@@ -1,5 +1,0 @@
-{
-    "port_number": 9124,
-    "parquets_directory": "split_output",
-    "url_col": "parquet_url"
-}

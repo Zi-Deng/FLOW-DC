@@ -1,6 +1,0 @@
-{
-    "port_number": 9124,
-    "parquets_directory": "examples/2split",
-    "url_col": "photo_url",
-    "class_col": "species_name" 
-}

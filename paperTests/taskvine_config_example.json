@@ -1,9 +1,0 @@
-{
-  "port_number": 9123,
-  "parquets_directory": "input_parquets/",
-  "url_col": "parquet_url",
-  "download_script": "paperTests/asyncParquet.py",
-  "concurrent_downloads": 3,
-  "timeout": 300,
-  "output_directory": "downloaded_parquets"
-}

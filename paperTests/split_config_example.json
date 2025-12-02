@@ -1,8 +1,0 @@
-{
-  "parquet": "spider_urls.parquet",
-  "url_col": "parquet_url",
-  "groups": 10,
-  "output_folder": "split_output",
-  "method": "simple",
-  "output_format": "parquet"
-}

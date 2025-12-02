@@ -1,8 +1,0 @@
-{
-  "input_parquet": "spider_urls.parquet",
-  "url_column": "parquet_url",
-  "output_directory": "downloaded_parquets",
-  "filename_column": "custom_filename",
-  "concurrent_downloads": 5,
-  "timeout": 300
-}

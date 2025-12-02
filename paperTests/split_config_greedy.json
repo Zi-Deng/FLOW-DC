@@ -1,9 +1,0 @@
-{
-  "parquet": "data/input_data.parquet",
-  "url_col": "photo_url",
-  "grouping_col": "species_name",
-  "groups": 5,
-  "output_folder": "greedy_split",
-  "method": "greedy",
-  "output_format": "parquet"
-}
