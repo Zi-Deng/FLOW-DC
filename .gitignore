@@ -163,6 +163,6 @@ cython_debug/
 vine-run-info
 zkdeng-workers
 playground
-files
+files/input
 data
 examples
