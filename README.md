@@ -111,9 +111,8 @@ FLOW-DC accepts input files in multiple formats:
 - **XML**: Structured data format (`.xml`)
 - **Excel**: `.xlsx` or `.xls` files (supported via `single_download.py` module)
 
-Your input file must contain at least two columns:
-- A column with image URLs (default: `photo_url`, configurable via `--url`)
-- A column with class/label names (default: `taxon_name`, configurable via `--label`)
+Your input file must contain the following column:
+- A column with URLs (default: `photo_url`, configurable via `--url`)
 
 Example Parquet file structure:
 ```
