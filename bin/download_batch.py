@@ -270,42 +270,55 @@ class TokenBucket:
 class RateController:
     """
     Tracks download results and calculates success rates for adaptive rate limiting.
-    Only 429 and 500+ errors count as rate-limiting failures.
+    429, 500+ errors, and connection errors (reset by peer, disconnected, refused)
+    count as rate-limiting failures.
     """
     def __init__(self, window_size=100):
-        self.results = deque(maxlen=window_size)  # (success, status_code) tuples
+        self.results = deque(maxlen=window_size)  # (success, status_code, error_message) tuples
         self.interval_results = []  # Results for current interval
         self.perfect_success_intervals = 0  # Consecutive intervals with 100% success
         self._lock = threading.Lock()
-        self.current_interval_has_error = False  # Track if current interval has 429/500+ error
+        self.current_interval_has_error = False  # Track if current interval has rate-limiting error
     
-    def is_rate_limiting_error(self, status_code):
-        """Check if status code is a rate-limiting error (429 or 500+)."""
-        if status_code is None:
+    def is_connection_error(self, error_message):
+        """Check if error message indicates a connection-level rate limiting issue."""
+        if error_message is None:
             return False
-        return status_code == 429 or (status_code is not None and status_code >= 500)
+        error_str = str(error_message).lower()
+        connection_error_patterns = [
+            "connection reset by peer",
+            "server disconnected",
+            "connection refused",
+        ]
+        return any(pattern in error_str for pattern in connection_error_patterns)
     
-    def record_result(self, success, status_code):
+    def is_rate_limiting_error(self, status_code, error_message=None):
+        """Check if this is a rate-limiting error (429, 500+, or connection error)."""
+        if status_code == 429 or (status_code is not None and status_code >= 500):
+            return True
+        return self.is_connection_error(error_message)
+    
+    def record_result(self, success, status_code, error_message=None):
         """Record a download result (thread-safe)."""
         with self._lock:
-            self.results.append((success, status_code))
-            self.interval_results.append((success, status_code))
+            self.results.append((success, status_code, error_message))
+            self.interval_results.append((success, status_code, error_message))
             
             # Check if this is a rate-limiting error
-            if not success and self.is_rate_limiting_error(status_code):
+            if not success and self.is_rate_limiting_error(status_code, error_message):
                 self.current_interval_has_error = True
     
-    def record_error(self, status_code):
+    def record_error(self, status_code, error_message=None):
         """Record a rate-limiting error (triggers immediate decrease)."""
         with self._lock:
-            if self.is_rate_limiting_error(status_code):
+            if self.is_rate_limiting_error(status_code, error_message):
                 self.current_interval_has_error = True
-                self.results.append((False, status_code))
-                self.interval_results.append((False, status_code))
+                self.results.append((False, status_code, error_message))
+                self.interval_results.append((False, status_code, error_message))
     
     def get_success_rate(self):
         """
-        Calculate success rate for probing (only 429/500+ count as failures).
+        Calculate success rate for probing (only 429/500+/connection errors count as failures).
         Returns success rate as float between 0.0 and 1.0.
         """
         with self._lock:
@@ -316,10 +329,11 @@ class RateController:
             successes = 0
             rate_limiting_failures = 0
             
-            for success, status_code in self.results:
+            for success, status_code, *rest in self.results:
+                error_message = rest[0] if rest else None
                 if success:
                     successes += 1
-                elif self.is_rate_limiting_error(status_code):
+                elif self.is_rate_limiting_error(status_code, error_message):
                     rate_limiting_failures += 1
                 # Other errors (404, 403, etc.) are ignored
             
@@ -331,7 +345,7 @@ class RateController:
     
     def has_perfect_success(self):
         """
-        Binary check: True if no 429/500+ errors in current interval.
+        Binary check: True if no 429/500+/connection errors in current interval.
         Used for AIMD binary logic.
         """
         with self._lock:
@@ -1090,7 +1104,7 @@ async def download_batch(
 
             # Record result for rate controller (always record, even if None)
             if rate_controller:
-                rate_controller.record_result(error is None, status_code)
+                rate_controller.record_result(error is None, status_code, error)
 
             if error:
                 error_details.append({
@@ -1104,19 +1118,22 @@ async def download_batch(
                 is_429_error = status_code == 429 or "429" in str(error)
                 is_timeout_error = status_code == 504 or "504" in str(error)
                 is_server_error = status_code is not None and status_code >= 500
+                is_connection_error = any(p in str(error).lower() for p in [
+                    "connection reset by peer", "server disconnected", "connection refused"
+                ])
 
-                if is_429_error or is_timeout_error or is_server_error:
+                if is_429_error or is_timeout_error or is_server_error or is_connection_error:
                     original_row = df_batch.loc[df_batch.index==key]
                     if not original_row.empty:
                         retry_rows.append(original_row.to_dict(orient='records')[0])
                     
                     # Trigger immediate rate decrease for rate-limiting errors
                     if rate_controller and enable_rate_limiting:
-                        rate_controller.record_error(status_code)
+                        rate_controller.record_error(status_code, error)
                         # Immediate decrease via rate controller
                         token_bucket.immediate_decrease(0.7)
                 
-                if not (is_429_error or is_timeout_error or is_server_error):
+                if not (is_429_error or is_timeout_error or is_server_error or is_connection_error):
                     print(f"\n[Error] Key: {key}, Error: {error}, Status Code: {status_code}")
             else:
                 successful_downloads += 1

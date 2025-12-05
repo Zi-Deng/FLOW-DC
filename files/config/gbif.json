@@ -5,7 +5,7 @@
     "output_format": "imagefolder",
     "url": "url",
     "label": null,
-    "concurrent_downloads": 1000,
+    "concurrent_downloads": 2000,
     "timeout": 30,
     "rate_limit": 10,
     "rate_capacity": 200,
