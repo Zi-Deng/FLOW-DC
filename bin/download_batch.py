@@ -22,7 +22,7 @@ from collections import deque
 import threading
 
 # Import single download functions
-from single_download import (
+from single_download_gbif import (
     download_single,
     load_input_file,
     extract_extension
@@ -80,6 +80,7 @@ def parse_args():
     parser.add_argument("--rate_capacity", type=int, default=200, help="Token bucket capacity (default: 200).")
     parser.add_argument("--enable_rate_limiting", action="store_true", help="Enable token bucket rate limiting.")
     parser.add_argument("--max_retry_attempts", type=int, default=3, help="Maximum retry attempts for 429 errors (default: 3).")
+    parser.add_argument("--rate_control_mode", type=str, default="aimd", choices=["aimd", "bbr"], help="Rate control algorithm: aimd (default) or bbr (model-based).")
     parser.add_argument("--create_overview", action="store_true", default=True, help="Create JSON overview file (default: True).")
     parser.add_argument("--croissant", type=str, default="no_croissant", choices=["no_croissant", "basic_croissant", "comprehensive_croissant"], help="Generate Croissant metadata: no_croissant (default), basic_croissant, or comprehensive_croissant.")
     
@@ -138,6 +139,7 @@ def load_json_config(config_path):
         'rate_capacity': 200,
         'enable_rate_limiting': False,
         'max_retry_attempts': 0,
+        'rate_control_mode': 'aimd',
         'create_overview': True,
         'croissant': 'no_croissant',
         'file_name_pattern': '{segment[-2]}',
@@ -175,6 +177,7 @@ def load_json_config(config_path):
         'rate_capacity': int,
         'enable_rate_limiting': bool,
         'max_retry_attempts': int,
+        'rate_control_mode': str,
         'file_name_pattern': str,
         'naming_mode': str
     }
@@ -358,6 +361,437 @@ class RateController:
         with self._lock:
             self.perfect_success_intervals = 0
 
+
+class DownloadMetrics:
+    """
+    Collects per-request download metrics for BBR-like rate control.
+    Tracks RTT samples, throughput, and file sizes for model estimation.
+    """
+    
+    def __init__(self, window_seconds=60):
+        self._lock = threading.Lock()
+        self.rtt_samples = deque()           # (timestamp, rtt_seconds)
+        self.throughput_samples = deque()     # (timestamp, bytes, duration)
+        self.file_size_samples = deque(maxlen=1000)  # Track recent file sizes
+        self.window_seconds = window_seconds
+        
+        # Per-interval accumulators (reset each interval)
+        self._interval_bytes = 0
+        self._interval_count = 0
+        self._interval_start = time.time()
+    
+    def record_download(self, bytes_downloaded, start_time, end_time):
+        """
+        Record a completed download for BBR model estimation.
+        
+        Args:
+            bytes_downloaded: Size of downloaded content in bytes
+            start_time: Request start time (time.time())
+            end_time: Request completion time (time.time())
+        """
+        rtt = end_time - start_time
+        with self._lock:
+            now = time.time()
+            self.rtt_samples.append((now, rtt))
+            self.throughput_samples.append((now, bytes_downloaded, rtt))
+            if bytes_downloaded > 0:
+                self.file_size_samples.append(bytes_downloaded)
+            self._interval_bytes += bytes_downloaded
+            self._interval_count += 1
+            self._prune_old_samples(now)
+    
+    def _prune_old_samples(self, now):
+        """Remove samples older than window_seconds."""
+        cutoff = now - self.window_seconds
+        while self.rtt_samples and self.rtt_samples[0][0] < cutoff:
+            self.rtt_samples.popleft()
+        while self.throughput_samples and self.throughput_samples[0][0] < cutoff:
+            self.throughput_samples.popleft()
+    
+    def get_min_rtt(self):
+        """
+        Get RTprop estimate (minimum RTT in window).
+        
+        Returns:
+            Minimum RTT in seconds, or None if no samples
+        """
+        with self._lock:
+            if not self.rtt_samples:
+                return None
+            return min(rtt for _, rtt in self.rtt_samples)
+    
+    def get_avg_rtt(self):
+        """
+        Get average RTT from recent samples.
+        
+        Returns:
+            Average RTT in seconds, or None if no samples
+        """
+        with self._lock:
+            if not self.rtt_samples:
+                return None
+            return sum(rtt for _, rtt in self.rtt_samples) / len(self.rtt_samples)
+    
+    def get_interval_throughput(self, interval_sec=5.0):
+        """
+        Get throughput for the current interval and reset counters.
+        
+        Args:
+            interval_sec: Expected interval duration in seconds
+            
+        Returns:
+            Throughput in bytes/second
+        """
+        with self._lock:
+            elapsed = time.time() - self._interval_start
+            if elapsed <= 0:
+                elapsed = interval_sec
+            throughput = self._interval_bytes / elapsed
+            # Reset interval counters
+            self._interval_bytes = 0
+            self._interval_count = 0
+            self._interval_start = time.time()
+            return throughput
+    
+    def get_interval_count(self):
+        """Get number of downloads in current interval."""
+        with self._lock:
+            return self._interval_count
+    
+    def get_avg_file_size(self):
+        """
+        Get average file size from recent downloads.
+        
+        Returns:
+            Average file size in bytes, or None if no samples
+        """
+        with self._lock:
+            if not self.file_size_samples:
+                return None
+            return sum(self.file_size_samples) / len(self.file_size_samples)
+
+
+class BBRController:
+    """
+    BBR-like model-based rate controller for FLOW-DC.
+    
+    Uses measured throughput and RTT to estimate bottleneck bandwidth (BtlBw)
+    and minimum RTT (RTprop), then computes target rate and concurrency from
+    BDP = BtlBw × RTprop.
+    
+    State machine:
+    - STARTUP: Quickly probe for available bandwidth (exponential increase)
+    - DRAIN: Reduce in-flight to drain excess queue after STARTUP
+    - PROBE_BW: Steady-state cycling through probe-up/probe-down/cruise phases
+    - PROBE_RTT: Periodically refresh RTprop estimate with minimal sending
+    """
+    
+    # States
+    STARTUP = "STARTUP"
+    DRAIN = "DRAIN"
+    PROBE_BW = "PROBE_BW"
+    PROBE_RTT = "PROBE_RTT"
+    
+    # Gain cycle for PROBE_BW (8-interval cycle)
+    # 1.25 = probe up, 0.75 = probe down, 1.0 = cruise
+    GAIN_CYCLE = [1.25, 0.75, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+    
+    def __init__(self,
+                 bw_window=10,              # intervals for BtlBw max filter
+                 rtprop_window=60,          # seconds for RTprop min filter refresh
+                 avg_file_size=None,        # None = learn from first 5 downloads
+                 file_size_warmup=5,        # Number of downloads to learn avg_file_size
+                 initial_rate=10):          # initial req/s during warmup
+        
+        self.state = self.STARTUP
+        self.btlbw = None              # bytes/sec (estimated bottleneck bandwidth)
+        self.rtprop = None             # seconds (estimated min RTT)
+        self.rtprop_timestamp = None   # When rtprop was last updated
+        
+        # BtlBw estimation: windowed max of throughput
+        self.bw_history = deque(maxlen=bw_window)
+        self.bw_window = bw_window
+        self.rtprop_window = rtprop_window
+        
+        # File size learning
+        self.avg_file_size = avg_file_size
+        self.file_size_warmup = file_size_warmup
+        self.file_size_samples = []
+        self.warmup_complete = avg_file_size is not None
+        
+        # Pacing and cwnd gains
+        self.pacing_gain = 2.0         # STARTUP gain (doubles each interval)
+        self.cwnd_gain = 2.0           # Target ~2×BDP in-flight
+        self.gain_index = 0            # Current position in GAIN_CYCLE
+        
+        # STARTUP tracking
+        self.startup_rounds = 0
+        self.last_btlbw = None
+        self.btlbw_plateau_count = 0   # Consecutive intervals without BtlBw growth
+        
+        # Initial rate for warmup/fallback
+        self.initial_rate = initial_rate
+        
+        self._lock = threading.RLock()
+    
+    def update_file_size(self, bytes_downloaded):
+        """
+        Learn avg_file_size from first N downloads.
+        
+        Args:
+            bytes_downloaded: Size of a completed download in bytes
+        """
+        if self.warmup_complete or bytes_downloaded <= 0:
+            return
+        
+        with self._lock:
+            self.file_size_samples.append(bytes_downloaded)
+            
+            if len(self.file_size_samples) >= self.file_size_warmup:
+                self.avg_file_size = sum(self.file_size_samples) / len(self.file_size_samples)
+                self.warmup_complete = True
+                print(f"[BBR] Learned avg_file_size: {self.avg_file_size / 1024:.1f} KB from {self.file_size_warmup} samples")
+    
+    def update_model(self, throughput_bytes_per_sec, min_rtt_sample, now):
+        """
+        Update BtlBw and RTprop estimates from interval metrics.
+        
+        Args:
+            throughput_bytes_per_sec: Measured throughput this interval
+            min_rtt_sample: Minimum RTT observed this interval (seconds)
+            now: Current timestamp
+        """
+        with self._lock:
+            # Update BtlBw (windowed max of throughput)
+            if throughput_bytes_per_sec > 0:
+                self.bw_history.append(throughput_bytes_per_sec)
+                new_btlbw = max(self.bw_history)
+                
+                # Track if BtlBw is still growing (for STARTUP exit)
+                if self.btlbw is not None:
+                    if new_btlbw <= self.btlbw * 1.1:  # Less than 10% growth
+                        self.btlbw_plateau_count += 1
+                    else:
+                        self.btlbw_plateau_count = 0
+                
+                self.last_btlbw = self.btlbw
+                self.btlbw = new_btlbw
+            
+            # Update RTprop (windowed min of RTT)
+            if min_rtt_sample is not None and min_rtt_sample > 0:
+                if self.rtprop is None or min_rtt_sample < self.rtprop:
+                    self.rtprop = min_rtt_sample
+                    self.rtprop_timestamp = now
+    
+    def get_bdp_bytes(self):
+        """
+        Compute BDP (Bandwidth-Delay Product) = BtlBw × RTprop.
+        
+        Returns:
+            BDP in bytes, or None if model not initialized
+        """
+        with self._lock:
+            if self.btlbw is None or self.rtprop is None:
+                return None
+            return self.btlbw * self.rtprop
+    
+    def get_target_rate(self):
+        """
+        Get target pacing rate in requests per second.
+        
+        Returns:
+            Target rate (req/s), or None if model not ready
+        """
+        with self._lock:
+            if not self.warmup_complete or self.btlbw is None:
+                return self.initial_rate  # Fallback during warmup
+            
+            pacing_bytes_per_sec = self.btlbw * self.pacing_gain
+            return pacing_bytes_per_sec / self.avg_file_size
+    
+    def get_target_concurrency(self, avg_rtt=None):
+        """
+        Get target concurrent downloads (BBR's cwnd analogue).
+        
+        Args:
+            avg_rtt: Optional average RTT to use; defaults to rtprop
+            
+        Returns:
+            Target concurrency (number of requests), or None if not ready
+        """
+        with self._lock:
+            if not self.warmup_complete or self.avg_file_size is None:
+                return None
+            
+            bdp = self.get_bdp_bytes()
+            if bdp is None:
+                return None
+            
+            # Target in-flight = BDP × cwnd_gain
+            target_bytes = bdp * self.cwnd_gain
+            concurrency = int(target_bytes / self.avg_file_size)
+            return max(2, concurrency)  # Minimum 2 concurrent
+    
+    def clamp_btlbw(self, measured_throughput):
+        """
+        Clamp BtlBw down when 429/5xx errors indicate policy limits.
+        
+        Args:
+            measured_throughput: Current measured throughput (bytes/sec)
+        """
+        with self._lock:
+            if measured_throughput > 0 and self.btlbw is not None:
+                # Cap BtlBw at current measured throughput
+                self.btlbw = min(self.btlbw, measured_throughput)
+                # Clear history to prevent old high values from persisting
+                self.bw_history.clear()
+                self.bw_history.append(self.btlbw)
+    
+    def step(self, metrics, rate_controller, now):
+        """
+        Run one interval of BBR state machine.
+        
+        Args:
+            metrics: DownloadMetrics instance with current measurements
+            rate_controller: RateController for 429/5xx awareness
+            now: Current timestamp
+            
+        Returns:
+            Tuple of (target_rate, target_concurrency)
+        """
+        with self._lock:
+            # Check if we need to enter PROBE_RTT (rtprop stale)
+            if (self.state != self.PROBE_RTT and 
+                self.rtprop_timestamp is not None and
+                now - self.rtprop_timestamp > self.rtprop_window):
+                self._enter_probe_rtt()
+            
+            # State machine transitions
+            if self.state == self.STARTUP:
+                self._step_startup(rate_controller)
+            elif self.state == self.DRAIN:
+                self._step_drain()
+            elif self.state == self.PROBE_BW:
+                self._step_probe_bw()
+            elif self.state == self.PROBE_RTT:
+                self._step_probe_rtt(now)
+            
+            return self.get_target_rate(), self.get_target_concurrency()
+    
+    def _step_startup(self, rate_controller):
+        """STARTUP state: exponentially probe for bandwidth."""
+        self.startup_rounds += 1
+        
+        # Exit conditions:
+        # 1. BtlBw stopped growing for 3 consecutive intervals
+        # 2. 429/5xx errors detected
+        if self.btlbw_plateau_count >= 3:
+            print(f"[BBR] STARTUP → DRAIN: BtlBw plateaued at {self.btlbw / 1e6:.2f} MB/s")
+            self._enter_drain()
+        elif rate_controller.current_interval_has_error:
+            print(f"[BBR] STARTUP → DRAIN: Rate-limiting errors detected")
+            self._enter_drain()
+        else:
+            # Keep probing with high gain
+            self.pacing_gain = 2.0
+    
+    def _enter_drain(self):
+        """Transition to DRAIN state."""
+        self.state = self.DRAIN
+        self.pacing_gain = 0.5  # Slow down to drain queue
+        self.drain_rounds = 0
+    
+    def _step_drain(self):
+        """DRAIN state: reduce in-flight to ~BDP."""
+        self.drain_rounds = getattr(self, 'drain_rounds', 0) + 1
+        
+        # Exit after 1-2 intervals (queue should be drained)
+        if self.drain_rounds >= 2:
+            print(f"[BBR] DRAIN → PROBE_BW: Queue drained")
+            self._enter_probe_bw()
+    
+    def _enter_probe_bw(self):
+        """Transition to PROBE_BW state."""
+        self.state = self.PROBE_BW
+        self.pacing_gain = 1.0
+        self.gain_index = 0
+    
+    def _step_probe_bw(self):
+        """PROBE_BW state: cycle through gain phases to probe bandwidth."""
+        # Cycle through GAIN_CYCLE
+        self.pacing_gain = self.GAIN_CYCLE[self.gain_index]
+        self.gain_index = (self.gain_index + 1) % len(self.GAIN_CYCLE)
+    
+    def _enter_probe_rtt(self):
+        """Transition to PROBE_RTT state."""
+        self.state = self.PROBE_RTT
+        self.pacing_gain = 0.1  # Minimal sending
+        self.probe_rtt_rounds = 0
+        self.rtprop = None  # Reset rtprop to get fresh measurement
+        print(f"[BBR] → PROBE_RTT: Refreshing RTprop estimate")
+    
+    def _step_probe_rtt(self, now):
+        """PROBE_RTT state: minimal sending to measure fresh RTT."""
+        self.probe_rtt_rounds = getattr(self, 'probe_rtt_rounds', 0) + 1
+        
+        # Exit after 2 intervals with fresh RTprop
+        if self.probe_rtt_rounds >= 2 and self.rtprop is not None:
+            self.rtprop_timestamp = now
+            print(f"[BBR] PROBE_RTT → PROBE_BW: New RTprop = {self.rtprop * 1000:.1f} ms")
+            self._enter_probe_bw()
+    
+    def get_state(self):
+        """Get current BBR state."""
+        return self.state
+
+
+class ConcurrencyLimiter:
+    """
+    Dynamic concurrency limiter (BBR's cwnd analogue).
+    Caps concurrent downloads based on BDP estimation.
+    """
+    
+    def __init__(self, initial_limit=10, max_limit=1000):
+        self._limit = initial_limit
+        self._max_limit = max_limit
+        self._current_count = 0
+        self._lock = asyncio.Lock()
+        self._condition = asyncio.Condition()
+    
+    async def acquire(self):
+        """Acquire a slot (blocks if at limit)."""
+        async with self._condition:
+            while self._current_count >= self._limit:
+                await self._condition.wait()
+            self._current_count += 1
+    
+    async def release(self):
+        """Release a slot."""
+        async with self._condition:
+            self._current_count -= 1
+            self._condition.notify()
+    
+    def set_limit(self, new_limit):
+        """
+        Dynamically adjust concurrency limit.
+        
+        Args:
+            new_limit: New maximum concurrent requests
+        """
+        new_limit = max(2, min(new_limit, self._max_limit))
+        if new_limit != self._limit:
+            print(f"[BBR] Concurrency limit: {self._limit} → {new_limit}")
+            self._limit = new_limit
+    
+    def get_limit(self):
+        """Get current concurrency limit."""
+        return self._limit
+    
+    def get_current_count(self):
+        """Get current number of in-flight requests."""
+        return self._current_count
+
+
 async def aimd_convergence_controller(
     # Rate limiting
     token_bucket, rate_controller, max_rate,
@@ -465,6 +899,83 @@ async def aimd_convergence_controller(
                 intervals_in_state = 0
                 print(f"[AIMD] → Acceptable success rate ({success_rate:.1%}), returning to CONVERGED state")
 
+
+async def bbr_rate_controller(
+    token_bucket,
+    rate_controller,        # existing - safety layer for 429/5xx
+    concurrency_limiter,    # new - BBR's cwnd analogue
+    bbr_controller,         # new - BBR model and state machine
+    download_metrics,       # new - RTT and throughput measurements
+    max_rate,
+    interval=5
+):
+    """
+    BBR-like rate controller loop.
+    
+    Uses measured throughput and RTT to compute optimal pacing rate and
+    concurrency, while respecting 429/5xx rate limiting signals.
+    
+    Args:
+        token_bucket: TokenBucket instance for pacing
+        rate_controller: RateController for 429/5xx safety
+        concurrency_limiter: ConcurrencyLimiter for cwnd
+        bbr_controller: BBRController with model and state machine
+        download_metrics: DownloadMetrics for measurements
+        max_rate: Maximum allowed request rate
+        interval: Control loop interval in seconds
+    """
+    MULTIPLICATIVE_DECREASE = 0.7  # 30% reduction on policy errors
+    
+    print(f"[BBR] Starting BBR rate controller (interval={interval}s, max_rate={max_rate} req/s)")
+    
+    while True:
+        await asyncio.sleep(interval)
+        now = time.time()
+        
+        # 1. Get metrics from last interval
+        throughput = download_metrics.get_interval_throughput(interval)
+        min_rtt = download_metrics.get_min_rtt()
+        avg_rtt = download_metrics.get_avg_rtt()
+        
+        # 2. Update BBR model with measurements
+        bbr_controller.update_model(throughput, min_rtt, now)
+        
+        # 3. Run BBR state machine to get targets
+        target_rate, target_concurrency = bbr_controller.step(
+            download_metrics, rate_controller, now
+        )
+        
+        # 4. Start new interval for rate controller (safety layer)
+        rate_controller.start_new_interval()
+        
+        # 5. Apply RateController safety clamps (429/5xx protection)
+        if rate_controller.current_interval_has_error:
+            if target_rate:
+                target_rate *= MULTIPLICATIVE_DECREASE
+            bbr_controller.clamp_btlbw(throughput)  # Update model
+            print(f"[BBR] Policy error detected, clamping rate by {int((1-MULTIPLICATIVE_DECREASE)*100)}%")
+        
+        # 6. Apply final rate
+        if target_rate:
+            final_rate = min(target_rate, max_rate)
+            final_rate = max(1, final_rate)  # Minimum 1 req/s
+            token_bucket.adjust_rate(final_rate, f"bbr:{bbr_controller.get_state()}")
+            
+            # Log status
+            btlbw_mbps = (bbr_controller.btlbw or 0) / 1e6
+            rtprop_ms = (bbr_controller.rtprop or 0) * 1000
+            bdp_kb = (bbr_controller.get_bdp_bytes() or 0) / 1024
+            print(f"[BBR] {bbr_controller.get_state()}: "
+                  f"rate={final_rate:.0f} req/s, "
+                  f"BtlBw={btlbw_mbps:.2f} MB/s, "
+                  f"RTprop={rtprop_ms:.0f}ms, "
+                  f"BDP={bdp_kb:.0f}KB")
+        
+        # 7. Apply concurrency limit
+        if target_concurrency:
+            concurrency_limiter.set_limit(target_concurrency)
+
+
 async def download_batch(
     # Network/session
     session, concurrent_downloads,
@@ -481,10 +992,17 @@ async def download_batch(
     # File naming and download method
     file_name_pattern, naming_mode,
     # Retry control
-    attempt_number=1
+    attempt_number=1,
+    # BBR metrics (optional)
+    download_metrics=None,
+    bbr_controller=None,
+    concurrency_limiter=None
 ):
     """
     Download batch of images using single_download module.
+    
+    When download_metrics is provided (BBR mode), records RTT and throughput
+    for each completed download to enable model-based rate control.
     """
     global shutdown_flag
 
@@ -503,20 +1021,53 @@ async def download_batch(
                 seq_num = get_next_sequential_number()
                 filenames[row.name] = f"{seq_num:08d}{ext}"
 
+    # Wrapper for BBR metrics collection
+    async def download_with_metrics(row, filename_override):
+        """Wrapper that captures timing and bytes for BBR metrics."""
+        start_time = time.time()
+        
+        # Acquire concurrency slot if using BBR
+        if concurrency_limiter:
+            await concurrency_limiter.acquire()
+        
+        try:
+            key, file_path, class_name, error, status_code = await download_single(
+                # Core identifiers
+                url=row[url_col], key=row.name, class_name=row[class_col] if class_col is not None else None,
+                # Output config
+                output_folder=output_folder, output_format=output_format,
+                # Network/session
+                session=session, timeout=timeout,
+                # File naming
+                filename=filename_override,
+                # Rate limiting
+                token_bucket=token_bucket, enable_rate_limiting=enable_rate_limiting,
+                # Tracking
+                total_bytes=total_bytes
+            )
+            
+            end_time = time.time()
+            
+            # Record metrics for BBR if successful
+            if download_metrics and error is None:
+                # Get bytes from total_bytes (it's appended to during download)
+                bytes_downloaded = total_bytes[-1] if total_bytes else 0
+                download_metrics.record_download(bytes_downloaded, start_time, end_time)
+                
+                # Update BBR's file size learning
+                if bbr_controller and bytes_downloaded > 0:
+                    bbr_controller.update_file_size(bytes_downloaded)
+            
+            return key, file_path, class_name, error, status_code
+        finally:
+            # Release concurrency slot
+            if concurrency_limiter:
+                await concurrency_limiter.release()
+    
     tasks = [
-        download_single(
-            # Core identifiers
-            url=row[url_col], key=row.name, class_name=row[class_col] if class_col is not None else None,
-            # Output config
-            output_folder=output_folder, output_format=output_format,
-            # Network/session
-            session=session, timeout=timeout,
-            # File naming
-            filename=filenames.get(row.name) if naming_mode == "sequential" else None,
-            # Rate limiting
-            token_bucket=token_bucket, enable_rate_limiting=enable_rate_limiting,
-            # Tracking
-            total_bytes=total_bytes
+        download_with_metrics(
+            row,
+            filenames.get(row.name) if naming_mode == "sequential" else None
         )
         for _, row in df_batch.iterrows()
     ]
@@ -984,6 +1535,7 @@ async def main():
     rate_capacity = args.rate_capacity
     enable_rate_limiting = args.enable_rate_limiting
     max_retry_attempts = args.max_retry_attempts
+    rate_control_mode = args.rate_control_mode
     create_overview = args.create_overview
     croissant_mode = args.croissant
     file_name_pattern = args.file_name_pattern
@@ -1004,10 +1556,28 @@ async def main():
 
     token_bucket = None
     rate_controller = None
+    bbr_controller = None
+    download_metrics = None
+    concurrency_limiter = None
+    
     if enable_rate_limiting:
         token_bucket = TokenBucket(rate=rate_limit, capacity=rate_capacity)
         rate_controller = RateController(window_size=100)
-        print(f"Processing {filtered_count} images with {concurrent_downloads} concurrent downloads and {rate_limit:.1f} req/s rate limit")
+        
+        if rate_control_mode == "bbr":
+            # Initialize BBR-specific components
+            bbr_controller = BBRController(
+                bw_window=10,           # 10 intervals (~50s) for BtlBw max filter
+                rtprop_window=60,       # 60s for RTprop refresh
+                avg_file_size=None,     # Learn from first 5 downloads
+                file_size_warmup=5,
+                initial_rate=rate_limit
+            )
+            download_metrics = DownloadMetrics(window_seconds=60)
+            concurrency_limiter = ConcurrencyLimiter(initial_limit=concurrent_downloads, max_limit=concurrent_downloads*2)
+            print(f"Processing {filtered_count} images with BBR rate control (initial: {rate_limit:.1f} req/s, max concurrency: {concurrent_downloads})")
+        else:
+            print(f"Processing {filtered_count} images with AIMD rate control ({concurrent_downloads} concurrent, {rate_limit:.1f} req/s)")
     else:
         print(f"Processing {filtered_count} images with {concurrent_downloads} concurrent downloads (no rate limiting)")
 
@@ -1023,10 +1593,21 @@ async def main():
 
     recovery_task = None
     if enable_rate_limiting and token_bucket and rate_controller:
-        print(f"Starting adaptive rate controller (max: {concurrent_downloads*1.1:.1f} req/sec, interval: 5s)")
-        recovery_task = asyncio.create_task(
-            aimd_convergence_controller(token_bucket, rate_controller, concurrent_downloads*1.1, interval=5)
-        )
+        max_rate = concurrent_downloads * 1.1
+        
+        if rate_control_mode == "bbr" and bbr_controller and download_metrics and concurrency_limiter:
+            print(f"Starting BBR rate controller (max: {max_rate:.1f} req/sec, interval: 5s)")
+            recovery_task = asyncio.create_task(
+                bbr_rate_controller(
+                    token_bucket, rate_controller, concurrency_limiter,
+                    bbr_controller, download_metrics, max_rate, interval=5
+                )
+            )
+        else:
+            print(f"Starting AIMD rate controller (max: {max_rate:.1f} req/sec, interval: 5s)")
+            recovery_task = asyncio.create_task(
+                aimd_convergence_controller(token_bucket, rate_controller, max_rate, interval=5)
+            )
 
     async with aiohttp.ClientSession(
         connector=connector,
@@ -1047,7 +1628,11 @@ async def main():
                 total_bytes, timeout,
                 token_bucket, enable_rate_limiting, rate_controller,
                 file_name_pattern, naming_mode,
-                attempt
+                attempt,
+                # BBR metrics (optional)
+                download_metrics=download_metrics,
+                bbr_controller=bbr_controller,
+                concurrency_limiter=concurrency_limiter
             )
 
             total_successful_downloads += successful_downloads
