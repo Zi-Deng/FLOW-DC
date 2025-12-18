@@ -20,6 +20,10 @@ import signal
 from collections import deque
 import threading
 import shutil
+from urllib.parse import urlsplit
+from contextvars import ContextVar
+import statistics
+
 # Import single download functions
 from single_download_gbif import (
     download_single,
@@ -29,6 +33,7 @@ from single_download_gbif import (
 
 # Global flag for graceful shutdown
 shutdown_flag = False
+TRACE_CTX: ContextVar[dict | None] = ContextVar("TRACE_CTX", default=None)
 
 # Sequential counter for file naming
 _sequential_counter = 0
@@ -189,6 +194,348 @@ def load_json_config(config_path):
     
     # Convert to argparse.Namespace for compatibility
     return argparse.Namespace(**config_data)
+def _percentile(xs, p: float):
+    if not xs:
+        return None
+    ys = sorted(xs)
+    k = (len(ys) - 1) * p
+    f = int(k)
+    c = min(f + 1, len(ys) - 1)
+    if c == f:
+        return ys[f]
+    return ys[f] + (ys[c] - ys[f]) * (k - f)
+
+
+class HostSignals:
+    """
+    Per-host per-interval signals:
+      - TTFB samples (successful only)
+      - q = p95(ttfb)-p10(ttfb)
+      - r429 = #429/#total
+      - T_since429
+    Also maintains a rolling q_baseline estimate.
+    """
+    def __init__(self, interval_sec: float, q_hist_seconds: float = 300.0):
+        self.interval_sec = interval_sec
+        self._lock = threading.Lock()
+
+        self._ttfb_ok = []
+        self._total = 0
+        self._n429 = 0
+        self._bytes = 0
+
+        self.last_429_time = None
+
+        self.q_history = deque(maxlen=max(10, int(q_hist_seconds / interval_sec)))
+        self._stable_q_intervals = 0
+        self._no429_intervals = 0
+
+    def record(self, status_code: int | None, ttfb: float | None, bytes_downloaded: int = 0):
+        with self._lock:
+            self._total += 1
+            self._bytes += int(bytes_downloaded or 0)
+
+            if status_code == 429:
+                self._n429 += 1
+                self.last_429_time = time.time()
+                self._no429_intervals = 0
+
+            # Successful for q purposes: 2xx/3xx AND a TTFB sample
+            if status_code is not None and status_code < 400 and ttfb is not None:
+                self._ttfb_ok.append(float(ttfb))
+
+    def finish_interval(self, now: float):
+        """
+        Compute interval outputs and reset interval accumulators.
+        Returns dict with q, q_baseline, r429, T_since429, p10/p50/p95, bytes.
+        """
+        with self._lock:
+            total = self._total
+            n429 = self._n429
+            ttfb_ok = self._ttfb_ok
+            interval_bytes = self._bytes
+
+            # reset interval accumulators
+            self._total = 0
+            self._n429 = 0
+            self._ttfb_ok = []
+            self._bytes = 0
+
+        r429 = (n429 / total) if total > 0 else 0.0
+        T_since429 = (now - self.last_429_time) if self.last_429_time else float("inf")
+
+        p10 = _percentile(ttfb_ok, 0.10) if len(ttfb_ok) >= 10 else None
+        p50 = _percentile(ttfb_ok, 0.50) if len(ttfb_ok) >= 10 else None
+        p95 = _percentile(ttfb_ok, 0.95) if len(ttfb_ok) >= 10 else None
+
+        q = (p95 - p10) if (p95 is not None and p10 is not None) else None
+
+        # q_baseline: median of recent q values from “good” periods (added by controller)
+        q_baseline = statistics.median(self.q_history) if len(self.q_history) >= 6 else None
+
+        return {
+            "total": total,
+            "n429": n429,
+            "r429": r429,
+            "T_since429": T_since429,
+            "p10": p10,
+            "p50": p50,
+            "p95": p95,
+            "q": q,
+            "q_baseline": q_baseline,
+            "bytes": interval_bytes,
+        }
+class HostPoliteController:
+    CRUISE = "CRUISE"
+    DRAIN = "DRAIN"
+    COOLDOWN = "COOLDOWN"
+    PROBE = "PROBE"
+
+    def __init__(
+        self,
+        host: str,
+        token_bucket: TokenBucket,
+        conc: ConcurrencyLimiter,
+        signals: HostSignals,
+        *,
+        min_rate: float = 1.0,
+        max_rate: float = 10_000.0,
+        cwnd_gain: float = 2.0,          # request-level inflight gain (Little’s law style)
+        q_gamma: float = 2.5,            # DRAIN trigger if q > gamma*q_baseline
+        q_exit_eps: float = 0.25,        # exit DRAIN when q <= (1+eps)*baseline
+        drain_exit_no429_N: int = 3,
+        drain_exit_stable_M: int = 3,
+        cooldown_sec: float = 15 * 60,   # “quite a while”
+        probe_delta: float = 0.03,       # 3% probe step
+        probe_hold_intervals: int = 3,
+        probe_lockout_sec: float = 10 * 60,
+        beta_policy_rate: float = 0.5,
+        beta_policy_cwnd: float = 0.5,
+        beta_q_rate: float = 0.8,
+        beta_q_cwnd: float = 0.8,
+        per_host_conc_cap: int = 256,
+    ):
+        self.host = host
+        self.tb = token_bucket
+        self.conc = conc
+        self.signals = signals
+
+        self.min_rate = min_rate
+        self.max_rate = max_rate
+        self.cwnd_gain = cwnd_gain
+        self.q_gamma = q_gamma
+        self.q_exit_eps = q_exit_eps
+        self.drain_exit_no429_N = drain_exit_no429_N
+        self.drain_exit_stable_M = drain_exit_stable_M
+        self.cooldown_sec = cooldown_sec
+        self.probe_delta = probe_delta
+        self.probe_hold_intervals = probe_hold_intervals
+        self.probe_lockout_sec = probe_lockout_sec
+        self.beta_policy_rate = beta_policy_rate
+        self.beta_policy_cwnd = beta_policy_cwnd
+        self.beta_q_rate = beta_q_rate
+        self.beta_q_cwnd = beta_q_cwnd
+        self.per_host_conc_cap = per_host_conc_cap
+
+        self.state = self.CRUISE
+        self.safe_rate = float(self.tb.get_rate())
+        self.ceiling = float("inf")
+
+        self.cooldown_until = 0.0
+        self.probe_lockout_until = 0.0
+        self._probe_prev_rate = None
+        self._probe_remaining = 0
+
+        self._no429_streak = 0
+        self._q_stable_streak = 0
+
+    def _set_rate(self, new_rate: float, reason: str):
+        new_rate = max(self.min_rate, min(self.max_rate, float(new_rate)))
+        self.safe_rate = new_rate
+        self.tb.adjust_rate(new_rate, f"{self.host}:{reason}")
+
+    def _set_conc(self, new_conc: int, reason: str):
+        new_conc = max(2, min(int(new_conc), self.per_host_conc_cap))
+        self.conc.set_limit(new_conc)
+
+    def _derive_concurrency_from_latency(self, p50_ttfb: float | None):
+        """
+        Request-level analogue of “inflight ≈ rate * latency”.
+        If p50_ttfb is missing, do nothing.
+        """
+        if p50_ttfb is None or p50_ttfb <= 0:
+            return
+
+        target_inflight = int(max(2, self.safe_rate * p50_ttfb * self.cwnd_gain))
+        self._set_conc(target_inflight, "derived_concurrency")
+
+    def step_interval(self, snap: dict, now: float):
+        """
+        snap = HostSignals.finish_interval(now)
+        """
+
+        had_429 = snap["n429"] > 0
+        q = snap["q"]
+        q_baseline = snap["q_baseline"]
+        p50 = snap["p50"]
+
+        # Maintain streaks
+        if had_429:
+            self._no429_streak = 0
+        else:
+            self._no429_streak += 1
+
+        q_ok = False
+        if q is not None and q_baseline is not None and q_baseline > 0:
+            q_ok = (q <= q_baseline * (1.0 + self.q_exit_eps))
+        # “stable” is only meaningful if we can compute it
+        if q_ok:
+            self._q_stable_streak += 1
+        else:
+            self._q_stable_streak = 0
+
+        # Update baseline only during “good” non-violation periods
+        if (not had_429) and (q is not None) and (self.state in (self.CRUISE, self.COOLDOWN)):
+            self.signals.q_history.append(q)
+
+        # Always (re)derive concurrency from latency when possible
+        self._derive_concurrency_from_latency(p50)
+
+        # ----- Hard policy violation handling (429) -----
+        if had_429:
+            # This is the “hard brake + long cooldown” rule.
+            self.ceiling = min(self.ceiling, self.safe_rate)
+            self._set_rate(self.safe_rate * self.beta_policy_rate, "429_backoff_rate")
+            self._set_conc(int(self.conc.get_limit() * self.beta_policy_cwnd), "429_backoff_cwnd")
+
+            self.cooldown_until = now + self.cooldown_sec
+            self.probe_lockout_until = now + self.probe_lockout_sec
+
+            self.state = self.DRAIN
+            self._probe_prev_rate = None
+            self._probe_remaining = 0
+            return
+
+        # ----- Queue/pressure proxy handling (q blow-up) -----
+        q_blowup = False
+        if q is not None and q_baseline is not None and q_baseline > 0:
+            q_blowup = (q > q_baseline * self.q_gamma)
+
+        if q_blowup and self.state != self.DRAIN:
+            # Gentler than 429: treat as “be nicer”, not “policy limit”.
+            self._set_rate(self.safe_rate * self.beta_q_rate, "q_drain_rate")
+            self._set_conc(int(self.conc.get_limit() * self.beta_q_cwnd), "q_drain_cwnd")
+            self.state = self.DRAIN
+
+        # ----- State machine -----
+        if self.state == self.DRAIN:
+            # Exit criteria: no 429 for N intervals AND q back near baseline for M intervals.
+            if (self._no429_streak >= self.drain_exit_no429_N) and (self._q_stable_streak >= self.drain_exit_stable_M):
+                if now < self.cooldown_until:
+                    self.state = self.COOLDOWN
+                else:
+                    self.state = self.CRUISE
+
+        elif self.state == self.COOLDOWN:
+            # No probing allowed; keep cruising.
+            if now >= self.cooldown_until:
+                self.state = self.CRUISE
+
+        elif self.state == self.CRUISE:
+            # Decide whether a probe is allowed
+            if (now >= self.probe_lockout_until) and (now >= self.cooldown_until):
+                # Require q to be “stable” for a while before probing
+                if self._q_stable_streak >= 6:  # ~30s at 5s interval
+                    # Enter a tiny probe
+                    self._probe_prev_rate = self.safe_rate
+                    self._probe_remaining = self.probe_hold_intervals
+                    self._set_rate(self.safe_rate * (1.0 + self.probe_delta), "probe_up")
+                    self.state = self.PROBE
+
+        elif self.state == self.PROBE:
+            # Hold probe for a few intervals, then accept or revert based on q
+            self._probe_remaining -= 1
+
+            # Abort-fast if q spikes (even without 429)
+            if q_blowup:
+                if self._probe_prev_rate is not None:
+                    self._set_rate(self._probe_prev_rate, "probe_abort_q")
+                self.probe_lockout_until = now + self.probe_lockout_sec
+                self.state = self.COOLDOWN if now < self.cooldown_until else self.CRUISE
+                self._probe_prev_rate = None
+                self._probe_remaining = 0
+                return
+
+            if self._probe_remaining <= 0:
+                # Probe “succeeded” (no 429 and no q blow-up)
+                self.probe_lockout_until = now + self.probe_lockout_sec
+                self.state = self.CRUISE
+                self._probe_prev_rate = None
+                self._probe_remaining = 0
+
+class PerHostControllerManager:
+    def __init__(
+        self,
+        *,
+        interval_sec: float,
+        initial_rate: float,
+        min_rate: float,
+        max_rate: float,
+        per_host_conc_init: int,
+        per_host_conc_cap: int,
+    ):
+        self.interval_sec = interval_sec
+        self.initial_rate = initial_rate
+        self.min_rate = min_rate
+        self.max_rate = max_rate
+        self.per_host_conc_init = per_host_conc_init
+        self.per_host_conc_cap = per_host_conc_cap
+
+        self._lock = threading.Lock()
+        self.hosts: dict[str, HostPoliteController] = {}
+
+    def _mk(self, host: str):
+        tb = TokenBucket(rate=self.initial_rate, capacity=max(100, int(self.initial_rate * 2)))
+        sig = HostSignals(interval_sec=self.interval_sec)
+        conc = ConcurrencyLimiter(initial_limit=self.per_host_conc_init, max_limit=self.per_host_conc_cap)
+        ctrl = HostPoliteController(
+            host=host,
+            token_bucket=tb,
+            conc=conc,
+            signals=sig,
+            min_rate=self.min_rate,
+            max_rate=self.max_rate,
+            per_host_conc_cap=self.per_host_conc_cap,
+        )
+        return ctrl
+
+    def get(self, url: str) -> HostPoliteController:
+        host = urlsplit(url).netloc.lower()
+        if not host:
+            host = "unknown"
+        with self._lock:
+            if host not in self.hosts:
+                self.hosts[host] = self._mk(host)
+            return self.hosts[host]
+
+    def all(self):
+        with self._lock:
+            return list(self.hosts.values())
+
+async def per_host_polite_controller_loop(manager: PerHostControllerManager, interval_sec: float):
+    print(f"[PoliteCtrl] Starting per-host controller loop (interval={interval_sec}s)")
+    while not shutdown_flag:
+        await asyncio.sleep(interval_sec)
+        if shutdown_flag:
+            break
+        now = time.time()
+        for ctrl in manager.all():
+            snap = ctrl.signals.finish_interval(now)
+            # If host had no traffic this interval, skip (avoids baseline pollution)
+            if snap["total"] == 0:
+                continue
+            ctrl.step_interval(snap, now)
+
 
 class TokenBucket:
     def __init__(self, rate, capacity):
@@ -327,6 +674,105 @@ class RateController:
             self.current_interval_has_error = False
             self.interval_results = []
 
+def build_trace_config():
+    """
+    Build an aiohttp TraceConfig that writes timing into TRACE_CTX (ContextVar).
+    We approximate TTFB as time-to-first-response-chunk (first on_response_chunk_received).
+    """
+    trace = aiohttp.TraceConfig()
+
+    async def _ctx():
+        return TRACE_CTX.get()
+
+    async def on_request_start(session, ctx, params):
+        d = await _ctx()
+        if d is None:
+            return
+        d["t0"] = time.monotonic()
+        d["ttfb"] = None
+        d["dns_ms"] = None
+        d["conn_queue_ms"] = None
+        d["conn_create_ms"] = None
+        d["reused_conn"] = False
+        d["exc"] = None
+
+    async def on_dns_resolvehost_start(session, ctx, params):
+        d = await _ctx()
+        if d is None:
+            return
+        d["_dns_t0"] = time.monotonic()
+
+    async def on_dns_resolvehost_end(session, ctx, params):
+        d = await _ctx()
+        if d is None:
+            return
+        t1 = time.monotonic()
+        t0 = d.pop("_dns_t0", None)
+        if t0 is not None:
+            d["dns_ms"] = (t1 - t0) * 1000.0
+
+    async def on_connection_queued_start(session, ctx, params):
+        d = await _ctx()
+        if d is None:
+            return
+        d["_q_t0"] = time.monotonic()
+
+    async def on_connection_queued_end(session, ctx, params):
+        d = await _ctx()
+        if d is None:
+            return
+        t1 = time.monotonic()
+        t0 = d.pop("_q_t0", None)
+        if t0 is not None:
+            d["conn_queue_ms"] = (t1 - t0) * 1000.0
+
+    async def on_connection_create_start(session, ctx, params):
+        d = await _ctx()
+        if d is None:
+            return
+        d["_c_t0"] = time.monotonic()
+
+    async def on_connection_create_end(session, ctx, params):
+        d = await _ctx()
+        if d is None:
+            return
+        t1 = time.monotonic()
+        t0 = d.pop("_c_t0", None)
+        if t0 is not None:
+            d["conn_create_ms"] = (t1 - t0) * 1000.0
+
+    async def on_connection_reuseconn(session, ctx, params):
+        d = await _ctx()
+        if d is None:
+            return
+        d["reused_conn"] = True
+
+    async def on_response_chunk_received(session, ctx, params):
+        d = await _ctx()
+        if d is None:
+            return
+        if d.get("ttfb") is None and d.get("t0") is not None:
+            # first chunk time since request start
+            d["ttfb"] = time.monotonic() - d["t0"]
+
+    async def on_request_exception(session, ctx, params):
+        d = await _ctx()
+        if d is None:
+            return
+        d["exc"] = str(params.exception)
+
+    trace.on_request_start.append(on_request_start)
+    trace.on_dns_resolvehost_start.append(on_dns_resolvehost_start)
+    trace.on_dns_resolvehost_end.append(on_dns_resolvehost_end)
+    trace.on_connection_queued_start.append(on_connection_queued_start)
+    trace.on_connection_queued_end.append(on_connection_queued_end)
+    trace.on_connection_create_start.append(on_connection_create_start)
+    trace.on_connection_create_end.append(on_connection_create_end)
+    trace.on_connection_reuseconn.append(on_connection_reuseconn)
+    trace.on_response_chunk_received.append(on_response_chunk_received)
+    trace.on_request_exception.append(on_request_exception)
+
+    return trace
 
 class DownloadMetrics:
     """
@@ -927,7 +1373,8 @@ async def download_batch(
     # BBR metrics (optional)
     download_metrics=None,
     bbr_controller=None,
-    concurrency_limiter=None
+    concurrency_limiter=None,
+    polite_manager=None,
 ):
     """
     Download batch of images using single_download module.
@@ -954,46 +1401,55 @@ async def download_batch(
 
     # Wrapper for BBR metrics collection
     async def download_with_metrics(row, filename_override):
-        """Wrapper that captures timing and bytes for BBR metrics."""
+        url = str(row[url_col]).strip()
+        host_ctrl = polite_manager.get(url) if polite_manager else None
+
+        # Prefer per-host concurrency limit; optionally ALSO keep a global limiter if you want.
+        if host_ctrl:
+            await host_ctrl.conc.acquire()
+
+        # Install a per-request trace dict into the ContextVar so TraceConfig can write into it.
+        trace_dict = {}
+        trace_token = TRACE_CTX.set(trace_dict)
+
         start_time = time.time()
-        
-        # Acquire concurrency slot if using BBR
-        if concurrency_limiter:
-            await concurrency_limiter.acquire()
-        
         try:
             key, file_path, class_name, error, status_code = await download_single(
-                # Core identifiers
-                url=row[url_col], key=row.name, class_name=row[class_col] if class_col is not None else None,
-                # Output config
+                url=url, key=row.name,
+                class_name=row[class_col] if class_col is not None else None,
                 output_folder=output_folder, output_format=output_format,
-                # Network/session
                 session=session, timeout=timeout,
-                # File naming
                 filename=filename_override,
-                # Rate limiting
-                token_bucket=token_bucket, enable_rate_limiting=enable_rate_limiting,
-                # Tracking
-                total_bytes=total_bytes
+                token_bucket=(host_ctrl.tb if host_ctrl else token_bucket),
+                enable_rate_limiting=enable_rate_limiting,
+                total_bytes=total_bytes,
             )
-            
             end_time = time.time()
-            
-            # Record metrics for BBR if successful
-            if download_metrics and error is None:
-                # Get bytes from total_bytes (it's appended to during download)
-                bytes_downloaded = total_bytes[-1] if total_bytes else 0
+
+            # Per-request bytes: derive from file size if we wrote a file successfully
+            bytes_downloaded = 0
+            if error is None and file_path and os.path.exists(file_path):
+                try:
+                    bytes_downloaded = os.path.getsize(file_path)
+                except Exception:
+                    bytes_downloaded = 0
+
+            # Record per-host signals (TTFB proxy + 429 rate)
+            if host_ctrl:
+                ttfb = trace_dict.get("ttfb")
+                host_ctrl.signals.record(status_code=status_code, ttfb=ttfb, bytes_downloaded=bytes_downloaded)
+
+            # (Optional) keep your existing DownloadMetrics if you still want global reporting
+            if download_metrics and error is None and bytes_downloaded > 0:
                 download_metrics.record_download(bytes_downloaded, start_time, end_time)
-                
-                # Update BBR's file size learning
-                if bbr_controller and bytes_downloaded > 0:
-                    bbr_controller.update_file_size(bytes_downloaded)
-            
+
             return key, file_path, class_name, error, status_code
+
         finally:
-            # Release concurrency slot
-            if concurrency_limiter:
-                await concurrency_limiter.release()
+            TRACE_CTX.reset(trace_token)
+            if host_ctrl:
+                await host_ctrl.conc.release()
+
     
     tasks = [
         download_with_metrics(
@@ -1050,8 +1506,6 @@ async def download_batch(
                     # Trigger immediate rate decrease for rate-limiting errors
                     if rate_controller and enable_rate_limiting:
                         rate_controller.record_error(status_code, error)
-                        # Immediate decrease via rate controller
-                        token_bucket.immediate_decrease(0.7)
                 
                 if not (is_429_error or is_timeout_error or is_server_error or is_connection_error):
                     print(f"\n[Error] Key: {key}, Error: {error}, Status Code: {status_code}")
@@ -1594,17 +2048,34 @@ async def main():
     if enable_rate_limiting and token_bucket and rate_controller:
         max_rate = concurrent_downloads * 1.1
         print(f"Starting BBR rate controller (max: {max_rate:.1f} req/sec, interval: 5s)")
-        recovery_task = asyncio.create_task(
-            bbr_rate_controller(
-                token_bucket, rate_controller, concurrency_limiter,
-                bbr_controller, download_metrics, max_rate, interval=5
-            )
+    polite_manager = None
+    controller_task = None
+
+    if enable_rate_limiting:
+        interval_sec = 5.0
+
+        # Interpret CLI values as “initial per-host” defaults.
+        polite_manager = PerHostControllerManager(
+            interval_sec=interval_sec,
+            initial_rate=rate_limit,
+            min_rate=1.0,
+            max_rate=max(10.0, concurrent_downloads * 2.0),  # you can raise this if needed
+            per_host_conc_init=max(2, min(concurrent_downloads, 32)),
+            per_host_conc_cap=max(32, concurrent_downloads),
         )
+
+        controller_task = asyncio.create_task(
+            per_host_polite_controller_loop(polite_manager, interval_sec=interval_sec)
+        )
+
+
+    trace_config = build_trace_config()
 
     async with aiohttp.ClientSession(
         connector=connector,
-        timeout=aiohttp.ClientTimeout(total=timeout*2),  # Overall session timeout
-        headers={'User-Agent': 'FLOW-DC-ImageDownloader/1.0'}
+        timeout=aiohttp.ClientTimeout(total=timeout*2),
+        headers={'User-Agent': 'FLOW-DC-ImageDownloader/1.0'},
+        trace_configs=[trace_config],
     ) as session:
         all_error_details = []
         total_successful_downloads = 0
@@ -1628,7 +2099,8 @@ async def main():
                 # BBR metrics (optional)
                 download_metrics=download_metrics,
                 bbr_controller=bbr_controller,
-                concurrency_limiter=concurrency_limiter
+                concurrency_limiter=concurrency_limiter,
+                polite_manager=polite_manager
             )
 
             total_successful_downloads += successful_downloads
@@ -1682,8 +2154,9 @@ async def main():
         elif not retry_rows:
             print(f"\nAll downloads completed successfully or no retry errors remaining.")
 
-    if recovery_task:
-        recovery_task.cancel()
+    if controller_task:
+        controller_task.cancel()
+
 
     # Measure bandwidth again after downloads
     end_bandwidth_mbps, end_bandwidth_MBps = await measure_baseline_bandwidth(
