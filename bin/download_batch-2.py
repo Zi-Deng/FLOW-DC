@@ -157,6 +157,16 @@ class Config:
     per_host_conc_cap: int = 256
     control_interval_sec: float = 5.0
 
+    # PolicyBBR parameters
+    startup_growth_factor: float = 1.5        # Rate multiplier in STARTUP
+    latency_degradation_factor: float = 1.5   # p50 > rtprop * this triggers exit
+    headroom: float = 0.85                    # Operate at this fraction of ceiling
+    probe_interval_sec: float = 60.0          # Seconds between probes in PROBE_BW
+    probe_increment: float = 0.05             # +5% per probe
+    backoff_ceiling_factor: float = 0.7       # Cut ceiling by 30% on 429
+    backoff_cooldown_sec: float = 300.0       # 5-minute cooldown after 429
+    startup_max_intervals: int = 20           # Safety cap on STARTUP duration
+
     max_retry_attempts: int = 3
     retry_backoff_sec: float = 2.0
 
@@ -195,9 +205,19 @@ def parse_args() -> Config:
     p.add_argument("--min_rate", type=float, default=1.0) # new
     p.add_argument("--max_rate", type=float, default=10000.0) # new
 
-    p.add_argument("--per_host_conc_init", type=int, default=16) # new
-    p.add_argument("--per_host_conc_cap", type=int, default=256) # new
+    p.add_argument("--per_host_conc_init", type=int, default=16)
+    p.add_argument("--per_host_conc_cap", type=int, default=256)
     p.add_argument("--control_interval", dest="control_interval_sec", type=float, default=5.0)
+
+    # PolicyBBR parameters
+    p.add_argument("--startup_growth_factor", type=float, default=1.5, help="Rate multiplier in STARTUP phase")
+    p.add_argument("--latency_degradation_factor", type=float, default=1.5, help="p50 > rtprop * this triggers STARTUP exit")
+    p.add_argument("--headroom", type=float, default=0.85, help="Operate at this fraction of ceiling rate")
+    p.add_argument("--probe_interval_sec", type=float, default=60.0, help="Seconds between probes in PROBE_BW")
+    p.add_argument("--probe_increment", type=float, default=0.05, help="Rate increment per probe (+5%)")
+    p.add_argument("--backoff_ceiling_factor", type=float, default=0.7, help="Cut ceiling by this factor on 429")
+    p.add_argument("--backoff_cooldown_sec", type=float, default=300.0, help="Cooldown seconds after 429")
+    p.add_argument("--startup_max_intervals", type=int, default=20, help="Safety cap on STARTUP duration")
 
     p.add_argument("--max_retry_attempts", type=int, default=3)
     p.add_argument("--retry_backoff_sec", type=float, default=2.0)
@@ -231,12 +251,22 @@ def parse_args() -> Config:
             "concurrent_downloads": int(data.get("concurrent_downloads", 1000)),
             "timeout_sec": int(data.get("timeout", 30)),
             "enable_polite_controller": bool(data.get("enable_polite_controller", True)),
-            "initial_rate": float(data.get("rate_limit", 100.0)),
+            "initial_rate": float(data.get("initial_rate", data.get("rate_limit", 100.0))),
             "min_rate": float(data.get("min_rate", 1.0)),
             "max_rate": float(data.get("max_rate", 10000.0)),
             "per_host_conc_init": int(data.get("per_host_conc_init", 16)),
             "per_host_conc_cap": int(data.get("per_host_conc_cap", 512)),
             "control_interval_sec": float(data.get("control_interval_sec", 5.0)),
+            # PolicyBBR parameters
+            "startup_growth_factor": float(data.get("startup_growth_factor", 1.5)),
+            "latency_degradation_factor": float(data.get("latency_degradation_factor", 1.5)),
+            "headroom": float(data.get("headroom", 0.85)),
+            "probe_interval_sec": float(data.get("probe_interval_sec", 60.0)),
+            "probe_increment": float(data.get("probe_increment", 0.05)),
+            "backoff_ceiling_factor": float(data.get("backoff_ceiling_factor", 0.7)),
+            "backoff_cooldown_sec": float(data.get("backoff_cooldown_sec", 300.0)),
+            "startup_max_intervals": int(data.get("startup_max_intervals", 20)),
+            # Other parameters
             "max_retry_attempts": int(data.get("max_retry_attempts", 3)),
             "retry_backoff_sec": float(data.get("retry_backoff_sec", 2.0)),
             "naming_mode": data.get("naming_mode", "sequential"),
@@ -268,6 +298,16 @@ def parse_args() -> Config:
         per_host_conc_init=args.per_host_conc_init,
         per_host_conc_cap=args.per_host_conc_cap,
         control_interval_sec=args.control_interval_sec,
+        # PolicyBBR parameters
+        startup_growth_factor=args.startup_growth_factor,
+        latency_degradation_factor=args.latency_degradation_factor,
+        headroom=args.headroom,
+        probe_interval_sec=args.probe_interval_sec,
+        probe_increment=args.probe_increment,
+        backoff_ceiling_factor=args.backoff_ceiling_factor,
+        backoff_cooldown_sec=args.backoff_cooldown_sec,
+        startup_max_intervals=args.startup_max_intervals,
+        # Other parameters
         max_retry_attempts=args.max_retry_attempts,
         retry_backoff_sec=args.retry_backoff_sec,
         naming_mode=args.naming_mode,
@@ -385,7 +425,7 @@ class TokenBucket:
         self._capacity = max(100, int(self._rate * 2))
         self._tokens = min(self._tokens, float(self._capacity))
         r = f" ({reason})" if reason else ""
-        print(f"[PoliteCtrl] rate={self._rate:.2f} req/s cap={self._capacity}{r}")
+        print(f"[PolicyBBR] rate={self._rate:.2f} req/s cap={self._capacity}{r}")
 
     async def acquire(self) -> None:
         while not shutdown_flag:
@@ -430,7 +470,7 @@ class AsyncSemaphoreLimiter:
     def set_limit(self, new_limit: int) -> None:
         new_limit = max(2, min(int(new_limit), self._cap))
         if new_limit != self._limit:
-            print(f"[PoliteCtrl] conc {self._limit} -> {new_limit}")
+            print(f"[PolicyBBR] conc {self._limit} -> {new_limit}")
             self._limit = new_limit
 
 # ---------------------------
@@ -498,12 +538,25 @@ class HostSignals:
             "bytes": interval_bytes,
         }
 
-class HostBBRPoliteController:
-    """A lightweight, conservative per-host controller."""
-    CRUISE = "CRUISE"
+class HostPolicyBBRController:
+    """
+    Policy-Aware BBR Controller for rate-limited APIs.
+    
+    Discovers optimal throughput via STARTUP phase, uses latency as early warning
+    before 429s, and maintains headroom below discovered ceiling.
+    
+    States:
+        STARTUP: Exponential growth (1.5x) to discover ceiling via latency degradation
+        DRAIN: Settle at ceiling * headroom after ceiling discovery
+        PROBE_BW: Steady state with conservative probing (+5% every 60s)
+        PROBE_RTT: Refresh RTprop estimate by reducing concurrency briefly
+        BACKOFF: Aggressive retreat after 429 with long cooldown
+    """
+    STARTUP = "STARTUP"
     DRAIN = "DRAIN"
-    COOLDOWN = "COOLDOWN"
-    PROBE = "PROBE"
+    PROBE_BW = "PROBE_BW"
+    PROBE_RTT = "PROBE_RTT"
+    BACKOFF = "BACKOFF"
 
     def __init__(
         self,
@@ -514,17 +567,16 @@ class HostBBRPoliteController:
         *,
         min_rate: float,
         max_rate: float,
-        q_gamma: float = 2.5,
-        q_exit_eps: float = 0.25,
-        cooldown_sec: float = 15 * 60,
-        probe_delta: float = 0.03,
-        probe_hold_intervals: int = 3,
-        probe_lockout_sec: float = 10 * 60,
-        beta_policy_rate: float = 0.5,
-        beta_policy_cwnd: float = 0.5,
-        beta_q_rate: float = 0.8,
-        beta_q_cwnd: float = 0.8,
         per_host_conc_cap: int = 256,
+        # PolicyBBR parameters
+        startup_growth_factor: float = 1.5,
+        latency_degradation_factor: float = 1.5,
+        headroom: float = 0.85,
+        probe_interval_sec: float = 60.0,
+        probe_increment: float = 0.05,
+        backoff_ceiling_factor: float = 0.7,
+        backoff_cooldown_sec: float = 300.0,
+        startup_max_intervals: int = 20,
     ):
         self.host = host
         self.tb = tb
@@ -533,30 +585,43 @@ class HostBBRPoliteController:
 
         self.min_rate = float(min_rate)
         self.max_rate = float(max_rate)
-        self.q_gamma = float(q_gamma)
-        self.q_exit_eps = float(q_exit_eps)
-
-        self.cooldown_sec = float(cooldown_sec)
-        self.probe_delta = float(probe_delta)
-        self.probe_hold_intervals = int(probe_hold_intervals)
-        self.probe_lockout_sec = float(probe_lockout_sec)
-
-        self.beta_policy_rate = float(beta_policy_rate)
-        self.beta_policy_cwnd = float(beta_policy_cwnd)
-        self.beta_q_rate = float(beta_q_rate)
-        self.beta_q_cwnd = float(beta_q_cwnd)
-
         self.per_host_conc_cap = int(per_host_conc_cap)
 
-        self.state = self.CRUISE
-        self.safe_rate = float(self.tb.get_rate())
-        self.cooldown_until = 0.0
-        self.probe_lockout_until = 0.0
+        # PolicyBBR parameters
+        self.startup_growth_factor = float(startup_growth_factor)
+        self.latency_degradation_factor = float(latency_degradation_factor)
+        self.headroom = float(headroom)
+        self.probe_interval_sec = float(probe_interval_sec)
+        self.probe_increment = float(probe_increment)
+        self.backoff_ceiling_factor = float(backoff_ceiling_factor)
+        self.backoff_cooldown_sec = float(backoff_cooldown_sec)
+        self.startup_max_intervals = int(startup_max_intervals)
 
+        # State
+        self.state = self.STARTUP
+        self.safe_rate = float(self.tb.get_rate())
+        
+        # PolicyBBR tracking
+        self.rtprop: Optional[float] = None  # Min observed TTFB (baseline latency)
+        self.ceiling_rate: float = float('inf')  # Upper bound discovered during STARTUP
+        self.policy_bw: float = 0.0  # Max safe rate observed without 429/latency degradation
+        
+        # STARTUP tracking
+        self._startup_intervals = 0
+        self._startup_baseline_p50: Optional[float] = None
+        
+        # PROBE_BW tracking
+        self._last_probe_time: float = 0.0
         self._probe_prev_rate: Optional[float] = None
-        self._probe_remaining = 0
-        self._no429_streak = 0
-        self._q_stable_streak = 0
+        
+        # BACKOFF tracking
+        self._backoff_until: float = 0.0
+        self._last_backoff_time: float = 0.0
+        self._min_backoff_interval_sec: float = 0.5  # Minimum time between successive backoffs
+        
+        # PROBE_RTT tracking
+        self._last_probe_rtt_time: float = 0.0
+        self._saved_rate_for_probe_rtt: Optional[float] = None
 
     def _set_rate(self, new_rate: float, reason: str) -> None:
         new_rate = max(self.min_rate, min(self.max_rate, float(new_rate)))
@@ -564,92 +629,200 @@ class HostBBRPoliteController:
         self.tb.adjust_rate(new_rate, f"{self.host}:{reason}")
 
     def _set_conc(self, new_conc: int, reason: str) -> None:
-        new_conc = max(2, min(int(new_conc), self.per_host_conc_cap))
+        new_conc = max(4, min(int(new_conc), self.per_host_conc_cap))
         self.conc.set_limit(new_conc)
+
+    def _update_rtprop(self, p10: Optional[float]) -> None:
+        """Update RTprop (min observed latency) from p10 TTFB."""
+        if p10 is not None and p10 > 0:
+            if self.rtprop is None:
+                self.rtprop = p10
+            else:
+                self.rtprop = min(self.rtprop, p10)
+
+    def _derive_concurrency_from_bdp(self) -> None:
+        """Set concurrency based on BDP = rate * RTprop."""
+        if self.rtprop is not None and self.rtprop > 0:
+            target_conc = int(max(4, self.safe_rate * self.rtprop * 2.0))
+            self._set_conc(min(target_conc, self.per_host_conc_cap), "bdp")
+
+    def _is_latency_degraded(self, p50: Optional[float]) -> bool:
+        """Check if latency has degraded significantly from baseline."""
+        if self.rtprop is None or p50 is None:
+            return False
+        return p50 > self.rtprop * self.latency_degradation_factor
 
     async def step_interval(self, snap: dict[str, Any], now: float) -> None:
         had_429 = snap["n429"] > 0
-        q = snap["q"]
-        q_baseline = snap["q_baseline"]
+        p10 = snap["p10"]
         p50 = snap["p50"]
-
-        if had_429:
-            self._no429_streak = 0
-        else:
-            self._no429_streak += 1
-
-        q_ok = False
-        if q is not None and q_baseline is not None and q_baseline > 0:
-            q_ok = q <= q_baseline * (1.0 + self.q_exit_eps)
-
-        if q_ok:
-            self._q_stable_streak += 1
-        else:
-            self._q_stable_streak = 0
-
-        # Update baseline only during non-violation cruise/cooldown
-        if (not had_429) and (q is not None) and (self.state in (self.CRUISE, self.COOLDOWN)):
-            self.signals.q_history.append(q)
-
-        # Derive per-host concurrency from latency (Little’s law-ish)
-        if p50 is not None and p50 > 0:
-            target = int(max(2, self.safe_rate * p50 * 2.0))
-            self._set_conc(target, "latency_derived")
-
-        # Hard policy violation
-        if had_429:
-            self._set_rate(self.safe_rate * self.beta_policy_rate, "429_backoff")
-            self._set_conc(int(self.conc.get_limit() * self.beta_policy_cwnd), "429_backoff")
-            self.cooldown_until = now + self.cooldown_sec
-            self.probe_lockout_until = now + self.probe_lockout_sec
-            self.state = self.DRAIN
-            self._probe_prev_rate = None
-            self._probe_remaining = 0
-            return
-
-        # Queue/pressure proxy blow-up
-        q_blowup = False
-        if q is not None and q_baseline is not None and q_baseline > 0:
-            q_blowup = q > q_baseline * self.q_gamma
-
-        if q_blowup and self.state != self.DRAIN:
-            self._set_rate(self.safe_rate * self.beta_q_rate, "q_drain")
-            self._set_conc(int(self.conc.get_limit() * self.beta_q_cwnd), "q_drain")
-            self.state = self.DRAIN
-
-        # State machine
-        if self.state == self.DRAIN:
-            if self._no429_streak >= 3 and self._q_stable_streak >= 3:
-                self.state = self.COOLDOWN if now < self.cooldown_until else self.CRUISE
-
-        elif self.state == self.COOLDOWN:
-            if now >= self.cooldown_until:
-                self.state = self.CRUISE
-
-        elif self.state == self.CRUISE:
-            if now >= self.probe_lockout_until and now >= self.cooldown_until:
-                if self._q_stable_streak >= 6:
-                    self._probe_prev_rate = self.safe_rate
-                    self._probe_remaining = self.probe_hold_intervals
-                    self._set_rate(self.safe_rate * (1.0 + self.probe_delta), "probe_up")
-                    self.state = self.PROBE
-
-        elif self.state == self.PROBE:
-            self._probe_remaining -= 1
-            if q_blowup:
-                if self._probe_prev_rate is not None:
-                    self._set_rate(self._probe_prev_rate, "probe_abort_q")
-                self.probe_lockout_until = now + self.probe_lockout_sec
-                self.state = self.COOLDOWN if now < self.cooldown_until else self.CRUISE
-                self._probe_prev_rate = None
-                self._probe_remaining = 0
+        
+        # Always update RTprop (min latency baseline)
+        self._update_rtprop(p10)
+        
+        # Always derive concurrency from BDP (except in PROBE_RTT)
+        if self.state != self.PROBE_RTT:
+            self._derive_concurrency_from_bdp()
+        
+        latency_degraded = self._is_latency_degraded(p50)
+        
+        # ========== STARTUP PHASE ==========
+        if self.state == self.STARTUP:
+            self._startup_intervals += 1
+            
+            # Exit on 429 → set ceiling, enter BACKOFF
+            if had_429:
+                self._last_backoff_time = now
+                self.ceiling_rate = self.safe_rate * self.backoff_ceiling_factor
+                self._set_rate(self.ceiling_rate * self.headroom, "startup_429")
+                self._backoff_until = now + self.backoff_cooldown_sec
+                self.state = self.BACKOFF
+                print(f"[PolicyBBR] {self.host}: STARTUP→BACKOFF on 429 at rate={self.safe_rate:.1f}")
                 return
-
-            if self._probe_remaining <= 0:
-                self.probe_lockout_until = now + self.probe_lockout_sec
-                self.state = self.CRUISE
+            
+            # Establish baseline latency on first good sample
+            if self._startup_baseline_p50 is None and p50 is not None:
+                self._startup_baseline_p50 = p50
+                print(f"[PolicyBBR] {self.host}: STARTUP baseline p50={p50*1000:.1f}ms")
+            
+            # Exit if latency degraded → set ceiling, enter DRAIN
+            if latency_degraded:
+                self.ceiling_rate = self.safe_rate
+                self._set_rate(self.ceiling_rate * self.headroom, "startup_latency")
+                self.state = self.DRAIN
+                print(f"[PolicyBBR] {self.host}: STARTUP→DRAIN on latency at ceiling={self.ceiling_rate:.1f}")
+                return
+            
+            # Exit if near max_rate → enter DRAIN
+            if self.safe_rate >= self.max_rate * 0.95:
+                self.ceiling_rate = self.max_rate
+                self._set_rate(self.ceiling_rate * self.headroom, "startup_max")
+                self.state = self.DRAIN
+                print(f"[PolicyBBR] {self.host}: STARTUP→DRAIN at max_rate={self.max_rate}")
+                return
+            
+            # Safety cap on STARTUP duration
+            if self._startup_intervals >= self.startup_max_intervals:
+                self.ceiling_rate = self.safe_rate
+                self._set_rate(self.ceiling_rate * self.headroom, "startup_timeout")
+                self.state = self.DRAIN
+                print(f"[PolicyBBR] {self.host}: STARTUP→DRAIN after {self._startup_intervals} intervals")
+                return
+            
+            # Otherwise, grow rate exponentially
+            new_rate = min(self.safe_rate * self.startup_growth_factor, self.max_rate)
+            self._set_rate(new_rate, "startup_grow")
+            
+            # Track policy_bw (max safe rate observed)
+            self.policy_bw = max(self.policy_bw, self.safe_rate)
+            return
+        
+        # ========== DRAIN PHASE ==========
+        elif self.state == self.DRAIN:
+            # Exit on 429 → enter BACKOFF
+            if had_429:
+                self._last_backoff_time = now
+                self.ceiling_rate *= self.backoff_ceiling_factor
+                self._set_rate(self.ceiling_rate * self.headroom, "drain_429")
+                self._backoff_until = now + self.backoff_cooldown_sec
+                self.state = self.BACKOFF
+                print(f"[PolicyBBR] {self.host}: DRAIN→BACKOFF on 429")
+                return
+            
+            # Wait for latency to stabilize before entering PROBE_BW
+            if not latency_degraded:
+                self._last_probe_time = now
+                self._last_probe_rtt_time = now
+                self.state = self.PROBE_BW
+                print(f"[PolicyBBR] {self.host}: DRAIN→PROBE_BW at rate={self.safe_rate:.1f}")
+            return
+        
+        # ========== PROBE_BW PHASE (steady state) ==========
+        elif self.state == self.PROBE_BW:
+            # Exit on 429 → enter BACKOFF
+            if had_429:
+                self._last_backoff_time = now
+                self.ceiling_rate *= self.backoff_ceiling_factor
+                self._set_rate(self.ceiling_rate * self.headroom, "probe_bw_429")
+                self._backoff_until = now + self.backoff_cooldown_sec
+                self.state = self.BACKOFF
+                print(f"[PolicyBBR] {self.host}: PROBE_BW→BACKOFF on 429")
+                return
+            
+            # If latency degraded, revert any probe and stay in PROBE_BW
+            if latency_degraded and self._probe_prev_rate is not None:
+                self._set_rate(self._probe_prev_rate, "probe_abort_latency")
                 self._probe_prev_rate = None
-                self._probe_remaining = 0
+            
+            # Update policy_bw if stable
+            if not latency_degraded and not had_429:
+                self.policy_bw = max(self.policy_bw, self.safe_rate)
+            
+            # Periodically probe for more bandwidth
+            if now - self._last_probe_time > self.probe_interval_sec:
+                if not latency_degraded and self.safe_rate < self.ceiling_rate:
+                    self._probe_prev_rate = self.safe_rate
+                    probe_rate = min(self.safe_rate * (1.0 + self.probe_increment), self.ceiling_rate)
+                    self._set_rate(probe_rate, "probe_up")
+                    self._last_probe_time = now
+                    print(f"[PolicyBBR] {self.host}: PROBE_BW probing to {probe_rate:.1f}")
+            
+            # Periodically enter PROBE_RTT to refresh RTprop
+            if now - self._last_probe_rtt_time > self.probe_interval_sec * 2:
+                self._saved_rate_for_probe_rtt = self.safe_rate
+                self._set_conc(4, "probe_rtt_enter")  # Reduce concurrency to get unqueued RTT
+                self.state = self.PROBE_RTT
+                print(f"[PolicyBBR] {self.host}: PROBE_BW→PROBE_RTT")
+            return
+        
+        # ========== PROBE_RTT PHASE ==========
+        elif self.state == self.PROBE_RTT:
+            # 429 in PROBE_RTT → enter BACKOFF
+            if had_429:
+                self._last_backoff_time = now
+                self.ceiling_rate *= self.backoff_ceiling_factor
+                self._set_rate(self.ceiling_rate * self.headroom, "probe_rtt_429")
+                self._backoff_until = now + self.backoff_cooldown_sec
+                self.state = self.BACKOFF
+                print(f"[PolicyBBR] {self.host}: PROBE_RTT→BACKOFF on 429")
+                return
+            
+            # After one interval, return to PROBE_BW
+            self._last_probe_rtt_time = now
+            if self._saved_rate_for_probe_rtt is not None:
+                self._set_rate(self._saved_rate_for_probe_rtt, "probe_rtt_exit")
+            self._derive_concurrency_from_bdp()  # Restore concurrency
+            self.state = self.PROBE_BW
+            print(f"[PolicyBBR] {self.host}: PROBE_RTT→PROBE_BW")
+            return
+        
+        # ========== BACKOFF PHASE ==========
+        elif self.state == self.BACKOFF:
+            # CRITICAL: Even during backoff, if we still hit 429, back off MORE.
+            # The cooldown blocks upward probing, not downward protection.
+            # Use minimum interval to prevent instant collapse from many concurrent 429s.
+            # Apply backoff factor up to 3 times based on number of 429s in this interval.
+            n429 = snap["n429"]
+            if n429 > 0 and (now - self._last_backoff_time >= self._min_backoff_interval_sec):
+                self._last_backoff_time = now
+                # Apply backoff factor up to 3 times (0.7^1, 0.7^2, or 0.7^3)
+                backoff_multiplier = min(n429, 3)
+                combined_factor = self.backoff_ceiling_factor ** backoff_multiplier
+                self.ceiling_rate *= combined_factor
+                new_rate = max(self.min_rate, self.ceiling_rate * self.headroom)
+                self._set_rate(new_rate, f"backoff_429x{backoff_multiplier}")
+                # Extend cooldown since we haven't found safe rate yet
+                self._backoff_until = now + self.backoff_cooldown_sec
+                print(f"[PolicyBBR] {self.host}: BACKOFF {n429} 429s (x{backoff_multiplier}), ceiling→{self.ceiling_rate:.1f}")
+                return
+            
+            # Stay in BACKOFF until cooldown expires
+            if now >= self._backoff_until:
+                self._last_probe_time = now
+                self._last_probe_rtt_time = now
+                self.state = self.PROBE_BW
+                print(f"[PolicyBBR] {self.host}: BACKOFF→PROBE_BW after cooldown")
+            return
 
 class PerHostControllerManager:
     def __init__(
@@ -661,6 +834,15 @@ class PerHostControllerManager:
         max_rate: float,
         per_host_conc_init: int,
         per_host_conc_cap: int,
+        # PolicyBBR parameters
+        startup_growth_factor: float = 1.5,
+        latency_degradation_factor: float = 1.5,
+        headroom: float = 0.85,
+        probe_interval_sec: float = 60.0,
+        probe_increment: float = 0.05,
+        backoff_ceiling_factor: float = 0.7,
+        backoff_cooldown_sec: float = 300.0,
+        startup_max_intervals: int = 20,
     ):
         self.interval_sec = float(interval_sec)
         self.initial_rate = float(initial_rate)
@@ -668,18 +850,28 @@ class PerHostControllerManager:
         self.max_rate = float(max_rate)
         self.per_host_conc_init = int(per_host_conc_init)
         self.per_host_conc_cap = int(per_host_conc_cap)
+        
+        # PolicyBBR parameters
+        self.startup_growth_factor = float(startup_growth_factor)
+        self.latency_degradation_factor = float(latency_degradation_factor)
+        self.headroom = float(headroom)
+        self.probe_interval_sec = float(probe_interval_sec)
+        self.probe_increment = float(probe_increment)
+        self.backoff_ceiling_factor = float(backoff_ceiling_factor)
+        self.backoff_cooldown_sec = float(backoff_cooldown_sec)
+        self.startup_max_intervals = int(startup_max_intervals)
 
         self._lock = asyncio.Lock()
-        self._hosts: dict[str, HostBBRPoliteController] = {}
+        self._hosts: dict[str, HostPolicyBBRController] = {}
 
-    async def get(self, url: str) -> HostBBRPoliteController:
+    async def get(self, url: str) -> HostPolicyBBRController:
         host = urlsplit(url).netloc.lower() or "unknown"
         async with self._lock:
             if host not in self._hosts:
                 tb = TokenBucket(rate=self.initial_rate)
                 sig = HostSignals(interval_sec=self.interval_sec)
                 conc = AsyncSemaphoreLimiter(initial=self.per_host_conc_init, cap=self.per_host_conc_cap)
-                self._hosts[host] = HostBBRPoliteController(
+                self._hosts[host] = HostPolicyBBRController(
                     host=host,
                     tb=tb,
                     conc=conc,
@@ -687,15 +879,24 @@ class PerHostControllerManager:
                     min_rate=self.min_rate,
                     max_rate=self.max_rate,
                     per_host_conc_cap=self.per_host_conc_cap,
+                    # PolicyBBR parameters
+                    startup_growth_factor=self.startup_growth_factor,
+                    latency_degradation_factor=self.latency_degradation_factor,
+                    headroom=self.headroom,
+                    probe_interval_sec=self.probe_interval_sec,
+                    probe_increment=self.probe_increment,
+                    backoff_ceiling_factor=self.backoff_ceiling_factor,
+                    backoff_cooldown_sec=self.backoff_cooldown_sec,
+                    startup_max_intervals=self.startup_max_intervals,
                 )
             return self._hosts[host]
 
-    async def all(self) -> list[HostBBRPoliteController]:
+    async def all(self) -> list[HostPolicyBBRController]:
         async with self._lock:
             return list(self._hosts.values())
 
 async def per_host_controller_loop(mgr: PerHostControllerManager, interval_sec: float) -> None:
-    print(f"[PoliteCtrl] Per-host controller loop started (interval={interval_sec}s)")
+    print(f"[PolicyBBR] Per-host controller loop started (interval={interval_sec}s)")
     while not shutdown_flag:
         await asyncio.sleep(interval_sec)
         if shutdown_flag:
@@ -826,6 +1027,18 @@ async def download_one(
         if host_ctrl is not None:
             await host_ctrl.signals.record(status_code=status, ttfb=trace_dict.get("ttfb"), bytes_downloaded=bytes_dl)
 
+        # Log errors when they occur (especially 429s which affect rate)
+        if err is not None or (status is not None and status >= 400):
+            host = urlsplit(url).netloc.lower() or "unknown"
+            rate_info = f", rate={host_ctrl.safe_rate:.1f}" if host_ctrl else ""
+            conc_info = f", conc={host_ctrl.conc.get_limit()}" if host_ctrl else ""
+            if status == 429:
+                print(f"[Error] 429 Too Many Requests from {host}{rate_info}{conc_info}")
+            elif status is not None and status >= 400:
+                print(f"[Error] HTTP {status} from {host}: {err or 'unknown'}{rate_info}")
+            elif err:
+                print(f"[Error] {host}: {err}{rate_info}")
+
         # Collision detection: track written paths across attempts
         if err is None and file_path:
             prev = global_written_paths.get(file_path)
@@ -944,6 +1157,14 @@ def write_overview(
             "per_host_conc_init": cfg.per_host_conc_init,
             "per_host_conc_cap": cfg.per_host_conc_cap,
             "control_interval_sec": cfg.control_interval_sec,
+            "startup_growth_factor": cfg.startup_growth_factor,
+            "latency_degradation_factor": cfg.latency_degradation_factor,
+            "headroom": cfg.headroom,
+            "probe_interval_sec": cfg.probe_interval_sec,
+            "probe_increment": cfg.probe_increment,
+            "backoff_ceiling_factor": cfg.backoff_ceiling_factor,
+            "backoff_cooldown_sec": cfg.backoff_cooldown_sec,
+            "startup_max_intervals": cfg.startup_max_intervals,
             "max_retry_attempts": cfg.max_retry_attempts,
             "naming_mode": cfg.naming_mode,
             "file_name_pattern": cfg.file_name_pattern,
@@ -997,6 +1218,15 @@ async def main() -> None:
             max_rate=cfg.max_rate,
             per_host_conc_init=cfg.per_host_conc_init,
             per_host_conc_cap=cfg.per_host_conc_cap,
+            # PolicyBBR parameters
+            startup_growth_factor=cfg.startup_growth_factor,
+            latency_degradation_factor=cfg.latency_degradation_factor,
+            headroom=cfg.headroom,
+            probe_interval_sec=cfg.probe_interval_sec,
+            probe_increment=cfg.probe_increment,
+            backoff_ceiling_factor=cfg.backoff_ceiling_factor,
+            backoff_cooldown_sec=cfg.backoff_cooldown_sec,
+            startup_max_intervals=cfg.startup_max_intervals,
         )
         ctrl_task = asyncio.create_task(per_host_controller_loop(mgr, cfg.control_interval_sec))
 
