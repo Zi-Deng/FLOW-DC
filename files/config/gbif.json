@@ -1,5 +1,5 @@
 {
-  "input": "files/input/gbif_url_10000_transformed.parquet",
+  "input": "files/input/gbif_url_10000.parquet",
   "input_format": "parquet",
   "output": "files/output/gbif_url_10000",
   "output_format": "imagefolder",
@@ -9,12 +9,12 @@
   "timeout": 30,
   "enable_polite_controller": true,
   
-  "initial_rate": 10000,
+  "initial_rate": 10,
   "min_rate": 1.0,
   "max_rate": 10000.0,
   "per_host_conc_init": 8,
   "per_host_conc_cap": 10000,
-  "control_interval_sec": 5.0,
+  "control_interval_sec": 0.25,
 
   "startup_growth_factor": 1.5,
   "latency_degradation_factor": 1.5,
