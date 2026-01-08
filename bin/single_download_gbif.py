@@ -162,30 +162,44 @@ def save_webdataset(content, file_path, key, image_url, class_name, total_bytes)
 async def download_via_http_get(session, url, timeout):
     """
     Download content via standard HTTP GET request.
-    
+
     Args:
         session: aiohttp ClientSession
         url: URL to download
         timeout: Request timeout in seconds
-        
+
     Returns:
-        Tuple of (content: bytes, status_code: int, error: str)
+        Tuple of (content: bytes, status_code: int, error: str, retry_after_sec: float|None)
+        retry_after_sec is extracted from Retry-After header on 429 responses
     """
     try:
         async with session.get(url, timeout=aiohttp.ClientTimeout(total=timeout)) as response:
             if response.status == 200:
                 content = await response.read()
-                return content, response.status, None
+                return content, response.status, None, None
             else:
                 try:
                     status_name = HTTPStatus(response.status).phrase
                 except ValueError:
                     status_name = "Unknown"
-                return None, response.status, f"HTTP Error: {status_name}"
+
+                # Extract Retry-After header if present (for 429 responses)
+                retry_after_sec = None
+                if response.status == 429:
+                    retry_after = response.headers.get("Retry-After")
+                    if retry_after:
+                        try:
+                            # Retry-After can be seconds (int) or HTTP-date
+                            retry_after_sec = float(retry_after)
+                        except ValueError:
+                            # Could be HTTP-date format, ignore for now
+                            pass
+
+                return None, response.status, f"HTTP Error: {status_name}", retry_after_sec
     except asyncio.TimeoutError as e:
-        return None, 408, str(e)
+        return None, 408, str(e), None
     except Exception as e:
-        return None, None, str(e)
+        return None, None, str(e), None
 
 async def download_hf_parquet(session, url, timeout):
     try:
@@ -219,7 +233,7 @@ async def download_single(
 ):
     """
     Download a single URL and save it according to output format.
-    
+
     Args:
         url: Image URL to download
         key: Row key/identifier
@@ -234,14 +248,15 @@ async def download_single(
         token_bucket: Optional TokenBucket for rate limiting
         enable_rate_limiting: Whether rate limiting is enabled
         total_bytes: Optional list to track file sizes
-        
+
     Returns:
-        Tuple of (key, file_path, class_name, error, status_code)
+        Tuple of (key, file_path, class_name, error, status_code, retry_after_sec)
         - key: Row identifier
         - file_path: Full path to saved file (or None if error)
         - class_name: Sanitized class name
         - error: Error message (or None if success)
         - status_code: HTTP status code (or None if other error)
+        - retry_after_sec: Retry-After header value in seconds (for 429 responses)
     """
     #########################################################
     # Sanitize class name
@@ -252,8 +267,8 @@ async def download_single(
     # Validate URL
     #########################################################
     if pd.isna(url) or not str(url).strip():
-        return key, None, class_name, "Invalid image URL", None
-    
+        return key, None, class_name, "Invalid image URL", None, None
+
     url = str(url).strip()
     
 
@@ -289,20 +304,20 @@ async def download_single(
     #########################################################
     # DOWNLOAD
     #########################################################
-    content, status_code, error = await download_via_http_get(session, url, timeout)
+    content, status_code, error, retry_after_sec = await download_via_http_get(session, url, timeout)
 
     #########################################################
     # Handle download result
     #########################################################
     if error or content is None:
-        return key, file_path, class_name, error, status_code
-    
+        return key, file_path, class_name, error, status_code, retry_after_sec
+
     #########################################################
     # Save based on output format
     #########################################################
     if total_bytes is None:
         total_bytes = []
-    
+
     if output_format == "imagefolder":
         success, save_error = save_imagefolder(content, file_path, key, url, class_name, total_bytes)
     elif output_format == "webdataset":
@@ -310,11 +325,11 @@ async def download_single(
     else:
         # Default to imagefolder
         success, save_error = save_imagefolder(content, file_path, key, url, class_name, total_bytes)
-    
+
     if success:
-        return key, file_path, class_name, None, status_code
+        return key, file_path, class_name, None, status_code, None
     else:
-        return key, file_path, class_name, save_error, status_code
+        return key, file_path, class_name, save_error, status_code, None
 
 def load_input_file(file_path, file_format=None):
     """
@@ -389,14 +404,14 @@ async def main_single():
             output_format=output_format,
             session=session,
             timeout=timeout,
-            file_name_pattern=file_name_pattern,
-            download_method=download_method
         )
-        
-        key, file_path, class_name, error, status_code = result
-        
+
+        key, file_path, class_name, error, status_code, retry_after = result
+
         if error:
             print(f"Error: {error} (Status: {status_code})")
+            if retry_after:
+                print(f"Retry-After: {retry_after}s")
         else:
             print(f"Success: Saved to {file_path}")
 
