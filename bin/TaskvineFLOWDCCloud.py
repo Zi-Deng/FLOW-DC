@@ -1,0 +1,505 @@
+#!/usr/bin/env python
+"""
+FLOW-DC TaskVine Cloud Orchestrator
+
+Distributed image downloading with direct cloud storage upload.
+Each worker downloads images and uploads the tar.gz directly to cloud storage
+using gocmd (iRODS/CyVerse) or other cloud CLI tools.
+
+This script:
+1. Reads partition parquet files from a directory
+2. Creates a TaskVine task for each partition
+3. Each task runs download_batch.py with PolicyBBR rate control
+4. Each task uploads its output directly to cloud storage
+5. Supports parallel upload while downloading continues
+
+Usage:
+    python TaskvineFLOWDCCloud.py --config files/config/taskvine_flowdc_cloud.json
+
+Config file format:
+{
+    "port_number": 9123,
+    "parquets_directory": "files/input/partitions",
+    "cloud_destination": "AIIRA_Insects_Dataset",
+    "cloud_tool": "gocmd",
+    "url_col": "url",
+    "label_col": "species",
+    "concurrent_downloads": 1000,
+    "enable_polite_controller": true,
+    "timeout_minutes": 60,
+    "max_retries": 3
+}
+"""
+
+import ndcctools.taskvine as vine
+import json
+import os
+import argparse
+import time
+import sys
+import tempfile
+from pathlib import Path
+
+
+def parse_args():
+    """Parse command line arguments."""
+    parser = argparse.ArgumentParser(
+        description="FLOW-DC TaskVine Cloud Orchestrator - Distributed downloading with cloud upload",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Using gocmd (iRODS/CyVerse):
+  python TaskvineFLOWDCCloud.py --config files/config/taskvine_flowdc_cloud.json
+
+  # Dry run to preview tasks:
+  python TaskvineFLOWDCCloud.py --config files/config/taskvine_flowdc_cloud.json --dry_run
+"""
+    )
+    parser.add_argument(
+        "--config_file",
+        "--config",
+        dest="config_file",
+        type=str,
+        required=True,
+        help="Path to the TaskVine configuration JSON file."
+    )
+    parser.add_argument(
+        "--dry_run",
+        action="store_true",
+        help="Print tasks without submitting them."
+    )
+    return parser.parse_args()
+
+
+def parse_json_config(file_path: str) -> dict:
+    """
+    Load and parse the JSON configuration file with validation.
+    """
+    if not os.path.exists(file_path):
+        raise FileNotFoundError(f"Configuration file not found: {file_path}")
+
+    with open(file_path, 'r') as config_file:
+        config = json.load(config_file)
+
+    # Required fields for cloud mode
+    required_fields = ['port_number', 'parquets_directory', 'cloud_destination']
+    for field in required_fields:
+        if field not in config:
+            raise ValueError(f"Required field '{field}' not found in config")
+
+    # Set defaults for optional fields
+    defaults = {
+        'cloud_tool': 'gocmd',  # Options: 'gocmd', 'aws', 'gsutil', 'rclone'
+        'cloud_put_command': None,  # Custom upload command template
+        'url_col': 'url',
+        'label_col': None,
+        'concurrent_downloads': 1000,
+        'enable_polite_controller': True,
+        'timeout_minutes': 60,
+        'timeout_sec': 30,
+        'max_retries': 3,
+        'create_tar': True,
+        'output_format': 'imagefolder',
+        # PolicyBBR defaults
+        'initial_rate': 100.0,
+        'min_rate': 1.0,
+        'max_rate': 10000.0,
+        'per_host_conc_init': 16,
+        'per_host_conc_cap': 512,
+        # Task resource defaults
+        'task_cores': 8,
+        'task_memory_mb': 16000,
+        'task_disk_mb': 100000,
+    }
+
+    for field, default_value in defaults.items():
+        if field not in config:
+            config[field] = default_value
+
+    return config
+
+
+def get_upload_command(config: dict, tar_name: str) -> str:
+    """
+    Generate the cloud upload command based on configuration.
+
+    Args:
+        config: Configuration dictionary
+        tar_name: Name of the tar.gz file to upload
+
+    Returns:
+        Upload command string
+    """
+    cloud_tool = config.get('cloud_tool', 'gocmd')
+    destination = config['cloud_destination']
+
+    # Custom command template takes precedence
+    if config.get('cloud_put_command'):
+        return config['cloud_put_command'].format(
+            file=tar_name,
+            destination=destination
+        )
+
+    # Built-in cloud tool commands
+    if cloud_tool == 'gocmd':
+        # iRODS / CyVerse
+        return f"gocmd put {tar_name} {destination}"
+
+    elif cloud_tool == 'aws':
+        # AWS S3
+        return f"aws s3 cp {tar_name} s3://{destination}/{tar_name}"
+
+    elif cloud_tool == 'gsutil':
+        # Google Cloud Storage
+        return f"gsutil cp {tar_name} gs://{destination}/{tar_name}"
+
+    elif cloud_tool == 'rclone':
+        # Rclone (generic)
+        return f"rclone copy {tar_name} {destination}"
+
+    elif cloud_tool == 'scp':
+        # SCP to remote server
+        return f"scp {tar_name} {destination}"
+
+    else:
+        raise ValueError(f"Unknown cloud_tool: {cloud_tool}")
+
+
+def create_partition_config(base_config: dict, partition_file: str, output_name: str) -> dict:
+    """
+    Create a download_batch.py config for a specific partition.
+
+    Args:
+        base_config: Base TaskVine config with download parameters
+        partition_file: Name of the partition parquet file
+        output_name: Output folder name for this partition
+
+    Returns:
+        Config dict suitable for download_batch.py
+    """
+    return {
+        "input": partition_file,
+        "input_format": "parquet",
+        "output": output_name,
+        "output_format": base_config.get('output_format', 'imagefolder'),
+        "url": base_config.get('url_col', 'url'),
+        "label": base_config.get('label_col'),
+        "concurrent_downloads": base_config.get('concurrent_downloads', 1000),
+        "timeout": base_config.get('timeout_sec', 30),
+        "enable_polite_controller": base_config.get('enable_polite_controller', True),
+        # PolicyBBR parameters
+        "initial_rate": base_config.get('initial_rate', 100.0),
+        "min_rate": base_config.get('min_rate', 1.0),
+        "max_rate": base_config.get('max_rate', 10000.0),
+        "per_host_conc_init": base_config.get('per_host_conc_init', 16),
+        "per_host_conc_cap": base_config.get('per_host_conc_cap', 512),
+        "control_interval_sec": base_config.get('control_interval_sec', 0.25),
+        # Additional PolicyBBR parameters
+        "startup_growth_factor": base_config.get('startup_growth_factor', 1.5),
+        "latency_degradation_factor": base_config.get('latency_degradation_factor', 1.5),
+        "headroom": base_config.get('headroom', 0.85),
+        "probe_interval_sec": base_config.get('probe_interval_sec', 60.0),
+        "probe_increment": base_config.get('probe_increment', 0.05),
+        "backoff_ceiling_factor": base_config.get('backoff_ceiling_factor', 0.7),
+        "backoff_cooldown_sec": base_config.get('backoff_cooldown_sec', 300.0),
+        # Retry parameters
+        "max_retry_attempts": base_config.get('max_retry_attempts', 3),
+        "retry_backoff_sec": base_config.get('retry_backoff_sec', 2.0),
+        # Output options - always create tar for cloud upload
+        "naming_mode": base_config.get('naming_mode', 'sequential'),
+        "create_tar": True,  # Required for cloud upload
+        "create_overview": base_config.get('create_overview', True),
+    }
+
+
+def declare_parquet_files(manager, directory: str) -> dict:
+    """
+    Declare input parquet files to TaskVine manager.
+
+    Returns:
+        Dictionary mapping filename -> declared file object
+    """
+    if not os.path.exists(directory):
+        print(f"Error: Directory {directory} does not exist")
+        return {}
+
+    parquet_files = sorted([
+        os.path.join(directory, f)
+        for f in os.listdir(directory)
+        if f.endswith(".parquet")
+    ])
+
+    if not parquet_files:
+        print(f"Warning: No parquet files found in {directory}")
+        return {}
+
+    declared_files = {}
+    for parquet_path in parquet_files:
+        file_name = os.path.basename(parquet_path)
+        try:
+            declared_file = manager.declare_file(parquet_path)
+            declared_files[file_name] = declared_file
+            print(f"  Declared input: {file_name}")
+        except Exception as e:
+            print(f"  Error declaring {parquet_path}: {e}")
+
+    return declared_files
+
+
+def submit_cloud_tasks(
+    manager,
+    download_script: str,
+    single_download_script: str,
+    parquet_files: dict,
+    config: dict,
+    temp_dir: str
+) -> int:
+    """
+    Submit download + cloud upload tasks to TaskVine.
+
+    Args:
+        manager: TaskVine manager instance
+        download_script: Path to download_batch.py
+        single_download_script: Path to single_download_gbif.py (dependency)
+        parquet_files: Dict of filename -> declared file
+        config: TaskVine configuration
+        temp_dir: Temporary directory for config files
+
+    Returns:
+        Number of tasks submitted
+    """
+    # Declare the download scripts
+    download_script_vine = manager.declare_file(download_script)
+    single_download_vine = manager.declare_file(single_download_script)
+
+    max_retries = config.get('max_retries', 3)
+    task_cores = config.get('task_cores', 8)
+    task_memory = config.get('task_memory_mb', 16000)
+    task_disk = config.get('task_disk_mb', 100000)
+
+    submitted_tasks = 0
+
+    for file_name, declared_file in parquet_files.items():
+        try:
+            # Create output name from partition name
+            base_name = file_name.replace(".parquet", "")
+            output_name = f"output_{base_name}"
+            tar_name = f"{output_name}.tar.gz"
+
+            # Create partition-specific config
+            partition_config = create_partition_config(config, file_name, output_name)
+
+            # Write config to temp file
+            config_filename = f"config_{base_name}.json"
+            config_path = os.path.join(temp_dir, config_filename)
+            with open(config_path, 'w') as f:
+                json.dump(partition_config, f, indent=2)
+
+            # Declare config file
+            config_vine = manager.declare_file(config_path)
+
+            # Get cloud upload command
+            upload_command = get_upload_command(config, tar_name)
+
+            # Create task command:
+            # 1. Run download_batch.py to download images and create tar
+            # 2. Upload tar to cloud storage
+            # 3. Remove local tar after successful upload (save disk space)
+            command = (
+                f"python download_batch.py --config {config_filename} && "
+                f"{upload_command} && "
+                f"rm -f {tar_name} && "
+                f"echo 'Successfully uploaded {tar_name} to cloud'"
+            )
+
+            task = vine.Task(command)
+
+            # Set task properties
+            task.set_retries(max_retries)
+            task.set_cores(task_cores)
+            task.set_memory(task_memory)
+            task.set_disk(task_disk)
+
+            # Add input files
+            task.add_input(download_script_vine, "download_batch.py")
+            task.add_input(single_download_vine, "single_download_gbif.py")
+            task.add_input(config_vine, config_filename)
+            task.add_input(declared_file, file_name)
+
+            # Note: No output file declared since we upload directly to cloud
+            # and delete the local file
+
+            # Submit task
+            task_id = manager.submit(task)
+            submitted_tasks += 1
+            print(f"  Submitted task {task_id}: {file_name} -> cloud:{config['cloud_destination']}/{tar_name}")
+
+        except Exception as e:
+            print(f"  Error submitting task for {file_name}: {e}")
+
+    return submitted_tasks
+
+
+def monitor_tasks(manager, total_tasks: int) -> tuple[int, int]:
+    """
+    Monitor task completion with detailed status reporting.
+
+    Returns:
+        Tuple of (successful_tasks, failed_tasks)
+    """
+    print("\nWaiting for tasks to complete...")
+    completed_tasks = 0
+    failed_tasks = 0
+    start_time = time.time()
+    last_status_time = start_time
+
+    while not manager.empty():
+        task = manager.wait(5)
+        current_time = time.time()
+
+        if task:
+            completed_tasks += 1
+            elapsed = current_time - start_time
+
+            if task.successful():
+                print(f"✓ Task {task.id} completed ({completed_tasks}/{total_tasks}) - {elapsed:.1f}s elapsed")
+                if task.output:
+                    # Print last line of output
+                    output_lines = task.output.strip().split('\n')
+                    if output_lines:
+                        print(f"  {output_lines[-1]}")
+            else:
+                failed_tasks += 1
+                print(f"✗ Task {task.id} FAILED ({completed_tasks}/{total_tasks}) - {elapsed:.1f}s elapsed")
+                print(f"  Exit code: {task.exit_code}")
+                if task.output:
+                    # Print last few lines of output for debugging
+                    output_lines = task.output.strip().split('\n')
+                    for line in output_lines[-5:]:
+                        print(f"  {line}")
+        else:
+            # Print status every 60 seconds when no task completes
+            if current_time - last_status_time >= 60:
+                elapsed = current_time - start_time
+                stats = manager.stats
+                print(f"Status: {completed_tasks}/{total_tasks} done, "
+                      f"{stats.tasks_running} running, "
+                      f"{stats.tasks_waiting} waiting - {elapsed:.1f}s elapsed")
+                last_status_time = current_time
+
+    total_time = time.time() - start_time
+    print(f"\nAll tasks completed in {total_time:.1f}s")
+    print(f"  Successful: {completed_tasks - failed_tasks}")
+    print(f"  Failed: {failed_tasks}")
+
+    return completed_tasks - failed_tasks, failed_tasks
+
+
+def main():
+    args = parse_args()
+
+    print("=" * 60)
+    print("FLOW-DC TaskVine Cloud Orchestrator")
+    print("=" * 60)
+
+    # Load configuration
+    try:
+        config = parse_json_config(args.config_file)
+        print(f"\nConfiguration: {args.config_file}")
+    except Exception as e:
+        print(f"Error loading configuration: {e}")
+        sys.exit(1)
+
+    # Print configuration summary
+    print(f"  Partitions directory: {config['parquets_directory']}")
+    print(f"  Cloud destination: {config['cloud_destination']}")
+    print(f"  Cloud tool: {config.get('cloud_tool', 'gocmd')}")
+    print(f"  URL column: {config.get('url_col', 'url')}")
+    print(f"  Concurrent downloads per task: {config.get('concurrent_downloads', 1000)}")
+    print(f"  PolicyBBR enabled: {config.get('enable_polite_controller', True)}")
+
+    # Validate paths
+    download_script = os.path.join(os.path.dirname(__file__), "download_batch.py")
+    single_download_script = os.path.join(os.path.dirname(__file__), "single_download_gbif.py")
+
+    if not os.path.exists(download_script):
+        print(f"Error: Download script not found: {download_script}")
+        sys.exit(1)
+
+    if not os.path.exists(single_download_script):
+        print(f"Error: Single download script not found: {single_download_script}")
+        sys.exit(1)
+
+    if args.dry_run:
+        print("\n[DRY RUN] Would process the following partitions:")
+        parquets_dir = config['parquets_directory']
+        if os.path.exists(parquets_dir):
+            for f in sorted(os.listdir(parquets_dir)):
+                if f.endswith('.parquet'):
+                    base_name = f.replace(".parquet", "")
+                    tar_name = f"output_{base_name}.tar.gz"
+                    upload_cmd = get_upload_command(config, tar_name)
+                    print(f"  {f}")
+                    print(f"    -> {upload_cmd}")
+        print("\n[DRY RUN] No tasks submitted.")
+        return
+
+    # Initialize TaskVine manager
+    try:
+        manager = vine.Manager(config['port_number'])
+        print(f"\nTaskVine Manager listening on port {manager.port}")
+
+        # Set manager tuning parameters for cloud workloads
+        manager.tune("worker-retrievals", 5)
+        manager.tune("transfer-temps-recovery", 1)
+
+    except Exception as e:
+        print(f"Error initializing TaskVine manager: {e}")
+        sys.exit(1)
+
+    # Declare input files
+    print(f"\nDeclaring input files from {config['parquets_directory']}...")
+    parquet_files = declare_parquet_files(manager, config['parquets_directory'])
+
+    if not parquet_files:
+        print("No partition files found. Exiting.")
+        sys.exit(1)
+
+    print(f"  Found {len(parquet_files)} partition files")
+
+    # Create temp directory for config files
+    with tempfile.TemporaryDirectory(prefix="flowdc_cloud_configs_") as temp_dir:
+        # Submit tasks
+        print("\nSubmitting cloud upload tasks...")
+        total_tasks = submit_cloud_tasks(
+            manager,
+            download_script,
+            single_download_script,
+            parquet_files,
+            config,
+            temp_dir
+        )
+
+        if total_tasks == 0:
+            print("No tasks were submitted. Exiting.")
+            sys.exit(1)
+
+        print(f"\nSubmitted {total_tasks} tasks")
+
+        # Monitor task completion
+        successful, failed = monitor_tasks(manager, total_tasks)
+
+    # Final summary
+    print("\n" + "=" * 60)
+    if failed > 0:
+        print(f"Warning: {failed} tasks failed out of {total_tasks}")
+        print(f"Check cloud destination for successful uploads: {config['cloud_destination']}")
+        sys.exit(1)
+    else:
+        print(f"All {successful} tasks completed successfully!")
+        print(f"Files uploaded to: {config['cloud_destination']}")
+    print("=" * 60)
+
+
+if __name__ == '__main__':
+    main()

@@ -1,0 +1,9 @@
+{
+  "parquet": "files/input/dataset.parquet",
+  "url_col": "url",
+  "groups": 10,
+  "output_folder": "files/input/partitions",
+  "method": "host",
+  "output_format": "parquet",
+  "add_host_column": true
+}
