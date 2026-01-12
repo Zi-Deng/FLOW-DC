@@ -1,35 +1,38 @@
 #!/usr/bin/env python3
 """
-FLOW-DC Batch Image Downloader (Refactored)
+FLOW-DC Batch Downloader with PAARC v2.0
 
-What this script does
-- Loads a tabular input (Parquet/CSV/Excel/XML via single_download_gbif.load_input_file)
-- Downloads images asynchronously with:
-  * bounded global concurrency (N worker tasks)
-  * optional per-host “polite” control:
-      - per-host token bucket pacing
-      - per-host concurrency cap
-      - per-host interval controller driven by TTFB distribution + 429 ratio
-- Retries transient failures (429 / 5xx / certain connection errors)
-- Writes a tar.gz archive of the output folder (optional)
-- Writes a small JSON overview report (optional)
+PAARC: Policy-Aware Adaptive Request Controller
+A concurrency-based congestion control algorithm for large-scale HTTP downloading.
 
-Compatibility notes
-- This script calls single_download_gbif.download_single(). It assumes download_single:
-    * can download a single URL to disk
-    * returns (key, file_path, class_name, error, status_code)
-    * can operate with enable_rate_limiting=False (recommended mode)
-- If your download_single REQUIRES token_bucket.acquire() internally, set
-  --token_bucket_in_download_single so we pass the per-host TokenBucket through.
+Key Design Principles:
+- Concurrency-primary control: Semaphore limits concurrent requests; rate emerges naturally
+- Self-regulating: When server latency increases, throughput automatically decreases
+- Policy-aware: Responds appropriately to server rate limits (HTTP 429) and errors
+- Measurement-driven: All control decisions based on observed TTFB and goodput
+- Smooth operation: Leaky bucket provides request smoothing without accumulation
 
-Author: (refactor generated)
+Theoretical Foundation:
+- Little's Law: C = R × T, where R = C / T (rate is emergent)
+- AIMD convergence (Chiu & Jain, 1989)
+- Kleinrock's power metric optimal at μ ≈ 0.75
+
+State Machine:
+    INIT → STARTUP → PROBE_BW ↔ PROBE_RTT
+              ↓           ↓
+           BACKOFF ←──────┘
+
+Author: FLOW-DC Team
+Version: 2.0.0
 """
 
 from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import json
+import math
 import os
 import re
 import shutil
@@ -38,7 +41,8 @@ import tarfile
 import time
 from collections import Counter, deque
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from enum import Enum, auto
 from pathlib import Path
 from typing import Any, Optional
 from urllib.parse import urlsplit
@@ -49,32 +53,43 @@ from tqdm.asyncio import tqdm
 
 from single_download_gbif import download_single, load_input_file, extract_extension
 
-# ---------------------------
-# Globals / shutdown handling
-# ---------------------------
+
+# =============================================================================
+# GLOBALS AND SHUTDOWN HANDLING
+# =============================================================================
 
 shutdown_flag = False
+
 
 def _signal_handler(sig, frame):
     global shutdown_flag
     print("\n[Shutdown] Interrupt received. Attempting graceful shutdown...")
     shutdown_flag = True
 
+
 signal.signal(signal.SIGINT, _signal_handler)
 signal.signal(signal.SIGTERM, _signal_handler)
 
-# Trace context used by aiohttp TraceConfig
+# Trace context for aiohttp TTFB measurement
 TRACE_CTX: ContextVar[dict | None] = ContextVar("TRACE_CTX", default=None)
 
-# ---------------------------
-# Small utilities
-# ---------------------------
+
+# =============================================================================
+# UTILITY FUNCTIONS
+# =============================================================================
 
 def _now() -> float:
+    """Current time in seconds (monotonic for intervals, time.time for timestamps)."""
     return time.time()
 
+
+def _monotonic() -> float:
+    """Monotonic time for duration measurements."""
+    return time.monotonic()
+
+
 def _sanitize_filename(name: str, max_len: int = 180) -> str:
-    # Remove path separators and overly exotic chars; keep it filesystem-safe.
+    """Sanitize a string for use as a filename."""
     name = name.strip().replace(os.sep, "_")
     name = re.sub(r"[^A-Za-z0-9._-]+", "_", name)
     name = re.sub(r"_+", "_", name).strip("._")
@@ -82,33 +97,42 @@ def _sanitize_filename(name: str, max_len: int = 180) -> str:
         name = "file"
     return name[:max_len]
 
-from typing import Optional
 
-def _percentile(values: list[float], percentile: float) -> Optional[float]: # Important to describe how we indicate a percentile
+def _percentile(values: list[float], p: float) -> Optional[float]:
+    """
+    Calculate percentile using linear interpolation.
+    
+    Args:
+        values: List of numeric values
+        p: Percentile in range [0, 1]
+    
+    Returns:
+        Percentile value or None if list is empty
+    """
     if not values:
         return None
-
+    
     sorted_values = sorted(values)
-
-    # Map percentile in [0, 1] onto an index in [0, n - 1]
-    fractional_index = (len(sorted_values) - 1) * percentile
-
-    lower_index = int(fractional_index)  # floor
-    upper_index = min(lower_index + 1, len(sorted_values) - 1)
-
-    # If the index is exact (or we're at the end), return the exact element
-    if upper_index == lower_index:
-        return sorted_values[lower_index]
-
-    # Linear interpolation between the two surrounding points
-    weight = fractional_index - lower_index
-    lower_value = sorted_values[lower_index]
-    upper_value = sorted_values[upper_index]
-
-    return lower_value + (upper_value - lower_value) * weight
+    n = len(sorted_values)
+    
+    if n == 1:
+        return sorted_values[0]
+    
+    # Map percentile to index
+    idx = (n - 1) * p
+    lower = int(idx)
+    upper = min(lower + 1, n - 1)
+    
+    if lower == upper:
+        return sorted_values[lower]
+    
+    # Linear interpolation
+    weight = idx - lower
+    return sorted_values[lower] + weight * (sorted_values[upper] - sorted_values[lower])
 
 
 def _is_connection_error(msg: Any) -> bool:
+    """Check if an error message indicates a connection-level failure."""
     if msg is None:
         return False
     s = str(msg).lower()
@@ -120,211 +144,240 @@ def _is_connection_error(msg: Any) -> bool:
         "connection aborted",
         "broken pipe",
         "timeout",
+        "timed out",
     ]
     return any(p in s for p in patterns)
 
-def _is_retryable(status_code: Optional[int], error: Any) -> bool: #NEEDS EDITING TO IMPROVE FUNCTIONALITY, status code should be checked
-    # Conservative: retry on explicit policy/server signals or connection failures.
+
+def _is_retryable(status_code: Optional[int], error: Any) -> bool:
+    """Determine if a request failure is retryable."""
     if status_code == 429 or status_code == 408:
         return True
     if status_code is not None and status_code >= 500:
         return True
     return _is_connection_error(error)
 
-# ---------------------------
-# Config
-# ---------------------------
+
+# =============================================================================
+# CONFIGURATION
+# =============================================================================
+
+@dataclass(frozen=True)
+class PAARCConfig:
+    """
+    Complete configuration for PAARC v2.0 controller.
+    
+    All parameters have sensible defaults based on theoretical analysis
+    and empirical testing.
+    """
+    # --- Concurrency Bounds ---
+    C_min: int = 2                      # Absolute floor; never operate below
+    C_max: int = 10_000                 # Absolute ceiling; safety limit
+    C_init: int = 4                     # Starting point for INIT phase
+    
+    # --- Timing Parameters ---
+    N_min: int = 50                     # Minimum samples per control interval
+    k_interval: int = 8                 # RTprop multiplier for interval duration
+    T_floor: float = 0.2                # 200ms minimum interval duration
+    
+    # --- INIT Phase ---
+    N_init: int = 20                    # Samples to collect in INIT phase
+    
+    # --- STARTUP Phase ---
+    gamma_startup: float = 1.25         # Exponential growth factor
+    startup_timeout: int = 30           # Maximum intervals in STARTUP
+    
+    # --- PROBE_BW Phase ---
+    mu: float = 0.75                    # Utilization factor (operating margin)
+    gamma_probe: float = 0.02           # Additive increase fraction (2%)
+    stable_intervals_required: int = 2  # Stable intervals before probing
+    
+    # --- PROBE_RTT Phase ---
+    probe_rtt_period: float = 10.0      # Seconds between PROBE_RTT entries
+    probe_rtt_min_samples: int = 100    # Minimum samples before PROBE_RTT trigger
+    probe_rtt_concurrency_factor: float = 0.5  # Reduce to 50% of current C
+    n_restore: int = 5                  # Gradual restoration steps
+    
+    # --- BACKOFF Phase ---
+    beta: float = 0.5                   # Multiplicative decrease factor
+    cooldown_rtprop_mult: int = 5       # Cooldown = max(5 × RTprop, ...)
+    cooldown_floor: float = 2.0         # 2 second minimum cooldown
+    
+    # --- Ceiling Revision ---
+    underperformance_threshold: float = 0.70  # Goodput < expected × this
+    underperformance_intervals: int = 5       # Consecutive intervals to trigger
+    revision_factor: float = 0.80             # Multiplicative ceiling reduction
+    
+    # --- Latency Thresholds ---
+    theta_50: float = 1.5               # Median degradation threshold
+    theta_95: float = 2.0               # Tail degradation threshold
+    
+    # --- Smoothing ---
+    alpha_ema: float = 0.3              # EMA smoothing factor
+    rtprop_window: float = 10.0         # RTprop tracking window (seconds)
+
 
 @dataclass(frozen=True)
 class Config:
+    """Main application configuration."""
     input_path: str
     output_folder: str
-
+    
     input_format: str = "parquet"
-    url_col: str = "photo_url"
+    url_col: str = "url"
     label_col: Optional[str] = None
-
+    
     output_format: str = "imagefolder"
-
+    
     concurrent_downloads: int = 256
     timeout_sec: int = 30
-
-    enable_polite_controller: bool = False
-    initial_rate: float = 100.0
-    min_rate: float = 1.0
-    max_rate: float = 10_000.0
-    per_host_conc_init: int = 16
-    per_host_conc_cap: int = 256
-    control_interval_sec: float = 5.0
-
-    # PolicyBBR parameters
-    startup_growth_factor: float = 1.5        # Rate multiplier in STARTUP
-    latency_degradation_factor: float = 1.5   # p50 > rtprop * this triggers exit
-    latency_degradation_factor_p95: float = 2.0  # p95 > rtprop * this triggers exit
-    headroom: float = 0.85                    # Operate at this fraction of ceiling
-    probe_interval_sec: float = 5.0          # Seconds between probes in PROBE_BW
-    probe_increment: float = 0.05                # +5% per probe
-    bdp_multiplier: float = 1.2               # BDP = rate * rtprop * this (conservative default)
-
-    # Differentiated backoff factors per error type
-    backoff_factor_429: float = 0.5           # Aggressive: cut ceiling by 50% on rate limit
-    backoff_factor_5xx: float = 0.7           # Moderate: cut ceiling by 30% on server error
-    backoff_factor_conn: float = 0.85         # Light: cut ceiling by 15% on connection error
-    backoff_ceiling_factor: float = 0.7       # Legacy: default for combined backoff
-
-    # Differentiated cooldown per error type
-    cooldown_sec_429: float = 300.0           # 5-minute cooldown after 429
-    cooldown_sec_5xx: float = 60.0            # 1-minute cooldown after 5xx
-    cooldown_sec_conn: float = 10.0           # 10-second cooldown after connection error
-    backoff_cooldown_sec: float = 300.0       # Legacy: default cooldown
-
-    startup_max_intervals: int = 20           # Safety cap on STARTUP duration
-
-    # EMA smoothing for TTFB
-    ttfb_ema_alpha: float = 0.3               # EMA smoothing factor (higher = more responsive)
-
+    
+    # PAARC controller toggle
+    enable_paarc: bool = True
+    
+    # PAARC parameters (passed to PAARCConfig)
+    C_init: int = 4
+    C_min: int = 2
+    C_max: int = 10_000
+    mu: float = 0.75
+    gamma_startup: float = 1.25
+    gamma_probe: float = 0.02
+    beta: float = 0.5
+    theta_50: float = 1.5
+    theta_95: float = 2.0
+    probe_rtt_period: float = 10.0
+    cooldown_floor: float = 2.0
+    alpha_ema: float = 0.3
+    
+    # Retry configuration
     max_retry_attempts: int = 3
     retry_backoff_sec: float = 2.0
-
-    # Filenameing
-    naming_mode: str = "url_based"  # url_based | sequential
-    file_name_pattern: str = "{segment[-2]}"  # only used for url_based
-
-    # Tar and reporting
+    
+    # Filename configuration
+    naming_mode: str = "sequential"     # sequential | url_based
+    file_name_pattern: str = "{segment[-2]}"
+    
+    # Output options
     create_tar: bool = True
     create_overview: bool = True
+    
+    def to_paarc_config(self) -> PAARCConfig:
+        """Convert to PAARCConfig with relevant parameters."""
+        return PAARCConfig(
+            C_init=self.C_init,
+            C_min=self.C_min,
+            C_max=self.C_max,
+            mu=self.mu,
+            gamma_startup=self.gamma_startup,
+            gamma_probe=self.gamma_probe,
+            beta=self.beta,
+            theta_50=self.theta_50,
+            theta_95=self.theta_95,
+            probe_rtt_period=self.probe_rtt_period,
+            cooldown_floor=self.cooldown_floor,
+            alpha_ema=self.alpha_ema,
+        )
 
-    # Integration switch: where to apply token-bucket pacing
-    token_bucket_in_download_single: bool = False
 
 def parse_args() -> Config:
-    p = argparse.ArgumentParser(description="Asynchronous batch image downloader (FLOW-DC refactor).")
-
-    p.add_argument("--config", type=str, help="Path to a JSON config file. If set, other args are ignored.")
-
-    ############################################################
-    p.add_argument("--input", dest="input_path", type=str, help="Path to input file (parquet/csv/excel/xml).")
+    """Parse command line arguments or JSON config file."""
+    p = argparse.ArgumentParser(
+        description="FLOW-DC Batch Downloader with PAARC v2.0 Congestion Control",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  python download_batch.py --config gbif.json
+  python download_batch.py --input urls.parquet --output images/ --enable_paarc
+"""
+    )
+    
+    p.add_argument("--config", type=str, help="Path to JSON config file")
+    
+    # Input/Output
+    p.add_argument("--input", dest="input_path", type=str, help="Input file path")
     p.add_argument("--input_format", type=str, default="parquet")
-
-    p.add_argument("--url", dest="url_col", type=str, default="photo_url")
+    p.add_argument("--url", dest="url_col", type=str, default="url")
     p.add_argument("--label", dest="label_col", type=str, default=None)
-
-    p.add_argument("--output", dest="output_folder", type=str, help="Output folder (images are written here).")
+    p.add_argument("--output", dest="output_folder", type=str, help="Output folder")
     p.add_argument("--output_format", type=str, default="imagefolder")
-
+    
+    # Download settings
     p.add_argument("--concurrent_downloads", type=int, default=256)
     p.add_argument("--timeout", dest="timeout_sec", type=int, default=30)
-
-    p.add_argument("--enable_polite_controller", action="store_true", help="Enable per-host polite controller.") # new
-
-    p.add_argument("--initial_rate", dest="initial_rate", type=float, default=100.0)
-    p.add_argument("--min_rate", type=float, default=1.0) # new
-    p.add_argument("--max_rate", type=float, default=10000.0) # new
-
-    p.add_argument("--per_host_conc_init", type=int, default=16)
-    p.add_argument("--per_host_conc_cap", type=int, default=256)
-    p.add_argument("--control_interval", dest="control_interval_sec", type=float, default=5.0)
-
-    # PolicyBBR parameters
-    p.add_argument("--startup_growth_factor", type=float, default=1.5, help="Rate multiplier in STARTUP phase")
-    p.add_argument("--latency_degradation_factor", type=float, default=1.5, help="p50 > rtprop * this triggers STARTUP exit")
-    p.add_argument("--latency_degradation_factor_p95", type=float, default=2.0, help="p95 > rtprop * this triggers STARTUP exit")
-    p.add_argument("--headroom", type=float, default=0.85, help="Operate at this fraction of ceiling rate")
-    p.add_argument("--probe_interval_sec", type=float, default=60.0, help="Seconds between probes in PROBE_BW")
-    p.add_argument("--probe_increment", type=float, default=0.05, help="Rate increment per probe")
-    p.add_argument("--bdp_multiplier", type=float, default=1.2, help="BDP multiplier for concurrency calculation")
-
-    # Differentiated backoff factors
-    p.add_argument("--backoff_factor_429", type=float, default=0.5, help="Ceiling factor on 429 (aggressive)")
-    p.add_argument("--backoff_factor_5xx", type=float, default=0.7, help="Ceiling factor on 5xx (moderate)")
-    p.add_argument("--backoff_factor_conn", type=float, default=0.85, help="Ceiling factor on connection error (light)")
-    p.add_argument("--backoff_ceiling_factor", type=float, default=0.7, help="Legacy: default ceiling factor")
-
-    # Differentiated cooldowns
-    p.add_argument("--cooldown_sec_429", type=float, default=300.0, help="Cooldown after 429 rate limit")
-    p.add_argument("--cooldown_sec_5xx", type=float, default=60.0, help="Cooldown after 5xx server error")
-    p.add_argument("--cooldown_sec_conn", type=float, default=10.0, help="Cooldown after connection error")
-    p.add_argument("--backoff_cooldown_sec", type=float, default=300.0, help="Legacy: default cooldown")
-    p.add_argument("--startup_max_intervals", type=int, default=20, help="Safety cap on STARTUP duration")
-
-    # EMA smoothing
-    p.add_argument("--ttfb_ema_alpha", type=float, default=0.3, help="EMA smoothing factor for TTFB")
-
+    
+    # PAARC toggle
+    p.add_argument("--enable_paarc", action="store_true", default=True)
+    p.add_argument("--disable_paarc", action="store_true")
+    
+    # PAARC parameters
+    p.add_argument("--C_init", type=int, default=4)
+    p.add_argument("--C_min", type=int, default=2)
+    p.add_argument("--C_max", type=int, default=10000)
+    p.add_argument("--mu", type=float, default=0.75, help="Utilization factor")
+    p.add_argument("--gamma_startup", type=float, default=1.25)
+    p.add_argument("--gamma_probe", type=float, default=0.02)
+    p.add_argument("--beta", type=float, default=0.5, help="Backoff factor")
+    p.add_argument("--theta_50", type=float, default=1.5)
+    p.add_argument("--theta_95", type=float, default=2.0)
+    p.add_argument("--probe_rtt_period", type=float, default=10.0)
+    p.add_argument("--cooldown_floor", type=float, default=2.0)
+    p.add_argument("--alpha_ema", type=float, default=0.3)
+    
+    # Retry
     p.add_argument("--max_retry_attempts", type=int, default=3)
     p.add_argument("--retry_backoff_sec", type=float, default=2.0)
-
-    p.add_argument("--naming_mode", type=str, default="url_based", choices=["url_based", "sequential"])
+    
+    # Naming
+    p.add_argument("--naming_mode", type=str, default="sequential",
+                   choices=["sequential", "url_based"])
     p.add_argument("--file_name_pattern", type=str, default="{segment[-2]}")
-
-    p.add_argument("--no_tar", action="store_true", help="Disable tar.gz creation.")
-    p.add_argument("--no_overview", action="store_true", help="Disable overview JSON creation.")
-
-    p.add_argument(
-        "--token_bucket_in_download_single",
-        action="store_true",
-        help="If set, download_single is responsible for awaiting token_bucket.acquire().",
-    )
-
+    
+    # Output options
+    p.add_argument("--no_tar", action="store_true")
+    p.add_argument("--no_overview", action="store_true")
+    
     args = p.parse_args()
-
+    
+    # Load from JSON config if provided
     if args.config:
         cfg_path = Path(args.config)
         with cfg_path.open("r") as f:
             data = json.load(f)
-        # JSON keys use your original naming; map to Config fields.
-        mapped = {
-            "input_path": data["input"],
-            "output_folder": data["output"],
-            "input_format": data.get("input_format", "parquet"),
-            "output_format": data.get("output_format", "imagefolder"),
-            "url_col": data.get("url", "photo_url"),
-            "label_col": data.get("label", None),
-            "concurrent_downloads": int(data.get("concurrent_downloads", 1000)),
-            "timeout_sec": int(data.get("timeout", 30)),
-            "enable_polite_controller": bool(data.get("enable_polite_controller", True)),
-            "initial_rate": float(data.get("initial_rate", data.get("rate_limit", 100.0))),
-            "min_rate": float(data.get("min_rate", 1.0)),
-            "max_rate": float(data.get("max_rate", 10000.0)),
-            "per_host_conc_init": int(data.get("per_host_conc_init", 16)),
-            "per_host_conc_cap": int(data.get("per_host_conc_cap", 512)),
-            "control_interval_sec": float(data.get("control_interval_sec", 5.0)),
-            # PolicyBBR parameters
-            "startup_growth_factor": float(data.get("startup_growth_factor", 1.5)),
-            "latency_degradation_factor": float(data.get("latency_degradation_factor", 1.5)),
-            "latency_degradation_factor_p95": float(data.get("latency_degradation_factor_p95", 2.0)),
-            "headroom": float(data.get("headroom", 0.85)),
-            "probe_interval_sec": float(data.get("probe_interval_sec", 60.0)),
-            "probe_increment": float(data.get("probe_increment", 0.05)),
-            "bdp_multiplier": float(data.get("bdp_multiplier", 1.2)),
-            # Differentiated backoff factors
-            "backoff_factor_429": float(data.get("backoff_factor_429", 0.5)),
-            "backoff_factor_5xx": float(data.get("backoff_factor_5xx", 0.7)),
-            "backoff_factor_conn": float(data.get("backoff_factor_conn", 0.85)),
-            "backoff_ceiling_factor": float(data.get("backoff_ceiling_factor", 0.7)),
-            # Differentiated cooldowns
-            "cooldown_sec_429": float(data.get("cooldown_sec_429", 300.0)),
-            "cooldown_sec_5xx": float(data.get("cooldown_sec_5xx", 60.0)),
-            "cooldown_sec_conn": float(data.get("cooldown_sec_conn", 10.0)),
-            "backoff_cooldown_sec": float(data.get("backoff_cooldown_sec", 300.0)),
-            "startup_max_intervals": int(data.get("startup_max_intervals", 20)),
-            # EMA smoothing
-            "ttfb_ema_alpha": float(data.get("ttfb_ema_alpha", 0.3)),
-            # Other parameters
-            "max_retry_attempts": int(data.get("max_retry_attempts", 3)),
-            "retry_backoff_sec": float(data.get("retry_backoff_sec", 2.0)),
-            "naming_mode": data.get("naming_mode", "sequential"),
-            "file_name_pattern": data.get("file_name_pattern", "{segment[-2]}"),
-            "create_tar": bool(data.get("create_tar", True)),
-            "create_overview": bool(data.get("create_overview", True)),
-            "token_bucket_in_download_single": bool(data.get("token_bucket_in_download_single", False)),
-        }
+        
         return Config(
-            **mapped,
+            input_path=data.get("input", ""),
+            output_folder=data.get("output", ""),
+            input_format=data.get("input_format", "parquet"),
+            url_col=data.get("url", "url"),
+            label_col=data.get("label"),
+            output_format=data.get("output_format", "imagefolder"),
+            concurrent_downloads=int(data.get("concurrent_downloads", 256)),
+            timeout_sec=int(data.get("timeout", 30)),
+            enable_paarc=bool(data.get("enable_paarc", True)),
+            C_init=int(data.get("C_init", 4)),
+            C_min=int(data.get("C_min", 2)),
+            C_max=int(data.get("C_max", 10000)),
+            mu=float(data.get("mu", 0.75)),
+            gamma_startup=float(data.get("gamma_startup", 1.25)),
+            gamma_probe=float(data.get("gamma_probe", 0.02)),
+            beta=float(data.get("beta", 0.5)),
+            theta_50=float(data.get("theta_50", 1.5)),
+            theta_95=float(data.get("theta_95", 2.0)),
+            probe_rtt_period=float(data.get("probe_rtt_period", 10.0)),
+            cooldown_floor=float(data.get("cooldown_floor", 2.0)),
+            alpha_ema=float(data.get("alpha_ema", 0.3)),
+            max_retry_attempts=int(data.get("max_retry_attempts", 3)),
+            retry_backoff_sec=float(data.get("retry_backoff_sec", 2.0)),
+            naming_mode=data.get("naming_mode", "sequential"),
+            file_name_pattern=data.get("file_name_pattern", "{segment[-2]}"),
+            create_tar=bool(data.get("create_tar", True)),
+            create_overview=bool(data.get("create_overview", True)),
         )
-
+    
+    # Validate required args
     if not args.input_path or not args.output_folder:
-        p.error("--input and --output are required unless --config is provided.")
-
+        p.error("--input and --output are required unless --config is provided")
+    
     return Config(
         input_path=args.input_path,
         output_folder=args.output_folder,
@@ -334,235 +387,271 @@ def parse_args() -> Config:
         output_format=args.output_format,
         concurrent_downloads=args.concurrent_downloads,
         timeout_sec=args.timeout_sec,
-        enable_polite_controller=args.enable_polite_controller,
-        initial_rate=args.initial_rate,
-        min_rate=args.min_rate,
-        max_rate=args.max_rate,
-        per_host_conc_init=args.per_host_conc_init,
-        per_host_conc_cap=args.per_host_conc_cap,
-        control_interval_sec=args.control_interval_sec,
-        # PolicyBBR parameters
-        startup_growth_factor=args.startup_growth_factor,
-        latency_degradation_factor=args.latency_degradation_factor,
-        latency_degradation_factor_p95=args.latency_degradation_factor_p95,
-        headroom=args.headroom,
-        probe_interval_sec=args.probe_interval_sec,
-        probe_increment=args.probe_increment,
-        bdp_multiplier=args.bdp_multiplier,
-        # Differentiated backoff
-        backoff_factor_429=args.backoff_factor_429,
-        backoff_factor_5xx=args.backoff_factor_5xx,
-        backoff_factor_conn=args.backoff_factor_conn,
-        backoff_ceiling_factor=args.backoff_ceiling_factor,
-        cooldown_sec_429=args.cooldown_sec_429,
-        cooldown_sec_5xx=args.cooldown_sec_5xx,
-        cooldown_sec_conn=args.cooldown_sec_conn,
-        backoff_cooldown_sec=args.backoff_cooldown_sec,
-        startup_max_intervals=args.startup_max_intervals,
-        ttfb_ema_alpha=args.ttfb_ema_alpha,
-        # Other parameters
+        enable_paarc=args.enable_paarc and not args.disable_paarc,
+        C_init=args.C_init,
+        C_min=args.C_min,
+        C_max=args.C_max,
+        mu=args.mu,
+        gamma_startup=args.gamma_startup,
+        gamma_probe=args.gamma_probe,
+        beta=args.beta,
+        theta_50=args.theta_50,
+        theta_95=args.theta_95,
+        probe_rtt_period=args.probe_rtt_period,
+        cooldown_floor=args.cooldown_floor,
+        alpha_ema=args.alpha_ema,
         max_retry_attempts=args.max_retry_attempts,
         retry_backoff_sec=args.retry_backoff_sec,
         naming_mode=args.naming_mode,
         file_name_pattern=args.file_name_pattern,
         create_tar=not args.no_tar,
         create_overview=not args.no_overview,
-        token_bucket_in_download_single=args.token_bucket_in_download_single,
     )
 
-# ---------------------------
-# I/O validation
-# ---------------------------
+
+# =============================================================================
+# INPUT VALIDATION AND LOADING
+# =============================================================================
 
 def validate_and_load(cfg: Config) -> pd.DataFrame:
+    """Load and validate input data."""
     in_path = Path(cfg.input_path)
     if not in_path.exists():
         raise FileNotFoundError(f"Input file not found: {in_path}")
-
+    
     out_dir = Path(cfg.output_folder)
     if out_dir.exists():
         print(f"[I/O] Output folder exists; deleting: {out_dir}")
         shutil.rmtree(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-
-    # Determine input format if not explicitly consistent
-    input_format = cfg.input_format
-    if input_format is None:
-        input_format = in_path.suffix.lstrip(".").lower()
-
-    df = load_input_file(str(in_path), input_format)
-
+    
+    # Load data
+    df = load_input_file(str(in_path), cfg.input_format)
+    
+    # Validate columns
     if cfg.url_col not in df.columns:
-        raise ValueError(f"URL column '{cfg.url_col}' not in input file columns: {list(df.columns)[:30]}...")
-
+        raise ValueError(f"URL column '{cfg.url_col}' not found. Available: {list(df.columns)[:10]}...")
+    
     if cfg.label_col is not None and cfg.label_col not in df.columns:
-        raise ValueError(f"Label column '{cfg.label_col}' not in input file columns: {list(df.columns)[:30]}...")
-
+        raise ValueError(f"Label column '{cfg.label_col}' not found.")
+    
+    # Clean data
     df = df.dropna(subset=[cfg.url_col]).copy()
     df[cfg.url_col] = df[cfg.url_col].astype(str).str.strip()
     df = df[df[cfg.url_col].str.len() > 0]
-
+    
     if df.empty:
         raise ValueError("No valid URLs found after filtering.")
-
-    # Preserve stable keys across retries
+    
+    # Stable keys for retry tracking
     df["__key__"] = df.index.astype(str)
-
+    
     return df
 
-# ---------------------------
-# aiohttp tracing (TTFB proxy)
-# ---------------------------
+
+# =============================================================================
+# AIOHTTP TRACING (TTFB MEASUREMENT)
+# =============================================================================
 
 def build_trace_config() -> aiohttp.TraceConfig:
     """
-    Write per-request timings into TRACE_CTX (ContextVar).
-    We approximate TTFB as time to first response chunk.
+    Build aiohttp trace config to measure TTFB.
+    
+    TTFB is approximated as time from request start to first response chunk.
     """
     trace = aiohttp.TraceConfig()
-
-    async def _ctx():
+    
+    async def _get_ctx():
         return TRACE_CTX.get()
-
+    
     async def on_request_start(session, ctx, params):
-        d = await _ctx()
-        if d is None:
-            return
-        d["t0"] = time.monotonic()
-        d["ttfb"] = None
-        d["exc"] = None
-
+        d = await _get_ctx()
+        if d is not None:
+            d["t0"] = _monotonic()
+            d["ttfb"] = None
+            d["exc"] = None
+    
     async def on_response_chunk_received(session, ctx, params):
-        d = await _ctx()
-        if d is None:
-            return
-        if d.get("ttfb") is None and d.get("t0") is not None:
-            d["ttfb"] = time.monotonic() - d["t0"]
-
+        d = await _get_ctx()
+        if d is not None:
+            if d.get("ttfb") is None and d.get("t0") is not None:
+                d["ttfb"] = _monotonic() - d["t0"]
+    
     async def on_request_exception(session, ctx, params):
-        d = await _ctx()
-        if d is None:
-            return
-        d["exc"] = str(params.exception)
-
+        d = await _get_ctx()
+        if d is not None:
+            d["exc"] = str(params.exception)
+    
     trace.on_request_start.append(on_request_start)
     trace.on_response_chunk_received.append(on_response_chunk_received)
     trace.on_request_exception.append(on_request_exception)
+    
     return trace
 
-# ---------------------------
-# Rate / concurrency primitives
-# ---------------------------
 
-class TokenBucket:
+# =============================================================================
+# PAARC v2.0 STATE MACHINE
+# =============================================================================
+
+class PAARCState(Enum):
+    """PAARC controller states."""
+    INIT = auto()
+    STARTUP = auto()
+    PROBE_BW = auto()
+    PROBE_RTT = auto()
+    BACKOFF = auto()
+
+
+# =============================================================================
+# CONCURRENCY CONTROL: ADAPTIVE SEMAPHORE
+# =============================================================================
+
+class AdaptiveSemaphore:
     """
-    Async token bucket, used as per-host pacer.
-
-    Capacity scales with rate to keep burst duration ~2 seconds (min 100 tokens).
+    Adjustable semaphore for concurrency control.
+    
+    The primary control mechanism in PAARC v2.0. Limits the number of
+    concurrent in-flight requests.
     """
-    def __init__(self, rate: float, capacity: Optional[int] = None):
-        self._rate = max(1.0, float(rate))
-        self._capacity = capacity if capacity is not None else max(100, int(self._rate * 2))
-        self._tokens = float(self._capacity)
-        self._last = time.monotonic()
-        self._lock = asyncio.Lock()
-
-    def get_rate(self) -> float:
-        return float(self._rate)
-
-    def adjust_rate(self, new_rate: float, reason: str = "") -> None:
-        new_rate = max(1.0, float(new_rate))
-        if abs(new_rate - self._rate) < 0.1:
-            return
-        self._rate = new_rate
-        self._capacity = max(100, int(self._rate * 2))
-        self._tokens = min(self._tokens, float(self._capacity))
-        r = f" ({reason})" if reason else ""
-        print(f"[PolicyBBR] rate={self._rate:.2f} req/s cap={self._capacity}{r}")
-
-    async def acquire(self) -> None:
-        while not shutdown_flag:
-            async with self._lock:
-                self._refill_locked()
-                if self._tokens >= 1.0:
-                    self._tokens -= 1.0
-                    return
-                sleep_s = max(0.005, (1.0 - self._tokens) / self._rate)
-            await asyncio.sleep(min(0.05, sleep_s))
-
-    def _refill_locked(self) -> None:
-        now = time.monotonic()
-        elapsed = now - self._last
-        if elapsed <= 0:
-            return
-        self._tokens = min(float(self._capacity), self._tokens + elapsed * self._rate)
-        self._last = now
-
-class AsyncSemaphoreLimiter:
-    """A simple adjustable semaphore-like limiter."""
-    def __init__(self, initial: int, cap: int):
-        self._limit = max(2, int(initial))
-        self._cap = max(2, int(cap))
+    
+    def __init__(self, initial: int, minimum: int = 2, maximum: int = 10000):
+        self._limit = max(minimum, min(initial, maximum))
+        self._minimum = minimum
+        self._maximum = maximum
         self._inflight = 0
         self._cond = asyncio.Condition()
-
+    
     async def acquire(self) -> None:
+        """Acquire a slot, blocking if at limit."""
         async with self._cond:
             while self._inflight >= self._limit and not shutdown_flag:
                 await self._cond.wait()
             self._inflight += 1
-
+    
     async def release(self) -> None:
+        """Release a slot."""
         async with self._cond:
             self._inflight = max(0, self._inflight - 1)
             self._cond.notify_all()
-
-    def get_limit(self) -> int:
-        return int(self._limit)
-
-    def set_limit(self, new_limit: int) -> None:
-        new_limit = max(2, min(int(new_limit), self._cap))
+    
+    @property
+    def limit(self) -> int:
+        """Current concurrency limit."""
+        return self._limit
+    
+    @property
+    def inflight(self) -> int:
+        """Current in-flight count."""
+        return self._inflight
+    
+    def set_limit(self, new_limit: int, reason: str = "") -> None:
+        """Adjust the concurrency limit."""
+        new_limit = max(self._minimum, min(new_limit, self._maximum))
         if new_limit != self._limit:
-            print(f"[PolicyBBR] conc {self._limit} -> {new_limit}")
+            old = self._limit
             self._limit = new_limit
+            reason_str = f" ({reason})" if reason else ""
+            print(f"[PAARC] Concurrency: {old} → {new_limit}{reason_str}")
 
-# ---------------------------
-# Host signals + controller
-# ---------------------------
 
-class HostSignals:
-    """Per-host metrics aggregated per control interval with EMA smoothing and goodput tracking."""
-    def __init__(self, interval_sec: float, q_hist_seconds: float = 300.0, ttfb_ema_alpha: float = 0.3):
-        self.interval_sec = float(interval_sec)
-        self.ttfb_ema_alpha = float(ttfb_ema_alpha)
+# =============================================================================
+# LEAKY BUCKET SMOOTHER (NON-ACCUMULATING)
+# =============================================================================
+
+class LeakyBucketSmoother:
+    """
+    Non-accumulating leaky bucket for request smoothing.
+    
+    Unlike a token bucket, this does NOT accumulate credit during periods
+    of low activity. This prevents bursts after PROBE_RTT or idle periods.
+    
+    The smoothing rate is derived from Little's Law:
+        implied_rate = C / RTprop
+        min_delay = 1 / implied_rate = RTprop / C
+    """
+    
+    def __init__(self, concurrency: int, rtprop: float):
+        self._concurrency = concurrency
+        self._rtprop = rtprop
+        self._min_delay = self._calculate_min_delay()
+        self._last_request_time: float = 0.0
         self._lock = asyncio.Lock()
+    
+    def _calculate_min_delay(self) -> float:
+        """Calculate minimum inter-request delay."""
+        if self._rtprop > 0 and self._concurrency > 0:
+            return self._rtprop / self._concurrency
+        return 0.01  # 10ms default
+    
+    def update(self, concurrency: int, rtprop: float) -> None:
+        """Update smoothing parameters."""
+        self._concurrency = max(1, concurrency)
+        self._rtprop = max(0.001, rtprop)  # Minimum 1ms RTprop
+        self._min_delay = self._calculate_min_delay()
+    
+    async def acquire(self) -> None:
+        """Wait if necessary to maintain smooth request spacing."""
+        async with self._lock:
+            now = _monotonic()
+            elapsed = now - self._last_request_time
+            
+            if elapsed < self._min_delay:
+                await asyncio.sleep(self._min_delay - elapsed)
+            
+            self._last_request_time = _monotonic()
+    
+    @property
+    def implied_rate(self) -> float:
+        """Current implied rate (requests per second)."""
+        if self._min_delay > 0:
+            return 1.0 / self._min_delay
+        return float('inf')
 
-        self._ttfb_ok: list[float] = []
-        self._total = 0
-        self._n429 = 0
-        self._n_conn_error = 0  # Connection errors (reset, timeout at connection level)
-        self._n_server_error = 0  # 5xx errors and 408 timeouts
-        self._bytes = 0
-        self.last_429_time: Optional[float] = None
-        self.last_overload_time: Optional[float] = None  # Any overload signal (429, conn error, 408)
 
-        # Retry-After tracking (from 429 responses)
-        self.last_retry_after_sec: Optional[float] = None
+# =============================================================================
+# HOST METRICS COLLECTOR
+# =============================================================================
 
-        # EMA-smoothed TTFB values for stable signals
+class HostMetrics:
+    """
+    Per-host metrics collection and statistics.
+    
+    Collects TTFB samples, error counts, and bytes downloaded per interval.
+    Computes percentiles and EMA-smoothed values for stable control signals.
+    """
+    
+    def __init__(self, config: PAARCConfig):
+        self.config = config
+        self._lock = asyncio.Lock()
+        
+        # Per-interval accumulators
+        self._ttfb_samples: list[float] = []
+        self._file_sizes: list[int] = []
+        self._n_success = 0
+        self._n_errors = 0
+        self._bytes_downloaded = 0
+        self._interval_start = _monotonic()
+        
+        # Retry-After tracking
+        self._retry_after: Optional[float] = None
+        
+        # EMA-smoothed percentiles
         self._ema_p10: Optional[float] = None
         self._ema_p50: Optional[float] = None
         self._ema_p95: Optional[float] = None
-
-        # Goodput tracking (bytes/sec over time)
-        self._interval_start_time: float = _now()
-        self._total_bytes_lifetime: int = 0
-        self._total_success_lifetime: int = 0
-
-        maxlen = max(10, int(q_hist_seconds / self.interval_sec))
-        self.q_history: deque[float] = deque(maxlen=maxlen)
-        self.goodput_history: deque[float] = deque(maxlen=maxlen)  # bytes/sec per interval
-
+        
+        # RTprop tracking (minimum p10 over sliding window)
+        self._rtprop: Optional[float] = None
+        self._rtprop_samples: deque[tuple[float, float]] = deque()  # (timestamp, p10)
+        
+        # Goodput history for plateau detection
+        self._goodput_history: deque[float] = deque(maxlen=10)
+        
+        # Lifetime statistics
+        self._total_samples = 0
+        self._total_bytes = 0
+        self._avg_file_size: Optional[float] = None
+    
     async def record(
         self,
         status_code: Optional[int],
@@ -571,703 +660,800 @@ class HostSignals:
         is_conn_error: bool = False,
         retry_after_sec: Optional[float] = None
     ) -> None:
+        """Record metrics from a completed request."""
         async with self._lock:
-            self._total += 1
-            self._bytes += int(bytes_downloaded or 0)
-
-            # Connection-level errors (no HTTP response at all)
-            if is_conn_error:
-                self._n_conn_error += 1
-                self.last_overload_time = _now()
-
-            if status_code == 429:
-                self._n429 += 1
-                self.last_429_time = _now()
-                self.last_overload_time = _now()
-                # Track Retry-After header if provided
-                if retry_after_sec is not None:
-                    self.last_retry_after_sec = retry_after_sec
-
-            # 408 (Request Timeout) and 5xx errors also indicate server overload
-            if status_code is not None and (status_code == 408 or status_code >= 500):
-                self._n_server_error += 1
-                self.last_overload_time = _now()
-
-            if status_code is not None and status_code < 400 and ttfb is not None:
-                self._ttfb_ok.append(float(ttfb))
-                self._total_bytes_lifetime += int(bytes_downloaded or 0)
-                self._total_success_lifetime += 1
-
-    def _update_ema(self, current_ema: Optional[float], new_value: Optional[float]) -> Optional[float]:
-        """Update EMA with new value. Returns updated EMA."""
+            # Track Retry-After if provided
+            if retry_after_sec is not None:
+                self._retry_after = retry_after_sec
+            
+            # Classify as success or error
+            is_error = (
+                is_conn_error or
+                status_code == 429 or
+                status_code == 408 or
+                (status_code is not None and status_code >= 500)
+            )
+            
+            if is_error:
+                self._n_errors += 1
+            else:
+                self._n_success += 1
+                self._bytes_downloaded += bytes_downloaded
+                
+                # Record TTFB for successful requests
+                if ttfb is not None and ttfb > 0:
+                    self._ttfb_samples.append(ttfb)
+                
+                # Record file size
+                if bytes_downloaded > 0:
+                    self._file_sizes.append(bytes_downloaded)
+    
+    def _update_ema(self, current: Optional[float], new_value: Optional[float]) -> Optional[float]:
+        """Update EMA with new value."""
         if new_value is None:
-            return current_ema
-        if current_ema is None:
+            return current
+        if current is None:
             return new_value
-        return self.ttfb_ema_alpha * new_value + (1 - self.ttfb_ema_alpha) * current_ema
-
-    async def finish_interval(self, now: float) -> dict[str, Any]:
+        return self.config.alpha_ema * new_value + (1 - self.config.alpha_ema) * current
+    
+    async def finish_interval(self) -> dict[str, Any]:
+        """
+        Finalize interval and compute statistics.
+        
+        Returns a snapshot dict with all metrics for controller decisions.
+        """
         async with self._lock:
-            total = self._total
-            n429 = self._n429
-            n_conn_error = self._n_conn_error
-            n_server_error = self._n_server_error
-            ttfb_ok = self._ttfb_ok
-            interval_bytes = self._bytes
-            retry_after = self.last_retry_after_sec
-
-            # Calculate interval duration for goodput
-            interval_duration = now - self._interval_start_time
-            self._interval_start_time = now
-
-            # Reset interval counters
-            self._total = 0
-            self._n429 = 0
-            self._n_conn_error = 0
-            self._n_server_error = 0
-            self._ttfb_ok = []
-            self._bytes = 0
-            self.last_retry_after_sec = None  # Reset after consuming
-
-        r429 = (n429 / total) if total > 0 else 0.0
-        T_since429 = (now - self.last_429_time) if self.last_429_time else float("inf")
-        T_since_overload = (now - self.last_overload_time) if self.last_overload_time else float("inf")
-
-        # Combined overload count: 429s + connection errors + server errors (408, 5xx)
-        n_overload = n429 + n_conn_error + n_server_error
-        r_overload = (n_overload / total) if total > 0 else 0.0
-
-        # Raw percentiles from this interval
-        p10_raw = _percentile(ttfb_ok, 0.10) if len(ttfb_ok) >= 5 else None
-        p50_raw = _percentile(ttfb_ok, 0.50) if len(ttfb_ok) >= 5 else None
-        p95_raw = _percentile(ttfb_ok, 0.95) if len(ttfb_ok) >= 5 else None
-
+            now = _monotonic()
+            duration = now - self._interval_start
+            
+            # Snapshot and reset interval accumulators
+            ttfb_samples = self._ttfb_samples.copy()
+            file_sizes = self._file_sizes.copy()
+            n_success = self._n_success
+            n_errors = self._n_errors
+            bytes_downloaded = self._bytes_downloaded
+            retry_after = self._retry_after
+            
+            self._ttfb_samples.clear()
+            self._file_sizes.clear()
+            self._n_success = 0
+            self._n_errors = 0
+            self._bytes_downloaded = 0
+            self._interval_start = now
+            self._retry_after = None
+            
+            # Update lifetime stats
+            self._total_samples += len(ttfb_samples)
+            self._total_bytes += bytes_downloaded
+            
+            # Calculate average file size
+            if file_sizes:
+                if self._avg_file_size is None:
+                    self._avg_file_size = sum(file_sizes) / len(file_sizes)
+                else:
+                    # EMA update
+                    new_avg = sum(file_sizes) / len(file_sizes)
+                    self._avg_file_size = 0.1 * new_avg + 0.9 * self._avg_file_size
+        
+        total = n_success + n_errors
+        n_samples = len(ttfb_samples)
+        
+        # Calculate raw percentiles (require minimum samples)
+        p10_raw = _percentile(ttfb_samples, 0.10) if n_samples >= 5 else None
+        p50_raw = _percentile(ttfb_samples, 0.50) if n_samples >= 5 else None
+        p95_raw = _percentile(ttfb_samples, 0.95) if n_samples >= 5 else None
+        
         # Update EMA-smoothed values
         self._ema_p10 = self._update_ema(self._ema_p10, p10_raw)
         self._ema_p50 = self._update_ema(self._ema_p50, p50_raw)
         self._ema_p95 = self._update_ema(self._ema_p95, p95_raw)
-
-        # Use EMA values for controller decisions (more stable)
-        p10 = self._ema_p10
-        p50 = self._ema_p50
-        p95 = self._ema_p95
-
-        q = (p95 - p10) if (p95 is not None and p10 is not None) else None
-        q_baseline = (sorted(self.q_history)[len(self.q_history)//2] if len(self.q_history) >= 6 else None)
-
-        # Calculate goodput (bytes/sec) for this interval
-        goodput_bps = (interval_bytes / interval_duration) if interval_duration > 0 else 0.0
-        self.goodput_history.append(goodput_bps)
-
-        # Calculate lifetime goodput stats
-        lifetime_goodput_avg = (
-            (self._total_bytes_lifetime / (now - self._interval_start_time))
-            if self._total_success_lifetime > 0 else 0.0
-        )
-
+        
+        # Update RTprop (minimum p10 over sliding window)
+        if p10_raw is not None:
+            self._rtprop_samples.append((now, p10_raw))
+            # Expire old samples
+            cutoff = now - self.config.rtprop_window
+            while self._rtprop_samples and self._rtprop_samples[0][0] < cutoff:
+                self._rtprop_samples.popleft()
+            # RTprop is minimum p10 in window
+            if self._rtprop_samples:
+                self._rtprop = min(s[1] for s in self._rtprop_samples)
+        
+        # Calculate goodput (requests per second)
+        goodput_rps = n_success / duration if duration > 0 else 0.0
+        goodput_bps = bytes_downloaded / duration if duration > 0 else 0.0
+        self._goodput_history.append(goodput_rps)
+        
         return {
             "total": total,
-            "n429": n429,
-            "n_conn_error": n_conn_error,
-            "n_server_error": n_server_error,
-            "n_overload": n_overload,
-            "r429": r429,
-            "r_overload": r_overload,
-            "T_since429": T_since429,
-            "T_since_overload": T_since_overload,
-            "p10": p10,
-            "p50": p50,
-            "p95": p95,
+            "n_success": n_success,
+            "n_errors": n_errors,
+            "n_samples": n_samples,
+            "has_overload": n_errors > 0,
+            "p10": self._ema_p10,
+            "p50": self._ema_p50,
+            "p95": self._ema_p95,
             "p10_raw": p10_raw,
             "p50_raw": p50_raw,
             "p95_raw": p95_raw,
-            "q": q,
-            "q_baseline": q_baseline,
-            "bytes": interval_bytes,
+            "rtprop": self._rtprop,
+            "goodput_rps": goodput_rps,
             "goodput_bps": goodput_bps,
-            "goodput_mbps": goodput_bps / 1_000_000,
-            "retry_after_sec": retry_after,
+            "bytes": bytes_downloaded,
+            "duration": duration,
+            "retry_after": retry_after,
+            "avg_file_size": self._avg_file_size,
+            "total_samples_lifetime": self._total_samples,
         }
-
-class HostPolicyBBRController:
-    """
-    Policy-Aware BBR Controller for rate-limited APIs.
-
-    Discovers optimal throughput via STARTUP phase, uses latency as early warning
-    before 429s, and maintains headroom below discovered ceiling.
-
-    Enhanced with:
-    - Differentiated backoff factors (429 vs 5xx vs connection errors)
-    - Retry-After header support for dynamic cooldown
-    - Configurable BDP multiplier for conservative concurrency
-    - p95 latency checks in addition to p50
-    - Proportional backoff based on error magnitude
-
-    States:
-        STARTUP: Exponential growth (1.5x) to discover ceiling via latency degradation
-        DRAIN: Settle at ceiling * headroom after ceiling discovery
-        PROBE_BW: Steady state with conservative probing (+5% every 60s)
-        PROBE_RTT: Refresh RTprop estimate by reducing concurrency briefly
-        BACKOFF: Aggressive retreat after 429 with long cooldown
-    """
-    STARTUP = "STARTUP"
-    DRAIN = "DRAIN"
-    PROBE_BW = "PROBE_BW"
-    PROBE_RTT = "PROBE_RTT"
-    BACKOFF = "BACKOFF"
-
-    def __init__(
-        self,
-        host: str,
-        tb: TokenBucket,
-        conc: AsyncSemaphoreLimiter,
-        signals: HostSignals,
-        *,
-        min_rate: float,
-        max_rate: float,
-        per_host_conc_cap: int = 256,
-        # PolicyBBR parameters
-        startup_growth_factor: float = 1.5,
-        latency_degradation_factor: float = 1.5,
-        latency_degradation_factor_p95: float = 2.0,
-        headroom: float = 0.85,
-        probe_interval_sec: float = 60.0,
-        probe_increment: float = 0.05,
-        bdp_multiplier: float = 1.2,
-        # Differentiated backoff factors
-        backoff_factor_429: float = 0.5,
-        backoff_factor_5xx: float = 0.7,
-        backoff_factor_conn: float = 0.85,
-        backoff_ceiling_factor: float = 0.7,
-        # Differentiated cooldowns
-        cooldown_sec_429: float = 300.0,
-        cooldown_sec_5xx: float = 60.0,
-        cooldown_sec_conn: float = 10.0,
-        backoff_cooldown_sec: float = 300.0,
-        startup_max_intervals: int = 20,
-    ):
-        self.host = host
-        self.tb = tb
-        self.conc = conc
-        self.signals = signals
-
-        self.min_rate = float(min_rate)
-        self.max_rate = float(max_rate)
-        self.per_host_conc_cap = int(per_host_conc_cap)
-
-        # PolicyBBR parameters
-        self.startup_growth_factor = float(startup_growth_factor)
-        self.latency_degradation_factor = float(latency_degradation_factor)
-        self.latency_degradation_factor_p95 = float(latency_degradation_factor_p95)
-        self.headroom = float(headroom)
-        self.probe_interval_sec = float(probe_interval_sec)
-        self.probe_increment = float(probe_increment)
-        self.bdp_multiplier = float(bdp_multiplier)
-
-        # Differentiated backoff factors (per error type)
-        self.backoff_factor_429 = float(backoff_factor_429)
-        self.backoff_factor_5xx = float(backoff_factor_5xx)
-        self.backoff_factor_conn = float(backoff_factor_conn)
-        self.backoff_ceiling_factor = float(backoff_ceiling_factor)  # Legacy fallback
-
-        # Differentiated cooldowns (per error type)
-        self.cooldown_sec_429 = float(cooldown_sec_429)
-        self.cooldown_sec_5xx = float(cooldown_sec_5xx)
-        self.cooldown_sec_conn = float(cooldown_sec_conn)
-        self.backoff_cooldown_sec = float(backoff_cooldown_sec)  # Legacy fallback
-
-        self.startup_max_intervals = int(startup_max_intervals)
-
-        # State
-        self.state = self.STARTUP
-        self.safe_rate = float(self.tb.get_rate())
-
-        # PolicyBBR tracking
-        self.rtprop: Optional[float] = None  # Min observed TTFB (baseline latency)
-        self.ceiling_rate: float = float('inf')  # Upper bound discovered during STARTUP
-        self.policy_bw: float = 0.0  # Max safe rate observed without 429/latency degradation
-
-        # STARTUP tracking
-        self._startup_intervals = 0
-        self._startup_baseline_p50: Optional[float] = None
-        self._startup_consecutive_latency_degradations = 0  # Track consecutive latency degradations
-
-        # PROBE_BW tracking
-        self._last_probe_time: float = 0.0
-        self._probe_prev_rate: Optional[float] = None
-
-        # BACKOFF tracking
-        self._backoff_until: float = 0.0
-
-        # PROBE_RTT tracking
-        self._last_probe_rtt_time: float = 0.0
-        self._saved_rate_for_probe_rtt: Optional[float] = None
-
-    def _set_rate(self, new_rate: float, reason: str) -> None:
-        new_rate = max(self.min_rate, min(self.max_rate, float(new_rate)))
-        self.safe_rate = new_rate
-        self.tb.adjust_rate(new_rate, f"{self.host}:{reason}")
-
-    def _set_conc(self, new_conc: int, reason: str) -> None:
-        new_conc = max(4, min(int(new_conc), self.per_host_conc_cap))
-        self.conc.set_limit(new_conc)
-
-    def _update_rtprop(self, p10: Optional[float]) -> None:
-        """Update RTprop (min observed latency) from p10 TTFB."""
-        if p10 is not None and p10 > 0:
-            if self.rtprop is None:
-                self.rtprop = p10
-            else:
-                self.rtprop = min(self.rtprop, p10)
-
-    def _derive_concurrency_from_bdp(self) -> None:
-        """Set concurrency based on BDP = rate * RTprop * bdp_multiplier."""
-        if self.rtprop is not None and self.rtprop > 0:
-            # Use configurable bdp_multiplier (default 1.2, more conservative than old 2.0)
-            target_conc = int(max(4, self.safe_rate * self.rtprop * self.bdp_multiplier))
-            self._set_conc(min(target_conc, self.per_host_conc_cap), "bdp")
-
-    def _is_latency_degraded(self, p50: Optional[float], p95: Optional[float] = None) -> bool:
+    
+    def is_goodput_plateau(self) -> bool:
         """
-        Check if latency has degraded significantly from baseline.
-        Uses both p50 and p95 for more robust detection.
+        Detect goodput plateau: goodput not increasing for 3 consecutive intervals.
+        
+        Plateau detected when: goodput[t] < goodput[t-3] × 1.02 for last 3 intervals
         """
-        if self.rtprop is None:
+        if len(self._goodput_history) < 4:
             return False
+        
+        baseline = self._goodput_history[-4]
+        if baseline <= 0:
+            return False
+        
+        # Check if all last 3 values are within 2% of baseline
+        for g in list(self._goodput_history)[-3:]:
+            if g > baseline * 1.02:
+                return False
+        
+        return True
+    
+    @property
+    def rtprop(self) -> Optional[float]:
+        """Current RTprop estimate (minimum observed latency)."""
+        return self._rtprop
+    
+    @property
+    def total_samples(self) -> int:
+        """Total TTFB samples collected lifetime."""
+        return self._total_samples
+    
+    @property
+    def avg_file_size(self) -> Optional[float]:
+        """Average file size in bytes."""
+        return self._avg_file_size
 
-        # Check p50 degradation
-        p50_degraded = (p50 is not None and p50 > self.rtprop * self.latency_degradation_factor)
 
-        # Check p95 degradation (tail latency - uses separate, typically higher threshold)
-        p95_degraded = (p95 is not None and p95 > self.rtprop * self.latency_degradation_factor_p95)
+# =============================================================================
+# PAARC v2.0 CONTROLLER
+# =============================================================================
 
-        # Degraded if either p50 OR p95 exceeds threshold
-        return p50_degraded or p95_degraded
-
-    def _compute_differentiated_backoff(self, snap: dict[str, Any]) -> tuple[float, float, str]:
-        """
-        Compute backoff factor and cooldown based on error type composition.
-
-        Returns:
-            (backoff_factor, cooldown_sec, error_description)
-
-        Priority: 429 > 5xx > connection errors
-        When multiple error types occur, use the most aggressive backoff.
-        Also applies proportional backoff based on error count (up to factor^3).
-        """
-        n429 = snap.get("n429", 0)
-        n_server_error = snap.get("n_server_error", 0)
-        n_conn_error = snap.get("n_conn_error", 0)
-        retry_after = snap.get("retry_after_sec")
-
-        # Determine primary error type and base factors
-        if n429 > 0:
-            # 429 rate limit - most aggressive backoff
-            base_factor = self.backoff_factor_429
-            # Use Retry-After if available, otherwise default cooldown
-            cooldown = retry_after if retry_after is not None else self.cooldown_sec_429
-            err_type = "429"
-            error_count = n429
-        elif n_server_error > 0:
-            # 5xx server error - moderate backoff
-            base_factor = self.backoff_factor_5xx
-            cooldown = self.cooldown_sec_5xx
-            err_type = "5xx"
-            error_count = n_server_error
-        elif n_conn_error > 0:
-            # Connection error - light backoff
-            base_factor = self.backoff_factor_conn
-            cooldown = self.cooldown_sec_conn
-            err_type = "conn"
-            error_count = n_conn_error
+class PAARCController:
+    """
+    PAARC v2.0: Policy-Aware Adaptive Request Controller
+    
+    Concurrency-primary congestion control for HTTP downloading.
+    
+    State Machine:
+        INIT → STARTUP → PROBE_BW ↔ PROBE_RTT
+                  ↓           ↓
+               BACKOFF ←──────┘
+    
+    Core principles:
+    - Concurrency (C) is the primary control variable
+    - Rate (R) emerges from Little's Law: R = C / RTprop
+    - Uses single utilization factor μ = 0.75
+    - All errors treated equivalently
+    - Gradual restoration after PROBE_RTT
+    """
+    
+    def __init__(self, host: str, config: PAARCConfig):
+        self.host = host
+        self.config = config
+        
+        # State
+        self.state = PAARCState.INIT
+        
+        # Concurrency control (primary)
+        self.semaphore = AdaptiveSemaphore(
+            initial=config.C_init,
+            minimum=config.C_min,
+            maximum=config.C_max
+        )
+        
+        # Metrics
+        self.metrics = HostMetrics(config)
+        
+        # Smoother (initialized after RTprop known)
+        self.smoother: Optional[LeakyBucketSmoother] = None
+        
+        # PAARC state variables
+        self._concurrency = config.C_init
+        self._C_ceiling: Optional[int] = None
+        self._C_operating: int = config.C_init
+        
+        # INIT phase
+        self._init_samples = 0
+        
+        # STARTUP phase
+        self._startup_intervals = 0
+        
+        # PROBE_BW phase
+        self._stable_intervals = 0
+        self._underperformance_intervals = 0
+        
+        # PROBE_RTT phase
+        self._last_probe_rtt_time: float = 0.0
+        self._samples_since_probe_rtt: int = 0
+        self._saved_concurrency: Optional[int] = None
+        self._restoring: bool = False
+        
+        # BACKOFF phase
+        self._cooldown_until: float = 0.0
+        
+        # Timing
+        self._last_interval_time = _monotonic()
+    
+    def _get_rtprop(self) -> float:
+        """Get RTprop with fallback."""
+        rtprop = self.metrics.rtprop
+        return rtprop if rtprop is not None else 0.2  # 200ms default
+    
+    def _set_concurrency(self, new_C: int, reason: str) -> None:
+        """Set concurrency with bounds enforcement."""
+        new_C = max(self.config.C_min, min(new_C, self.config.C_max))
+        if new_C != self._concurrency:
+            self._concurrency = new_C
+            self.semaphore.set_limit(new_C, reason)
+            self._update_smoother()
+    
+    def _update_smoother(self) -> None:
+        """Update or initialize the leaky bucket smoother."""
+        rtprop = self._get_rtprop()
+        if self.smoother is None:
+            self.smoother = LeakyBucketSmoother(self._concurrency, rtprop)
         else:
-            # No errors (shouldn't happen if this is called)
-            return 1.0, 0.0, "none"
-
-        # Apply proportional backoff: factor^min(error_count, 3)
-        # This means multiple errors in one interval cause more aggressive backoff
-        backoff_power = min(error_count, 3)
-        combined_factor = base_factor ** backoff_power
-
-        err_desc = f"{err_type}x{error_count}"
-        if retry_after is not None and n429 > 0:
-            err_desc += f" (Retry-After:{retry_after:.0f}s)"
-
-        return combined_factor, cooldown, err_desc
-
-    async def step_interval(self, snap: dict[str, Any], now: float) -> None:
-        had_429 = snap["n429"] > 0
-        n_overload = snap.get("n_overload", snap["n429"])  # 429s + conn errors + 408/5xx
-        r_overload = snap.get("r_overload", snap["r429"])  # Ratio of overload errors
-        had_overload = n_overload > 0  # Any overload signal
-        p10 = snap["p10"]
-        p50 = snap["p50"]
+            self.smoother.update(self._concurrency, rtprop)
+    
+    def _is_latency_degraded(self, snap: dict) -> bool:
+        """Check if latency has degraded significantly from baseline."""
+        rtprop = self.metrics.rtprop
+        if rtprop is None:
+            return False
+        
+        p50 = snap.get("p50")
         p95 = snap.get("p95")
-
-        # Always update RTprop (min latency baseline)
-        self._update_rtprop(p10)
-
-        # Always derive concurrency from BDP (except in PROBE_RTT)
-        if self.state != self.PROBE_RTT:
-            self._derive_concurrency_from_bdp()
-
-        # Use both p50 and p95 for latency degradation check
-        latency_degraded = self._is_latency_degraded(p50, p95)
-
-        # ========== STARTUP PHASE ==========
-        if self.state == self.STARTUP:
-            self._startup_intervals += 1
-
-            # Exit on overload (429, connection errors, 408/5xx) → set ceiling, enter BACKOFF
-            if had_overload:
-                # Use differentiated backoff based on error type
-                combined_factor, cooldown, err_desc = self._compute_differentiated_backoff(snap)
-                self.ceiling_rate = self.safe_rate * combined_factor
-                self._set_rate(self.ceiling_rate * self.headroom, "startup_overload")
-                self._backoff_until = now + cooldown
-                self.state = self.BACKOFF
-                print(f"[PolicyBBR] {self.host}: STARTUP→BACKOFF on {err_desc} (factor={combined_factor:.2f}) at rate={self.safe_rate:.1f}")
-                return
-
-            # Establish baseline latency on first good sample
-            if self._startup_baseline_p50 is None and p50 is not None:
-                self._startup_baseline_p50 = p50
-                print(f"[PolicyBBR] {self.host}: STARTUP baseline p50={p50*1000:.1f}ms")
-
-            # Track consecutive latency degradations; only exit after 10 consecutive
-            if latency_degraded:
-                self._startup_consecutive_latency_degradations += 1
-                if self._startup_consecutive_latency_degradations >= 10:
-                    # Exit after 10 consecutive latency degradations → set ceiling, enter DRAIN
-                    self.ceiling_rate = self.safe_rate
-                    self._set_rate(self.ceiling_rate * self.headroom, "startup_latency")
-                    self.state = self.DRAIN
-                    print(f"[PolicyBBR] {self.host}: STARTUP→DRAIN on latency (10 consecutive) at ceiling={self.ceiling_rate:.1f}")
-                    return
-                else:
-                    # First degradation: warn but continue (don't grow rate this interval)
-                    print(f"[PolicyBBR] {self.host}: STARTUP latency warning ({self._startup_consecutive_latency_degradations}/10)")
-                    return
-            else:
-                # Reset counter when latency is healthy
-                self._startup_consecutive_latency_degradations = 0
-
-            # Exit if near max_rate → enter DRAIN
-            if self.safe_rate >= self.max_rate * 0.95:
-                self.ceiling_rate = self.max_rate
-                self._set_rate(self.ceiling_rate * self.headroom, "startup_max")
-                self.state = self.DRAIN
-                print(f"[PolicyBBR] {self.host}: STARTUP→DRAIN at max_rate={self.max_rate}")
-                return
-
-            # Safety cap on STARTUP duration
-            if self._startup_intervals >= self.startup_max_intervals:
-                self.ceiling_rate = self.safe_rate
-                self._set_rate(self.ceiling_rate * self.headroom, "startup_timeout")
-                self.state = self.DRAIN
-                print(f"[PolicyBBR] {self.host}: STARTUP→DRAIN after {self._startup_intervals} intervals")
-                return
-
-            # Otherwise, grow rate exponentially
-            new_rate = min(self.safe_rate * self.startup_growth_factor, self.max_rate)
-            self._set_rate(new_rate, "startup_grow")
-
-            # Track policy_bw (max safe rate observed)
-            self.policy_bw = max(self.policy_bw, self.safe_rate)
+        
+        # Check p50 degradation
+        p50_degraded = p50 is not None and p50 > rtprop * self.config.theta_50
+        
+        # Check p95 degradation (tail latency)
+        p95_degraded = p95 is not None and p95 > rtprop * self.config.theta_95
+        
+        return p50_degraded or p95_degraded
+    
+    def _calculate_cooldown(self, retry_after: Optional[float]) -> float:
+        """Calculate cooldown duration: max(5 × RTprop, 2s, retry_after)."""
+        rtprop = self._get_rtprop()
+        rtprop_based = self.config.cooldown_rtprop_mult * rtprop
+        
+        candidates = [rtprop_based, self.config.cooldown_floor]
+        if retry_after is not None and retry_after > 0:
+            candidates.append(retry_after)
+        
+        return max(candidates)
+    
+    def _calculate_control_interval(self, snap: dict) -> float:
+        """
+        Calculate control interval duration.
+        
+        interval = max(k × RTprop, N_min / goodput_rps, T_floor)
+        
+        Ensures both time-based stability and sample-based reliability.
+        """
+        rtprop = self._get_rtprop()
+        goodput_rps = snap.get("goodput_rps", 0)
+        
+        # Time-based: k × RTprop
+        time_based = self.config.k_interval * rtprop
+        
+        # Sample-based: N_min / goodput
+        if goodput_rps > 0:
+            sample_based = self.config.N_min / goodput_rps
+        else:
+            sample_based = self.config.T_floor
+        
+        return max(time_based, sample_based, self.config.T_floor)
+    
+    def _calculate_additive_increase(self) -> int:
+        """
+        Calculate additive increase for PROBE_BW probing.
+        
+        ΔC = max(1, ceil(C_operating × γ_probe))
+        
+        Proportional increase scales with current operating point.
+        """
+        delta = math.ceil(self._C_operating * self.config.gamma_probe)
+        return max(1, delta)
+    
+    async def step_interval(self) -> None:
+        """
+        Execute one control interval step.
+        
+        Called periodically by the controller loop.
+        """
+        now = _monotonic()
+        
+        # Get interval snapshot
+        snap = await self.metrics.finish_interval()
+        
+        # Update samples since PROBE_RTT
+        self._samples_since_probe_rtt += snap.get("n_samples", 0)
+        
+        # Skip if no activity
+        if snap["total"] == 0:
             return
-
-        # ========== DRAIN PHASE ==========
-        elif self.state == self.DRAIN:
-            # Exit on overload → enter BACKOFF
-            if had_overload:
-                # Use differentiated backoff based on error type
-                combined_factor, cooldown, err_desc = self._compute_differentiated_backoff(snap)
-                self.ceiling_rate *= combined_factor
-                self._set_rate(self.ceiling_rate * self.headroom, "drain_overload")
-                self._backoff_until = now + cooldown
-                self.state = self.BACKOFF
-                print(f"[PolicyBBR] {self.host}: DRAIN→BACKOFF on {err_desc} (factor={combined_factor:.2f})")
-                return
-
-            # Wait for latency to stabilize before entering PROBE_BW
-            if not latency_degraded:
-                self._last_probe_time = now
-                self._last_probe_rtt_time = now
-                self.state = self.PROBE_BW
-                print(f"[PolicyBBR] {self.host}: DRAIN→PROBE_BW at rate={self.safe_rate:.1f}")
+        
+        # Print status for debugging
+        state_str = self.state.name
+        C = self._concurrency
+        rtprop = self.metrics.rtprop
+        rtprop_ms = rtprop * 1000 if rtprop else 0
+        goodput = snap.get("goodput_rps", 0)
+        n_errors = snap.get("n_errors", 0)
+        
+        if n_errors > 0:
+            print(f"[PAARC] {self.host}: {state_str} | C={C} | RTprop={rtprop_ms:.0f}ms | "
+                  f"Goodput={goodput:.1f}/s | Errors={n_errors}")
+        
+        # Dispatch to state handler
+        if self.state == PAARCState.INIT:
+            await self._step_init(snap, now)
+        elif self.state == PAARCState.STARTUP:
+            await self._step_startup(snap, now)
+        elif self.state == PAARCState.PROBE_BW:
+            await self._step_probe_bw(snap, now)
+        elif self.state == PAARCState.PROBE_RTT:
+            await self._step_probe_rtt(snap, now)
+        elif self.state == PAARCState.BACKOFF:
+            await self._step_backoff(snap, now)
+        
+        self._last_interval_time = now
+    
+    async def _step_init(self, snap: dict, now: float) -> None:
+        """
+        INIT phase: Establish RTprop baseline.
+        
+        - Collect N_init samples at C_init concurrency
+        - Set RTprop = p10 of samples
+        - Calculate avg_file_size
+        - Transition to STARTUP
+        """
+        self._init_samples += snap.get("n_samples", 0)
+        
+        # Check for overload during INIT
+        if snap.get("has_overload"):
+            self._C_ceiling = self.config.C_init
+            cooldown = self._calculate_cooldown(snap.get("retry_after"))
+            self._cooldown_until = now + cooldown
+            self.state = PAARCState.BACKOFF
+            print(f"[PAARC] {self.host}: INIT→BACKOFF on error")
             return
-
-        # ========== PROBE_BW PHASE (steady state) ==========
-        elif self.state == self.PROBE_BW:
-            # Exit on overload → enter BACKOFF
-            if had_overload:
-                # Use differentiated backoff based on error type
-                combined_factor, cooldown, err_desc = self._compute_differentiated_backoff(snap)
-                self.ceiling_rate *= combined_factor
-                self._set_rate(self.ceiling_rate * self.headroom, "probe_bw_overload")
-                self._backoff_until = now + cooldown
-                self.state = self.BACKOFF
-                print(f"[PolicyBBR] {self.host}: PROBE_BW→BACKOFF on {err_desc} (factor={combined_factor:.2f})")
-                return
-
-            # If latency degraded, revert any probe and stay in PROBE_BW
-            if latency_degraded and self._probe_prev_rate is not None:
-                self._set_rate(self._probe_prev_rate, "probe_abort_latency")
-                self._probe_prev_rate = None
-
-            # Update policy_bw if stable
-            if not latency_degraded and not had_overload:
-                self.policy_bw = max(self.policy_bw, self.safe_rate)
-
-            # Periodically probe for more bandwidth
-            if now - self._last_probe_time > self.probe_interval_sec:
-                if not latency_degraded and self.safe_rate < self.ceiling_rate:
-                    self._probe_prev_rate = self.safe_rate
-                    probe_rate = min(self.safe_rate * (1.0 + self.probe_increment), self.ceiling_rate)
-                    self._set_rate(probe_rate, "probe_up")
-                    self._last_probe_time = now
-                    print(f"[PolicyBBR] {self.host}: PROBE_BW probing to {probe_rate:.1f}")
-
-            # Periodically enter PROBE_RTT to refresh RTprop
-            if now - self._last_probe_rtt_time > self.probe_interval_sec * 2:
-                self._saved_rate_for_probe_rtt = self.safe_rate
-                self._set_conc(4, "probe_rtt_enter")  # Reduce concurrency to get unqueued RTT
-                self.state = self.PROBE_RTT
-                print(f"[PolicyBBR] {self.host}: PROBE_BW→PROBE_RTT")
+        
+        # Wait for sufficient samples
+        if self._init_samples >= self.config.N_init:
+            rtprop = self.metrics.rtprop
+            avg_size = self.metrics.avg_file_size
+            
+            rtprop_ms = rtprop * 1000 if rtprop else 0
+            avg_size_kb = avg_size / 1024 if avg_size else 0
+            
+            print(f"[PAARC] {self.host}: INIT complete | RTprop={rtprop_ms:.0f}ms | "
+                  f"AvgSize={avg_size_kb:.1f}KB")
+            
+            # Initialize smoother now that we have RTprop
+            self._update_smoother()
+            
+            # Transition to STARTUP
+            self.state = PAARCState.STARTUP
+            print(f"[PAARC] {self.host}: INIT→STARTUP")
+    
+    async def _step_startup(self, snap: dict, now: float) -> None:
+        """
+        STARTUP phase: Discover maximum sustainable concurrency.
+        
+        - Exponential growth: C × γ_startup each interval
+        - Exit on: overload, goodput plateau, C_max, or timeout
+        - Set C_ceiling on exit
+        """
+        self._startup_intervals += 1
+        
+        # Check for overload → BACKOFF
+        if snap.get("has_overload"):
+            # Set ceiling at reduced level
+            self._C_ceiling = max(
+                self.config.C_min,
+                int(self._concurrency * self.config.beta)
+            )
+            self._C_operating = int(self._C_ceiling * self.config.mu)
+            self._set_concurrency(self._C_operating, "startup_overload")
+            
+            cooldown = self._calculate_cooldown(snap.get("retry_after"))
+            self._cooldown_until = now + cooldown
+            self.state = PAARCState.BACKOFF
+            
+            print(f"[PAARC] {self.host}: STARTUP→BACKOFF | C_ceiling={self._C_ceiling}")
             return
-
-        # ========== PROBE_RTT PHASE ==========
-        elif self.state == self.PROBE_RTT:
-            # Overload in PROBE_RTT → enter BACKOFF
-            if had_overload:
-                # Use differentiated backoff based on error type
-                combined_factor, cooldown, err_desc = self._compute_differentiated_backoff(snap)
-                self.ceiling_rate *= combined_factor
-                self._set_rate(self.ceiling_rate * self.headroom, "probe_rtt_overload")
-                self._backoff_until = now + cooldown
-                self.state = self.BACKOFF
-                print(f"[PolicyBBR] {self.host}: PROBE_RTT→BACKOFF on {err_desc} (factor={combined_factor:.2f})")
-                return
-
-            # After one interval, return to PROBE_BW
+        
+        # Check for goodput plateau → PROBE_BW
+        if self.metrics.is_goodput_plateau():
+            self._C_ceiling = self._concurrency
+            self._C_operating = int(self._C_ceiling * self.config.mu)
+            self._set_concurrency(self._C_operating, "startup_plateau")
+            
             self._last_probe_rtt_time = now
-            if self._saved_rate_for_probe_rtt is not None:
-                self._set_rate(self._saved_rate_for_probe_rtt, "probe_rtt_exit")
-            self._derive_concurrency_from_bdp()  # Restore concurrency
-            self.state = self.PROBE_BW
-            print(f"[PolicyBBR] {self.host}: PROBE_RTT→PROBE_BW")
+            self._samples_since_probe_rtt = 0
+            self.state = PAARCState.PROBE_BW
+            
+            print(f"[PAARC] {self.host}: STARTUP→PROBE_BW (plateau) | C_ceiling={self._C_ceiling}")
             return
-
-        # ========== BACKOFF PHASE ==========
-        elif self.state == self.BACKOFF:
-            # If overload persists, use differentiated backoff again
-            if had_overload:
-                combined_factor, cooldown, err_desc = self._compute_differentiated_backoff(snap)
-                self.ceiling_rate *= combined_factor
-                new_rate = max(self.min_rate, self.ceiling_rate * self.headroom)
-                self._set_rate(new_rate, "backoff_continued")
-                # Extend cooldown since we haven't found safe rate yet
-                self._backoff_until = now + cooldown
-                print(f"[PolicyBBR] {self.host}: BACKOFF {err_desc} (factor={combined_factor:.2f}), ceiling→{self.ceiling_rate:.1f}")
-                return
-
-            # Stay in BACKOFF until cooldown expires
-            if now >= self._backoff_until:
-                self._last_probe_time = now
-                self._last_probe_rtt_time = now
-                self.state = self.PROBE_BW
-                print(f"[PolicyBBR] {self.host}: BACKOFF→PROBE_BW after cooldown")
+        
+        # Check for C_max reached → PROBE_BW
+        if self._concurrency >= self.config.C_max:
+            self._C_ceiling = self.config.C_max
+            self._C_operating = int(self._C_ceiling * self.config.mu)
+            self._set_concurrency(self._C_operating, "startup_max")
+            
+            self._last_probe_rtt_time = now
+            self._samples_since_probe_rtt = 0
+            self.state = PAARCState.PROBE_BW
+            
+            print(f"[PAARC] {self.host}: STARTUP→PROBE_BW (max) | C_ceiling={self._C_ceiling}")
             return
+        
+        # Check for timeout → PROBE_BW
+        if self._startup_intervals >= self.config.startup_timeout:
+            self._C_ceiling = self._concurrency
+            self._C_operating = int(self._C_ceiling * self.config.mu)
+            self._set_concurrency(self._C_operating, "startup_timeout")
+            
+            self._last_probe_rtt_time = now
+            self._samples_since_probe_rtt = 0
+            self.state = PAARCState.PROBE_BW
+            
+            print(f"[PAARC] {self.host}: STARTUP→PROBE_BW (timeout) | C_ceiling={self._C_ceiling}")
+            return
+        
+        # Continue exponential growth
+        new_C = int(self._concurrency * self.config.gamma_startup)
+        new_C = min(new_C, self.config.C_max)
+        self._set_concurrency(new_C, "startup_grow")
+    
+    async def _step_probe_bw(self, snap: dict, now: float) -> None:
+        """
+        PROBE_BW phase: Steady-state operation with conservative probing.
+        
+        - Operate at C_operating = C_ceiling × μ
+        - Additive increase after stable intervals
+        - Check for ceiling revision on underperformance
+        - Trigger PROBE_RTT periodically
+        """
+        # Check for overload → BACKOFF
+        if snap.get("has_overload"):
+            # Revise ceiling downward
+            if self._C_ceiling is not None:
+                self._C_ceiling = max(
+                    self.config.C_min,
+                    int(self._C_ceiling * self.config.beta)
+                )
+                self._C_operating = int(self._C_ceiling * self.config.mu)
+            else:
+                self._C_operating = max(
+                    self.config.C_min,
+                    int(self._concurrency * self.config.beta)
+                )
+            
+            self._set_concurrency(self._C_operating, "probe_bw_overload")
+            
+            cooldown = self._calculate_cooldown(snap.get("retry_after"))
+            self._cooldown_until = now + cooldown
+            self.state = PAARCState.BACKOFF
+            
+            print(f"[PAARC] {self.host}: PROBE_BW→BACKOFF | C_ceiling={self._C_ceiling}")
+            return
+        
+        # Check for PROBE_RTT trigger
+        time_since_probe = now - self._last_probe_rtt_time
+        if (time_since_probe > self.config.probe_rtt_period and
+            self._samples_since_probe_rtt > self.config.probe_rtt_min_samples):
+            
+            # Save current concurrency for restoration
+            self._saved_concurrency = self._concurrency
+            
+            # Reduce to 50% of current (BBRv2/v3 style)
+            probe_C = max(
+                self.config.C_min,
+                int(self._concurrency * self.config.probe_rtt_concurrency_factor)
+            )
+            self._set_concurrency(probe_C, "probe_rtt_enter")
+            
+            self.state = PAARCState.PROBE_RTT
+            print(f"[PAARC] {self.host}: PROBE_BW→PROBE_RTT | C={probe_C}")
+            return
+        
+        # Check for latency degradation
+        if self._is_latency_degraded(snap):
+            self._stable_intervals = 0
+            return
+        
+        # Check for ceiling revision (sustained underperformance)
+        self._check_ceiling_revision(snap)
+        
+        # Additive increase after stable intervals
+        self._stable_intervals += 1
+        
+        if self._stable_intervals >= self.config.stable_intervals_required:
+            if self._C_ceiling is not None and self._concurrency < self._C_ceiling:
+                delta = self._calculate_additive_increase()
+                new_C = min(self._concurrency + delta, self._C_ceiling)
+                self._set_concurrency(new_C, "probe_bw_increase")
+                self._stable_intervals = 0
+    
+    def _check_ceiling_revision(self, snap: dict) -> None:
+        """
+        Check for and apply ceiling revision on sustained underperformance.
+        
+        If goodput < expected × 0.70 for 5 consecutive intervals,
+        multiplicatively reduce ceiling.
+        """
+        if self._C_ceiling is None:
+            return
+        
+        rtprop = self._get_rtprop()
+        expected_goodput = self._C_operating / rtprop
+        actual_goodput = snap.get("goodput_rps", 0)
+        
+        if actual_goodput < expected_goodput * self.config.underperformance_threshold:
+            self._underperformance_intervals += 1
+            
+            if self._underperformance_intervals >= self.config.underperformance_intervals:
+                # Multiplicative ceiling revision
+                old_ceiling = self._C_ceiling
+                self._C_ceiling = max(
+                    self.config.C_min,
+                    int(self._C_ceiling * self.config.revision_factor)
+                )
+                self._C_operating = int(self._C_ceiling * self.config.mu)
+                self._set_concurrency(self._C_operating, "ceiling_revision")
+                self._underperformance_intervals = 0
+                
+                print(f"[PAARC] {self.host}: Ceiling revised {old_ceiling}→{self._C_ceiling}")
+        else:
+            self._underperformance_intervals = 0
+    
+    async def _step_probe_rtt(self, snap: dict, now: float) -> None:
+        """
+        PROBE_RTT phase: Refresh RTprop estimate.
+        
+        - Operate at reduced concurrency (50% of normal)
+        - Duration: max(3 × RTprop, 500ms)
+        - Gradual restoration back to operating point
+        """
+        # Check for overload → BACKOFF
+        if snap.get("has_overload"):
+            if self._C_ceiling is not None:
+                self._C_ceiling = max(
+                    self.config.C_min,
+                    int(self._C_ceiling * self.config.beta)
+                )
+                self._C_operating = int(self._C_ceiling * self.config.mu)
+            
+            cooldown = self._calculate_cooldown(snap.get("retry_after"))
+            self._cooldown_until = now + cooldown
+            self.state = PAARCState.BACKOFF
+            
+            print(f"[PAARC] {self.host}: PROBE_RTT→BACKOFF")
+            return
+        
+        # Check if we should start restoration or continue
+        if not self._restoring:
+            # First interval in PROBE_RTT - just collect RTprop samples
+            # Next interval will start restoration
+            self._restoring = True
+            return
+        
+        # Gradual restoration
+        await self._restore_concurrency(now)
+    
+    async def _restore_concurrency(self, now: float) -> None:
+        """
+        Gradually restore concurrency after PROBE_RTT.
+        
+        Restores over n_restore steps, each separated by RTprop.
+        """
+        if self._saved_concurrency is None:
+            self._saved_concurrency = self._C_operating
+        
+        target = self._saved_concurrency
+        current = self._concurrency
+        
+        if current >= target:
+            # Restoration complete
+            self._last_probe_rtt_time = now
+            self._samples_since_probe_rtt = 0
+            self._restoring = False
+            self._saved_concurrency = None
+            self.state = PAARCState.PROBE_BW
+            
+            print(f"[PAARC] {self.host}: PROBE_RTT→PROBE_BW (restored)")
+            return
+        
+        # Calculate step size
+        step = max(1, (target - current) // self.config.n_restore)
+        new_C = min(current + step, target)
+        self._set_concurrency(new_C, "probe_rtt_restore")
+    
+    async def _step_backoff(self, snap: dict, now: float) -> None:
+        """
+        BACKOFF phase: Recover from overload.
+        
+        - Wait for cooldown period
+        - Further reduce on continued errors
+        - Transition to PROBE_BW after recovery
+        """
+        # Check for continued overload
+        if snap.get("has_overload"):
+            # Further multiplicative decrease
+            new_C = max(
+                self.config.C_min,
+                int(self._concurrency * self.config.beta)
+            )
+            self._set_concurrency(new_C, "backoff_continued")
+            
+            # Revise ceiling
+            if self._C_ceiling is not None:
+                self._C_ceiling = max(
+                    self.config.C_min,
+                    int(self._C_ceiling * self.config.beta)
+                )
+            
+            # Extend cooldown
+            cooldown = self._calculate_cooldown(snap.get("retry_after"))
+            self._cooldown_until = now + cooldown
+            
+            print(f"[PAARC] {self.host}: BACKOFF continued | C={new_C}")
+            return
+        
+        # Check if cooldown has expired
+        if now >= self._cooldown_until:
+            # Recover to operating point
+            if self._C_ceiling is not None:
+                self._C_operating = int(self._C_ceiling * self.config.mu)
+            self._set_concurrency(self._C_operating, "backoff_recover")
+            
+            self._last_probe_rtt_time = now
+            self._samples_since_probe_rtt = 0
+            self.state = PAARCState.PROBE_BW
+            
+            print(f"[PAARC] {self.host}: BACKOFF→PROBE_BW | C={self._C_operating}")
 
-class PerHostControllerManager:
-    def __init__(
-        self,
-        *,
-        interval_sec: float,
-        initial_rate: float,
-        min_rate: float,
-        max_rate: float,
-        per_host_conc_init: int,
-        per_host_conc_cap: int,
-        # PolicyBBR parameters
-        startup_growth_factor: float = 1.5,
-        latency_degradation_factor: float = 1.5,
-        latency_degradation_factor_p95: float = 2.0,
-        headroom: float = 0.85,
-        probe_interval_sec: float = 60.0,
-        probe_increment: float = 0.05,
-        bdp_multiplier: float = 1.2,
-        # Differentiated backoff factors
-        backoff_factor_429: float = 0.5,
-        backoff_factor_5xx: float = 0.7,
-        backoff_factor_conn: float = 0.85,
-        backoff_ceiling_factor: float = 0.7,
-        # Differentiated cooldowns
-        cooldown_sec_429: float = 300.0,
-        cooldown_sec_5xx: float = 60.0,
-        cooldown_sec_conn: float = 10.0,
-        backoff_cooldown_sec: float = 30.0,
-        startup_max_intervals: int = 20,
-        # EMA smoothing
-        ttfb_ema_alpha: float = 0.3,
-    ):
-        self.interval_sec = float(interval_sec)
-        self.initial_rate = float(initial_rate)
-        self.min_rate = float(min_rate)
-        self.max_rate = float(max_rate)
-        self.per_host_conc_init = int(per_host_conc_init)
-        self.per_host_conc_cap = int(per_host_conc_cap)
 
-        # PolicyBBR parameters
-        self.startup_growth_factor = float(startup_growth_factor)
-        self.latency_degradation_factor = float(latency_degradation_factor)
-        self.latency_degradation_factor_p95 = float(latency_degradation_factor_p95)
-        self.headroom = float(headroom)
-        self.probe_interval_sec = float(probe_interval_sec)
-        self.probe_increment = float(probe_increment)
-        self.bdp_multiplier = float(bdp_multiplier)
+# =============================================================================
+# PER-HOST CONTROLLER MANAGER
+# =============================================================================
 
-        # Differentiated backoff factors
-        self.backoff_factor_429 = float(backoff_factor_429)
-        self.backoff_factor_5xx = float(backoff_factor_5xx)
-        self.backoff_factor_conn = float(backoff_factor_conn)
-        self.backoff_ceiling_factor = float(backoff_ceiling_factor)
-
-        # Differentiated cooldowns
-        self.cooldown_sec_429 = float(cooldown_sec_429)
-        self.cooldown_sec_5xx = float(cooldown_sec_5xx)
-        self.cooldown_sec_conn = float(cooldown_sec_conn)
-        self.backoff_cooldown_sec = float(backoff_cooldown_sec)
-
-        self.startup_max_intervals = int(startup_max_intervals)
-        self.ttfb_ema_alpha = float(ttfb_ema_alpha)
-
+class HostControllerManager:
+    """
+    Manages PAARC controllers for multiple hosts.
+    
+    Creates and retrieves per-host controllers lazily.
+    Runs the periodic control loop.
+    """
+    
+    def __init__(self, config: PAARCConfig):
+        self.config = config
         self._lock = asyncio.Lock()
-        self._hosts: dict[str, HostPolicyBBRController] = {}
-
-    async def get(self, url: str) -> HostPolicyBBRController:
+        self._controllers: dict[str, PAARCController] = {}
+    
+    async def get_controller(self, url: str) -> PAARCController:
+        """Get or create controller for URL's host."""
         host = urlsplit(url).netloc.lower() or "unknown"
+        
         async with self._lock:
-            if host not in self._hosts:
-                tb = TokenBucket(rate=self.initial_rate)
-                sig = HostSignals(
-                    interval_sec=self.interval_sec,
-                    ttfb_ema_alpha=self.ttfb_ema_alpha
-                )
-                conc = AsyncSemaphoreLimiter(initial=self.per_host_conc_init, cap=self.per_host_conc_cap)
-                self._hosts[host] = HostPolicyBBRController(
-                    host=host,
-                    tb=tb,
-                    conc=conc,
-                    signals=sig,
-                    min_rate=self.min_rate,
-                    max_rate=self.max_rate,
-                    per_host_conc_cap=self.per_host_conc_cap,
-                    # PolicyBBR parameters
-                    startup_growth_factor=self.startup_growth_factor,
-                    latency_degradation_factor=self.latency_degradation_factor,
-                    latency_degradation_factor_p95=self.latency_degradation_factor_p95,
-                    headroom=self.headroom,
-                    probe_interval_sec=self.probe_interval_sec,
-                    probe_increment=self.probe_increment,
-                    bdp_multiplier=self.bdp_multiplier,
-                    # Differentiated backoff factors
-                    backoff_factor_429=self.backoff_factor_429,
-                    backoff_factor_5xx=self.backoff_factor_5xx,
-                    backoff_factor_conn=self.backoff_factor_conn,
-                    backoff_ceiling_factor=self.backoff_ceiling_factor,
-                    # Differentiated cooldowns
-                    cooldown_sec_429=self.cooldown_sec_429,
-                    cooldown_sec_5xx=self.cooldown_sec_5xx,
-                    cooldown_sec_conn=self.cooldown_sec_conn,
-                    backoff_cooldown_sec=self.backoff_cooldown_sec,
-                    startup_max_intervals=self.startup_max_intervals,
-                )
-            return self._hosts[host]
-
-    async def all(self) -> list[HostPolicyBBRController]:
+            if host not in self._controllers:
+                self._controllers[host] = PAARCController(host, self.config)
+                print(f"[PAARC] Created controller for {host}")
+            return self._controllers[host]
+    
+    async def all_controllers(self) -> list[PAARCController]:
+        """Get all active controllers."""
         async with self._lock:
-            return list(self._hosts.values())
+            return list(self._controllers.values())
 
-async def per_host_controller_loop(mgr: PerHostControllerManager, interval_sec: float) -> None:
-    print(f"[PolicyBBR] Per-host controller loop started (interval={interval_sec}s)")
+
+async def controller_loop(manager: HostControllerManager) -> None:
+    """
+    Periodic control loop for all host controllers.
+    
+    Runs step_interval for each controller based on their individual
+    calculated interval durations.
+    """
+    print("[PAARC] Controller loop started")
+    
+    # Use a base interval for checking; individual controllers have their own timing
+    base_interval = 0.2  # 200ms base check interval
+    
     while not shutdown_flag:
-        await asyncio.sleep(interval_sec)
+        await asyncio.sleep(base_interval)
+        
         if shutdown_flag:
             break
-        now = _now()
-        ctrls = await mgr.all()
-        for ctrl in ctrls:
-            snap = await ctrl.signals.finish_interval(now)
-            if snap["total"] == 0:
-                continue
-            
-            # Print error overview if any errors occurred this interval
-            n_overload = snap.get("n_overload", 0)
-            if n_overload > 0:
-                n429 = snap.get("n429", 0)
-                n_conn = snap.get("n_conn_error", 0)
-                n_server = snap.get("n_server_error", 0)
-                total = snap.get("total", 0)
-                breakdown_parts = []
-                if n429 > 0:
-                    breakdown_parts.append(f"429:{n429}")
-                if n_conn > 0:
-                    breakdown_parts.append(f"conn:{n_conn}")
-                if n_server > 0:
-                    breakdown_parts.append(f"5xx/408:{n_server}")
-                breakdown = " | ".join(breakdown_parts) if breakdown_parts else "unknown"
-                rate = ctrl.safe_rate
-                conc = ctrl.conc.get_limit()
-                print(f"[Errors] {ctrl.host}: {n_overload}/{total} errors ({breakdown}) | rate={rate:.1f} req/s, conc={conc}")
-            
-            await ctrl.step_interval(snap, now)
+        
+        controllers = await manager.all_controllers()
+        
+        for ctrl in controllers:
+            try:
+                await ctrl.step_interval()
+            except Exception as e:
+                print(f"[PAARC] Error in controller for {ctrl.host}: {e}")
 
-# ---------------------------
-# Filename allocation
-# ---------------------------
+
+# =============================================================================
+# FILENAME ALLOCATION
+# =============================================================================
 
 class SequentialNamer:
-    """Stable sequential namer keyed by __key__ so retries do not change filenames."""
+    """Stable sequential filename generator."""
+    
     def __init__(self):
         self._lock = asyncio.Lock()
         self._counter = 0
         self._map: dict[str, str] = {}
-
+    
     async def filename_for(self, key: str, url: str) -> str:
+        """Get filename for a key, creating if needed."""
         async with self._lock:
             if key in self._map:
                 return self._map[key]
+            
             _, ext = extract_extension(str(url))
             if not ext:
                 ext = ".jpg"
+            
             self._counter += 1
             fn = f"{self._counter:08d}{ext}"
             self._map[key] = fn
             return fn
 
+
 def render_filename(pattern: str, url: str, key: str) -> str:
+    """Render filename from pattern and URL."""
     seg = [s for s in urlsplit(url).path.split("/") if s]
     ext = Path(urlsplit(url).path).suffix or ""
     safe_key = _sanitize_filename(key)
+    
     env = {"segment": seg, "ext": ext, "key": safe_key}
+    
     try:
         stem = pattern.format(**env)
     except Exception:
         stem = safe_key
+    
     stem = _sanitize_filename(stem)
+    
     if ext and not stem.endswith(ext):
         stem = f"{stem}{ext}"
     if not Path(stem).suffix:
         stem = f"{stem}.jpg"
+    
     return stem
 
-# ---------------------------
-# Download execution (bounded)
-# ---------------------------
+
+# =============================================================================
+# DOWNLOAD EXECUTION
+# =============================================================================
 
 @dataclass
 class DownloadOutcome:
+    """Result of a single download attempt."""
     key: str
     url: str
     success: bool
@@ -1277,45 +1463,47 @@ class DownloadOutcome:
     error: Optional[str]
     bytes_downloaded: int = 0
 
+
 async def download_one(
     *,
     row: pd.Series,
     cfg: Config,
     session: aiohttp.ClientSession,
     total_bytes: list[int],
-    mgr: Optional[PerHostControllerManager],
+    manager: Optional[HostControllerManager],
     sequential_namer: SequentialNamer,
     global_written_paths: dict[str, str],
 ) -> DownloadOutcome:
+    """Execute a single download with PAARC control."""
     url = str(row[cfg.url_col]).strip()
     key = str(row.get("__key__", row.name))
     class_name = str(row[cfg.label_col]) if cfg.label_col is not None else None
-
+    
     # Determine filename
-    filename_override = None
     if cfg.naming_mode == "sequential":
         filename_override = await sequential_namer.filename_for(key, url)
     else:
         filename_override = render_filename(cfg.file_name_pattern, url, key)
-
-    host_ctrl = None
-    if mgr is not None:
-        host_ctrl = await mgr.get(url)
-
-    # Limit per-host concurrency before making the request
-    if host_ctrl is not None:
-        await host_ctrl.conc.acquire()
-
+    
+    # Get host controller if PAARC enabled
+    ctrl: Optional[PAARCController] = None
+    if manager is not None:
+        ctrl = await manager.get_controller(url)
+    
+    # Acquire concurrency slot
+    if ctrl is not None:
+        await ctrl.semaphore.acquire()
+    
+    # Set up tracing context
     trace_dict: dict[str, Any] = {}
     trace_token = TRACE_CTX.set(trace_dict)
-
-    t0 = _now()
+    
     try:
-        # Apply pacing either here OR inside download_single (config switch)
-        if host_ctrl is not None and not cfg.token_bucket_in_download_single:
-            await host_ctrl.tb.acquire()
-
-        # Run the actual download
+        # Apply smoothing if available
+        if ctrl is not None and ctrl.smoother is not None:
+            await ctrl.smoother.acquire()
+        
+        # Execute download
         k, file_path, cls, err, status, retry_after_sec = await download_single(
             url=url,
             key=key,
@@ -1325,39 +1513,38 @@ async def download_one(
             session=session,
             timeout=cfg.timeout_sec,
             filename=filename_override,
-            token_bucket=(host_ctrl.tb if (host_ctrl is not None and cfg.token_bucket_in_download_single) else None),
-            enable_rate_limiting=bool(host_ctrl is not None and cfg.token_bucket_in_download_single),
+            token_bucket=None,
+            enable_rate_limiting=False,
             total_bytes=total_bytes,
         )
-
+        
+        # Get bytes downloaded
         bytes_dl = 0
         if err is None and file_path and os.path.exists(file_path):
             try:
                 bytes_dl = os.path.getsize(file_path)
             except Exception:
                 bytes_dl = 0
-
-        # Per-host signal recording (TTFB + 429 ratio + connection errors + Retry-After)
-        # Use the same _is_connection_error logic as _is_retryable for consistency
+        
+        # Record metrics
         is_conn_error = _is_connection_error(err)
-        if host_ctrl is not None:
-            await host_ctrl.signals.record(
+        if ctrl is not None:
+            await ctrl.metrics.record(
                 status_code=status,
                 ttfb=trace_dict.get("ttfb"),
                 bytes_downloaded=bytes_dl,
                 is_conn_error=is_conn_error,
-                retry_after_sec=retry_after_sec
+                retry_after_sec=retry_after_sec,
             )
-
-
-        # Collision detection: track written paths across attempts
+        
+        # Track written paths for collision detection
         if err is None and file_path:
             prev = global_written_paths.get(file_path)
             if prev is not None and prev != key:
-                print(f"[Warning] Filename collision: {file_path} (prev key={prev}, current key={key})")
+                print(f"[Warning] Filename collision: {file_path}")
             else:
                 global_written_paths[file_path] = key
-
+        
         return DownloadOutcome(
             key=str(k),
             url=url,
@@ -1368,72 +1555,84 @@ async def download_one(
             error=str(err) if err is not None else None,
             bytes_downloaded=bytes_dl,
         )
-
+    
     finally:
         TRACE_CTX.reset(trace_token)
-        if host_ctrl is not None:
-            await host_ctrl.conc.release()
+        if ctrl is not None:
+            await ctrl.semaphore.release()
+
 
 async def download_batch_bounded(
     *,
     cfg: Config,
     session: aiohttp.ClientSession,
     df: pd.DataFrame,
-    mgr: Optional[PerHostControllerManager],
+    manager: Optional[HostControllerManager],
     sequential_namer: SequentialNamer,
     global_written_paths: dict[str, str],
 ) -> dict[str, DownloadOutcome]:
     """
-    Bounded scheduler:
-      - enqueue rows
-      - spawn cfg.concurrent_downloads workers
-      - each worker processes one row at a time
+    Bounded batch download scheduler.
+    
+    Uses a queue with N worker tasks for bounded parallelism.
     """
     q: asyncio.Queue[pd.Series] = asyncio.Queue()
     for _, row in df.iterrows():
         q.put_nowait(row)
-
+    
     total_bytes: list[int] = []
     outcomes: dict[str, DownloadOutcome] = {}
-    pbar = tqdm(total=len(df), desc="URLs", unit="url")
-
+    pbar = tqdm(total=len(df), desc="Downloading", unit="url")
+    
     async def worker():
         while not shutdown_flag:
             try:
                 row = q.get_nowait()
             except asyncio.QueueEmpty:
                 return
+            
             out = await download_one(
                 row=row,
                 cfg=cfg,
                 session=session,
                 total_bytes=total_bytes,
-                mgr=mgr,
+                manager=manager,
                 sequential_namer=sequential_namer,
                 global_written_paths=global_written_paths,
             )
+            
             outcomes[out.key] = out
             q.task_done()
             pbar.update(1)
-
-    workers = [asyncio.create_task(worker()) for _ in range(max(1, int(cfg.concurrent_downloads)))]
+    
+    workers = [
+        asyncio.create_task(worker())
+        for _ in range(max(1, cfg.concurrent_downloads))
+    ]
+    
     await asyncio.gather(*workers)
     pbar.close()
-
+    
     return outcomes
 
-# ---------------------------
-# Tar + overview
-# ---------------------------
+
+# =============================================================================
+# TAR AND OVERVIEW
+# =============================================================================
 
 def create_tar(output_folder: str) -> str:
+    """Create tar.gz archive of output folder."""
     out = Path(output_folder)
     tar_path = out.with_suffix(out.suffix + ".tar.gz") if out.suffix else Path(str(out) + ".tar.gz")
+    
     if not out.exists():
         raise FileNotFoundError(f"Output folder not found: {out}")
+    
     with tarfile.open(str(tar_path), "w:gz") as tf:
         tf.add(str(out), arcname=out.name)
+    
     return str(tar_path.resolve())
+
 
 def write_overview(
     *,
@@ -1443,15 +1642,17 @@ def write_overview(
     elapsed_sec: float,
     tar_path: Optional[str],
 ) -> str:
+    """Write JSON overview report."""
     successes = [o for o in outcomes.values() if o.success]
     failures = [o for o in outcomes.values() if not o.success]
     err_counter = Counter((o.status_code, o.error) for o in failures)
-
+    
     total_bytes = sum(o.bytes_downloaded for o in successes)
     mb = total_bytes / 1e6
     speed_MBps = (mb / elapsed_sec) if elapsed_sec > 0 else 0.0
-
+    
     report = {
+        "paarc_version": "2.0.0",
         "script_inputs": {
             "input": cfg.input_path,
             "input_format": cfg.input_format,
@@ -1461,36 +1662,20 @@ def write_overview(
             "label_column": cfg.label_col,
             "concurrent_downloads": cfg.concurrent_downloads,
             "timeout_sec": cfg.timeout_sec,
-            "enable_polite_controller": cfg.enable_polite_controller,
-            "initial_rate": cfg.initial_rate,
-            "min_rate": cfg.min_rate,
-            "max_rate": cfg.max_rate,
-            "per_host_conc_init": cfg.per_host_conc_init,
-            "per_host_conc_cap": cfg.per_host_conc_cap,
-            "control_interval_sec": cfg.control_interval_sec,
-            "startup_growth_factor": cfg.startup_growth_factor,
-            "latency_degradation_factor": cfg.latency_degradation_factor,
-            "latency_degradation_factor_p95": cfg.latency_degradation_factor_p95,
-            "headroom": cfg.headroom,
-            "probe_interval_sec": cfg.probe_interval_sec,
-            "probe_increment": cfg.probe_increment,
-            "bdp_multiplier": cfg.bdp_multiplier,
-            # Differentiated backoff factors
-            "backoff_factor_429": cfg.backoff_factor_429,
-            "backoff_factor_5xx": cfg.backoff_factor_5xx,
-            "backoff_factor_conn": cfg.backoff_factor_conn,
-            "backoff_ceiling_factor": cfg.backoff_ceiling_factor,
-            # Differentiated cooldowns
-            "cooldown_sec_429": cfg.cooldown_sec_429,
-            "cooldown_sec_5xx": cfg.cooldown_sec_5xx,
-            "cooldown_sec_conn": cfg.cooldown_sec_conn,
-            "backoff_cooldown_sec": cfg.backoff_cooldown_sec,
-            "startup_max_intervals": cfg.startup_max_intervals,
-            "ttfb_ema_alpha": cfg.ttfb_ema_alpha,
+            "enable_paarc": cfg.enable_paarc,
+            "paarc_config": {
+                "C_init": cfg.C_init,
+                "C_min": cfg.C_min,
+                "C_max": cfg.C_max,
+                "mu": cfg.mu,
+                "gamma_startup": cfg.gamma_startup,
+                "gamma_probe": cfg.gamma_probe,
+                "beta": cfg.beta,
+                "theta_50": cfg.theta_50,
+                "theta_95": cfg.theta_95,
+            },
             "max_retry_attempts": cfg.max_retry_attempts,
             "naming_mode": cfg.naming_mode,
-            "file_name_pattern": cfg.file_name_pattern,
-            "token_bucket_in_download_single": cfg.token_bucket_in_download_single,
         },
         "summary": {
             "total_urls": df_total,
@@ -1504,101 +1689,88 @@ def write_overview(
             "tar_path": tar_path,
         },
         "error_breakdown": [
-            {
-                "status_code": sc,
-                "error": err,
-                "count": cnt,
-            }
+            {"status_code": sc, "error": err, "count": cnt}
             for (sc, err), cnt in err_counter.most_common()
         ],
         "timestamp_local": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()),
     }
-
+    
     out = Path(cfg.output_folder)
     overview_path = out.with_name(out.name + "_overview.json")
+    
     with overview_path.open("w") as f:
         json.dump(report, f, indent=2)
+    
     return str(overview_path.resolve())
 
-# ---------------------------
-# Main
-# ---------------------------
+
+# =============================================================================
+# MAIN
+# =============================================================================
 
 async def main() -> None:
+    """Main entry point."""
     cfg = parse_args()
-
+    
+    print("=" * 72)
+    print("FLOW-DC Batch Downloader with PAARC v2.0")
+    print("=" * 72)
+    
+    # Load and validate input
     df = validate_and_load(cfg)
     print(f"[Load] URLs after filtering: {len(df)}")
-
-    mgr: Optional[PerHostControllerManager] = None
+    
+    # Initialize PAARC controller manager if enabled
+    manager: Optional[HostControllerManager] = None
     ctrl_task: Optional[asyncio.Task] = None
-    if cfg.enable_polite_controller:
-        mgr = PerHostControllerManager(
-            interval_sec=cfg.control_interval_sec,
-            initial_rate=cfg.initial_rate,
-            min_rate=cfg.min_rate,
-            max_rate=cfg.max_rate,
-            per_host_conc_init=cfg.per_host_conc_init,
-            per_host_conc_cap=cfg.per_host_conc_cap,
-            # PolicyBBR parameters
-            startup_growth_factor=cfg.startup_growth_factor,
-            latency_degradation_factor=cfg.latency_degradation_factor,
-            latency_degradation_factor_p95=cfg.latency_degradation_factor_p95,
-            headroom=cfg.headroom,
-            probe_interval_sec=cfg.probe_interval_sec,
-            probe_increment=cfg.probe_increment,
-            bdp_multiplier=cfg.bdp_multiplier,
-            # Differentiated backoff factors
-            backoff_factor_429=cfg.backoff_factor_429,
-            backoff_factor_5xx=cfg.backoff_factor_5xx,
-            backoff_factor_conn=cfg.backoff_factor_conn,
-            backoff_ceiling_factor=cfg.backoff_ceiling_factor,
-            # Differentiated cooldowns
-            cooldown_sec_429=cfg.cooldown_sec_429,
-            cooldown_sec_5xx=cfg.cooldown_sec_5xx,
-            cooldown_sec_conn=cfg.cooldown_sec_conn,
-            backoff_cooldown_sec=cfg.backoff_cooldown_sec,
-            startup_max_intervals=cfg.startup_max_intervals,
-            ttfb_ema_alpha=cfg.ttfb_ema_alpha,
-        )
-        ctrl_task = asyncio.create_task(per_host_controller_loop(mgr, cfg.control_interval_sec))
-
+    
+    if cfg.enable_paarc:
+        paarc_config = cfg.to_paarc_config()
+        manager = HostControllerManager(paarc_config)
+        ctrl_task = asyncio.create_task(controller_loop(manager))
+        print(f"[PAARC] Enabled | C_init={paarc_config.C_init} | μ={paarc_config.mu}")
+    else:
+        print("[PAARC] Disabled - using fixed concurrency")
+    
+    # Configure aiohttp
     connector = aiohttp.TCPConnector(
-        limit=max(50, int(cfg.concurrent_downloads * 2)),
+        limit=max(50, cfg.concurrent_downloads * 2),
         ttl_dns_cache=300,
         use_dns_cache=True,
     )
     trace_config = build_trace_config()
-
+    
     sequential_namer = SequentialNamer()
     global_written_paths: dict[str, str] = {}
     final_outcomes: dict[str, DownloadOutcome] = {}
-
-    start = time.monotonic()
+    
+    start = _monotonic()
+    
     try:
         async with aiohttp.ClientSession(
             connector=connector,
             timeout=aiohttp.ClientTimeout(total=max(1, cfg.timeout_sec * 2)),
-            headers={"User-Agent": "FLOW-DC-ImageDownloader/2.0"},
+            headers={"User-Agent": "FLOW-DC/2.0 PAARC/2.0"},
             trace_configs=[trace_config],
         ) as session:
             current_df = df.copy()
             attempt = 1
-
+            
             while attempt <= cfg.max_retry_attempts and not current_df.empty and not shutdown_flag:
-                print(f"\n[Attempt {attempt}] processing {len(current_df)} URLs...")
+                print(f"\n[Attempt {attempt}] Processing {len(current_df)} URLs...")
+                
                 outcomes = await download_batch_bounded(
                     cfg=cfg,
                     session=session,
                     df=current_df,
-                    mgr=mgr,
+                    manager=manager,
                     sequential_namer=sequential_namer,
                     global_written_paths=global_written_paths,
                 )
-
-                # Merge outcomes, overwriting older attempts for the same key
+                
+                # Merge outcomes
                 final_outcomes.update(outcomes)
-
+                
                 # Build retry set
                 retry_rows = []
                 for _, row in current_df.iterrows():
@@ -1610,62 +1782,74 @@ async def main() -> None:
                         continue
                     if _is_retryable(out.status_code, out.error):
                         retry_rows.append(row)
-
-                # Per-attempt summary
+                
+                # Summary
                 succ = sum(1 for o in outcomes.values() if o.success)
                 fail = sum(1 for o in outcomes.values() if not o.success)
                 retryable = len(retry_rows)
-                print(f"[Attempt {attempt}] success={succ} fail={fail} retryable={retryable}")
-
+                print(f"[Attempt {attempt}] Success={succ} Failed={fail} Retryable={retryable}")
+                
                 if retry_rows and attempt < cfg.max_retry_attempts and not shutdown_flag:
                     await asyncio.sleep(cfg.retry_backoff_sec)
                     current_df = pd.DataFrame(retry_rows)
                     attempt += 1
                 else:
                     break
-
+    
     finally:
         if ctrl_task is not None:
             ctrl_task.cancel()
-            with contextlib.suppress(Exception):
-                if ctrl_task is not None:
-                    ctrl_task.cancel()
-                    with contextlib.suppress(asyncio.CancelledError):
-                        await ctrl_task
-
-    elapsed = time.monotonic() - start
-
+            with contextlib.suppress(asyncio.CancelledError):
+                await ctrl_task
+    
+    elapsed = _monotonic() - start
+    
     # Final summary
     successes = [o for o in final_outcomes.values() if o.success]
     failures = [o for o in final_outcomes.values() if not o.success]
+    
     print("\n" + "=" * 72)
-    print("FINAL STATUS SUMMARY")
+    print("FINAL SUMMARY")
     print("=" * 72)
-    print(f"Total URLs in input:   {len(df)}")
+    print(f"Total URLs:            {len(df)}")
     print(f"Successful downloads:  {len(successes)}")
-    print(f"Permanent failures:    {len(failures)}")
-    print(f"Elapsed time (sec):    {elapsed:.2f}")
+    print(f"Failed downloads:      {len(failures)}")
+    print(f"Elapsed time:          {elapsed:.2f}s")
     if len(df) > 0:
         print(f"Success rate:          {(len(successes) / len(df)) * 100:.2f}%")
-
-    # Tar + overview
+    
+    total_mb = sum(o.bytes_downloaded for o in successes) / 1e6
+    print(f"Total downloaded:      {total_mb:.2f} MB")
+    if elapsed > 0:
+        print(f"Average speed:         {total_mb / elapsed:.2f} MB/s")
+    
+    # Create tar archive
     tar_path = None
-    if cfg.create_tar and (not shutdown_flag) and len(successes) > 0:
+    if cfg.create_tar and not shutdown_flag and len(successes) > 0:
         try:
             tar_path = create_tar(cfg.output_folder)
             print(f"[Tar] Created: {tar_path}")
         except Exception as e:
             print(f"[Tar] Failed: {e}")
-
+    
+    # Write overview
     if cfg.create_overview:
         try:
-            overview = write_overview(cfg=cfg, df_total=len(df), outcomes=final_outcomes, elapsed_sec=elapsed, tar_path=tar_path)
+            overview = write_overview(
+                cfg=cfg,
+                df_total=len(df),
+                outcomes=final_outcomes,
+                elapsed_sec=elapsed,
+                tar_path=tar_path,
+            )
             print(f"[Report] Overview: {overview}")
         except Exception as e:
-            print(f"[Report] Failed to write overview: {e}")
+            print(f"[Report] Failed: {e}")
+    
+    print("=" * 72)
+
 
 if __name__ == "__main__":
-    import contextlib
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
