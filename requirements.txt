@@ -1,0 +1,23 @@
+# FLOW-DC Requirements
+# For full functionality with TaskVine, use environment.yml with conda instead
+
+# Data Processing
+polars>=0.20
+pandas>=2.0
+numpy>=1.24
+pyarrow>=14.0
+
+# Async HTTP
+aiohttp>=3.9
+
+# Progress & CLI
+tqdm>=4.66
+
+# Web UI
+nicegui>=1.4
+
+# Optional: Distributed Workflow (better installed via conda)
+# ndcctools>=7.14
+
+# Optional: Cloud Storage - iRODS/CyVerse (better installed via conda)
+# gocommands

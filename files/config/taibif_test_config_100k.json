@@ -1,0 +1,36 @@
+{
+  "input": "files/input/gbif_url_10000.parquet",
+  "input_format": "parquet",
+  "output": "files/output/gbif_url_10000",
+  "output_format": "imagefolder",
+
+  "url": "url",
+  "label": "species",
+
+  "concurrent_downloads": 500,
+  "timeout": 30,
+
+  "enable_paarc": true,
+
+  "C_init": 8,
+  "C_min": 2,
+  "C_max": 200,
+  "mu": 0.8,
+  "gamma_startup": 1.25,
+  "gamma_probe": 0.05,
+  "beta": 0.7,
+  "theta_50": 1.5,
+  "theta_95": 2.0,
+  "probe_rtt_period": 30.0,
+  "cooldown_floor": 2.0,
+  "alpha_ema": 0.3,
+
+  "max_retry_attempts": 3,
+  "retry_backoff_sec": 2.0,
+
+  "naming_mode": "sequential",
+  "file_name_pattern": "{segment[-2]}",
+
+  "create_tar": false,
+  "create_overview": true
+}

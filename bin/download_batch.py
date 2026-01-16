@@ -1141,7 +1141,7 @@ class PAARCController:
 
         Returns +1 for conservative fine-tuning in steady state.
         """
-        return 1
+        return 10
     
     async def step_interval(self) -> None:
         """
@@ -1305,7 +1305,7 @@ class PAARCController:
             return
 
         # Additive growth (+1 per interval)
-        new_C = self._concurrency + 1
+        new_C = self._concurrency + 10
         new_C = min(new_C, self.config.C_max)
         self._set_concurrency(new_C, "startup_grow")
     
