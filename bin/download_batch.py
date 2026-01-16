@@ -214,7 +214,7 @@ class PAARCConfig:
     
     # --- Smoothing ---
     alpha_ema: float = 0.3              # EMA smoothing factor
-    rtprop_window: float = 10.0         # RTprop tracking window (seconds)
+    rtprop_window: float = 11.0         # RTprop tracking window (seconds)
 
 
 @dataclass(frozen=True)
@@ -697,10 +697,15 @@ class HostMetrics:
             return new_value
         return self.config.alpha_ema * new_value + (1 - self.config.alpha_ema) * current
     
-    async def finish_interval(self) -> dict[str, Any]:
+    async def finish_interval(self, allow_rtprop_update: bool = True) -> dict[str, Any]:
         """
         Finalize interval and compute statistics.
-        
+
+        Args:
+            allow_rtprop_update: If True (INIT/PROBE_RTT phases), add all p10 samples
+                to the RTprop window. If False (other phases), only accept new minimums
+                to avoid polluting RTprop with inflated samples from high-concurrency periods.
+
         Returns a snapshot dict with all metrics for controller decisions.
         """
         async with self._lock:
@@ -750,13 +755,23 @@ class HostMetrics:
         self._ema_p95 = self._update_ema(self._ema_p95, p95_raw)
         
         # Update RTprop (minimum p10 over sliding window)
+        # BBR-style: only fully update during INIT/PROBE_RTT; otherwise only accept new minimums
         old_rtprop = self._rtprop
         if p10_raw is not None:
-            self._rtprop_samples.append((now, p10_raw))
-            # Expire old samples
+            # Always expire old samples to maintain window
             cutoff = now - self.config.rtprop_window
             while self._rtprop_samples and self._rtprop_samples[0][0] < cutoff:
                 self._rtprop_samples.popleft()
+
+            if allow_rtprop_update:
+                # INIT/PROBE_RTT: Add all samples to window for full RTprop discovery
+                self._rtprop_samples.append((now, p10_raw))
+            else:
+                # STARTUP/PROBE_BW/BACKOFF: Only add if it's a new minimum
+                # This prevents inflated samples from polluting RTprop
+                if self._rtprop is None or p10_raw < self._rtprop:
+                    self._rtprop_samples.append((now, p10_raw))
+
             # RTprop is minimum p10 in window
             if self._rtprop_samples:
                 self._rtprop = min(s[1] for s in self._rtprop_samples)
@@ -768,7 +783,8 @@ class HostMetrics:
                 p50_ms = (self._ema_p50 or 0) * 1000
                 p95_ms = (self._ema_p95 or 0) * 1000
                 avg_kb = (self._avg_file_size or 0) / 1024
-                print(f"[PAARC] {self.host}: RTprop updated → {rtprop_ms:.0f}ms | "
+                update_type = "full" if allow_rtprop_update else "new_min"
+                print(f"[PAARC] {self.host}: RTprop updated ({update_type}) → {rtprop_ms:.0f}ms | "
                       f"p10={p10_ms:.0f}ms p50={p50_ms:.0f}ms p95={p95_ms:.0f}ms | "
                       f"AvgSize={avg_kb:.1f}KB | Samples={self._total_samples}")
 
@@ -1037,13 +1053,18 @@ class PAARCController:
     async def step_interval(self) -> None:
         """
         Execute one control interval step.
-        
+
         Called periodically by the controller loop.
         """
         now = _monotonic()
-        
+
+        # Determine if RTprop should be fully updated based on current state
+        # Only INIT and PROBE_RTT phases should fully update RTprop
+        # Other phases only accept new minimums to avoid pollution from inflated samples
+        allow_rtprop_update = self.state in (PAARCState.INIT, PAARCState.PROBE_RTT)
+
         # Get interval snapshot
-        snap = await self.metrics.finish_interval()
+        snap = await self.metrics.finish_interval(allow_rtprop_update=allow_rtprop_update)
         
         # Update samples since PROBE_RTT
         self._samples_since_probe_rtt += snap.get("n_samples", 0)
