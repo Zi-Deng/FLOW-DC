@@ -563,7 +563,7 @@ class AdaptiveSemaphore:
         """Release a slot."""
         async with self._cond:
             self._inflight = max(0, self._inflight - 1)
-            self._cond.notify_all()
+            self._cond.notify(1)  # Only wake ONE waiter (fixes thundering herd)
     
     @property
     def limit(self) -> int:
@@ -583,6 +583,14 @@ class AdaptiveSemaphore:
             self._limit = new_limit
             reason_str = f" ({reason})" if reason else ""
             print(f"[PAARC] Concurrency: {old} → {new_limit}{reason_str}")
+            # Notify waiters if limit increased (fixes stalled limit increases)
+            if new_limit > old:
+                asyncio.create_task(self._notify_waiters(new_limit - old))
+
+    async def _notify_waiters(self, count: int) -> None:
+        """Wake up waiters when limit increases."""
+        async with self._cond:
+            self._cond.notify(count)
 
 
 # =============================================================================
@@ -622,14 +630,18 @@ class LeakyBucketSmoother:
     
     async def acquire(self) -> None:
         """Wait if necessary to maintain smooth request spacing."""
+        # Calculate wait time while holding lock, then sleep OUTSIDE the lock
+        # This fixes the serialization bug where lock was held during sleep
         async with self._lock:
             now = _monotonic()
             elapsed = now - self._last_request_time
-            
-            if elapsed < self._min_delay:
-                await asyncio.sleep(self._min_delay - elapsed)
-            
-            self._last_request_time = _monotonic()
+            wait_time = max(0.0, self._min_delay - elapsed)
+            # Reserve our slot by setting the expected request time
+            self._last_request_time = now + wait_time
+
+        # Sleep outside the lock to allow other tasks to acquire slots
+        if wait_time > 0:
+            await asyncio.sleep(wait_time)
     
     @property
     def implied_rate(self) -> float:
@@ -930,6 +942,7 @@ class PAARCController:
         # PROBE_BW phase
         self._stable_intervals = 0
         self._underperformance_intervals = 0
+        self._was_latency_degraded = False  # Track previous state to reduce log spam
         
         # PROBE_RTT phase
         self._last_probe_rtt_time: float = 0.0
@@ -1027,8 +1040,8 @@ class PAARCController:
 
         degraded = p50_degraded or p95_degraded
 
-        # Log when degradation detected
-        if degraded:
+        # Log only on state transition (not-degraded → degraded) to reduce spam
+        if degraded and not self._was_latency_degraded:
             p50_str = f"{p50:.3f}" if p50 is not None else "None"
             p95_str = f"{p95:.3f}" if p95 is not None else "None"
             print(f"[PAARC] {self.host}: PROBE_BW latency degraded | "
@@ -1036,6 +1049,7 @@ class PAARCController:
                   f"p50={p50_str}s (thresh={p50_threshold:.3f}s) | "
                   f"p95={p95_str}s (thresh={p95_threshold:.3f}s)")
 
+        self._was_latency_degraded = degraded
         return degraded
 
     def _is_latency_plateau(self, snap: dict) -> bool:
@@ -1391,17 +1405,23 @@ class PAARCController:
     def _check_ceiling_revision(self, snap: dict) -> None:
         """
         Check for and apply ceiling revision on sustained underperformance.
-        
+
         If goodput < expected × 0.70 for 5 consecutive intervals,
         multiplicatively reduce ceiling.
         """
         if self._C_ceiling is None:
             return
-        
+
+        actual_goodput = snap.get("goodput_rps", 0)
+
+        # Don't revise ceiling if goodput is suspiciously low (<1 req/s)
+        # This likely indicates a client-side bottleneck, not server issue
+        if actual_goodput < 1.0:
+            return
+
         rtprop = self._get_rtprop()
         expected_goodput = self._C_operating / rtprop
-        actual_goodput = snap.get("goodput_rps", 0)
-        
+
         if actual_goodput < expected_goodput * self.config.underperformance_threshold:
             self._underperformance_intervals += 1
             
@@ -1479,8 +1499,9 @@ class PAARCController:
             print(f"[PAARC] {self.host}: PROBE_RTT→PROBE_BW (restored)")
             return
         
-        # Calculate step size
-        step = max(1, (target - current) // self.config.n_restore)
+        # Calculate step size - use 2 steps for faster restoration
+        # (Previously used n_restore=5 which took 14+ seconds)
+        step = max(1, (target - current) // 2)
         new_C = min(current + step, target)
         self._set_concurrency(new_C, "probe_rtt_restore")
     
