@@ -82,22 +82,51 @@ shutdown_requested = False
 # -----------------------------------------
 
 DEFAULT_CONFIG = {
+    # Input/Output
     "input_path": "",
     "input_format": "parquet",
     "output_folder": "",
     "output_format": "imagefolder",
-    "url_col": "photo_url",
+
+    # Column mapping
+    "url_col": "url",
     "label_col": "",
-    "concurrent_downloads": 256,
+
+    # Download settings
+    "concurrent_downloads": 1000,
     "timeout_sec": 30,
-    "enable_polite_controller": True,
-    "initial_rate": 100.0,
-    "min_rate": 1.0,
-    "max_rate": 10000.0,
-    "per_host_conc_init": 16,
-    "per_host_conc_cap": 256,
-    "control_interval_sec": 5.0,
+
+    # PAARC toggle
+    "enable_paarc": True,
+
+    # PAARC concurrency bounds
+    "C_init": 8,
+    "C_min": 2,
+    "C_max": 2000,
+
+    # PAARC utilization and backoff
+    "mu": 1.0,
+    "beta": 0.7,
+
+    # PAARC latency thresholds
+    "theta_50": 1.5,
+    "theta_95": 2.0,
+    "startup_theta_50": 3.0,
+    "startup_theta_95": 4.0,
+
+    # PAARC timing
+    "probe_rtt_period": 30.0,
+    "rtprop_window": 35.0,
+    "cooldown_floor": 2.0,
+
+    # PAARC smoothing
+    "alpha_ema": 0.3,
+
+    # Retry settings
     "max_retry_attempts": 3,
+    "retry_backoff_sec": 2.0,
+
+    # Output options
     "naming_mode": "sequential",
     "create_tar": False,
     "create_overview": True,
@@ -128,20 +157,30 @@ class UIState:
                 "url": "url_col",
                 "label": "label_col",
                 "timeout": "timeout_sec",
-                "control_interval_sec": "control_interval_sec",
             }
 
             for json_key, config_key in mapping.items():
                 if json_key in data:
                     self.config[config_key] = data[json_key]
 
-            # Direct mappings
+            # Direct mappings for PAARC parameters
             direct_keys = [
                 "input_format", "output_format", "concurrent_downloads",
-                "enable_polite_controller", "initial_rate", "min_rate",
-                "max_rate", "per_host_conc_init", "per_host_conc_cap",
-                "control_interval_sec", "max_retry_attempts", "naming_mode",
-                "create_tar", "create_overview"
+                "enable_paarc",
+                # PAARC concurrency bounds
+                "C_init", "C_min", "C_max",
+                # PAARC utilization and backoff
+                "mu", "beta",
+                # PAARC latency thresholds
+                "theta_50", "theta_95", "startup_theta_50", "startup_theta_95",
+                # PAARC timing
+                "probe_rtt_period", "rtprop_window", "cooldown_floor",
+                # PAARC smoothing
+                "alpha_ema",
+                # Retry settings
+                "max_retry_attempts", "retry_backoff_sec",
+                # Output options
+                "naming_mode", "create_tar", "create_overview"
             ]
             for key in direct_keys:
                 if key in data:
@@ -154,24 +193,53 @@ class UIState:
     def save_config_file(self, filepath: str) -> bool:
         """Save configuration to JSON file."""
         try:
-            # Map config keys back to JSON format
+            # Map config keys back to JSON format (compatible with download_batch.py)
             data = {
+                # Input/Output
                 "input": self.config["input_path"],
                 "input_format": self.config["input_format"],
                 "output": self.config["output_folder"],
                 "output_format": self.config["output_format"],
+
+                # Column mapping
                 "url": self.config["url_col"],
                 "label": self.config["label_col"] if self.config["label_col"] else None,
+
+                # Download settings
                 "concurrent_downloads": self.config["concurrent_downloads"],
                 "timeout": self.config["timeout_sec"],
-                "enable_polite_controller": self.config["enable_polite_controller"],
-                "initial_rate": self.config["initial_rate"],
-                "min_rate": self.config["min_rate"],
-                "max_rate": self.config["max_rate"],
-                "per_host_conc_init": self.config["per_host_conc_init"],
-                "per_host_conc_cap": self.config["per_host_conc_cap"],
-                "control_interval_sec": self.config["control_interval_sec"],
+
+                # PAARC toggle
+                "enable_paarc": self.config["enable_paarc"],
+
+                # PAARC concurrency bounds
+                "C_init": self.config["C_init"],
+                "C_min": self.config["C_min"],
+                "C_max": self.config["C_max"],
+
+                # PAARC utilization and backoff
+                "mu": self.config["mu"],
+                "beta": self.config["beta"],
+
+                # PAARC latency thresholds
+                "theta_50": self.config["theta_50"],
+                "theta_95": self.config["theta_95"],
+                "startup_theta_50": self.config["startup_theta_50"],
+                "startup_theta_95": self.config["startup_theta_95"],
+
+                # PAARC timing
+                "probe_rtt_period": self.config["probe_rtt_period"],
+                "rtprop_window": self.config["rtprop_window"],
+                "cooldown_floor": self.config["cooldown_floor"],
+
+                # PAARC smoothing
+                "alpha_ema": self.config["alpha_ema"],
+
+                # Retry settings
                 "max_retry_attempts": self.config["max_retry_attempts"],
+                "retry_backoff_sec": self.config["retry_backoff_sec"],
+
+                # Output options
                 "naming_mode": self.config["naming_mode"],
                 "create_tar": self.config["create_tar"],
                 "create_overview": self.config["create_overview"],
@@ -230,14 +298,16 @@ async def run_download_job():
             # Simulate rate changes
             job_status.current_rate = random.uniform(80, 150)
 
-            # Simulate policy state transitions
+            # Simulate PAARC state transitions
             progress = job_status.progress
-            if progress < 10:
+            if progress < 5:
+                job_status.policy_state = "INIT"
+            elif progress < 15:
                 job_status.policy_state = "STARTUP"
-            elif progress < 20:
-                job_status.policy_state = "DRAIN"
-            elif progress < 90:
+            elif progress < 85:
                 job_status.policy_state = "PROBE_BW"
+            elif progress < 90:
+                job_status.policy_state = "PROBE_RTT"
             else:
                 job_status.policy_state = "PROBE_BW"
 
@@ -415,55 +485,91 @@ def create_config_panel():
                             value=ui_state.config['create_overview']
                         ).bind_value(ui_state.config, 'create_overview')
 
-            # Rate Control Tab
+            # Rate Control Tab (PAARC)
             with ui.tab_panel(rate_tab):
                 with ui.column().classes('w-full gap-4'):
                     ui.checkbox(
-                        'Enable PolicyBBR Rate Control',
-                        value=ui_state.config['enable_polite_controller']
-                    ).bind_value(ui_state.config, 'enable_polite_controller')
+                        'Enable PAARC Rate Control',
+                        value=ui_state.config['enable_paarc']
+                    ).bind_value(ui_state.config, 'enable_paarc')
 
-                    ui.label('Rate Limits').classes('text-lg font-semibold mt-2')
-
-                    with ui.row().classes('w-full gap-4'):
-                        ui.number(
-                            label='Initial Rate (req/s)',
-                            value=ui_state.config['initial_rate'],
-                            min=1, max=100000
-                        ).classes('flex-grow').bind_value(ui_state.config, 'initial_rate')
-
-                        ui.number(
-                            label='Min Rate (req/s)',
-                            value=ui_state.config['min_rate'],
-                            min=0.1, max=1000
-                        ).classes('flex-grow').bind_value(ui_state.config, 'min_rate')
-
-                        ui.number(
-                            label='Max Rate (req/s)',
-                            value=ui_state.config['max_rate'],
-                            min=1, max=100000
-                        ).classes('flex-grow').bind_value(ui_state.config, 'max_rate')
-
-                    ui.label('Per-Host Concurrency').classes('text-lg font-semibold mt-4')
+                    ui.label('Concurrency Bounds').classes('text-lg font-semibold mt-2')
 
                     with ui.row().classes('w-full gap-4'):
                         ui.number(
-                            label='Initial Concurrency',
-                            value=ui_state.config['per_host_conc_init'],
+                            label='C_init (Initial)',
+                            value=ui_state.config['C_init'],
                             min=1, max=1000
-                        ).classes('flex-grow').bind_value(ui_state.config, 'per_host_conc_init')
+                        ).classes('flex-grow').bind_value(ui_state.config, 'C_init')
 
                         ui.number(
-                            label='Max Concurrency',
-                            value=ui_state.config['per_host_conc_cap'],
+                            label='C_min (Minimum)',
+                            value=ui_state.config['C_min'],
+                            min=1, max=100
+                        ).classes('flex-grow').bind_value(ui_state.config, 'C_min')
+
+                        ui.number(
+                            label='C_max (Maximum)',
+                            value=ui_state.config['C_max'],
                             min=1, max=10000
-                        ).classes('flex-grow').bind_value(ui_state.config, 'per_host_conc_cap')
+                        ).classes('flex-grow').bind_value(ui_state.config, 'C_max')
+
+                    ui.label('PAARC Parameters').classes('text-lg font-semibold mt-4')
+
+                    with ui.row().classes('w-full gap-4'):
+                        ui.number(
+                            label='mu (Utilization)',
+                            value=ui_state.config['mu'],
+                            min=0.1, max=1.0, step=0.05
+                        ).classes('flex-grow').bind_value(ui_state.config, 'mu')
 
                         ui.number(
-                            label='Control Interval (sec)',
-                            value=ui_state.config['control_interval_sec'],
-                            min=0.1, max=60
-                        ).classes('flex-grow').bind_value(ui_state.config, 'control_interval_sec')
+                            label='beta (Backoff)',
+                            value=ui_state.config['beta'],
+                            min=0.1, max=1.0, step=0.05
+                        ).classes('flex-grow').bind_value(ui_state.config, 'beta')
+
+                        ui.number(
+                            label='alpha_ema (Smoothing)',
+                            value=ui_state.config['alpha_ema'],
+                            min=0.1, max=1.0, step=0.05
+                        ).classes('flex-grow').bind_value(ui_state.config, 'alpha_ema')
+
+                    ui.label('Latency Thresholds').classes('text-lg font-semibold mt-4')
+
+                    with ui.row().classes('w-full gap-4'):
+                        ui.number(
+                            label='theta_50 (P50 thresh)',
+                            value=ui_state.config['theta_50'],
+                            min=1.0, max=10.0, step=0.1
+                        ).classes('flex-grow').bind_value(ui_state.config, 'theta_50')
+
+                        ui.number(
+                            label='theta_95 (P95 thresh)',
+                            value=ui_state.config['theta_95'],
+                            min=1.0, max=10.0, step=0.1
+                        ).classes('flex-grow').bind_value(ui_state.config, 'theta_95')
+
+                    ui.label('Timing').classes('text-lg font-semibold mt-4')
+
+                    with ui.row().classes('w-full gap-4'):
+                        ui.number(
+                            label='Probe RTT Period (sec)',
+                            value=ui_state.config['probe_rtt_period'],
+                            min=5.0, max=120.0, step=5.0
+                        ).classes('flex-grow').bind_value(ui_state.config, 'probe_rtt_period')
+
+                        ui.number(
+                            label='RTprop Window (sec)',
+                            value=ui_state.config['rtprop_window'],
+                            min=10.0, max=120.0, step=5.0
+                        ).classes('flex-grow').bind_value(ui_state.config, 'rtprop_window')
+
+                        ui.number(
+                            label='Cooldown Floor (sec)',
+                            value=ui_state.config['cooldown_floor'],
+                            min=0.5, max=30.0, step=0.5
+                        ).classes('flex-grow').bind_value(ui_state.config, 'cooldown_floor')
 
         # Config file actions
         with ui.row().classes('w-full gap-4 mt-4'):
@@ -508,7 +614,7 @@ def create_status_panel():
 
             with ui.column().classes('items-center'):
                 policy_label = ui.label('IDLE').classes('text-2xl font-bold')
-                ui.label('PolicyBBR State').classes('text-sm text-gray-500')
+                ui.label('PAARC State').classes('text-sm text-gray-500')
 
         # Progress bar
         progress_bar = ui.linear_progress(value=0, show_value=False).classes('w-full')

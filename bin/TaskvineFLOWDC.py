@@ -8,7 +8,7 @@ Submits download_batch.py tasks for each partition created by SplitParquet.py.
 This script:
 1. Reads partition parquet files from a directory
 2. Creates a TaskVine task for each partition
-3. Each task runs download_batch.py with PolicyBBR rate control
+3. Each task runs download_batch.py with PAARC rate control
 4. Collects output tar.gz archives
 
 Usage:
@@ -22,9 +22,16 @@ Config file format:
     "url_col": "url",
     "label_col": "species",
     "concurrent_downloads": 1000,
-    "enable_polite_controller": true,
+    "enable_paarc": true,
     "timeout_minutes": 60,
-    "max_retries": 3
+    "max_retries": 3,
+
+    // PAARC parameters
+    "C_init": 8,
+    "C_min": 2,
+    "C_max": 2000,
+    "mu": 1.0,
+    "beta": 0.7
 }
 """
 
@@ -41,7 +48,7 @@ from pathlib import Path
 def parse_args():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(
-        description="FLOW-DC TaskVine Orchestrator - Distributed image downloading",
+        description="FLOW-DC TaskVine Orchestrator - Distributed image downloading with PAARC",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -83,25 +90,59 @@ def parse_json_config(file_path: str) -> dict:
 
     # Set defaults for optional fields
     defaults = {
+        # Output settings
         'output_directory': 'files/output/images',
+        'output_format': 'imagefolder',
+
+        # Column mapping
         'url_col': 'url',
         'label_col': None,
+
+        # Download settings
         'concurrent_downloads': 1000,
-        'enable_polite_controller': True,
-        'timeout_minutes': 60,
-        'max_retries': 3,
+        'timeout_sec': 30,
+
+        # PAARC toggle
+        'enable_paarc': True,
+
+        # PAARC concurrency bounds
+        'C_init': 8,
+        'C_min': 2,
+        'C_max': 2000,
+
+        # PAARC utilization and backoff
+        'mu': 1.0,
+        'beta': 0.7,
+
+        # PAARC latency thresholds
+        'theta_50': 1.5,
+        'theta_95': 2.0,
+        'startup_theta_50': 3.0,
+        'startup_theta_95': 4.0,
+
+        # PAARC timing
+        'probe_rtt_period': 30.0,
+        'rtprop_window': 35.0,
+        'cooldown_floor': 2.0,
+
+        # PAARC smoothing
+        'alpha_ema': 0.3,
+
+        # Retry settings
+        'max_retry_attempts': 3,
+        'retry_backoff_sec': 2.0,
+
+        # Output options
+        'naming_mode': 'sequential',
         'create_tar': True,
-        'output_format': 'imagefolder',
-        # PolicyBBR defaults
-        'initial_rate': 100.0,
-        'min_rate': 1.0,
-        'max_rate': 10000.0,
-        'per_host_conc_init': 16,
-        'per_host_conc_cap': 512,
-        # Task resource defaults
+        'create_overview': True,
+
+        # TaskVine task resource defaults
         'task_cores': 4,
         'task_memory_mb': 8000,
         'task_disk_mb': 50000,
+        'timeout_minutes': 60,
+        'max_retries': 3,
     }
 
     for field, default_value in defaults.items():
@@ -124,33 +165,50 @@ def create_partition_config(base_config: dict, partition_file: str, output_name:
         Config dict suitable for download_batch.py
     """
     return {
+        # Input/Output
         "input": partition_file,
         "input_format": "parquet",
         "output": output_name,
         "output_format": base_config.get('output_format', 'imagefolder'),
+
+        # Column mapping
         "url": base_config.get('url_col', 'url'),
         "label": base_config.get('label_col'),
+
+        # Download settings
         "concurrent_downloads": base_config.get('concurrent_downloads', 1000),
         "timeout": base_config.get('timeout_sec', 30),
-        "enable_polite_controller": base_config.get('enable_polite_controller', True),
-        # PolicyBBR parameters
-        "initial_rate": base_config.get('initial_rate', 100.0),
-        "min_rate": base_config.get('min_rate', 1.0),
-        "max_rate": base_config.get('max_rate', 10000.0),
-        "per_host_conc_init": base_config.get('per_host_conc_init', 16),
-        "per_host_conc_cap": base_config.get('per_host_conc_cap', 512),
-        "control_interval_sec": base_config.get('control_interval_sec', 0.25),
-        # Additional PolicyBBR parameters
-        "startup_growth_factor": base_config.get('startup_growth_factor', 1.5),
-        "latency_degradation_factor": base_config.get('latency_degradation_factor', 1.5),
-        "headroom": base_config.get('headroom', 0.85),
-        "probe_interval_sec": base_config.get('probe_interval_sec', 60.0),
-        "probe_increment": base_config.get('probe_increment', 0.05),
-        "backoff_ceiling_factor": base_config.get('backoff_ceiling_factor', 0.7),
-        "backoff_cooldown_sec": base_config.get('backoff_cooldown_sec', 300.0),
-        # Retry parameters
+
+        # PAARC toggle
+        "enable_paarc": base_config.get('enable_paarc', True),
+
+        # PAARC concurrency bounds
+        "C_init": base_config.get('C_init', 8),
+        "C_min": base_config.get('C_min', 2),
+        "C_max": base_config.get('C_max', 2000),
+
+        # PAARC utilization and backoff
+        "mu": base_config.get('mu', 1.0),
+        "beta": base_config.get('beta', 0.7),
+
+        # PAARC latency thresholds
+        "theta_50": base_config.get('theta_50', 1.5),
+        "theta_95": base_config.get('theta_95', 2.0),
+        "startup_theta_50": base_config.get('startup_theta_50', 3.0),
+        "startup_theta_95": base_config.get('startup_theta_95', 4.0),
+
+        # PAARC timing
+        "probe_rtt_period": base_config.get('probe_rtt_period', 30.0),
+        "rtprop_window": base_config.get('rtprop_window', 35.0),
+        "cooldown_floor": base_config.get('cooldown_floor', 2.0),
+
+        # PAARC smoothing
+        "alpha_ema": base_config.get('alpha_ema', 0.3),
+
+        # Retry settings
         "max_retry_attempts": base_config.get('max_retry_attempts', 3),
         "retry_backoff_sec": base_config.get('retry_backoff_sec', 2.0),
+
         # Output options
         "naming_mode": base_config.get('naming_mode', 'sequential'),
         "create_tar": base_config.get('create_tar', True),
@@ -206,7 +264,7 @@ def submit_tasks(
     Args:
         manager: TaskVine manager instance
         download_script: Path to download_batch.py
-        single_download_script: Path to single_download_gbif.py (dependency)
+        single_download_script: Path to single_download.py (dependency)
         parquet_files: Dict of filename -> declared file
         config: TaskVine configuration
         temp_dir: Temporary directory for config files
@@ -245,9 +303,6 @@ def submit_tasks(
             config_vine = manager.declare_file(config_path)
 
             # Create task command
-            # The task will:
-            # 1. Run download_batch.py with the config
-            # 2. The output tar.gz is created by download_batch.py
             command = f"python download_batch.py --config {config_filename}"
 
             task = vine.Task(command)
@@ -260,7 +315,7 @@ def submit_tasks(
 
             # Add input files
             task.add_input(download_script_vine, "download_batch.py")
-            task.add_input(single_download_vine, "single_download_gbif.py")
+            task.add_input(single_download_vine, "single_download.py")
             task.add_input(config_vine, config_filename)
             task.add_input(declared_file, file_name)
 
@@ -281,7 +336,7 @@ def submit_tasks(
     return submitted_tasks
 
 
-def monitor_tasks(manager, total_tasks: int) -> tuple[int, int]:
+def monitor_tasks(manager, total_tasks: int) -> tuple:
     """
     Monitor task completion with detailed status reporting.
 
@@ -303,21 +358,21 @@ def monitor_tasks(manager, total_tasks: int) -> tuple[int, int]:
             elapsed = current_time - start_time
 
             if task.successful():
-                print(f"✓ Task {task.id} completed ({completed_tasks}/{total_tasks}) - {elapsed:.1f}s elapsed")
+                print(f"[OK] Task {task.id} completed ({completed_tasks}/{total_tasks}) - {elapsed:.1f}s elapsed")
                 if task.output:
                     # Print last line of output
                     output_lines = task.output.strip().split('\n')
                     if output_lines:
-                        print(f"  Output: {output_lines[-1]}")
+                        print(f"     Output: {output_lines[-1]}")
             else:
                 failed_tasks += 1
-                print(f"✗ Task {task.id} FAILED ({completed_tasks}/{total_tasks}) - {elapsed:.1f}s elapsed")
-                print(f"  Exit code: {task.exit_code}")
+                print(f"[FAIL] Task {task.id} FAILED ({completed_tasks}/{total_tasks}) - {elapsed:.1f}s elapsed")
+                print(f"       Exit code: {task.exit_code}")
                 if task.output:
                     # Print last few lines of output for debugging
                     output_lines = task.output.strip().split('\n')
                     for line in output_lines[-3:]:
-                        print(f"  {line}")
+                        print(f"       {line}")
         else:
             # Print status every 60 seconds when no task completes
             if current_time - last_status_time >= 60:
@@ -341,6 +396,7 @@ def main():
 
     print("=" * 60)
     print("FLOW-DC TaskVine Orchestrator")
+    print("Distributed downloading with PAARC rate control")
     print("=" * 60)
 
     # Load configuration
@@ -356,11 +412,14 @@ def main():
     print(f"  Output directory: {config.get('output_directory', 'files/output/images')}")
     print(f"  URL column: {config.get('url_col', 'url')}")
     print(f"  Concurrent downloads per task: {config.get('concurrent_downloads', 1000)}")
-    print(f"  PolicyBBR enabled: {config.get('enable_polite_controller', True)}")
+    print(f"  PAARC enabled: {config.get('enable_paarc', True)}")
+    if config.get('enable_paarc', True):
+        print(f"    C_init={config.get('C_init', 8)}, C_min={config.get('C_min', 2)}, C_max={config.get('C_max', 2000)}")
+        print(f"    mu={config.get('mu', 1.0)}, beta={config.get('beta', 0.7)}")
 
     # Validate paths
     download_script = os.path.join(os.path.dirname(__file__), "download_batch.py")
-    single_download_script = os.path.join(os.path.dirname(__file__), "single_download_gbif.py")
+    single_download_script = os.path.join(os.path.dirname(__file__), "single_download.py")
 
     if not os.path.exists(download_script):
         print(f"Error: Download script not found: {download_script}")

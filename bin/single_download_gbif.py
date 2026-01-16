@@ -6,7 +6,8 @@ Handles format-specific logic, file naming, and download methods.
 
 import os
 import json
-import pandas as pd
+import math
+import polars as pl
 import aiohttp
 import asyncio
 from urllib.parse import urlparse, unquote
@@ -18,16 +19,17 @@ import hashlib
 def sanitize_class_name(class_name):
     """
     Clean class name for filesystem compatibility.
-    
+
     Args:
         class_name: Raw class name from data (can be None)
-        
+
     Returns:
         Sanitized class name safe for filesystem, or "output" if None
     """
     if class_name is None:
         return "output"
-    if pd.isna(class_name):
+    # Check for NaN (works for both float NaN and None)
+    if isinstance(class_name, float) and math.isnan(class_name):
         return "unknown"
     return str(class_name).replace("'", "").replace('"', "").replace(" ", "_").replace("/", "_")
 
@@ -266,7 +268,7 @@ async def download_single(
     #########################################################
     # Validate URL
     #########################################################
-    if pd.isna(url) or not str(url).strip():
+    if url is None or (isinstance(url, float) and math.isnan(url)) or not str(url).strip():
         return key, None, class_name, "Invalid image URL", None, None
 
     url = str(url).strip()
@@ -333,16 +335,16 @@ async def download_single(
 
 def load_input_file(file_path, file_format=None):
     """
-    Load input file in various formats.
-    
+    Load input file in various formats using Polars.
+
     Args:
         file_path: Path to input file
         file_format: Optional format hint ('parquet', 'csv', 'excel', 'xml')
                     If None, inferred from file extension
-        
+
     Returns:
-        pandas DataFrame
-        
+        Polars DataFrame
+
     Raises:
         FileNotFoundError: If file doesn't exist
         ValueError: If format is unsupported
@@ -350,7 +352,7 @@ def load_input_file(file_path, file_format=None):
     """
     if not os.path.exists(file_path):
         raise FileNotFoundError(f"Input file {file_path} not found")
-    
+
     # Determine format from extension if not provided
     if file_format is None:
         if file_path.endswith(".parquet"):
@@ -363,16 +365,19 @@ def load_input_file(file_path, file_format=None):
             file_format = "xml"
         else:
             raise ValueError(f"Could not determine file format from extension: {file_path}")
-    
+
     try:
         if file_format == "parquet":
-            return pd.read_parquet(file_path)
+            return pl.read_parquet(file_path)
         elif file_format == "csv":
-            return pd.read_csv(file_path)
+            return pl.read_csv(file_path)
         elif file_format == "excel":
-            return pd.read_excel(file_path)
+            return pl.read_excel(file_path)
         elif file_format == "xml":
-            return pd.read_xml(file_path)
+            # Polars doesn't have native XML support, use pandas as fallback
+            import pandas as pd
+            pdf = pd.read_xml(file_path)
+            return pl.from_pandas(pdf)
         else:
             raise ValueError(f"Unsupported file format: {file_format}")
     except Exception as e:

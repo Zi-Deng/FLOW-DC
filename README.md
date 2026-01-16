@@ -2,233 +2,423 @@
 
 **Flexible Large-scale Orchestrated Workflow for Data Collection**
 
-A pipeline for distributed downloading of large-scale machine learning datasets using parallelism and workflow management systems.
+A high-performance pipeline for distributed downloading of large-scale machine learning datasets, featuring adaptive per-host rate control and seamless integration with HPC workflow managers.
 
 ## Overview
 
-FLOW-DC is utilized for rapid acquisition of large datasets in machine learning research. FLOW-DC leverages distributed parallelism to significantly speed up dataset acquisition times.
+FLOW-DC accelerates dataset acquisition for machine learning research by leveraging distributed parallelism across multiple worker machines. The system uses a manager-worker architecture built on TaskVine, where a central manager partitions datasets, assigns download tasks to workers, and consolidates results.
 
-FLOW-DC uses a manager-worker paradigm where a central manager machine efficiently partitions datasets into manageable subsets, assigns them to worker machines for concurrent download jobs, and consolidates the final dataset. The system is built on TaskVine workflow management.
+The core component is **PAARC (Policy-Aware Adaptive Request Controller)**, a congestion control algorithm that dynamically adjusts concurrency for each target host based on observed latency. This enables FLOW-DC to maximize throughput while respecting server rate limits and avoiding overload.
 
 ## Installation
 
 ### Prerequisites
 
 - Conda (Miniconda or Anaconda)
-- Python 3.10.8
+- Python 3.10+
 
 ### Setup
 
-1. Clone the repository:
 ```bash
+# Clone the repository
 git clone https://github.com/zkdeng-uofa/FLOW-DC
 cd FLOW-DC
-```
 
-2. Create the conda environment from the provided `environment.yml`:
-```bash
+# Create and activate the conda environment
 conda env create -f environment.yml
-```
-
-3. Activate the environment:
-```bash
 conda activate FLOW-DC
 ```
 
-The environment includes all necessary dependencies:
-- Python 3.10.8
-- pandas, numpy for data manipulation
-- aiohttp for asynchronous HTTP requests
-- ndcctools (TaskVine) for workflow management
-- tqdm for progress bars
-- pyarrow for Parquet file support
+The environment includes all necessary dependencies: polars, aiohttp, pyarrow, ndcctools (TaskVine), tqdm, and NiceGUI.
 
 ## Quick Start
 
-### Basic Usage
+### Single-Machine Download
 
-The simplest way to use FLOW-DC is with a JSON configuration file:
+The simplest way to download a dataset is with a JSON configuration file:
 
 ```bash
-python bin/download.py --config files/config/my_config.json
+python bin/download_batch.py --config files/config/my_config.json
+```
+
+### Example Configuration
+
+Create a configuration file (e.g., `my_config.json`):
+
+```json
+{
+    "input": "files/input/dataset.parquet",
+    "output": "files/output/images",
+    "url": "photo_url",
+    "label": "species",
+
+    "concurrent_downloads": 1000,
+    "timeout": 30,
+
+    "enable_paarc": true,
+    "C_init": 8,
+    "C_min": 2,
+    "C_max": 2000,
+
+    "output_format": "imagefolder",
+    "create_tar": true,
+    "create_overview": true
+}
 ```
 
 ### Command-Line Usage
 
-Alternatively, you can specify all parameters via command-line arguments:
+All configuration options are also available as command-line arguments:
 
 ```bash
-python bin/download.py \
-    --input files/input/gbif_url_10000.parquet \
-    --output files/output/gbif_dataset \
+python bin/download_batch.py \
+    --input files/input/dataset.parquet \
+    --output files/output/images \
     --url photo_url \
-    --label taxon_name \
-    --output_format webdataset \
+    --label species \
     --concurrent_downloads 1000 \
-    --timeout 30 \
-    --enable_rate_limiting \
-    --rate_limit 500 \
-    --max_retry_attempts 3
+    --enable_paarc
 ```
 
-### Example Configuration File
+## Scripts Reference
 
-Create a JSON configuration file (e.g., `my_config.json`):
+### download_batch.py
+
+The main batch downloader with PAARC rate control. Handles concurrent downloads, automatic retries, and per-host adaptive concurrency.
+
+```bash
+python bin/download_batch.py --config config.json
+```
+
+**Key Features:**
+- Bounded concurrency with adaptive semaphores
+- Per-host rate limiting via PAARC
+- Automatic retry for transient failures (429, 5xx, timeouts)
+- TTFB-based latency monitoring
+- Supports imagefolder and webdataset output formats
+
+### SplitParquet.py
+
+Partitions a dataset manifest into multiple files for distributed downloading. Supports three grouping strategies:
+
+```bash
+# Host-based grouping (recommended for distributed downloads)
+python bin/SplitParquet.py \
+    --parquet dataset.parquet \
+    --url_col url \
+    --groups 10 \
+    --output_folder partitions \
+    --method host
+
+# Using a configuration file
+python bin/SplitParquet.py --config partition_config.json
+```
+
+**Partitioning Methods:**
+
+| Method | Description |
+|--------|-------------|
+| `host` | Groups URLs by domain, ensuring each partition deals with fewer unique hosts |
+| `simple` | Equal-sized random partitions |
+| `greedy` | Balances partitions by a grouping column (e.g., class labels) |
+
+Host-based partitioning is recommended for distributed downloads because each worker can maximize throughput by focusing on fewer hosts, and the PAARC controller operates more effectively with consistent per-host traffic.
+
+### CalcDatasetSize.py
+
+Estimates total download size by querying URLs for Content-Length headers. Useful for planning storage requirements before starting a large download.
+
+```bash
+# Estimate size for a single file
+python bin/CalcDatasetSize.py \
+    --input dataset.parquet \
+    --url_column url
+
+# Estimate size for partitioned datasets
+python bin/CalcDatasetSize.py \
+    --directory partitions/ \
+    --url_column url
+
+# Sample 5000 URLs for faster estimation
+python bin/CalcDatasetSize.py \
+    --input dataset.parquet \
+    --url_column url \
+    --sample 5000
+```
+
+### TaskvineFLOWDC.py
+
+Orchestrates distributed downloading across multiple worker machines using TaskVine. Creates a download task for each partition and collects the results.
+
+```bash
+# Start the manager
+python bin/TaskvineFLOWDC.py --config taskvine_config.json
+
+# Preview tasks without executing
+python bin/TaskvineFLOWDC.py --config taskvine_config.json --dry_run
+```
+
+**TaskVine Configuration Example:**
 
 ```json
 {
-    "input": "files/input/my_dataset.parquet",
-    "input_format": "parquet",
-    "output": "files/output/my_dataset_webdataset",
-    "output_format": "webdataset",
-    "url": "photo_url",
-    "label": "taxon_name",
+    "port_number": 9123,
+    "parquets_directory": "files/input/partitions",
+    "output_directory": "files/output/images",
+
+    "url_col": "url",
+    "label_col": "species",
+
     "concurrent_downloads": 1000,
-    "timeout": 30,
-    "rate_limit": 500,
-    "rate_capacity": 1000,
-    "enable_rate_limiting": true,
-    "max_retry_attempts": 3,
-    "create_overview": true,
-    "croissant": "basic_croissant",
-    "dataset_name": "My Image Dataset",
-    "dataset_description": "A collection of images organized by taxonomic name",
-    "dataset_license": "CC-BY-4.0",
-    "dataset_creator": "Your Name",
-    "dataset_version": "1.0.0"
+    "enable_paarc": true,
+    "C_init": 8,
+    "C_max": 2000,
+
+    "task_cores": 4,
+    "task_memory_mb": 8000,
+    "timeout_minutes": 60
 }
 ```
 
-See `files/config/gbif.json` for a complete example.
+Workers connect to the manager using standard TaskVine commands. See the [TaskVine documentation](https://cctools.readthedocs.io/en/latest/taskvine/) for details.
 
-## Usage
+### TaskvineFLOWDCCloud.py
 
-### Input File Format
+Extended version of the TaskVine orchestrator that uploads results directly to cloud storage. Supports iRODS/CyVerse (via gocmd), AWS S3, Google Cloud Storage, and rclone.
 
-FLOW-DC accepts input files in multiple formats:
-- **Parquet** (recommended): Efficient binary format, supports large datasets
-- **CSV**: Simple text format (`.csv` or `.txt`)
-- **XML**: Structured data format (`.xml`)
-- **Excel**: `.xlsx` or `.xls` files (supported via `single_download.py` module)
-
-Your input file must contain the following column:
-- A column with URLs (default: `photo_url`, configurable via `--url`)
-
-Example Parquet file structure:
-```
-photo_url                              | taxon_name
-https://example.com/image1.jpg         | Species_A
-https://example.com/image2.jpg         | Species_B
+```bash
+python bin/TaskvineFLOWDCCloud.py --config taskvine_cloud_config.json
 ```
 
-### Output Formats
+**Cloud Configuration Example:**
 
-#### ImageFolder Format
-Organizes images into class-specific subdirectories:
+```json
+{
+    "port_number": 9123,
+    "parquets_directory": "files/input/partitions",
+    "cloud_destination": "AIIRA_Dataset",
+    "cloud_tool": "gocmd",
+
+    "url_col": "url",
+    "concurrent_downloads": 1000,
+    "enable_paarc": true
+}
 ```
-output_folder/
+
+Supported cloud tools: `gocmd` (iRODS), `aws` (S3), `gsutil` (GCS), `rclone`, `scp`.
+
+### ui_app.py
+
+A web-based interface for configuring downloads and monitoring progress. Built with NiceGUI.
+
+```bash
+python bin/ui_app.py
+```
+
+Opens a browser interface at `http://localhost:8080` where you can:
+- Configure all download parameters
+- Load and save configuration files
+- Start and monitor download jobs
+- View real-time progress and PAARC state
+
+### single_download.py / single_download_gbif.py
+
+Low-level modules providing the core download functions. These are used internally by `download_batch.py` and can be imported for custom integrations.
+
+```python
+from single_download import download_single, load_input_file
+
+# Load a dataset
+df = load_input_file("dataset.parquet")
+
+# Download a single URL
+result = await download_single(
+    url="https://example.com/image.jpg",
+    key="row_001",
+    class_name="species_a",
+    output_folder="output",
+    output_format="imagefolder",
+    session=session,
+    timeout=30
+)
+```
+
+## Configuration Reference
+
+### Input/Output Settings
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `input` | string | required | Path to input file (parquet, csv, excel, xml) |
+| `input_format` | string | auto | Input format: `parquet`, `csv`, `excel`, `xml` |
+| `output` | string | required | Output directory path |
+| `output_format` | string | `imagefolder` | Output format: `imagefolder` or `webdataset` |
+| `url` | string | `url` | Column name containing URLs |
+| `label` | string | null | Column name for class labels (optional) |
+
+### Download Settings
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `concurrent_downloads` | int | 1000 | Maximum concurrent download workers |
+| `timeout` | int | 30 | Request timeout in seconds |
+| `max_retry_attempts` | int | 3 | Maximum retries for failed downloads |
+| `retry_backoff_sec` | float | 2.0 | Delay between retry attempts |
+
+### PAARC Rate Control
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `enable_paarc` | bool | true | Enable adaptive per-host rate control |
+| `C_init` | int | 8 | Initial concurrency per host |
+| `C_min` | int | 2 | Minimum concurrency floor |
+| `C_max` | int | 2000 | Maximum concurrency ceiling |
+| `mu` | float | 1.0 | Utilization factor (0.0-1.0) |
+| `beta` | float | 0.7 | Backoff multiplier on overload |
+| `theta_50` | float | 1.5 | P50 latency threshold (× RTprop) |
+| `theta_95` | float | 2.0 | P95 latency threshold (× RTprop) |
+| `probe_rtt_period` | float | 30.0 | Seconds between RTprop refresh |
+| `alpha_ema` | float | 0.3 | Latency smoothing factor |
+
+### Output Options
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `naming_mode` | string | `sequential` | Filename strategy: `sequential` or `url_based` |
+| `create_tar` | bool | true | Create tar.gz archive of output |
+| `create_overview` | bool | true | Generate JSON overview with statistics |
+
+## Input File Format
+
+FLOW-DC accepts input files in multiple formats. The file must contain a column with URLs to download.
+
+**Supported Formats:**
+- Parquet (recommended for large datasets)
+- CSV
+- Excel (.xlsx, .xls)
+- XML
+
+**Example Input Structure:**
+
+| url | species |
+|-----|---------|
+| https://example.com/img1.jpg | Species_A |
+| https://example.com/img2.jpg | Species_B |
+| https://example.com/img3.jpg | Species_A |
+
+## Output Formats
+
+### ImageFolder
+
+Organizes images into class-specific subdirectories, compatible with PyTorch's `ImageFolder` dataset class:
+
+```
+output/
 ├── Species_A/
-│   ├── image1.jpg
-│   └── image2.jpg
+│   ├── 00000001.jpg
+│   └── 00000003.jpg
 └── Species_B/
-    └── image3.jpg
+    └── 00000002.jpg
 ```
 
-#### WebDataset Format
-Stores images and JSON metadata files in a flat structure, suitable for tar archiving:
+### WebDataset
+
+Flat structure with JSON metadata files, suitable for creating WebDataset tar archives:
+
 ```
-output_folder/
-├── image1.jpg
-├── image1.json
-├── image2.jpg
-└── image2.json
+output/
+├── 00000001.jpg
+├── 00000001.json
+├── 00000002.jpg
+├── 00000002.json
+└── ...
 ```
 
-### Configuration Options
+Each JSON file contains metadata about the corresponding image:
 
-#### Download Settings
-- `--concurrent_downloads`: Number of simultaneous downloads (default: 1000)
-- `--timeout`: Request timeout in seconds (default: 30)
-- `--max_retry_attempts`: Maximum retries for failed downloads (default: 3)
+```json
+{
+    "key": "00000001",
+    "url": "https://example.com/img1.jpg",
+    "class_name": "Species_A"
+}
+```
 
-#### Rate Limiting
-- `--enable_rate_limiting`: Enable adaptive rate limiting
-- `--rate_limit`: Initial rate limit in requests per second (default: 100.0)
-- `--rate_capacity`: Token bucket capacity (default: 200)
+## Distributed Workflow
 
-The adaptive rate limiter uses AIMD algorithm to automatically adjust download rates based on server responses, preventing rate-limiting errors (429) and server overload.
+For large-scale downloads, FLOW-DC supports distributed execution across multiple machines:
 
-#### Metadata Generation
-- `--croissant`: Generate Croissant metadata (`no_croissant`, `basic_croissant`, `comprehensive_croissant`)
-- `--create_overview`: Generate JSON overview file with download statistics (default: True)
+1. **Partition the dataset** by host to optimize per-worker performance:
+   ```bash
+   python bin/SplitParquet.py --parquet dataset.parquet --url_col url --groups 20 --output_folder partitions --method host
+   ```
 
-### Distributed Execution with TaskVine
+2. **Start the TaskVine manager**:
+   ```bash
+   python bin/TaskvineFLOWDC.py --config taskvine_config.json
+   ```
 
-For distributed downloading across multiple machines:
+3. **Connect workers** from other machines:
+   ```bash
+   vine_worker manager_hostname 9123
+   ```
 
-1. **Start the Manager**: On your manager machine, initialize the TaskVine manager
-2. **Connect Workers**: On worker machines, connect to the manager using the manager's IP and port
-3. **Submit Tasks**: The manager will automatically partition your dataset and distribute tasks to available workers
-
-The manager-worker paradigm allows:
-- Dynamic worker addition/removal during execution
-- Automatic task rescheduling on worker failure
-- Centralized progress monitoring and result aggregation
-
-Refer to the TaskVine documentation for detailed setup instructions.
+The manager automatically distributes partitions to available workers and collects results. Workers can be added or removed dynamically during execution.
 
 ## Performance
 
-FLOW-DC has been successfully used to download large-scale datasets:
+FLOW-DC has been used to download large-scale datasets in production:
 
-- **Biotrove-Train Dataset**: 13 TiB, 38.7 million images downloaded in ~42 hours using 10 Jetstream workers (average throughput: 85 MiB/s per worker)
+- **Biotrove-Train Dataset**: 13 TiB, 38.7 million images downloaded in approximately 42 hours using 10 Jetstream cloud workers.
 
-Download throughput scales approximately linearly with the number of worker machines until network or server limitations are reached.
+Throughput scales approximately linearly with the number of workers until network or server bandwidth becomes the limiting factor.
 
 ## Project Structure
 
 ```
 FLOW-DC/
 ├── bin/
-│   ├── download.py              # Main download script
-│   ├── single_download.py       # Modular single URL download functions
-│   └── download_batch.py        # Batch download orchestration
+│   ├── download_batch.py         # Main batch downloader with PAARC
+│   ├── single_download.py        # Core download module
+│   ├── single_download_gbif.py   # GBIF-specific download module
+│   ├── SplitParquet.py           # Dataset partitioning
+│   ├── CalcDatasetSize.py        # Size estimation
+│   ├── TaskvineFLOWDC.py         # TaskVine orchestrator
+│   ├── TaskvineFLOWDCCloud.py    # TaskVine with cloud storage
+│   ├── ui_app.py                 # Web interface
+│   └── FLOWDC.ipynb              # Jupyter notebook example
 ├── files/
-│   ├── config/                   # Example configuration files
-│   ├── input/                    # Input data files (parquet, CSV, etc.)
-│   └── output/                   # Output datasets
-├── jupyter/                      # Jupyter notebook examples
-├── examples/                     # Usage examples
-├── environment.yml               # Conda environment specification
-└── README.md                     # This file
+│   ├── config/                   # Configuration examples
+│   ├── input/                    # Input datasets
+│   └── output/                   # Downloaded results
+├── docs/                         # Additional documentation
+├── environment.yml               # Conda environment
+└── README.md
 ```
 
 ## Citation
 
 If you use FLOW-DC in your research, please cite:
 
-```
-Deng, Z., Merchant, N., & Rodriguez, J. J. (2025). 
-Flexible Large-scale Orchestrated Workflow for Data Collection: FLOW-DC.
-(https://github.com/zkdeng-uofa/FLOW-DC)
+```bibtex
+@software{flowdc2025,
+    author = {Deng, Zi and Merchant, Nirav and Rodriguez, Jeffrey J.},
+    title = {FLOW-DC: Flexible Large-scale Orchestrated Workflow for Data Collection},
+    year = {2025},
+    url = {https://github.com/zkdeng-uofa/FLOW-DC}
+}
 ```
 
 ## Contact
 
-- **Primary Author**: Zi Deng (zkdeng@arizona.edu)
+- **Author**: Zi Deng (zkdeng@arizona.edu)
 - **Affiliation**: Electrical and Computer Engineering, University of Arizona
-- **GitHub**: [https://github.com/zkdeng-uofa/FLOW-DC]
+- **Repository**: https://github.com/zkdeng-uofa/FLOW-DC
 
 ## Acknowledgments
 
 FLOW-DC is built using:
-- [TaskVine](https://cctools.readthedocs.io/en/latest/taskvine/) for workflow management
-- [aiohttp](https://docs.aiohttp.org/) for asynchronous HTTP requests
-- [pandas](https://pandas.pydata.org/) for data manipulation
-
-## Additional Resources
-
-- For detailed feature documentation, see the paper
-- For TaskVine setup and usage, visit: https://cctools.readthedocs.io/en/latest/taskvine/
-- For questions and issues, please open an issue on GitHub
-
+- [TaskVine](https://cctools.readthedocs.io/en/latest/taskvine/) for distributed workflow management
+- [aiohttp](https://docs.aiohttp.org/) for asynchronous HTTP
+- [Polars](https://pola.rs/) for high-performance data processing
+- [NiceGUI](https://nicegui.io/) for the web interface

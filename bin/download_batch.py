@@ -48,7 +48,7 @@ from typing import Any, Optional
 from urllib.parse import urlsplit
 
 import aiohttp
-import pandas as pd
+import polars as pl
 from tqdm.asyncio import tqdm
 
 from single_download_gbif import download_single, load_input_file, extract_extension
@@ -440,39 +440,43 @@ Examples:
 # INPUT VALIDATION AND LOADING
 # =============================================================================
 
-def validate_and_load(cfg: Config) -> pd.DataFrame:
+def validate_and_load(cfg: Config) -> pl.DataFrame:
     """Load and validate input data."""
     in_path = Path(cfg.input_path)
     if not in_path.exists():
         raise FileNotFoundError(f"Input file not found: {in_path}")
-    
+
     out_dir = Path(cfg.output_folder)
     if out_dir.exists():
         print(f"[I/O] Output folder exists; deleting: {out_dir}")
         shutil.rmtree(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    
-    # Load data
+
+    # Load data (load_input_file returns Polars DataFrame)
     df = load_input_file(str(in_path), cfg.input_format)
-    
+
     # Validate columns
     if cfg.url_col not in df.columns:
-        raise ValueError(f"URL column '{cfg.url_col}' not found. Available: {list(df.columns)[:10]}...")
-    
+        raise ValueError(f"URL column '{cfg.url_col}' not found. Available: {df.columns[:10]}...")
+
     if cfg.label_col is not None and cfg.label_col not in df.columns:
         raise ValueError(f"Label column '{cfg.label_col}' not found.")
-    
-    # Clean data
-    df = df.dropna(subset=[cfg.url_col]).copy()
-    df[cfg.url_col] = df[cfg.url_col].astype(str).str.strip()
-    df = df[df[cfg.url_col].str.len() > 0]
-    
-    if df.empty:
+
+    # Clean data: drop nulls, cast to string, strip whitespace, filter empty
+    df = df.filter(pl.col(cfg.url_col).is_not_null())
+    df = df.with_columns(
+        pl.col(cfg.url_col).cast(pl.Utf8).str.strip_chars().alias(cfg.url_col)
+    )
+    df = df.filter(pl.col(cfg.url_col).str.len_chars() > 0)
+
+    if df.height == 0:
         raise ValueError("No valid URLs found after filtering.")
-    
-    # Stable keys for retry tracking
-    df["__key__"] = df.index.astype(str)
-    
+
+    # Add stable keys for retry tracking (row index as string)
+    df = df.with_row_index("__key__").with_columns(
+        pl.col("__key__").cast(pl.Utf8)
+    )
+
     return df
 
 
@@ -1668,7 +1672,7 @@ class DownloadOutcome:
 
 async def download_one(
     *,
-    row: pd.Series,
+    row: dict,
     cfg: Config,
     session: aiohttp.ClientSession,
     total_bytes: list[int],
@@ -1678,8 +1682,8 @@ async def download_one(
 ) -> DownloadOutcome:
     """Execute a single download with PAARC control."""
     url = str(row[cfg.url_col]).strip()
-    key = str(row.get("__key__", row.name))
-    class_name = str(row[cfg.label_col]) if cfg.label_col is not None else None
+    key = str(row.get("__key__", ""))
+    class_name = str(row[cfg.label_col]) if cfg.label_col is not None and row.get(cfg.label_col) is not None else None
     
     # Determine filename
     if cfg.naming_mode == "sequential":
@@ -1768,23 +1772,23 @@ async def download_batch_bounded(
     *,
     cfg: Config,
     session: aiohttp.ClientSession,
-    df: pd.DataFrame,
+    df: pl.DataFrame,
     manager: Optional[HostControllerManager],
     sequential_namer: SequentialNamer,
     global_written_paths: dict[str, str],
 ) -> dict[str, DownloadOutcome]:
     """
     Bounded batch download scheduler.
-    
+
     Uses a queue with N worker tasks for bounded parallelism.
     """
-    q: asyncio.Queue[pd.Series] = asyncio.Queue()
-    for _, row in df.iterrows():
+    q: asyncio.Queue[dict] = asyncio.Queue()
+    for row in df.iter_rows(named=True):
         q.put_nowait(row)
-    
+
     total_bytes: list[int] = []
     outcomes: dict[str, DownloadOutcome] = {}
-    pbar = tqdm(total=len(df), desc="Downloading", unit="url")
+    pbar = tqdm(total=df.height, desc="Downloading", unit="url")
     
     async def worker():
         while not shutdown_flag:
@@ -1918,7 +1922,7 @@ async def main() -> None:
     
     # Load and validate input
     df = validate_and_load(cfg)
-    print(f"[Load] URLs after filtering: {len(df)}")
+    print(f"[Load] URLs after filtering: {df.height}")
     
     # Initialize PAARC controller manager if enabled
     manager: Optional[HostControllerManager] = None
@@ -1953,11 +1957,11 @@ async def main() -> None:
             headers={"User-Agent": "FLOW-DC/2.0 PAARC/2.0"},
             trace_configs=[trace_config],
         ) as session:
-            current_df = df.copy()
+            current_df = df.clone()
             attempt = 1
-            
-            while attempt <= cfg.max_retry_attempts and not current_df.empty and not shutdown_flag:
-                print(f"\n[Attempt {attempt}] Processing {len(current_df)} URLs...")
+
+            while attempt <= cfg.max_retry_attempts and current_df.height > 0 and not shutdown_flag:
+                print(f"\n[Attempt {attempt}] Processing {current_df.height} URLs...")
                 
                 outcomes = await download_batch_bounded(
                     cfg=cfg,
@@ -1972,8 +1976,8 @@ async def main() -> None:
                 final_outcomes.update(outcomes)
                 
                 # Build retry set
-                retry_rows = []
-                for _, row in current_df.iterrows():
+                retry_keys = []
+                for row in current_df.iter_rows(named=True):
                     key = str(row["__key__"])
                     out = outcomes.get(key)
                     if out is None:
@@ -1981,17 +1985,18 @@ async def main() -> None:
                     if out.success:
                         continue
                     if _is_retryable(out.status_code, out.error):
-                        retry_rows.append(row)
-                
+                        retry_keys.append(key)
+
                 # Summary
                 succ = sum(1 for o in outcomes.values() if o.success)
                 fail = sum(1 for o in outcomes.values() if not o.success)
-                retryable = len(retry_rows)
+                retryable = len(retry_keys)
                 print(f"[Attempt {attempt}] Success={succ} Failed={fail} Retryable={retryable}")
-                
-                if retry_rows and attempt < cfg.max_retry_attempts and not shutdown_flag:
+
+                if retry_keys and attempt < cfg.max_retry_attempts and not shutdown_flag:
                     await asyncio.sleep(cfg.retry_backoff_sec)
-                    current_df = pd.DataFrame(retry_rows)
+                    # Filter to only retryable rows
+                    current_df = current_df.filter(pl.col("__key__").is_in(retry_keys))
                     attempt += 1
                 else:
                     break
@@ -2011,12 +2016,12 @@ async def main() -> None:
     print("\n" + "=" * 72)
     print("FINAL SUMMARY")
     print("=" * 72)
-    print(f"Total URLs:            {len(df)}")
+    print(f"Total URLs:            {df.height}")
     print(f"Successful downloads:  {len(successes)}")
     print(f"Failed downloads:      {len(failures)}")
     print(f"Elapsed time:          {elapsed:.2f}s")
-    if len(df) > 0:
-        print(f"Success rate:          {(len(successes) / len(df)) * 100:.2f}%")
+    if df.height > 0:
+        print(f"Success rate:          {(len(successes) / df.height) * 100:.2f}%")
     
     total_mb = sum(o.bytes_downloaded for o in successes) / 1e6
     print(f"Total downloaded:      {total_mb:.2f} MB")
@@ -2031,13 +2036,13 @@ async def main() -> None:
             print(f"[Tar] Created: {tar_path}")
         except Exception as e:
             print(f"[Tar] Failed: {e}")
-    
+
     # Write overview
     if cfg.create_overview:
         try:
             overview = write_overview(
                 cfg=cfg,
-                df_total=len(df),
+                df_total=df.height,
                 outcomes=final_outcomes,
                 elapsed_sec=elapsed,
                 tar_path=tar_path,
