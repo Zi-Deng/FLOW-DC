@@ -181,16 +181,17 @@ class PAARCConfig:
     T_floor: float = 0.2                # 200ms minimum interval duration
     
     # --- INIT Phase ---
-    N_init: int = 20                    # Samples to collect in INIT phase
+    N_init: int = 100                    # Samples to collect in INIT phase
     
     # --- STARTUP Phase ---
-    gamma_startup: float = 1.25         # Exponential growth factor
-    startup_timeout: int = 30           # Maximum intervals in STARTUP
+    gamma_startup: float = 1.02         # Exponential growth factor (2% per interval)
+    plateau_threshold: float = 1.01     # Goodput must increase by this factor to not be plateau
+    startup_timeout: int = 10000           # Maximum intervals in STARTUP
     
     # --- PROBE_BW Phase ---
     mu: float = 0.75                    # Utilization factor (operating margin)
     gamma_probe: float = 0.02           # Additive increase fraction (2%)
-    stable_intervals_required: int = 2  # Stable intervals before probing
+    stable_intervals_required: int = 1  # Stable intervals before probing
     
     # --- PROBE_RTT Phase ---
     probe_rtt_period: float = 10.0      # Seconds between PROBE_RTT entries
@@ -203,12 +204,12 @@ class PAARCConfig:
     cooldown_rtprop_mult: int = 5       # Cooldown = max(5 × RTprop, ...)
     cooldown_floor: float = 2.0         # 2 second minimum cooldown
     overload_check_rtprop_mult: float = 10.0  # Wait 10 × RTprop before checking continued overload
-    overload_check_floor: float = 2.0         # Minimum 3 seconds between overload checks
+    overload_check_floor: float = 3.0         # Minimum 3 seconds between overload checks
     
     # --- Ceiling Revision ---
     underperformance_threshold: float = 0.5  # Goodput < expected × this
     underperformance_intervals: int = 5       # Consecutive intervals to trigger
-    revision_factor: float = 0.80             # Multiplicative ceiling reduction
+    revision_factor: float = 1             # Multiplicative ceiling reduction
     
     # --- Latency Thresholds ---
     theta_50: float = 1.5               # Median degradation threshold
@@ -242,7 +243,8 @@ class Config:
     C_min: int = 2
     C_max: int = 10_000
     mu: float = 0.75
-    gamma_startup: float = 1.25
+    gamma_startup: float = 1.02
+    plateau_threshold: float = 1.01
     gamma_probe: float = 0.02
     beta: float = 0.5
     theta_50: float = 1.5
@@ -272,6 +274,7 @@ class Config:
             C_max=self.C_max,
             mu=self.mu,
             gamma_startup=self.gamma_startup,
+            plateau_threshold=self.plateau_threshold,
             gamma_probe=self.gamma_probe,
             beta=self.beta,
             theta_50=self.theta_50,
@@ -318,7 +321,8 @@ Examples:
     p.add_argument("--C_min", type=int, default=2)
     p.add_argument("--C_max", type=int, default=10000)
     p.add_argument("--mu", type=float, default=0.75, help="Utilization factor")
-    p.add_argument("--gamma_startup", type=float, default=1.25)
+    p.add_argument("--gamma_startup", type=float, default=1.02)
+    p.add_argument("--plateau_threshold", type=float, default=1.01)
     p.add_argument("--gamma_probe", type=float, default=0.02)
     p.add_argument("--beta", type=float, default=0.5, help="Backoff factor")
     p.add_argument("--theta_50", type=float, default=1.5)
@@ -362,7 +366,8 @@ Examples:
             C_min=int(data.get("C_min", 2)),
             C_max=int(data.get("C_max", 10000)),
             mu=float(data.get("mu", 0.75)),
-            gamma_startup=float(data.get("gamma_startup", 1.25)),
+            gamma_startup=float(data.get("gamma_startup", 1.02)),
+            plateau_threshold=float(data.get("plateau_threshold", 1.01)),
             gamma_probe=float(data.get("gamma_probe", 0.02)),
             beta=float(data.get("beta", 0.5)),
             theta_50=float(data.get("theta_50", 1.5)),
@@ -398,6 +403,7 @@ Examples:
         C_max=args.C_max,
         mu=args.mu,
         gamma_startup=args.gamma_startup,
+        plateau_threshold=args.plateau_threshold,
         gamma_probe=args.gamma_probe,
         beta=args.beta,
         theta_50=args.theta_50,
@@ -822,22 +828,25 @@ class HostMetrics:
     
     def is_goodput_plateau(self) -> bool:
         """
-        Detect goodput plateau: goodput not increasing for 3 consecutive intervals.
-        
-        Plateau detected when: goodput[t] < goodput[t-3] × 1.02 for last 3 intervals
+        Detect goodput plateau: goodput not increasing for several consecutive intervals.
+
+        Uses configurable plateau_threshold (default 1.01 = 1% improvement required).
+        Plateau detected when all recent values are below baseline × threshold.
         """
-        if len(self._goodput_history) < 6:
+        if len(self._goodput_history) < 11:
             return False
-        
-        baseline = self._goodput_history[-6]
+
+        baseline = self._goodput_history[-10]
         if baseline <= 0:
             return False
-        
-        # Check if all last 3 values are within 2% of baseline
-        for g in list(self._goodput_history)[-5:]:
-            if g > baseline * 1.01:
+
+        threshold = self.config.plateau_threshold
+
+        # Check if all last 5 values are below threshold improvement
+        for g in list(self._goodput_history)[-10:]:
+            if g > baseline * threshold:
                 return False
-        
+
         return True
 
     def reset_goodput_history(self) -> None:
@@ -1062,8 +1071,9 @@ class PAARCController:
         
         Proportional increase scales with current operating point.
         """
-        delta = math.ceil(self._C_operating * self.config.gamma_probe)
-        return max(1, delta)
+        # delta = math.ceil(self._C_operating * self.config.gamma_probe)
+        # return max(1, delta)
+        return 1
     
     async def step_interval(self) -> None:
         """
@@ -1231,8 +1241,12 @@ class PAARCController:
             print(f"[PAARC] {self.host}: STARTUP→PROBE_BW (timeout) | C_ceiling={self._C_ceiling}")
             return
         
-        # Continue exponential growth
-        new_C = int(self._concurrency * self.config.gamma_startup)
+        # Continue exponential growth (ensure at least +1 increase to avoid stalling at low C)
+        # new_C = max(
+        #     self._concurrency + 1,  # At minimum, grow by 1
+        #     int(self._concurrency * self.config.gamma_startup)
+        # )
+        new_C = self._concurrency + 1
         new_C = min(new_C, self.config.C_max)
         self._set_concurrency(new_C, "startup_grow")
     
