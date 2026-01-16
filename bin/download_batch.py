@@ -214,7 +214,7 @@ class PAARCConfig:
     
     # --- Smoothing ---
     alpha_ema: float = 0.3              # EMA smoothing factor
-    rtprop_window: float = 11.0         # RTprop tracking window (seconds)
+    rtprop_window: float = 15.0         # RTprop tracking window (seconds)
 
 
 @dataclass(frozen=True)
@@ -246,6 +246,7 @@ class Config:
     theta_50: float = 1.5
     theta_95: float = 2.0
     probe_rtt_period: float = 10.0
+    rtprop_window: float = 15.0
     cooldown_floor: float = 2.0
     alpha_ema: float = 0.3
     
@@ -274,6 +275,7 @@ class Config:
             theta_50=self.theta_50,
             theta_95=self.theta_95,
             probe_rtt_period=self.probe_rtt_period,
+            rtprop_window=self.rtprop_window,
             cooldown_floor=self.cooldown_floor,
             alpha_ema=self.alpha_ema,
         )
@@ -364,6 +366,7 @@ Examples:
             theta_50=float(data.get("theta_50", 1.5)),
             theta_95=float(data.get("theta_95", 2.0)),
             probe_rtt_period=float(data.get("probe_rtt_period", 10.0)),
+            rtprop_window=float(data.get("rtprop_window", 15.0)),
             cooldown_floor=float(data.get("cooldown_floor", 2.0)),
             alpha_ema=float(data.get("alpha_ema", 0.3)),
             max_retry_attempts=int(data.get("max_retry_attempts", 3)),
@@ -1059,9 +1062,17 @@ class PAARCController:
         now = _monotonic()
 
         # Determine if RTprop should be fully updated based on current state
-        # Only INIT and PROBE_RTT phases should fully update RTprop
-        # Other phases only accept new minimums to avoid pollution from inflated samples
-        allow_rtprop_update = self.state in (PAARCState.INIT, PAARCState.PROBE_RTT)
+        # - INIT: Always allow (discovering initial RTprop)
+        # - PROBE_RTT: Only after first interval (_restoring=True) to skip contaminated samples
+        # - Other phases: Only accept new minimums to avoid pollution
+        if self.state == PAARCState.INIT:
+            allow_rtprop_update = True
+        elif self.state == PAARCState.PROBE_RTT:
+            # Skip first interval - samples are contaminated from high-concurrency period
+            # _restoring is False on first interval, True on subsequent intervals
+            allow_rtprop_update = self._restoring
+        else:
+            allow_rtprop_update = False
 
         # Get interval snapshot
         snap = await self.metrics.finish_interval(allow_rtprop_update=allow_rtprop_update)
