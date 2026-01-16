@@ -75,6 +75,15 @@ TRACE_CTX: ContextVar[dict | None] = ContextVar("TRACE_CTX", default=None)
 
 
 # =============================================================================
+# PLATEAU DETECTION MODE
+# =============================================================================
+# Choose plateau detection method for STARTUP phase:
+#   "latency"    - BBR-style: detect when p50/p95 exceeds RTprop × threshold
+#   "derivative" - Efficiency-based: detect when goodput gain per +1 C drops
+PLATEAU_DETECTION_MODE = "latency"  # Options: "latency", "derivative"
+
+
+# =============================================================================
 # UTILITY FUNCTIONS
 # =============================================================================
 
@@ -183,14 +192,16 @@ class PAARCConfig:
     # --- INIT Phase ---
     N_init: int = 100                    # Samples to collect in INIT phase
     
-    # --- STARTUP Phase ---
-    gamma_startup: float = 1.02         # Exponential growth factor (2% per interval)
-    plateau_threshold: float = 1.01     # Goodput must increase by this factor to not be plateau
-    startup_timeout: int = 10000           # Maximum intervals in STARTUP
-    
+    # --- STARTUP Phase (Plateau Detection) ---
+    # Latency-based plateau detection (PLATEAU_DETECTION_MODE = "latency")
+    startup_theta_50: float = 4       # p50 > RTprop × 12 = plateau
+    startup_theta_95: float = 8      # p95 > RTprop × 16 = plateau
+    # Derivative-based plateau detection (PLATEAU_DETECTION_MODE = "derivative")
+    efficiency_threshold: float = 0.5   # Plateau if efficiency < 50% of expected
+    efficiency_window: int = 5          # Compare goodput over N intervals
+
     # --- PROBE_BW Phase ---
-    mu: float = 0.75                    # Utilization factor (operating margin)
-    gamma_probe: float = 0.02           # Additive increase fraction (2%)
+    mu: float = 0.85                    # Utilization factor (operating margin)
     stable_intervals_required: int = 1  # Stable intervals before probing
     
     # --- PROBE_RTT Phase ---
@@ -209,11 +220,11 @@ class PAARCConfig:
     # --- Ceiling Revision ---
     underperformance_threshold: float = 0.5  # Goodput < expected × this
     underperformance_intervals: int = 5       # Consecutive intervals to trigger
-    revision_factor: float = 1             # Multiplicative ceiling reduction
+    revision_factor: float = 0.99          # Multiplicative ceiling reduction
     
     # --- Latency Thresholds ---
-    theta_50: float = 1.5               # Median degradation threshold
-    theta_95: float = 2.0               # Tail degradation threshold
+    theta_50: float = 4               # Median degradation threshold
+    theta_95: float = 8               # Tail degradation threshold
     
     # --- Smoothing ---
     alpha_ema: float = 0.3              # EMA smoothing factor
@@ -242,10 +253,11 @@ class Config:
     C_init: int = 4
     C_min: int = 2
     C_max: int = 10_000
-    mu: float = 0.75
-    gamma_startup: float = 1.02
-    plateau_threshold: float = 1.01
-    gamma_probe: float = 0.02
+    mu: float = 0.85
+    startup_theta_50: float = 3.0
+    startup_theta_95: float = 4.0
+    efficiency_threshold: float = 0.5
+    efficiency_window: int = 5
     beta: float = 0.5
     theta_50: float = 1.5
     theta_95: float = 2.0
@@ -273,9 +285,10 @@ class Config:
             C_min=self.C_min,
             C_max=self.C_max,
             mu=self.mu,
-            gamma_startup=self.gamma_startup,
-            plateau_threshold=self.plateau_threshold,
-            gamma_probe=self.gamma_probe,
+            startup_theta_50=self.startup_theta_50,
+            startup_theta_95=self.startup_theta_95,
+            efficiency_threshold=self.efficiency_threshold,
+            efficiency_window=self.efficiency_window,
             beta=self.beta,
             theta_50=self.theta_50,
             theta_95=self.theta_95,
@@ -321,9 +334,10 @@ Examples:
     p.add_argument("--C_min", type=int, default=2)
     p.add_argument("--C_max", type=int, default=10000)
     p.add_argument("--mu", type=float, default=0.75, help="Utilization factor")
-    p.add_argument("--gamma_startup", type=float, default=1.02)
-    p.add_argument("--plateau_threshold", type=float, default=1.01)
-    p.add_argument("--gamma_probe", type=float, default=0.02)
+    p.add_argument("--startup_theta_50", type=float, default=3.0)
+    p.add_argument("--startup_theta_95", type=float, default=4.0)
+    p.add_argument("--efficiency_threshold", type=float, default=0.5)
+    p.add_argument("--efficiency_window", type=int, default=5)
     p.add_argument("--beta", type=float, default=0.5, help="Backoff factor")
     p.add_argument("--theta_50", type=float, default=1.5)
     p.add_argument("--theta_95", type=float, default=2.0)
@@ -366,9 +380,10 @@ Examples:
             C_min=int(data.get("C_min", 2)),
             C_max=int(data.get("C_max", 10000)),
             mu=float(data.get("mu", 0.75)),
-            gamma_startup=float(data.get("gamma_startup", 1.02)),
-            plateau_threshold=float(data.get("plateau_threshold", 1.01)),
-            gamma_probe=float(data.get("gamma_probe", 0.02)),
+            startup_theta_50=float(data.get("startup_theta_50", 3.0)),
+            startup_theta_95=float(data.get("startup_theta_95", 4.0)),
+            efficiency_threshold=float(data.get("efficiency_threshold", 0.5)),
+            efficiency_window=int(data.get("efficiency_window", 5)),
             beta=float(data.get("beta", 0.5)),
             theta_50=float(data.get("theta_50", 1.5)),
             theta_95=float(data.get("theta_95", 2.0)),
@@ -402,9 +417,10 @@ Examples:
         C_min=args.C_min,
         C_max=args.C_max,
         mu=args.mu,
-        gamma_startup=args.gamma_startup,
-        plateau_threshold=args.plateau_threshold,
-        gamma_probe=args.gamma_probe,
+        startup_theta_50=args.startup_theta_50,
+        startup_theta_95=args.startup_theta_95,
+        efficiency_threshold=args.efficiency_threshold,
+        efficiency_window=args.efficiency_window,
         beta=args.beta,
         theta_50=args.theta_50,
         theta_95=args.theta_95,
@@ -826,29 +842,6 @@ class HostMetrics:
             "total_samples_lifetime": self._total_samples,
         }
     
-    def is_goodput_plateau(self) -> bool:
-        """
-        Detect goodput plateau: goodput not increasing for several consecutive intervals.
-
-        Uses configurable plateau_threshold (default 1.01 = 1% improvement required).
-        Plateau detected when all recent values are below baseline × threshold.
-        """
-        if len(self._goodput_history) < 11:
-            return False
-
-        baseline = self._goodput_history[-10]
-        if baseline <= 0:
-            return False
-
-        threshold = self.config.plateau_threshold
-
-        # Check if all last 5 values are below threshold improvement
-        for g in list(self._goodput_history)[-10:]:
-            if g > baseline * threshold:
-                return False
-
-        return True
-
     def reset_goodput_history(self) -> None:
         """
         Reset goodput history.
@@ -929,10 +922,7 @@ class PAARCController:
         
         # INIT phase
         self._init_samples = 0
-        
-        # STARTUP phase
-        self._startup_intervals = 0
-        
+
         # PROBE_BW phase
         self._stable_intervals = 0
         self._underperformance_intervals = 0
@@ -1018,18 +1008,96 @@ class PAARCController:
         rtprop = self.metrics.rtprop
         if rtprop is None:
             return False
-        
+
         p50 = snap.get("p50")
         p95 = snap.get("p95")
-        
+
+        p50_threshold = rtprop * self.config.theta_50
+        p95_threshold = rtprop * self.config.theta_95
+
         # Check p50 degradation
-        p50_degraded = p50 is not None and p50 > rtprop * self.config.theta_50
-        
+        p50_degraded = p50 is not None and p50 > p50_threshold
+
         # Check p95 degradation (tail latency)
-        p95_degraded = p95 is not None and p95 > rtprop * self.config.theta_95
-        
-        return p50_degraded or p95_degraded
-    
+        p95_degraded = p95 is not None and p95 > p95_threshold
+
+        degraded = p50_degraded or p95_degraded
+
+        # Log when degradation detected
+        if degraded:
+            p50_str = f"{p50:.3f}" if p50 is not None else "None"
+            p95_str = f"{p95:.3f}" if p95 is not None else "None"
+            print(f"[PAARC] {self.host}: PROBE_BW latency degraded | "
+                  f"rtprop={rtprop:.3f}s | "
+                  f"p50={p50_str}s (thresh={p50_threshold:.3f}s) | "
+                  f"p95={p95_str}s (thresh={p95_threshold:.3f}s)")
+
+        return degraded
+
+    def _is_latency_plateau(self, snap: dict) -> bool:
+        """
+        BBR-style plateau detection: latency exceeds RTprop × threshold.
+
+        Detects server saturation when queue builds up, causing latency increase.
+        Uses looser thresholds than PROBE_BW since STARTUP wants to find ceiling.
+        """
+        rtprop = self.metrics.rtprop
+        if rtprop is None:
+            return False
+
+        p50 = snap.get("p50")
+        p95 = snap.get("p95")
+
+        p50_threshold = rtprop * self.config.startup_theta_50
+        p95_threshold = rtprop * self.config.startup_theta_95
+
+        p50_degraded = p50 is not None and p50 > p50_threshold
+        p95_degraded = p95 is not None and p95 > p95_threshold
+
+        degraded = p50_degraded or p95_degraded
+
+        # Log when degradation detected
+        if degraded:
+            p50_str = f"{p50:.3f}" if p50 is not None else "None"
+            p95_str = f"{p95:.3f}" if p95 is not None else "None"
+            print(f"[PAARC] {self.host}: STARTUP latency degraded | "
+                  f"rtprop={rtprop:.3f}s | "
+                  f"p50={p50_str}s (thresh={p50_threshold:.3f}s) | "
+                  f"p95={p95_str}s (thresh={p95_threshold:.3f}s)")
+
+        return degraded
+
+    def _is_derivative_plateau(self, snap: dict) -> bool:
+        """
+        Efficiency-based plateau detection: goodput gain per +1 C drops below threshold.
+
+        Measures diminishing returns: when adding concurrency no longer helps throughput.
+        Uses configurable window and threshold.
+        """
+        history = self.metrics._goodput_history
+        window = self.config.efficiency_window
+
+        if len(history) < window + 1:
+            return False
+
+        current = history[-1]
+        past = history[-(window + 1)]
+
+        if past <= 0:
+            return False
+
+        # Actual efficiency: goodput gained per +1 concurrency
+        actual_efficiency = (current - past) / window
+
+        # Expected efficiency if scaling linearly: past_goodput / past_C
+        past_C = self._concurrency - window
+        if past_C <= 0:
+            return False
+        expected_efficiency = past / past_C
+
+        # Plateau if actual < threshold × expected
+        return actual_efficiency < expected_efficiency * self.config.efficiency_threshold
+
     def _calculate_cooldown(self, retry_after: Optional[float]) -> float:
         """Calculate cooldown duration: max(5 × RTprop, 2s, retry_after)."""
         rtprop = self._get_rtprop()
@@ -1066,13 +1134,9 @@ class PAARCController:
     def _calculate_additive_increase(self) -> int:
         """
         Calculate additive increase for PROBE_BW probing.
-        
-        ΔC = max(1, ceil(C_operating × γ_probe))
-        
-        Proportional increase scales with current operating point.
+
+        Returns +1 for conservative fine-tuning in steady state.
         """
-        # delta = math.ceil(self._C_operating * self.config.gamma_probe)
-        # return max(1, delta)
         return 1
     
     async def step_interval(self) -> None:
@@ -1177,13 +1241,15 @@ class PAARCController:
     async def _step_startup(self, snap: dict, now: float) -> None:
         """
         STARTUP phase: Discover maximum sustainable concurrency.
-        
-        - Exponential growth: C × γ_startup each interval
-        - Exit on: overload, goodput plateau, C_max, or timeout
+
+        - Additive growth: +1 each interval
+        - Exit on: overload, plateau (latency or derivative), or C_max
         - Set C_ceiling on exit
+
+        Plateau detection mode controlled by PLATEAU_DETECTION_MODE:
+        - "latency": BBR-style, p50/p95 > RTprop × threshold
+        - "derivative": Efficiency-based, goodput gain per +1 C drops
         """
-        self._startup_intervals += 1
-        
         # Check for overload → BACKOFF
         if snap.get("has_overload"):
             # Set ceiling at reduced level
@@ -1201,51 +1267,40 @@ class PAARCController:
 
             print(f"[PAARC] {self.host}: STARTUP→BACKOFF | C_ceiling={self._C_ceiling}")
             return
-        
-        # Check for goodput plateau → PROBE_BW
-        if self.metrics.is_goodput_plateau():
+
+        # Check for plateau → PROBE_BW (method depends on PLATEAU_DETECTION_MODE)
+        is_plateau = False
+        if PLATEAU_DETECTION_MODE == "latency":
+            is_plateau = self._is_latency_plateau(snap)
+        elif PLATEAU_DETECTION_MODE == "derivative":
+            is_plateau = self._is_derivative_plateau(snap)
+
+        if is_plateau:
             self._C_ceiling = self._concurrency
             self._C_operating = int(self._C_ceiling * self.config.mu)
             self._set_concurrency(self._C_operating, "startup_plateau")
-            
+
             self._last_probe_rtt_time = now
             self._samples_since_probe_rtt = 0
             self.state = PAARCState.PROBE_BW
-            
-            print(f"[PAARC] {self.host}: STARTUP→PROBE_BW (plateau) | C_ceiling={self._C_ceiling}")
+
+            print(f"[PAARC] {self.host}: STARTUP→PROBE_BW (plateau/{PLATEAU_DETECTION_MODE}) | C_ceiling={self._C_ceiling}")
             return
-        
+
         # Check for C_max reached → PROBE_BW
         if self._concurrency >= self.config.C_max:
             self._C_ceiling = self.config.C_max
             self._C_operating = int(self._C_ceiling * self.config.mu)
             self._set_concurrency(self._C_operating, "startup_max")
-            
+
             self._last_probe_rtt_time = now
             self._samples_since_probe_rtt = 0
             self.state = PAARCState.PROBE_BW
-            
+
             print(f"[PAARC] {self.host}: STARTUP→PROBE_BW (max) | C_ceiling={self._C_ceiling}")
             return
-        
-        # Check for timeout → PROBE_BW
-        if self._startup_intervals >= self.config.startup_timeout:
-            self._C_ceiling = self._concurrency
-            self._C_operating = int(self._C_ceiling * self.config.mu)
-            self._set_concurrency(self._C_operating, "startup_timeout")
-            
-            self._last_probe_rtt_time = now
-            self._samples_since_probe_rtt = 0
-            self.state = PAARCState.PROBE_BW
-            
-            print(f"[PAARC] {self.host}: STARTUP→PROBE_BW (timeout) | C_ceiling={self._C_ceiling}")
-            return
-        
-        # Continue exponential growth (ensure at least +1 increase to avoid stalling at low C)
-        # new_C = max(
-        #     self._concurrency + 1,  # At minimum, grow by 1
-        #     int(self._concurrency * self.config.gamma_startup)
-        # )
+
+        # Additive growth (+1 per interval)
         new_C = self._concurrency + 1
         new_C = min(new_C, self.config.C_max)
         self._set_concurrency(new_C, "startup_grow")
@@ -1307,17 +1362,25 @@ class PAARCController:
         if self._is_latency_degraded(snap):
             self._stable_intervals = 0
             return
-        
-        # Check for ceiling revision (sustained underperformance)
+
+        # If operating above ceiling and stable, revise ceiling upward
+        if self._C_ceiling is not None and self._concurrency > self._C_ceiling:
+            old_ceiling = self._C_ceiling
+            self._C_ceiling = self._concurrency
+            self._C_operating = int(self._C_ceiling * self.config.mu)
+            #print(f"[PAARC] {self.host}: Ceiling revised {old_ceiling}→{self._C_ceiling} (probe success)")
+
+        # Check for ceiling revision downward (sustained underperformance)
         self._check_ceiling_revision(snap)
-        
+
         # Additive increase after stable intervals
         self._stable_intervals += 1
-        
+
         if self._stable_intervals >= self.config.stable_intervals_required:
-            if self._C_ceiling is not None and self._concurrency < self._C_ceiling:
+            # Can probe up to C_max (ceiling is soft, C_max is hard limit)
+            if self._concurrency < self.config.C_max:
                 delta = self._calculate_additive_increase()
-                new_C = min(self._concurrency + delta, self._C_ceiling)
+                new_C = min(self._concurrency + delta, self.config.C_max)
                 self._set_concurrency(new_C, "probe_bw_increase")
                 self._stable_intervals = 0
     
@@ -1339,17 +1402,18 @@ class PAARCController:
             self._underperformance_intervals += 1
             
             if self._underperformance_intervals >= self.config.underperformance_intervals:
-                # Multiplicative ceiling revision
+                # Multiplicative ceiling revision (ensure at least -1 decrease)
                 old_ceiling = self._C_ceiling
-                self._C_ceiling = max(
-                    self.config.C_min,
-                    int(self._C_ceiling * self.config.revision_factor)
+                revised = min(
+                    int(self._C_ceiling * self.config.revision_factor),
+                    self._C_ceiling - 1  # Guarantee at least -1
                 )
+                self._C_ceiling = max(self.config.C_min, revised)
                 self._C_operating = int(self._C_ceiling * self.config.mu)
                 self._set_concurrency(self._C_operating, "ceiling_revision")
                 self._underperformance_intervals = 0
                 
-                print(f"[PAARC] {self.host}: Ceiling revised {old_ceiling}→{self._C_ceiling}")
+                #print(f"[PAARC] {self.host}: Ceiling revised {old_ceiling}→{self._C_ceiling}")
         else:
             self._underperformance_intervals = 0
     
@@ -1806,8 +1870,6 @@ def write_overview(
                 "C_min": cfg.C_min,
                 "C_max": cfg.C_max,
                 "mu": cfg.mu,
-                "gamma_startup": cfg.gamma_startup,
-                "gamma_probe": cfg.gamma_probe,
                 "beta": cfg.beta,
                 "theta_50": cfg.theta_50,
                 "theta_95": cfg.theta_95,
