@@ -202,6 +202,8 @@ class PAARCConfig:
     beta: float = 0.5                   # Multiplicative decrease factor
     cooldown_rtprop_mult: int = 5       # Cooldown = max(5 × RTprop, ...)
     cooldown_floor: float = 2.0         # 2 second minimum cooldown
+    overload_check_rtprop_mult: float = 10.0  # Wait 10 × RTprop before checking continued overload
+    overload_check_floor: float = 2.0         # Minimum 3 seconds between overload checks
     
     # --- Ceiling Revision ---
     underperformance_threshold: float = 0.5  # Goodput < expected × this
@@ -934,7 +936,8 @@ class PAARCController:
         
         # BACKOFF phase
         self._cooldown_until: float = 0.0
-        
+        self._last_overload_reduction_time: float = 0.0  # Track last reduction for cooldown
+
         # Timing
         self._last_interval_time = _monotonic()
     
@@ -1135,6 +1138,7 @@ class PAARCController:
             self._C_ceiling = self.config.C_init
             cooldown = self._calculate_cooldown(snap.get("retry_after"))
             self._cooldown_until = now + cooldown
+            self._last_overload_reduction_time = now
             self.state = PAARCState.BACKOFF
             print(f"[PAARC] {self.host}: INIT→BACKOFF on error")
             return
@@ -1179,11 +1183,12 @@ class PAARCController:
             )
             self._C_operating = int(self._C_ceiling * self.config.mu)
             self._set_concurrency(self._C_operating, "startup_overload")
-            
+
             cooldown = self._calculate_cooldown(snap.get("retry_after"))
             self._cooldown_until = now + cooldown
+            self._last_overload_reduction_time = now
             self.state = PAARCState.BACKOFF
-            
+
             print(f"[PAARC] {self.host}: STARTUP→BACKOFF | C_ceiling={self._C_ceiling}")
             return
         
@@ -1256,11 +1261,12 @@ class PAARCController:
                 )
             
             self._set_concurrency(self._C_operating, "probe_bw_overload")
-            
+
             cooldown = self._calculate_cooldown(snap.get("retry_after"))
             self._cooldown_until = now + cooldown
+            self._last_overload_reduction_time = now
             self.state = PAARCState.BACKOFF
-            
+
             print(f"[PAARC] {self.host}: PROBE_BW→BACKOFF | C_ceiling={self._C_ceiling}")
             return
         
@@ -1349,11 +1355,12 @@ class PAARCController:
                     int(self._C_ceiling * self.config.beta)
                 )
                 self._C_operating = int(self._C_ceiling * self.config.mu)
-            
+
             cooldown = self._calculate_cooldown(snap.get("retry_after"))
             self._cooldown_until = now + cooldown
+            self._last_overload_reduction_time = now
             self.state = PAARCState.BACKOFF
-            
+
             print(f"[PAARC] {self.host}: PROBE_RTT→BACKOFF")
             return
         
@@ -1398,32 +1405,45 @@ class PAARCController:
     async def _step_backoff(self, snap: dict, now: float) -> None:
         """
         BACKOFF phase: Recover from overload.
-        
+
         - Wait for cooldown period
-        - Further reduce on continued errors
+        - Further reduce on continued errors (with RTprop-based cooldown)
         - Transition to PROBE_BW after recovery
         """
-        # Check for continued overload
-        if snap.get("has_overload"):
+        # Calculate overload check cooldown: max(floor, RTprop × multiplier)
+        # This prevents over-reduction due to error bursts from stale high-C requests
+        rtprop = self._get_rtprop()
+        overload_check_cooldown = max(
+            self.config.overload_check_floor,
+            rtprop * self.config.overload_check_rtprop_mult
+        )
+        time_since_last_reduction = now - self._last_overload_reduction_time
+
+        # Check for continued overload (only if cooldown has passed)
+        if snap.get("has_overload") and time_since_last_reduction >= overload_check_cooldown:
             # Further multiplicative decrease
             new_C = max(
                 self.config.C_min,
                 int(self._concurrency * self.config.beta)
             )
             self._set_concurrency(new_C, "backoff_continued")
-            
+
             # Revise ceiling
             if self._C_ceiling is not None:
                 self._C_ceiling = max(
                     self.config.C_min,
                     int(self._C_ceiling * self.config.beta)
                 )
-            
+
             # Extend cooldown
             cooldown = self._calculate_cooldown(snap.get("retry_after"))
             self._cooldown_until = now + cooldown
-            
-            print(f"[PAARC] {self.host}: BACKOFF continued | C={new_C}")
+
+            # Track this reduction for cooldown
+            self._last_overload_reduction_time = now
+
+            print(f"[PAARC] {self.host}: BACKOFF continued | C={new_C} | "
+                  f"overload_cooldown={overload_check_cooldown:.1f}s")
             return
         
         # Check if cooldown has expired
