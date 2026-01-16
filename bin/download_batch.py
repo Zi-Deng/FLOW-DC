@@ -615,13 +615,14 @@ class LeakyBucketSmoother:
 class HostMetrics:
     """
     Per-host metrics collection and statistics.
-    
+
     Collects TTFB samples, error counts, and bytes downloaded per interval.
     Computes percentiles and EMA-smoothed values for stable control signals.
     """
-    
-    def __init__(self, config: PAARCConfig):
+
+    def __init__(self, config: PAARCConfig, host: str = "unknown"):
         self.config = config
+        self.host = host
         self._lock = asyncio.Lock()
         
         # Per-interval accumulators
@@ -749,6 +750,7 @@ class HostMetrics:
         self._ema_p95 = self._update_ema(self._ema_p95, p95_raw)
         
         # Update RTprop (minimum p10 over sliding window)
+        old_rtprop = self._rtprop
         if p10_raw is not None:
             self._rtprop_samples.append((now, p10_raw))
             # Expire old samples
@@ -758,7 +760,18 @@ class HostMetrics:
             # RTprop is minimum p10 in window
             if self._rtprop_samples:
                 self._rtprop = min(s[1] for s in self._rtprop_samples)
-        
+
+            # Print RTprop statistics when RTprop is updated
+            if self._rtprop != old_rtprop:
+                rtprop_ms = self._rtprop * 1000 if self._rtprop else 0
+                p10_ms = (self._ema_p10 or 0) * 1000
+                p50_ms = (self._ema_p50 or 0) * 1000
+                p95_ms = (self._ema_p95 or 0) * 1000
+                avg_kb = (self._avg_file_size or 0) / 1024
+                print(f"[PAARC] {self.host}: RTprop updated → {rtprop_ms:.0f}ms | "
+                      f"p10={p10_ms:.0f}ms p50={p50_ms:.0f}ms p95={p95_ms:.0f}ms | "
+                      f"AvgSize={avg_kb:.1f}KB | Samples={self._total_samples}")
+
         # Calculate goodput (requests per second)
         goodput_rps = n_success / duration if duration > 0 else 0.0
         goodput_bps = bytes_downloaded / duration if duration > 0 else 0.0
@@ -821,6 +834,11 @@ class HostMetrics:
         """Average file size in bytes."""
         return self._avg_file_size
 
+    @property
+    def last_goodput(self) -> Optional[float]:
+        """Most recent goodput measurement (requests per second)."""
+        return self._goodput_history[-1] if self._goodput_history else None
+
 
 # =============================================================================
 # PAARC v2.0 CONTROLLER
@@ -860,8 +878,8 @@ class PAARCController:
         )
         
         # Metrics
-        self.metrics = HostMetrics(config)
-        
+        self.metrics = HostMetrics(config, host)
+
         # Smoother (initialized after RTprop known)
         self.smoother: Optional[LeakyBucketSmoother] = None
         
@@ -904,6 +922,48 @@ class PAARCController:
             self._concurrency = new_C
             self.semaphore.set_limit(new_C, reason)
             self._update_smoother()
+
+            # Print goodput (measured) and inferred rate (theoretical) with units
+            goodput_rps = self.metrics.last_goodput
+            rtprop = self.metrics.rtprop
+            avg_size = self.metrics.avg_file_size
+
+            # Format helper for bytes/sec
+            def fmt_bps(bps: float) -> str:
+                if bps >= 1_000_000:
+                    return f"{bps / 1_000_000:.2f} MB/s"
+                elif bps >= 1_000:
+                    return f"{bps / 1_000:.1f} KB/s"
+                else:
+                    return f"{bps:.0f} B/s"
+
+            # Goodput: actual measured throughput
+            if goodput_rps is not None:
+                goodput_rps_str = f"{goodput_rps:.1f} req/s"
+                if avg_size is not None:
+                    goodput_bps = goodput_rps * avg_size
+                    goodput_bps_str = fmt_bps(goodput_bps)
+                else:
+                    goodput_bps_str = "N/A"
+            else:
+                goodput_rps_str = "N/A"
+                goodput_bps_str = "N/A"
+
+            # Inferred rate: theoretical rate from Little's Law (R = C / RTprop)
+            if rtprop is not None and rtprop > 0:
+                inferred_rps = new_C / rtprop
+                inferred_rps_str = f"{inferred_rps:.1f} req/s"
+                if avg_size is not None:
+                    inferred_bps = inferred_rps * avg_size
+                    inferred_bps_str = fmt_bps(inferred_bps)
+                else:
+                    inferred_bps_str = "N/A"
+            else:
+                inferred_rps_str = "N/A"
+                inferred_bps_str = "N/A"
+
+            print(f"[PAARC]   Goodput(measured): {goodput_rps_str} ({goodput_bps_str}) | "
+                  f"InferredRate(C/RTprop): {inferred_rps_str} ({inferred_bps_str})")
     
     def _update_smoother(self) -> None:
         """Update or initialize the leaky bucket smoother."""
