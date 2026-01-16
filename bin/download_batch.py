@@ -204,7 +204,7 @@ class PAARCConfig:
     cooldown_floor: float = 2.0         # 2 second minimum cooldown
     
     # --- Ceiling Revision ---
-    underperformance_threshold: float = 0.70  # Goodput < expected × this
+    underperformance_threshold: float = 0.5  # Goodput < expected × this
     underperformance_intervals: int = 5       # Consecutive intervals to trigger
     revision_factor: float = 0.80             # Multiplicative ceiling reduction
     
@@ -824,20 +824,29 @@ class HostMetrics:
         
         Plateau detected when: goodput[t] < goodput[t-3] × 1.02 for last 3 intervals
         """
-        if len(self._goodput_history) < 4:
+        if len(self._goodput_history) < 6:
             return False
         
-        baseline = self._goodput_history[-4]
+        baseline = self._goodput_history[-6]
         if baseline <= 0:
             return False
         
         # Check if all last 3 values are within 2% of baseline
-        for g in list(self._goodput_history)[-3:]:
-            if g > baseline * 1.02:
+        for g in list(self._goodput_history)[-5:]:
+            if g > baseline * 1.01:
                 return False
         
         return True
-    
+
+    def reset_goodput_history(self) -> None:
+        """
+        Reset goodput history.
+
+        Called when entering STARTUP to ensure plateau detection
+        only considers STARTUP phase performance, not INIT phase values.
+        """
+        self._goodput_history.clear()
+
     @property
     def rtprop(self) -> Optional[float]:
         """Current RTprop estimate (minimum observed latency)."""
@@ -1140,10 +1149,13 @@ class PAARCController:
             
             print(f"[PAARC] {self.host}: INIT complete | RTprop={rtprop_ms:.0f}ms | "
                   f"AvgSize={avg_size_kb:.1f}KB")
-            
+
             # Initialize smoother now that we have RTprop
             self._update_smoother()
-            
+
+            # Reset goodput history so plateau detection only considers STARTUP phase
+            self.metrics.reset_goodput_history()
+
             # Transition to STARTUP
             self.state = PAARCState.STARTUP
             print(f"[PAARC] {self.host}: INIT→STARTUP")
