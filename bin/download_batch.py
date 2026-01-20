@@ -51,7 +51,7 @@ import aiohttp
 import polars as pl
 from tqdm.asyncio import tqdm
 
-from single_download_gbif import download_single, load_input_file, extract_extension
+from single_download import download_single, load_input_file, extract_extension
 
 
 # =============================================================================
@@ -1740,8 +1740,6 @@ async def download_one(
             session=session,
             timeout=cfg.timeout_sec,
             filename=filename_override,
-            token_bucket=None,
-            enable_rate_limiting=False,
             total_bytes=total_bytes,
         )
         
