@@ -1319,7 +1319,7 @@ class PAARCController:
             return
 
         # Additive growth (+1 per interval)
-        new_C = self._concurrency + 10
+        new_C = self._concurrency + 30
         new_C = min(new_C, self.config.C_max)
         self._set_concurrency(new_C, "startup_grow")
     
