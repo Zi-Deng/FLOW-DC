@@ -2032,27 +2032,34 @@ async def main() -> None:
     successes = [o for o in final_outcomes.values() if o.success]
     failures = [o for o in final_outcomes.values() if not o.success]
     
+    download_elapsed = elapsed  # Rename for clarity
+
     print("\n" + "=" * 72)
     print("FINAL SUMMARY")
     print("=" * 72)
     print(f"Total URLs:            {df.height}")
     print(f"Successful downloads:  {len(successes)}")
     print(f"Failed downloads:      {len(failures)}")
-    print(f"Elapsed time:          {elapsed:.2f}s")
+    print(f"Download time:         {download_elapsed:.2f}s")
     if df.height > 0:
         print(f"Success rate:          {(len(successes) / df.height) * 100:.2f}%")
-    
+
     total_mb = sum(o.bytes_downloaded for o in successes) / 1e6
     print(f"Total downloaded:      {total_mb:.2f} MB")
-    if elapsed > 0:
-        print(f"Average speed:         {total_mb / elapsed:.2f} MB/s")
+    if download_elapsed > 0:
+        print(f"Average speed:         {total_mb / download_elapsed:.2f} MB/s")
     
     # Create tar archive
     tar_path = None
+    tar_elapsed = 0.0
     if cfg.create_tar and not shutdown_flag and len(successes) > 0:
         try:
+            tar_start = _monotonic()
             tar_path = create_tar(cfg.output_folder)
+            tar_elapsed = _monotonic() - tar_start
+            tar_size_mb = Path(tar_path).stat().st_size / 1e6
             print(f"[Tar] Created: {tar_path}")
+            print(f"[Tar] Size: {tar_size_mb:.2f} MB, Time: {tar_elapsed:.2f}s")
         except Exception as e:
             print(f"[Tar] Failed: {e}")
 
@@ -2069,7 +2076,15 @@ async def main() -> None:
             print(f"[Report] Overview: {overview}")
         except Exception as e:
             print(f"[Report] Failed: {e}")
-    
+
+    # Timing breakdown
+    total_elapsed = download_elapsed + tar_elapsed
+    print("\n" + "-" * 72)
+    print("TIMING BREAKDOWN")
+    print("-" * 72)
+    print(f"Download time:         {download_elapsed:.2f}s ({download_elapsed/total_elapsed*100:.1f}%)" if total_elapsed > 0 else f"Download time:         {download_elapsed:.2f}s")
+    print(f"Tar creation time:     {tar_elapsed:.2f}s ({tar_elapsed/total_elapsed*100:.1f}%)" if total_elapsed > 0 else f"Tar creation time:     {tar_elapsed:.2f}s")
+    print(f"Total time:            {total_elapsed:.2f}s")
     print("=" * 72)
 
 
