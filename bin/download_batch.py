@@ -199,10 +199,12 @@ class PAARCConfig:
     # Derivative-based plateau detection (PLATEAU_DETECTION_MODE = "derivative")
     efficiency_threshold: float = 0.5   # Plateau if efficiency < 50% of expected
     efficiency_window: int = 5          # Compare goodput over N intervals
+    startup_additive_increase: int = 30  # Additive increase per interval in STARTUP
 
     # --- PROBE_BW Phase ---
     mu: float = 0.85                    # Utilization factor (operating margin)
     stable_intervals_required: int = 1  # Stable intervals before probing
+    probe_bw_additive_increase: int = 10  # Additive increase per stable interval in PROBE_BW
     
     # --- PROBE_RTT Phase ---
     probe_rtt_period: float = 10.0      # Seconds between PROBE_RTT entries
@@ -265,7 +267,9 @@ class Config:
     rtprop_window: float = 15.0
     cooldown_floor: float = 2.0
     alpha_ema: float = 0.3
-    
+    startup_additive_increase: int = 30
+    probe_bw_additive_increase: int = 10
+
     # Retry configuration
     max_retry_attempts: int = 3
     retry_backoff_sec: float = 2.0
@@ -276,6 +280,7 @@ class Config:
     
     # Output options
     create_tar: bool = True
+    compress_tar: bool = True  # False for uncompressed .tar (faster)
     create_overview: bool = True
     
     def to_paarc_config(self) -> PAARCConfig:
@@ -289,6 +294,8 @@ class Config:
             startup_theta_95=self.startup_theta_95,
             efficiency_threshold=self.efficiency_threshold,
             efficiency_window=self.efficiency_window,
+            startup_additive_increase=self.startup_additive_increase,
+            probe_bw_additive_increase=self.probe_bw_additive_increase,
             beta=self.beta,
             theta_50=self.theta_50,
             theta_95=self.theta_95,
@@ -344,7 +351,11 @@ Examples:
     p.add_argument("--probe_rtt_period", type=float, default=10.0)
     p.add_argument("--cooldown_floor", type=float, default=2.0)
     p.add_argument("--alpha_ema", type=float, default=0.3)
-    
+    p.add_argument("--startup_additive_increase", type=int, default=30,
+                   help="Additive increase per interval in STARTUP phase")
+    p.add_argument("--probe_bw_additive_increase", type=int, default=10,
+                   help="Additive increase per stable interval in PROBE_BW phase")
+
     # Retry
     p.add_argument("--max_retry_attempts", type=int, default=3)
     p.add_argument("--retry_backoff_sec", type=float, default=2.0)
@@ -356,6 +367,8 @@ Examples:
     
     # Output options
     p.add_argument("--no_tar", action="store_true")
+    p.add_argument("--no_compress_tar", action="store_true",
+                   help="Create uncompressed .tar instead of .tar.gz (faster)")
     p.add_argument("--no_overview", action="store_true")
     
     args = p.parse_args()
@@ -391,11 +404,14 @@ Examples:
             rtprop_window=float(data.get("rtprop_window", 15.0)),
             cooldown_floor=float(data.get("cooldown_floor", 2.0)),
             alpha_ema=float(data.get("alpha_ema", 0.3)),
+            startup_additive_increase=int(data.get("startup_additive_increase", 30)),
+            probe_bw_additive_increase=int(data.get("probe_bw_additive_increase", 10)),
             max_retry_attempts=int(data.get("max_retry_attempts", 3)),
             retry_backoff_sec=float(data.get("retry_backoff_sec", 2.0)),
             naming_mode=data.get("naming_mode", "sequential"),
             file_name_pattern=data.get("file_name_pattern", "{segment[-2]}"),
             create_tar=bool(data.get("create_tar", True)),
+            compress_tar=bool(data.get("compress_tar", True)),
             create_overview=bool(data.get("create_overview", True)),
         )
     
@@ -427,11 +443,14 @@ Examples:
         probe_rtt_period=args.probe_rtt_period,
         cooldown_floor=args.cooldown_floor,
         alpha_ema=args.alpha_ema,
+        startup_additive_increase=args.startup_additive_increase,
+        probe_bw_additive_increase=args.probe_bw_additive_increase,
         max_retry_attempts=args.max_retry_attempts,
         retry_backoff_sec=args.retry_backoff_sec,
         naming_mode=args.naming_mode,
         file_name_pattern=args.file_name_pattern,
         create_tar=not args.no_tar,
+        compress_tar=not args.no_compress_tar,
         create_overview=not args.no_overview,
     )
 
@@ -1146,17 +1165,9 @@ class PAARCController:
             sample_based = self.config.N_min / goodput_rps
         else:
             sample_based = self.config.T_floor
-        
-        return max(time_based, sample_based, self.config.T_floor)
-    
-    def _calculate_additive_increase(self) -> int:
-        """
-        Calculate additive increase for PROBE_BW probing.
 
-        Returns +1 for conservative fine-tuning in steady state.
-        """
-        return 10
-    
+        return max(time_based, sample_based, self.config.T_floor)
+
     async def step_interval(self) -> None:
         """
         Execute one control interval step.
@@ -1318,8 +1329,8 @@ class PAARCController:
             print(f"[PAARC] {self.host}: STARTUP→PROBE_BW (max) | C_ceiling={self._C_ceiling}")
             return
 
-        # Additive growth (+1 per interval)
-        new_C = self._concurrency + 30
+        # Additive growth per interval
+        new_C = self._concurrency + self.config.startup_additive_increase
         new_C = min(new_C, self.config.C_max)
         self._set_concurrency(new_C, "startup_grow")
     
@@ -1397,8 +1408,7 @@ class PAARCController:
         if self._stable_intervals >= self.config.stable_intervals_required:
             # Can probe up to C_max (ceiling is soft, C_max is hard limit)
             if self._concurrency < self.config.C_max:
-                delta = self._calculate_additive_increase()
-                new_C = min(self._concurrency + delta, self.config.C_max)
+                new_C = min(self._concurrency + self.config.probe_bw_additive_increase, self.config.C_max)
                 self._set_concurrency(new_C, "probe_bw_increase")
                 self._stable_intervals = 0
     
@@ -1596,32 +1606,75 @@ class HostControllerManager:
             return list(self._controllers.values())
 
 
+# async def controller_loop(manager: HostControllerManager) -> None:
+#     """
+#     Periodic control loop for all host controllers.
+    
+#     Runs step_interval for each controller based on their individual
+#     calculated interval durations.
+#     """
+#     print("[PAARC] Controller loop started")
+    
+#     # Use a base interval for checking; individual controllers have their own timing
+#     base_interval = 0.2  # 200ms base check interval
+    
+#     while not shutdown_flag:
+#         await asyncio.sleep(base_interval)
+        
+#         if shutdown_flag:
+#             break
+        
+#         controllers = await manager.all_controllers()
+        
+#         for ctrl in controllers:
+#             try:
+#                 await ctrl.step_interval()
+#             except Exception as e:
+#                 print(f"[PAARC] Error in controller for {ctrl.host}: {e}")
+
 async def controller_loop(manager: HostControllerManager) -> None:
     """
-    Periodic control loop for all host controllers.
-    
-    Runs step_interval for each controller based on their individual
-    calculated interval durations.
+    BBR-consistent control loop with per-host adaptive timing.
     """
-    print("[PAARC] Controller loop started")
-    
-    # Use a base interval for checking; individual controllers have their own timing
-    base_interval = 0.2  # 200ms base check interval
+    host_next_step: dict[str, float] = {}  # host -> next step time
     
     while not shutdown_flag:
-        await asyncio.sleep(base_interval)
-        
-        if shutdown_flag:
-            break
-        
+        now = time.monotonic()
         controllers = await manager.all_controllers()
         
         for ctrl in controllers:
-            try:
-                await ctrl.step_interval()
-            except Exception as e:
-                print(f"[PAARC] Error in controller for {ctrl.host}: {e}")
-
+            host = ctrl.host
+            next_time = host_next_step.get(host, 0)
+            
+            if now >= next_time:
+                try:
+                    snap = await ctrl.step_interval()
+                    
+                    # Calculate next interval based on RTprop
+                    rtprop = ctrl.metrics.rtprop or 0.2
+                    
+                    # BBR-style: interval = k × RTprop, with floor
+                    if ctrl.state == PAARCState.STARTUP:
+                        interval = max(4 * rtprop, 0.1)  # Faster during ramp-up
+                    elif ctrl.state == PAARCState.BACKOFF:
+                        interval = max(4 * rtprop, 0.1)   # Moderate during recovery
+                    else:
+                        interval = max(8 * rtprop, 0.2)   # Full cycle in steady-state
+                    
+                    host_next_step[host] = now + interval
+                    
+                except Exception as e:
+                    print(f"[PAARC] Error for {host}: {e}")
+                    host_next_step[host] = now + 0.2  # Fallback
+        
+        # Sleep until next host needs attention (or minimum check interval)
+        if host_next_step:
+            next_wakeup = min(host_next_step.values())
+            sleep_time = max(0.01, next_wakeup - time.monotonic())
+        else:
+            sleep_time = 0.2
+        
+        await asyncio.sleep(sleep_time)
 
 # =============================================================================
 # FILENAME ALLOCATION
@@ -1845,17 +1898,33 @@ async def download_batch_bounded(
 # TAR AND OVERVIEW
 # =============================================================================
 
-def create_tar(output_folder: str) -> str:
-    """Create tar.gz archive of output folder."""
+def create_tar(output_folder: str, compress: bool = True) -> str:
+    """Create tar archive of output folder.
+
+    Args:
+        output_folder: Path to the folder to archive
+        compress: If True, create .tar.gz (gzip compressed). If False, create .tar (uncompressed).
+
+    Returns:
+        Path to the created tar archive
+    """
     out = Path(output_folder)
-    tar_path = out.with_suffix(out.suffix + ".tar.gz") if out.suffix else Path(str(out) + ".tar.gz")
-    
+
+    if compress:
+        suffix = ".tar.gz"
+        mode = "w:gz"
+    else:
+        suffix = ".tar"
+        mode = "w"
+
+    tar_path = out.with_suffix(out.suffix + suffix) if out.suffix else Path(str(out) + suffix)
+
     if not out.exists():
         raise FileNotFoundError(f"Output folder not found: {out}")
-    
-    with tarfile.open(str(tar_path), "w:gz") as tf:
+
+    with tarfile.open(str(tar_path), mode) as tf:
         tf.add(str(out), arcname=out.name)
-    
+
     return str(tar_path.resolve())
 
 
@@ -2055,10 +2124,11 @@ async def main() -> None:
     if cfg.create_tar and not shutdown_flag and len(successes) > 0:
         try:
             tar_start = _monotonic()
-            tar_path = create_tar(cfg.output_folder)
+            tar_path = create_tar(cfg.output_folder, compress=cfg.compress_tar)
             tar_elapsed = _monotonic() - tar_start
             tar_size_mb = Path(tar_path).stat().st_size / 1e6
-            print(f"[Tar] Created: {tar_path}")
+            compress_str = "compressed" if cfg.compress_tar else "uncompressed"
+            print(f"[Tar] Created ({compress_str}): {tar_path}")
             print(f"[Tar] Size: {tar_size_mb:.2f} MB, Time: {tar_elapsed:.2f}s")
         except Exception as e:
             print(f"[Tar] Failed: {e}")
