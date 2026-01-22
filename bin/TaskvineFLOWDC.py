@@ -35,7 +35,6 @@ Config file format:
 }
 """
 
-import ndcctools.taskvine as vine
 import json
 import os
 import argparse
@@ -43,6 +42,12 @@ import time
 import sys
 import tempfile
 from pathlib import Path
+from contextlib import redirect_stderr
+from io import StringIO
+
+# Suppress "DaskVine not available" warning from taskvine import
+with redirect_stderr(StringIO()):
+    import ndcctools.taskvine as vine
 
 
 def parse_args():
@@ -177,7 +182,7 @@ def create_partition_config(base_config: dict, partition_file: str, output_name:
 
         # Download settings
         "concurrent_downloads": base_config.get('concurrent_downloads', 1000),
-        "timeout": base_config.get('timeout_sec', 30),
+        "timeout": base_config.get('timeout', base_config.get('timeout_sec', 30)),
 
         # PAARC toggle
         "enable_paarc": base_config.get('enable_paarc', True),
@@ -205,13 +210,23 @@ def create_partition_config(base_config: dict, partition_file: str, output_name:
         # PAARC smoothing
         "alpha_ema": base_config.get('alpha_ema', 0.3),
 
+        # PAARC additive increase settings
+        "startup_additive_increase": base_config.get('startup_additive_increase', 30),
+        "probe_bw_additive_increase": base_config.get('probe_bw_additive_increase', 10),
+
+        # PAARC efficiency settings
+        "efficiency_threshold": base_config.get('efficiency_threshold', 0.5),
+        "efficiency_window": base_config.get('efficiency_window', 5),
+
         # Retry settings
         "max_retry_attempts": base_config.get('max_retry_attempts', 3),
         "retry_backoff_sec": base_config.get('retry_backoff_sec', 2.0),
 
         # Output options
         "naming_mode": base_config.get('naming_mode', 'sequential'),
+        "file_name_pattern": base_config.get('file_name_pattern'),
         "create_tar": base_config.get('create_tar', True),
+        "compress_tar": base_config.get('compress_tar', True),
         "create_overview": base_config.get('create_overview', True),
     }
 
@@ -288,7 +303,10 @@ def submit_tasks(
             # Create output name from partition name
             base_name = file_name.replace(".parquet", "")
             output_name = f"output_{base_name}"
-            tar_name = f"{output_name}.tar.gz"
+            # Use .tar.gz if compressed, .tar if uncompressed
+            compress_tar = config.get('compress_tar', True)
+            tar_ext = ".tar.gz" if compress_tar else ".tar"
+            tar_name = f"{output_name}{tar_ext}"
 
             # Create partition-specific config
             partition_config = create_partition_config(config, file_name, output_name)
@@ -349,6 +367,13 @@ def monitor_tasks(manager, total_tasks: int) -> tuple:
     start_time = time.time()
     last_status_time = start_time
 
+    # Aggregate timing accumulators
+    total_exec_time = 0.0
+    total_input_xfer_time = 0.0
+    total_output_xfer_time = 0.0
+    total_bytes_in = 0
+    total_bytes_out = 0
+
     while not manager.empty():
         task = manager.wait(5)
         current_time = time.time()
@@ -357,8 +382,34 @@ def monitor_tasks(manager, total_tasks: int) -> tuple:
             completed_tasks += 1
             elapsed = current_time - start_time
 
+            # Extract timing metrics from TaskVine (all times are in microseconds)
+            exec_time_us = task.get_metric("time_workers_execute_last") or 0
+            commit_start_us = task.get_metric("time_when_commit_start") or 0
+            commit_end_us = task.get_metric("time_when_commit_end") or 0
+            submit_time_us = task.get_metric("time_when_submitted") or 0
+            done_time_us = task.get_metric("time_when_done") or 0
+
+            # Calculate times (convert from microseconds to seconds)
+            exec_time_sec = exec_time_us / 1e6
+            output_xfer_sec = (commit_end_us - commit_start_us) / 1e6 if (commit_end_us > 0 and commit_start_us > 0) else 0
+            total_task_sec = (done_time_us - submit_time_us) / 1e6 if (done_time_us > 0 and submit_time_us > 0) else 0
+            input_xfer_sec = max(0, total_task_sec - exec_time_sec - output_xfer_sec)
+
+            # Get transfer bytes
+            bytes_sent = task.get_metric("bytes_sent") or 0
+            bytes_received = task.get_metric("bytes_received") or 0
+
+            # Accumulate totals
+            total_exec_time += exec_time_sec
+            total_input_xfer_time += input_xfer_sec
+            total_output_xfer_time += output_xfer_sec
+            total_bytes_in += bytes_received
+            total_bytes_out += bytes_sent
+
             if task.successful():
                 print(f"[OK] Task {task.id} completed ({completed_tasks}/{total_tasks}) - {elapsed:.1f}s elapsed")
+                print(f"     Timing: exec={exec_time_sec:.1f}s, input_xfer={input_xfer_sec:.1f}s, output_xfer={output_xfer_sec:.1f}s")
+                print(f"     Transfer: in={bytes_received/1e6:.1f}MB, out={bytes_sent/1e6:.1f}MB")
                 if task.output:
                     # Print last line of output
                     output_lines = task.output.strip().split('\n')
@@ -387,6 +438,23 @@ def monitor_tasks(manager, total_tasks: int) -> tuple:
     print(f"\nAll tasks completed in {total_time:.1f}s")
     print(f"  Successful: {completed_tasks - failed_tasks}")
     print(f"  Failed: {failed_tasks}")
+
+    # Print aggregate timing breakdown
+    print("\n" + "=" * 60)
+    print("AGGREGATE TIMING BREAKDOWN")
+    print("=" * 60)
+    total_measured = total_exec_time + total_input_xfer_time + total_output_xfer_time
+    if total_measured > 0:
+        print(f"  Execution time (download+tar): {total_exec_time:.1f}s ({total_exec_time/total_measured*100:.1f}%)")
+        print(f"  Input transfer time:           {total_input_xfer_time:.1f}s ({total_input_xfer_time/total_measured*100:.1f}%)")
+        print(f"  Output transfer time:          {total_output_xfer_time:.1f}s ({total_output_xfer_time/total_measured*100:.1f}%)")
+    else:
+        print(f"  Execution time (download+tar): {total_exec_time:.1f}s")
+        print(f"  Input transfer time:           {total_input_xfer_time:.1f}s")
+        print(f"  Output transfer time:          {total_output_xfer_time:.1f}s")
+    print(f"  Total bytes received:          {total_bytes_in/1e6:.1f}MB")
+    print(f"  Total bytes sent:              {total_bytes_out/1e6:.1f}MB")
+    print("=" * 60)
 
     return completed_tasks - failed_tasks, failed_tasks
 
