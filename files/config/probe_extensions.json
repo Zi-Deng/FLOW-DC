@@ -1,0 +1,8 @@
+{
+  "input": "files/input/biotrove_test_100k.parquet",
+  "output": "files/input/biotrove_test_100k_corrected.parquet",
+  "url": "url",
+  "concurrency": 500,
+  "timeout": 10,
+  "extensions": ["jpeg", "jpg", "png", "gif"]
+}

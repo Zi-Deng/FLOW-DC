@@ -1,0 +1,10 @@
+{
+  "input": "files/test/Biotrove-Train.parquet",
+  "output": "files/test/Biotrove-Train-corrected.parquet",
+  "url": "url",
+  "concurrency": 1500,
+  "timeout": 10,
+  "batch_size": 500000,
+  "checkpoint_dir": "files/test/probe_checkpoints",
+  "extensions": ["jpeg", "jpg", "png", "gif"]
+}

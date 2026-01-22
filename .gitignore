@@ -164,6 +164,7 @@ vine-run-info
 zkdeng-workers
 playground
 files/output
+files/test
 data
 examples
 CLAUDE.md
