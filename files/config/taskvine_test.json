@@ -1,0 +1,36 @@
+{
+  "port_number": 9123,
+  "parquets_directory": "files/input",
+  "output_directory": "files/output/taskvine_test",
+
+  "url_col": "photo_url",
+  "label_col": "species_name",
+
+  "concurrent_downloads": 1000,
+  "timeout_sec": 30,
+
+  "enable_paarc": true,
+
+  "C_init": 8,
+  "C_min": 2,
+  "C_max": 2000,
+  "mu": 0.95,
+  "beta": 0.7,
+  "theta_50": 6.0,
+  "theta_95": 12.0,
+  "startup_theta_50": 12.0,
+  "startup_theta_95": 24.0,
+
+  "max_retry_attempts": 3,
+  "retry_backoff_sec": 2.0,
+
+  "naming_mode": "sequential",
+  "create_tar": true,
+  "create_overview": true,
+
+  "task_cores": 4,
+  "task_memory_mb": 8000,
+  "task_disk_mb": 10000,
+  "timeout_minutes": 60,
+  "max_retries": 3
+}

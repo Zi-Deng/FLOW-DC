@@ -104,7 +104,7 @@ def parse_json_config(file_path: str) -> dict:
         'label_col': None,
 
         # Download settings
-        'concurrent_downloads': 1000,
+        'concurrent_downloads': None,  # None = auto-detect based on unique hosts
         'timeout_sec': 30,
 
         # PAARC toggle
@@ -116,10 +116,10 @@ def parse_json_config(file_path: str) -> dict:
         'C_max': 2000,
 
         # PAARC utilization and backoff
-        'mu': 1.0,
-        'beta': 0.7,
+        'mu': 0.85,
+        'beta': 0.5,
 
-        # PAARC latency thresholds
+        # PAARC latency thresholds (must match download_batch.py defaults)
         'theta_50': 1.5,
         'theta_95': 2.0,
         'startup_theta_50': 3.0,
@@ -148,6 +148,9 @@ def parse_json_config(file_path: str) -> dict:
         'task_disk_mb': 50000,
         'timeout_minutes': 60,
         'max_retries': 3,
+
+        # Worker environment settings
+        'ulimit_nofile': 10000,  # File descriptor limit for workers (set to None to disable)
     }
 
     for field, default_value in defaults.items():
@@ -181,7 +184,7 @@ def create_partition_config(base_config: dict, partition_file: str, output_name:
         "label": base_config.get('label_col'),
 
         # Download settings
-        "concurrent_downloads": base_config.get('concurrent_downloads', 1000),
+        "concurrent_downloads": base_config.get('concurrent_downloads'),  # None = auto-detect
         "timeout": base_config.get('timeout', base_config.get('timeout_sec', 30)),
 
         # PAARC toggle
@@ -228,6 +231,7 @@ def create_partition_config(base_config: dict, partition_file: str, output_name:
         "create_tar": base_config.get('create_tar', True),
         "compress_tar": base_config.get('compress_tar', True),
         "create_overview": base_config.get('create_overview', True),
+        "force_overwrite": True,  # Always force in automated TaskVine mode
     }
 
 
@@ -321,7 +325,11 @@ def submit_tasks(
             config_vine = manager.declare_file(config_path)
 
             # Create task command
-            command = f"python download_batch.py --config {config_filename}"
+            ulimit_nofile = config.get('ulimit_nofile')
+            if ulimit_nofile:
+                command = f"bash -c 'ulimit -n {ulimit_nofile} && python download_batch.py --config {config_filename}'"
+            else:
+                command = f"python download_batch.py --config {config_filename}"
 
             task = vine.Task(command)
 

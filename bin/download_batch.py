@@ -67,8 +67,10 @@ def _signal_handler(sig, frame):
     shutdown_flag = True
 
 
-signal.signal(signal.SIGINT, _signal_handler)
-signal.signal(signal.SIGTERM, _signal_handler)
+def _setup_signal_handlers():
+    """Register signal handlers. Called from main() to avoid side effects on import."""
+    signal.signal(signal.SIGINT, _signal_handler)
+    signal.signal(signal.SIGTERM, _signal_handler)
 
 # Trace context for aiohttp TTFB measurement
 TRACE_CTX: ContextVar[dict | None] = ContextVar("TRACE_CTX", default=None)
@@ -194,8 +196,8 @@ class PAARCConfig:
     
     # --- STARTUP Phase (Plateau Detection) ---
     # Latency-based plateau detection (PLATEAU_DETECTION_MODE = "latency")
-    startup_theta_50: float = 4       # p50 > RTprop × 12 = plateau
-    startup_theta_95: float = 8      # p95 > RTprop × 16 = plateau
+    startup_theta_50: float = 3.0     # p50 > RTprop × threshold = plateau
+    startup_theta_95: float = 4.0     # p95 > RTprop × threshold = plateau
     # Derivative-based plateau detection (PLATEAU_DETECTION_MODE = "derivative")
     efficiency_threshold: float = 0.5   # Plateau if efficiency < 50% of expected
     efficiency_window: int = 5          # Compare goodput over N intervals
@@ -205,28 +207,27 @@ class PAARCConfig:
     mu: float = 0.85                    # Utilization factor (operating margin)
     stable_intervals_required: int = 1  # Stable intervals before probing
     probe_bw_additive_increase: int = 10  # Additive increase per stable interval in PROBE_BW
-    
+
     # --- PROBE_RTT Phase ---
     probe_rtt_period: float = 10.0      # Seconds between PROBE_RTT entries
     probe_rtt_min_samples: int = 100    # Minimum samples before PROBE_RTT trigger
     probe_rtt_concurrency_factor: float = 0.5  # Reduce to 50% of current C
-    n_restore: int = 5                  # Gradual restoration steps
-    
+
     # --- BACKOFF Phase ---
     beta: float = 0.5                   # Multiplicative decrease factor
     cooldown_rtprop_mult: int = 5       # Cooldown = max(5 × RTprop, ...)
     cooldown_floor: float = 2.0         # 2 second minimum cooldown
     overload_check_rtprop_mult: float = 10.0  # Wait 10 × RTprop before checking continued overload
     overload_check_floor: float = 3.0         # Minimum 3 seconds between overload checks
-    
+
     # --- Ceiling Revision ---
     underperformance_threshold: float = 0.5  # Goodput < expected × this
     underperformance_intervals: int = 5       # Consecutive intervals to trigger
     revision_factor: float = 0.99          # Multiplicative ceiling reduction
-    
-    # --- Latency Thresholds ---
-    theta_50: float = 4               # Median degradation threshold
-    theta_95: float = 8               # Tail degradation threshold
+
+    # --- Latency Thresholds (PROBE_BW phase) ---
+    theta_50: float = 1.5             # Median degradation threshold
+    theta_95: float = 2.0             # Tail degradation threshold
     
     # --- Smoothing ---
     alpha_ema: float = 0.3              # EMA smoothing factor
@@ -245,7 +246,7 @@ class Config:
     
     output_format: str = "imagefolder"
     
-    concurrent_downloads: int = 256
+    concurrent_downloads: Optional[int] = None  # None or 0 = auto-detect based on host count
     timeout_sec: int = 30
     
     # PAARC controller toggle
@@ -282,7 +283,8 @@ class Config:
     create_tar: bool = True
     compress_tar: bool = True  # False for uncompressed .tar (faster)
     create_overview: bool = True
-    
+    force_overwrite: bool = False  # If True, delete existing output folder without confirmation
+
     def to_paarc_config(self) -> PAARCConfig:
         """Convert to PAARCConfig with relevant parameters."""
         return PAARCConfig(
@@ -329,7 +331,8 @@ Examples:
     p.add_argument("--output_format", type=str, default="imagefolder")
     
     # Download settings
-    p.add_argument("--concurrent_downloads", type=int, default=256)
+    p.add_argument("--concurrent_downloads", type=int, default=0,
+                   help="Worker pool size. 0 = auto-detect based on unique hosts (recommended)")
     p.add_argument("--timeout", dest="timeout_sec", type=int, default=30)
     
     # PAARC toggle
@@ -340,7 +343,7 @@ Examples:
     p.add_argument("--C_init", type=int, default=4)
     p.add_argument("--C_min", type=int, default=2)
     p.add_argument("--C_max", type=int, default=10000)
-    p.add_argument("--mu", type=float, default=0.75, help="Utilization factor")
+    p.add_argument("--mu", type=float, default=0.85, help="Utilization factor")
     p.add_argument("--startup_theta_50", type=float, default=3.0)
     p.add_argument("--startup_theta_95", type=float, default=4.0)
     p.add_argument("--efficiency_threshold", type=float, default=0.5)
@@ -370,7 +373,9 @@ Examples:
     p.add_argument("--no_compress_tar", action="store_true",
                    help="Create uncompressed .tar instead of .tar.gz (faster)")
     p.add_argument("--no_overview", action="store_true")
-    
+    p.add_argument("--force", "-f", action="store_true",
+                   help="Force overwrite of existing output folder without confirmation")
+
     args = p.parse_args()
     
     # Load from JSON config if provided
@@ -386,13 +391,13 @@ Examples:
             url_col=data.get("url", "url"),
             label_col=data.get("label"),
             output_format=data.get("output_format", "imagefolder"),
-            concurrent_downloads=int(data.get("concurrent_downloads", 256)),
+            concurrent_downloads=data.get("concurrent_downloads"),  # None = auto-detect
             timeout_sec=int(data.get("timeout", 30)),
             enable_paarc=bool(data.get("enable_paarc", True)),
             C_init=int(data.get("C_init", 4)),
             C_min=int(data.get("C_min", 2)),
             C_max=int(data.get("C_max", 10000)),
-            mu=float(data.get("mu", 0.75)),
+            mu=float(data.get("mu", 0.85)),
             startup_theta_50=float(data.get("startup_theta_50", 3.0)),
             startup_theta_95=float(data.get("startup_theta_95", 4.0)),
             efficiency_threshold=float(data.get("efficiency_threshold", 0.5)),
@@ -413,8 +418,9 @@ Examples:
             create_tar=bool(data.get("create_tar", True)),
             compress_tar=bool(data.get("compress_tar", True)),
             create_overview=bool(data.get("create_overview", True)),
+            force_overwrite=bool(data.get("force_overwrite", False)),
         )
-    
+
     # Validate required args
     if not args.input_path or not args.output_folder:
         p.error("--input and --output are required unless --config is provided")
@@ -426,7 +432,7 @@ Examples:
         url_col=args.url_col,
         label_col=args.label_col,
         output_format=args.output_format,
-        concurrent_downloads=args.concurrent_downloads,
+        concurrent_downloads=args.concurrent_downloads if args.concurrent_downloads > 0 else None,
         timeout_sec=args.timeout_sec,
         enable_paarc=args.enable_paarc and not args.disable_paarc,
         C_init=args.C_init,
@@ -452,6 +458,7 @@ Examples:
         create_tar=not args.no_tar,
         compress_tar=not args.no_compress_tar,
         create_overview=not args.no_overview,
+        force_overwrite=args.force,
     )
 
 
@@ -467,8 +474,17 @@ def validate_and_load(cfg: Config) -> pl.DataFrame:
 
     out_dir = Path(cfg.output_folder)
     if out_dir.exists():
-        print(f"[I/O] Output folder exists; deleting: {out_dir}")
-        shutil.rmtree(out_dir)
+        if cfg.force_overwrite:
+            print(f"[I/O] Output folder exists; deleting (--force): {out_dir}")
+            shutil.rmtree(out_dir)
+        else:
+            response = input(f"[I/O] Output folder exists: {out_dir}\n"
+                           f"      Delete and continue? [y/N]: ").strip().lower()
+            if response in ('y', 'yes'):
+                print(f"[I/O] Deleting: {out_dir}")
+                shutil.rmtree(out_dir)
+            else:
+                raise SystemExit("Aborted: output folder exists. Use --force to overwrite.")
     out_dir.mkdir(parents=True, exist_ok=True)
 
     # Load data (load_input_file returns Polars DataFrame)
@@ -497,6 +513,36 @@ def validate_and_load(cfg: Config) -> pl.DataFrame:
     )
 
     return df
+
+
+def count_unique_hosts(df: pl.DataFrame, url_col: str) -> int:
+    """
+    Count unique hosts in the URL column.
+
+    Used for auto-sizing the worker pool and connection limits.
+
+    Args:
+        df: DataFrame with URLs
+        url_col: Name of the URL column
+
+    Returns:
+        Number of unique hosts found
+    """
+    # Extract hosts from URLs using Polars string operations
+    # URL format: scheme://host/path -> extract host part
+    hosts = (
+        df.select(pl.col(url_col))
+        .with_columns(
+            pl.col(url_col)
+            .str.replace(r"^https?://", "")  # Remove scheme
+            .str.replace(r"/.*$", "")         # Remove path
+            .str.to_lowercase()
+            .alias("__host__")
+        )
+        .select("__host__")
+        .unique()
+    )
+    return hosts.height
 
 
 # =============================================================================
@@ -906,6 +952,11 @@ class HostMetrics:
         """Most recent goodput measurement (requests per second)."""
         return self._goodput_history[-1] if self._goodput_history else None
 
+    @property
+    def goodput_history(self) -> deque[float]:
+        """Goodput history for plateau detection."""
+        return self._goodput_history
+
 
 # =============================================================================
 # PAARC v2.0 CONTROLLER
@@ -1111,7 +1162,7 @@ class PAARCController:
         Measures diminishing returns: when adding concurrency no longer helps throughput.
         Uses configurable window and threshold.
         """
-        history = self.metrics._goodput_history
+        history = self.metrics.goodput_history
         window = self.config.efficiency_window
 
         if len(history) < window + 1:
@@ -1848,11 +1899,15 @@ async def download_batch_bounded(
     manager: Optional[HostControllerManager],
     sequential_namer: SequentialNamer,
     global_written_paths: dict[str, str],
+    effective_workers: int,
 ) -> dict[str, DownloadOutcome]:
     """
     Bounded batch download scheduler.
 
     Uses a queue with N worker tasks for bounded parallelism.
+
+    Args:
+        effective_workers: Number of worker coroutines (auto-detected or configured)
     """
     q: asyncio.Queue[dict] = asyncio.Queue()
     for row in df.iter_rows(named=True):
@@ -1885,7 +1940,7 @@ async def download_batch_bounded(
     
     workers = [
         asyncio.create_task(worker())
-        for _ in range(max(1, cfg.concurrent_downloads))
+        for _ in range(max(1, effective_workers))
     ]
     
     await asyncio.gather(*workers)
@@ -1965,6 +2020,16 @@ def write_overview(
                 "beta": cfg.beta,
                 "theta_50": cfg.theta_50,
                 "theta_95": cfg.theta_95,
+                "startup_theta_50": cfg.startup_theta_50,
+                "startup_theta_95": cfg.startup_theta_95,
+                "startup_additive_increase": cfg.startup_additive_increase,
+                "probe_bw_additive_increase": cfg.probe_bw_additive_increase,
+                "efficiency_threshold": cfg.efficiency_threshold,
+                "efficiency_window": cfg.efficiency_window,
+                "probe_rtt_period": cfg.probe_rtt_period,
+                "rtprop_window": cfg.rtprop_window,
+                "cooldown_floor": cfg.cooldown_floor,
+                "alpha_ema": cfg.alpha_ema,
             },
             "max_retry_attempts": cfg.max_retry_attempts,
             "naming_mode": cfg.naming_mode,
@@ -2002,8 +2067,11 @@ def write_overview(
 
 async def main() -> None:
     """Main entry point."""
+    # Setup signal handlers here to avoid side effects on module import
+    _setup_signal_handlers()
+
     cfg = parse_args()
-    
+
     print("=" * 72)
     print("FLOW-DC Batch Downloader with PAARC v2.0")
     print("=" * 72)
@@ -2011,11 +2079,27 @@ async def main() -> None:
     # Load and validate input
     df = validate_and_load(cfg)
     print(f"[Load] URLs after filtering: {df.height}")
-    
+
+    # Auto-detect hosts and calculate optimal concurrency
+    num_hosts = count_unique_hosts(df, cfg.url_col)
+    print(f"[Load] Unique hosts detected: {num_hosts}")
+
+    # Calculate effective worker count:
+    # - If concurrent_downloads is set, use it as override/cap
+    # - Otherwise, auto-calculate as num_hosts * C_max
+    if cfg.concurrent_downloads is not None and cfg.concurrent_downloads > 0:
+        effective_workers = cfg.concurrent_downloads
+        print(f"[Config] Using configured concurrent_downloads: {effective_workers}")
+    else:
+        # Auto-size: num_hosts * C_max, capped at 10000 to prevent resource exhaustion
+        effective_workers = min(num_hosts * cfg.C_max, 10000)
+        print(f"[Config] Auto-sized worker pool: {effective_workers} "
+              f"({num_hosts} hosts × {cfg.C_max} C_max)")
+
     # Initialize PAARC controller manager if enabled
     manager: Optional[HostControllerManager] = None
     ctrl_task: Optional[asyncio.Task] = None
-    
+
     if cfg.enable_paarc:
         paarc_config = cfg.to_paarc_config()
         manager = HostControllerManager(paarc_config)
@@ -2023,10 +2107,10 @@ async def main() -> None:
         print(f"[PAARC] Enabled | C_init={paarc_config.C_init} | μ={paarc_config.mu}")
     else:
         print("[PAARC] Disabled - using fixed concurrency")
-    
-    # Configure aiohttp
+
+    # Configure aiohttp with auto-sized connection pool (10% headroom)
     connector = aiohttp.TCPConnector(
-        limit=max(50, cfg.concurrent_downloads * 2),
+        limit=max(50, int(effective_workers * 1.1)),
         ttl_dns_cache=300,
         use_dns_cache=True,
     )
@@ -2058,6 +2142,7 @@ async def main() -> None:
                     manager=manager,
                     sequential_namer=sequential_namer,
                     global_written_paths=global_written_paths,
+                    effective_workers=effective_workers,
                 )
                 
                 # Merge outcomes
