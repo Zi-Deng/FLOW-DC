@@ -231,7 +231,7 @@ class PAARCConfig:
     
     # --- Smoothing ---
     alpha_ema: float = 0.3              # EMA smoothing factor
-    rtprop_window: float = 15.0         # RTprop tracking window (seconds)
+    rtprop_window: float = 35.0         # RTprop tracking window (seconds)
 
 
 @dataclass(frozen=True)
@@ -265,7 +265,7 @@ class Config:
     theta_50: float = 1.5
     theta_95: float = 2.0
     probe_rtt_period: float = 10.0
-    rtprop_window: float = 15.0
+    rtprop_window: float = 35.0
     cooldown_floor: float = 2.0
     alpha_ema: float = 0.3
     startup_additive_increase: int = 30
@@ -406,7 +406,7 @@ Examples:
             theta_50=float(data.get("theta_50", 1.5)),
             theta_95=float(data.get("theta_95", 2.0)),
             probe_rtt_period=float(data.get("probe_rtt_period", 10.0)),
-            rtprop_window=float(data.get("rtprop_window", 15.0)),
+            rtprop_window=float(data.get("rtprop_window", 35.0)),
             cooldown_floor=float(data.get("cooldown_floor", 2.0)),
             alpha_ema=float(data.get("alpha_ema", 0.3)),
             startup_additive_increase=int(data.get("startup_additive_increase", 30)),
@@ -1699,7 +1699,7 @@ async def controller_loop(manager: HostControllerManager) -> None:
             
             if now >= next_time:
                 try:
-                    snap = await ctrl.step_interval()
+                    await ctrl.step_interval()
                     
                     # Calculate next interval based on RTprop
                     rtprop = ctrl.metrics.rtprop or 0.2
@@ -1983,24 +1983,36 @@ def create_tar(output_folder: str, compress: bool = True) -> str:
     return str(tar_path.resolve())
 
 
-def write_overview(
+def generate_overview_report(
     *,
     cfg: Config,
     df_total: int,
     outcomes: dict[str, DownloadOutcome],
     elapsed_sec: float,
-    tar_path: Optional[str],
-) -> str:
-    """Write JSON overview report."""
+    tar_path: Optional[str] = None,
+) -> dict:
+    """
+    Generate overview report data.
+
+    Args:
+        cfg: Configuration object
+        df_total: Total number of URLs in input
+        outcomes: Download outcomes dict
+        elapsed_sec: Total elapsed time
+        tar_path: Path to tar archive (optional, can be filled in later)
+
+    Returns:
+        Report dictionary
+    """
     successes = [o for o in outcomes.values() if o.success]
     failures = [o for o in outcomes.values() if not o.success]
     err_counter = Counter((o.status_code, o.error) for o in failures)
-    
+
     total_bytes = sum(o.bytes_downloaded for o in successes)
     mb = total_bytes / 1e6
     speed_MBps = (mb / elapsed_sec) if elapsed_sec > 0 else 0.0
-    
-    report = {
+
+    return {
         "paarc_version": "2.0.0",
         "script_inputs": {
             "input": cfg.input_path,
@@ -2051,13 +2063,50 @@ def write_overview(
         ],
         "timestamp_local": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()),
     }
-    
+
+
+def write_overview(
+    *,
+    cfg: Config,
+    df_total: int,
+    outcomes: dict[str, DownloadOutcome],
+    elapsed_sec: float,
+    tar_path: Optional[str] = None,
+    report: Optional[dict] = None,
+) -> str:
+    """
+    Write JSON overview report to external file.
+
+    Args:
+        cfg: Configuration object
+        df_total: Total number of URLs in input
+        outcomes: Download outcomes dict
+        elapsed_sec: Total elapsed time
+        tar_path: Path to tar archive (optional)
+        report: Pre-generated report dict (optional, will generate if not provided)
+
+    Returns:
+        Path to the written overview file
+    """
+    if report is None:
+        report = generate_overview_report(
+            cfg=cfg,
+            df_total=df_total,
+            outcomes=outcomes,
+            elapsed_sec=elapsed_sec,
+            tar_path=tar_path,
+        )
+    else:
+        # Update tar_path in existing report if provided
+        if tar_path is not None:
+            report["summary"]["tar_path"] = tar_path
+
     out = Path(cfg.output_folder)
     overview_path = out.with_name(out.name + "_overview.json")
-    
+
     with overview_path.open("w") as f:
         json.dump(report, f, indent=2)
-    
+
     return str(overview_path.resolve())
 
 
@@ -2203,7 +2252,26 @@ async def main() -> None:
     if download_elapsed > 0:
         print(f"Average speed:         {total_mb / download_elapsed:.2f} MB/s")
     
-    # Create tar archive
+    # Generate overview report (before tar so it can be included)
+    overview_report = None
+    if cfg.create_overview:
+        try:
+            overview_report = generate_overview_report(
+                cfg=cfg,
+                df_total=df.height,
+                outcomes=final_outcomes,
+                elapsed_sec=elapsed,
+                tar_path=None,  # Will be updated after tar creation
+            )
+            # Write overview INSIDE output folder so it gets included in tar
+            internal_overview_path = Path(cfg.output_folder) / "overview.json"
+            with internal_overview_path.open("w") as f:
+                json.dump(overview_report, f, indent=2)
+            print(f"[Report] Internal overview written: {internal_overview_path}")
+        except Exception as e:
+            print(f"[Report] Failed to generate overview: {e}")
+
+    # Create tar archive (now includes overview.json)
     tar_path = None
     tar_elapsed = 0.0
     if cfg.create_tar and not shutdown_flag and len(successes) > 0:
@@ -2218,19 +2286,20 @@ async def main() -> None:
         except Exception as e:
             print(f"[Tar] Failed: {e}")
 
-    # Write overview
-    if cfg.create_overview:
+    # Write external overview (with tar_path included)
+    if cfg.create_overview and overview_report is not None:
         try:
-            overview = write_overview(
+            external_overview = write_overview(
                 cfg=cfg,
                 df_total=df.height,
                 outcomes=final_outcomes,
                 elapsed_sec=elapsed,
                 tar_path=tar_path,
+                report=overview_report,
             )
-            print(f"[Report] Overview: {overview}")
+            print(f"[Report] External overview: {external_overview}")
         except Exception as e:
-            print(f"[Report] Failed: {e}")
+            print(f"[Report] Failed to write external overview: {e}")
 
     # Timing breakdown
     total_elapsed = download_elapsed + tar_elapsed

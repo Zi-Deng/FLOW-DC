@@ -38,6 +38,7 @@ Config file format:
 import json
 import os
 import argparse
+import re
 import time
 import sys
 import tempfile
@@ -196,8 +197,8 @@ def create_partition_config(base_config: dict, partition_file: str, output_name:
         "C_max": base_config.get('C_max', 2000),
 
         # PAARC utilization and backoff
-        "mu": base_config.get('mu', 1.0),
-        "beta": base_config.get('beta', 0.7),
+        "mu": base_config.get('mu', 0.85),
+        "beta": base_config.get('beta', 0.5),
 
         # PAARC latency thresholds
         "theta_50": base_config.get('theta_50', 1.5),
@@ -362,6 +363,36 @@ def submit_tasks(
     return submitted_tasks
 
 
+def parse_task_timing(output: str) -> tuple:
+    """
+    Parse download and tar timing from task output.
+
+    Looks for lines like:
+        Download time:         123.45s (85.0%)
+        Tar creation time:     20.00s (15.0%)
+
+    Returns:
+        Tuple of (download_time, tar_time) in seconds, or (None, None) if not found
+    """
+    download_time = None
+    tar_time = None
+
+    if not output:
+        return download_time, tar_time
+
+    # Match "Download time:" followed by a number
+    download_match = re.search(r'Download time:\s+([\d.]+)s', output)
+    if download_match:
+        download_time = float(download_match.group(1))
+
+    # Match "Tar creation time:" followed by a number
+    tar_match = re.search(r'Tar creation time:\s+([\d.]+)s', output)
+    if tar_match:
+        tar_time = float(tar_match.group(1))
+
+    return download_time, tar_time
+
+
 def monitor_tasks(manager, total_tasks: int) -> tuple:
     """
     Monitor task completion with detailed status reporting.
@@ -379,6 +410,8 @@ def monitor_tasks(manager, total_tasks: int) -> tuple:
     total_exec_time = 0.0
     total_input_xfer_time = 0.0
     total_output_xfer_time = 0.0
+    total_download_time = 0.0
+    total_tar_time = 0.0
     total_bytes_in = 0
     total_bytes_out = 0
 
@@ -415,8 +448,19 @@ def monitor_tasks(manager, total_tasks: int) -> tuple:
             total_bytes_out += bytes_sent
 
             if task.successful():
+                # Parse download/tar timing from task output
+                download_time, tar_time = parse_task_timing(task.output)
+                if download_time is not None:
+                    total_download_time += download_time
+                if tar_time is not None:
+                    total_tar_time += tar_time
+
                 print(f"[OK] Task {task.id} completed ({completed_tasks}/{total_tasks}) - {elapsed:.1f}s elapsed")
-                print(f"     Timing: exec={exec_time_sec:.1f}s, input_xfer={input_xfer_sec:.1f}s, output_xfer={output_xfer_sec:.1f}s")
+                if download_time is not None and tar_time is not None:
+                    print(f"     Timing: download={download_time:.1f}s, tar={tar_time:.1f}s, "
+                          f"input_xfer={input_xfer_sec:.1f}s, output_xfer={output_xfer_sec:.1f}s")
+                else:
+                    print(f"     Timing: exec={exec_time_sec:.1f}s, input_xfer={input_xfer_sec:.1f}s, output_xfer={output_xfer_sec:.1f}s")
                 print(f"     Transfer: in={bytes_received/1e6:.1f}MB, out={bytes_sent/1e6:.1f}MB")
                 if task.output:
                     # Print last line of output
@@ -452,12 +496,24 @@ def monitor_tasks(manager, total_tasks: int) -> tuple:
     print("AGGREGATE TIMING BREAKDOWN")
     print("=" * 60)
     total_measured = total_exec_time + total_input_xfer_time + total_output_xfer_time
+
+    # Show download/tar breakdown if available, otherwise show combined exec time
+    has_breakdown = total_download_time > 0 or total_tar_time > 0
+
     if total_measured > 0:
-        print(f"  Execution time (download+tar): {total_exec_time:.1f}s ({total_exec_time/total_measured*100:.1f}%)")
+        if has_breakdown:
+            print(f"  Download time:                 {total_download_time:.1f}s ({total_download_time/total_measured*100:.1f}%)")
+            print(f"  Tar creation time:             {total_tar_time:.1f}s ({total_tar_time/total_measured*100:.1f}%)")
+        else:
+            print(f"  Execution time (download+tar): {total_exec_time:.1f}s ({total_exec_time/total_measured*100:.1f}%)")
         print(f"  Input transfer time:           {total_input_xfer_time:.1f}s ({total_input_xfer_time/total_measured*100:.1f}%)")
         print(f"  Output transfer time:          {total_output_xfer_time:.1f}s ({total_output_xfer_time/total_measured*100:.1f}%)")
     else:
-        print(f"  Execution time (download+tar): {total_exec_time:.1f}s")
+        if has_breakdown:
+            print(f"  Download time:                 {total_download_time:.1f}s")
+            print(f"  Tar creation time:             {total_tar_time:.1f}s")
+        else:
+            print(f"  Execution time (download+tar): {total_exec_time:.1f}s")
         print(f"  Input transfer time:           {total_input_xfer_time:.1f}s")
         print(f"  Output transfer time:          {total_output_xfer_time:.1f}s")
     print(f"  Total bytes received:          {total_bytes_in/1e6:.1f}MB")
@@ -487,11 +543,13 @@ def main():
     print(f"  Partitions directory: {config['parquets_directory']}")
     print(f"  Output directory: {config.get('output_directory', 'files/output/images')}")
     print(f"  URL column: {config.get('url_col', 'url')}")
-    print(f"  Concurrent downloads per task: {config.get('concurrent_downloads', 1000)}")
+    concurrent_dl = config.get('concurrent_downloads')
+    concurrent_dl_str = str(concurrent_dl) if concurrent_dl is not None else "auto-detect"
+    print(f"  Concurrent downloads per task: {concurrent_dl_str}")
     print(f"  PAARC enabled: {config.get('enable_paarc', True)}")
     if config.get('enable_paarc', True):
         print(f"    C_init={config.get('C_init', 8)}, C_min={config.get('C_min', 2)}, C_max={config.get('C_max', 2000)}")
-        print(f"    mu={config.get('mu', 1.0)}, beta={config.get('beta', 0.7)}")
+        print(f"    mu={config.get('mu', 0.85)}, beta={config.get('beta', 0.5)}")
 
     # Validate paths
     download_script = os.path.join(os.path.dirname(__file__), "download_batch.py")
