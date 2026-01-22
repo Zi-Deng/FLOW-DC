@@ -16,12 +16,13 @@ dependencies:
 
   # Async HTTP
   - aiohttp>=3.9
+  - requests>=2.31
 
   # Progress & CLI
   - tqdm>=4.66
 
   # Distributed Workflow
-  - ndcctools>=7.14
+  - ndcctools=7.15.8
 
   # Cloud Storage (optional - for CyVerse/iRODS)
   - gocommands
