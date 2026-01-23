@@ -1756,13 +1756,37 @@ class SequentialNamer:
 
 
 def render_filename(pattern: str, url: str, key: str) -> str:
-    """Render filename from pattern and URL."""
+    """Render filename from pattern and URL.
+
+    Available template variables:
+        segment: List of URL path segments (non-empty parts)
+        segment_last: Last segment (usually the filename)
+        segment_parent: Second-to-last segment (often an ID)
+        segment_first: First segment
+        ext: File extension from URL (e.g., '.jpg')
+        key: Sanitized row key/identifier
+
+    Example patterns:
+        '{segment_parent}' - Use parent directory name (e.g., photo ID)
+        '{segment_last}' - Use original filename
+        '{key}_{segment_parent}' - Combine key with parent segment
+    """
     seg = [s for s in urlsplit(url).path.split("/") if s]
     ext = Path(urlsplit(url).path).suffix or ""
     safe_key = _sanitize_filename(key)
-    
-    env = {"segment": seg, "ext": ext, "key": safe_key}
-    
+
+    # Pre-compute common segment accessors for template use
+    # (Python's str.format() doesn't support negative indexing like {segment[-2]})
+    env = {
+        "segment": seg,
+        "ext": ext,
+        "key": safe_key,
+        # Convenience accessors (handle empty lists gracefully)
+        "segment_last": seg[-1] if seg else "",
+        "segment_parent": seg[-2] if len(seg) >= 2 else (seg[-1] if seg else ""),
+        "segment_first": seg[0] if seg else "",
+    }
+
     try:
         stem = pattern.format(**env)
     except Exception:

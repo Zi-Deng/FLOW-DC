@@ -1,0 +1,51 @@
+{
+  "run_info": {
+    "run_directory": "vine-run-info/2026-01-23T035411",
+    "run_date": "2026-01-23",
+    "config_file": null,
+    "output_directory": "files/output/biotrove_images"
+  },
+  "taskvine_stats": {
+    "run_start": "2026-01-23 03:54:11",
+    "run_end": "2026-01-23 06:13:53",
+    "total_wall_time_sec": 8382.58,
+    "total_wall_time_human": "2h 19m 42s",
+    "tasks_completed": 400,
+    "tasks_failed": 0,
+    "peak_workers": 20,
+    "bytes_received_TB": 4.32
+  },
+  "download_stats": {
+    "total_urls": 39883200,
+    "successful_downloads": 39711811,
+    "failed_downloads": 171389,
+    "success_rate_percent": 99.57,
+    "total_downloaded_TB": 4.38,
+    "effective_throughput_MBps": 548.09
+  },
+  "error_breakdown": [
+    {
+      "status_code": 404,
+      "error": "HTTP 404: Not Found",
+      "count": 171388
+    },
+    {
+      "status_code": null,
+      "error": "Connection Error: Cannot write to closing transport",
+      "count": 1
+    }
+  ],
+  "partition_stats": {
+    "count": 400,
+    "success_rate": {
+      "min": 99.07,
+      "max": 99.72,
+      "avg": 99.57
+    },
+    "throughput_MBps": {
+      "min": 94.78,
+      "max": 142.96,
+      "avg": 126.97
+    }
+  }
+}

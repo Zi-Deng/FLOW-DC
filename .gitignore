@@ -170,3 +170,6 @@ examples
 CLAUDE.md
 benchmark
 files/input/biotrove_test_100k_corrected.parquet
+files/input/Biotrove-Train-corrected.parquet
+files/input/biotrove_partitions/
+files/input/biotrove_test_100k_large.parquet

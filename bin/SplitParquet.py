@@ -10,10 +10,12 @@ Supports multiple grouping strategies:
 
 The host-based grouping is recommended for distributed downloads as it ensures
 workers can maximize throughput by dealing with fewer unique hosts per partition.
+
+Uses Polars for high-performance processing of large datasets (40M+ rows).
 """
 
 import argparse
-import pandas as pd
+import polars as pl
 import numpy as np
 import os
 import sys
@@ -78,7 +80,7 @@ def extract_host_from_url(url: str) -> str:
     Returns:
         Host/domain string (e.g., 'api.gbif.org')
     """
-    if pd.isna(url) or not str(url).strip():
+    if url is None or not str(url).strip():
         return "unknown"
     try:
         parsed = urlparse(str(url).strip())
@@ -212,20 +214,21 @@ Examples:
     )
 
 
-def greedy_grouping(num_partitions: int, df: pd.DataFrame, count_col: str, name_col: str) -> pd.DataFrame:
+def greedy_grouping(num_partitions: int, df: pl.DataFrame, count_col: str, name_col: str) -> pl.DataFrame:
     """
     Greedy bin-packing algorithm to balance partitions by count.
 
     Assigns items to the partition with the smallest current sum,
     resulting in balanced partition sizes.
     """
-    sorted_df = df.sort_values(by=count_col, ascending=False).reset_index(drop=True)
+    sorted_df = df.sort(count_col, descending=True)
 
     partitions = [[] for _ in range(num_partitions)]
     partition_sums = [0 for _ in range(num_partitions)]
 
-    for _, row in sorted_df.iterrows():
-        min_idx = np.argmin(partition_sums)
+    # Convert to rows for iteration (this is the slow part, but unavoidable for greedy)
+    for row in sorted_df.iter_rows(named=True):
+        min_idx = int(np.argmin(partition_sums))
         partitions[min_idx].append(row)
         partition_sums[min_idx] += row[count_col]
 
@@ -234,31 +237,28 @@ def greedy_grouping(num_partitions: int, df: pd.DataFrame, count_col: str, name_
         for row in partition:
             new_rows.append({name_col: row[name_col], count_col: row[count_col], "group": group_id})
 
-    return pd.DataFrame(new_rows)
+    return pl.DataFrame(new_rows)
 
 
-def simple_grouping(df: pd.DataFrame, num_partitions: int) -> pd.DataFrame:
-    """Simple equal-sized partitioning by row count."""
-    df_copy = df.copy().reset_index(drop=True)
-    total_rows = len(df)
+def simple_grouping(df: pl.DataFrame, num_partitions: int) -> pl.DataFrame:
+    """Simple equal-sized partitioning by row count using vectorized operations."""
+    total_rows = df.height
     rows_per_group = total_rows // num_partitions
     remainder = total_rows % num_partitions
 
+    # Build group assignments using vectorized operations
+    # First 'remainder' groups get (rows_per_group + 1) rows each
+    # Remaining groups get rows_per_group rows each
     group_assignments = []
-    current_row = 0
-
     for group_id in range(1, num_partitions + 1):
         group_size = rows_per_group + (1 if group_id <= remainder else 0)
-        for _ in range(group_size):
-            if current_row < total_rows:
-                group_assignments.append(group_id)
-                current_row += 1
+        group_assignments.extend([group_id] * group_size)
 
-    df_copy['group'] = group_assignments
-    return df_copy
+    # Add group column using polars
+    return df.with_columns(pl.Series("group", group_assignments))
 
 
-def host_grouping(df: pd.DataFrame, url_col: str, num_partitions: int) -> pd.DataFrame:
+def host_grouping(df: pl.DataFrame, url_col: str, num_partitions: int) -> pl.DataFrame:
     """
     Group URLs by their host/domain for optimal distributed downloading.
 
@@ -273,84 +273,112 @@ def host_grouping(df: pd.DataFrame, url_col: str, num_partitions: int) -> pd.Dat
     - PolicyBBR rate limiting works per-host
     - Reduces cross-worker interference on shared hosts
     """
-    df_copy = df.copy().reset_index(drop=True)
-
-    # Extract host from URLs
+    # Extract host from URLs using polars expression
     print("  Extracting hosts from URLs...")
-    df_copy['_host'] = df_copy[url_col].apply(extract_host_from_url)
+    df_with_host = df.with_columns(
+        pl.col(url_col).map_elements(extract_host_from_url, return_dtype=pl.Utf8).alias("_host")
+    )
 
     # Count URLs per host
-    host_counts = df_copy.groupby('_host').size().reset_index(name='_count')
-    host_counts = host_counts.sort_values(by='_count', ascending=False)
+    host_counts = (
+        df_with_host
+        .group_by("_host")
+        .agg(pl.len().alias("_count"))
+        .sort("_count", descending=True)
+    )
 
-    print(f"  Found {len(host_counts)} unique hosts")
+    print(f"  Found {host_counts.height} unique hosts")
     print(f"  Top 5 hosts by URL count:")
-    for _, row in host_counts.head(5).iterrows():
+    for row in host_counts.head(5).iter_rows(named=True):
         print(f"    {row['_host']}: {row['_count']} URLs")
 
     # Use greedy grouping to assign hosts to partitions
     host_groups = greedy_grouping(num_partitions, host_counts, '_count', '_host')
 
     # Merge group assignments back to original dataframe
-    df_copy = df_copy.merge(host_groups[['_host', 'group']], on='_host', how='left')
+    df_result = df_with_host.join(
+        host_groups.select(["_host", "group"]),
+        on="_host",
+        how="left"
+    )
 
-    # Clean up temporary columns (keep _host if add_host_column is True)
-    df_copy = df_copy.drop(columns=['_count'], errors='ignore')
-
-    return df_copy
+    return df_result
 
 
-def partition_df_legacy(df: pd.DataFrame, num_partitions: int, taxon_col: str) -> pd.DataFrame:
+def partition_df_legacy(df: pl.DataFrame, num_partitions: int, taxon_col: str) -> pl.DataFrame:
     """Legacy partitioning by taxon column (kept for backwards compatibility)."""
-    partition_size = ceil(len(df) / num_partitions)
-    sorted_df = df.sort_values(by=taxon_col).reset_index(drop=True)
-    sorted_df['group_num'] = ((np.arange(len(sorted_df)) // partition_size) + 1)
-    sorted_df[taxon_col] = sorted_df[taxon_col] + "_" + sorted_df['group_num'].astype(str)
-    sorted_df = sorted_df.drop(columns=['group_num'])
-    return sorted_df
+    partition_size = ceil(df.height / num_partitions)
+    sorted_df = df.sort(taxon_col)
+
+    # Add group_num column
+    group_nums = [(i // partition_size) + 1 for i in range(sorted_df.height)]
+    sorted_df = sorted_df.with_columns(pl.Series("group_num", group_nums))
+
+    # Modify taxon column
+    sorted_df = sorted_df.with_columns(
+        (pl.col(taxon_col) + "_" + pl.col("group_num").cast(pl.Utf8)).alias(taxon_col)
+    )
+
+    return sorted_df.drop("group_num")
 
 
-def save_partition(df: pd.DataFrame, group_id: int, output_folder: str, output_format: str) -> str:
+def save_partition(df: pl.DataFrame, group_id: int, output_folder: str, output_format: str) -> str:
     """Save a partition to file."""
     filename = f"partition_{group_id:03d}"
 
     if output_format == 'parquet':
         filepath = os.path.join(output_folder, f"{filename}.parquet")
-        df.to_parquet(filepath, index=False)
+        df.write_parquet(filepath)
     else:
         filepath = os.path.join(output_folder, f"{filename}.csv")
-        df.to_csv(filepath, index=False)
+        df.write_csv(filepath)
 
     return filepath
 
 
-def print_summary(grouped_df: pd.DataFrame, method: str):
+def print_summary(grouped_df: pl.DataFrame, method: str, num_partitions: int):
     """Print grouping summary statistics."""
-    group_stats = grouped_df.groupby('group').size().reset_index(name='count')
+    group_stats = (
+        grouped_df
+        .group_by("group")
+        .agg(pl.len().alias("count"))
+        .sort("group")
+    )
 
     print(f"\nPartitioning Summary ({method} method):")
-    print(f"  Total rows: {len(grouped_df):,}")
-    print(f"  Number of partitions: {len(group_stats)}")
-    print(f"  Rows per partition:")
+    print(f"  Total rows: {grouped_df.height:,}")
+    print(f"  Number of partitions: {group_stats.height}")
 
-    for _, row in group_stats.iterrows():
-        print(f"    Partition {int(row['group'])}: {row['count']:,} rows")
+    # Only print individual partition sizes if reasonable number
+    if num_partitions <= 20:
+        print(f"  Rows per partition:")
+        for row in group_stats.iter_rows(named=True):
+            print(f"    Partition {int(row['group'])}: {row['count']:,} rows")
+    else:
+        print(f"  (Showing stats only due to large partition count)")
 
-    print(f"  Min/Max/Mean: {group_stats['count'].min():,}/{group_stats['count'].max():,}/{group_stats['count'].mean():,.1f}")
+    counts = group_stats["count"]
+    print(f"  Min/Max/Mean: {counts.min():,}/{counts.max():,}/{counts.mean():,.1f}")
 
     # For host method, show host distribution
     if method == 'host' and '_host' in grouped_df.columns:
-        hosts_per_partition = grouped_df.groupby('group')['_host'].nunique().reset_index(name='unique_hosts')
-        print(f"\n  Unique hosts per partition:")
-        for _, row in hosts_per_partition.iterrows():
-            print(f"    Partition {int(row['group'])}: {row['unique_hosts']} hosts")
+        hosts_per_partition = (
+            grouped_df
+            .group_by("group")
+            .agg(pl.col("_host").n_unique().alias("unique_hosts"))
+            .sort("group")
+        )
+        if num_partitions <= 20:
+            print(f"\n  Unique hosts per partition:")
+            for row in hosts_per_partition.iter_rows(named=True):
+                print(f"    Partition {int(row['group'])}: {row['unique_hosts']} hosts")
 
 
 def main():
     inputs = parse_args()
 
     print("=" * 60)
-    print("FLOW-DC Dataset Partitioning")
+    print("FLOW-DC Dataset Partitioning (Polars)")
     print("=" * 60)
     print(f"\nConfiguration:")
     print(f"  Input: {inputs.parquet}")
@@ -368,20 +396,20 @@ def main():
         print(f"\nError: Input file '{inputs.parquet}' not found.")
         sys.exit(1)
 
-    # Load data
+    # Load data with polars
     print(f"\nLoading data from {inputs.parquet}...")
     try:
-        df = pd.read_parquet(inputs.parquet)
+        df = pl.read_parquet(inputs.parquet)
     except Exception as e:
         print(f"Error reading parquet: {e}")
         sys.exit(1)
 
-    print(f"  Loaded {len(df):,} rows, {len(df.columns)} columns")
+    print(f"  Loaded {df.height:,} rows, {len(df.columns)} columns")
 
     # Validate columns
     if inputs.url_col not in df.columns:
         print(f"Error: URL column '{inputs.url_col}' not found.")
-        print(f"Available columns: {list(df.columns)}")
+        print(f"Available columns: {df.columns}")
         sys.exit(1)
 
     if inputs.method == 'greedy' and inputs.grouping_col not in df.columns:
@@ -400,18 +428,27 @@ def main():
     elif inputs.method == GroupingMethod.GREEDY.value:
         # Legacy greedy by grouping column
         df = partition_df_legacy(df, inputs.groups, inputs.grouping_col)
-        count_df = df.groupby(inputs.grouping_col).size().reset_index(name="Count")
-        count_df = count_df.sort_values(by='Count', ascending=False)
+        count_df = (
+            df
+            .group_by(inputs.grouping_col)
+            .agg(pl.len().alias("Count"))
+            .sort("Count", descending=True)
+        )
         groups_df = greedy_grouping(inputs.groups, count_df, "Count", inputs.grouping_col)
-        df = df.drop(columns=['group'], errors='ignore')
-        df_grouped = df.merge(groups_df[[inputs.grouping_col, "group"]], on=inputs.grouping_col, how="left")
+        if "group" in df.columns:
+            df = df.drop("group")
+        df_grouped = df.join(
+            groups_df.select([inputs.grouping_col, "group"]),
+            on=inputs.grouping_col,
+            how="left"
+        )
 
     else:
         print(f"Error: Unknown method '{inputs.method}'")
         sys.exit(1)
 
     # Print summary
-    print_summary(df_grouped, inputs.method)
+    print_summary(df_grouped, inputs.method, inputs.groups)
 
     # Create output directory
     os.makedirs(inputs.output_folder, exist_ok=True)
@@ -420,8 +457,11 @@ def main():
     print(f"\nSaving partitions to {inputs.output_folder}/...")
     saved_files = []
 
-    for group in sorted(df_grouped["group"].unique()):
-        subset = df_grouped[df_grouped["group"] == group].copy()
+    # Get unique groups sorted
+    unique_groups = sorted(df_grouped["group"].unique().to_list())
+
+    for group in unique_groups:
+        subset = df_grouped.filter(pl.col("group") == group)
 
         # Remove internal columns from output
         cols_to_drop = ['group']
@@ -430,13 +470,18 @@ def main():
 
         # Rename _host to 'host' for cleaner output
         if inputs.add_host_column and '_host' in subset.columns:
-            subset = subset.rename(columns={'_host': 'host'})
+            subset = subset.rename({'_host': 'host'})
 
-        output_df = subset.drop(columns=[c for c in cols_to_drop if c in subset.columns])
+        # Drop columns that exist
+        cols_to_actually_drop = [c for c in cols_to_drop if c in subset.columns]
+        if cols_to_actually_drop:
+            output_df = subset.drop(cols_to_actually_drop)
+        else:
+            output_df = subset
 
         filepath = save_partition(output_df, int(group), inputs.output_folder, inputs.output_format)
         saved_files.append(filepath)
-        print(f"  Saved {filepath} ({len(output_df):,} rows)")
+        print(f"  Saved {filepath} ({output_df.height:,} rows)")
 
     print(f"\nCompleted! Created {len(saved_files)} partition files.")
     print("=" * 60)
