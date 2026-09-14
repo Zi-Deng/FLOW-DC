@@ -1,0 +1,56 @@
+{
+  "created_utc": "2026-04-29T13:54:38.055685+00:00",
+  "dataset": "openverse_mixed",
+  "label_column": "label",
+  "manifest_path": "benchmark/manifests/flowdc_gradient_20260429/openverse_mixed_3000.parquet",
+  "rows": 3000,
+  "sha256": "769cc4d974fe4e89389c2821e3095ee81fb013c18ee76fd168ad4a691e640820",
+  "source": "Openverse image search API, original provider URLs",
+  "source_notes": {
+    "api": "https://api.openverse.org/v1/images/",
+    "license_caveat": "Openverse metadata is retained for analysis; licenses should be independently verified for reuse.",
+    "official_docs": "https://docs.openverse.org/api/reference/made_with_ov.html",
+    "queries": [
+      "nature",
+      "bird",
+      "plant",
+      "insect",
+      "fungi",
+      "flower",
+      "tree",
+      "mammal",
+      "butterfly",
+      "museum specimen",
+      "landscape",
+      "ocean",
+      "mountain",
+      "geology",
+      "space",
+      "microscope",
+      "architecture",
+      "archive",
+      "painting",
+      "botany",
+      "wildlife",
+      "river",
+      "forest",
+      "coral"
+    ]
+  },
+  "top_hosts": [
+    {
+      "count": 2865,
+      "host": "live.staticflickr.com"
+    },
+    {
+      "count": 134,
+      "host": "upload.wikimedia.org"
+    },
+    {
+      "count": 1,
+      "host": "images.rawpixel.com"
+    }
+  ],
+  "unique_hosts": 3,
+  "url_column": "url"
+}

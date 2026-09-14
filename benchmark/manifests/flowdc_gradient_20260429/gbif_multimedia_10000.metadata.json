@@ -1,0 +1,121 @@
+{
+  "created_utc": "2026-04-29T13:46:36.317502+00:00",
+  "dataset": "gbif_multimedia",
+  "label_column": "label",
+  "manifest_path": "benchmark/manifests/flowdc_gradient_20260429/gbif_multimedia_10000.parquet",
+  "rows": 10000,
+  "sha256": "7aa44610a14ad9fdb60f84db2c41e18294f57bc8c3574ff5352bdf7407c98f41",
+  "source": "GBIF occurrence search API, direct multimedia identifier URLs",
+  "source_notes": {
+    "api": "https://api.gbif.org/v1/occurrence/search?mediaType=StillImage",
+    "facet_dataset_keys": [
+      "50c9509d-22c7-4a22-a47d-8c48425ef4a7",
+      "8a863029-f435-446a-821e-275f4f641165",
+      "040c5662-da76-4782-a48e-cdea1892d14c",
+      "cd6e21c8-9e8a-493a-8a76-fbf7862069e5",
+      "821cc27a-e3bb-4bc5-ac34-89ada245069d",
+      "b5cdf794-8fa4-4a85-8b26-755d087bf531",
+      "d415c253-4d61-4459-9d25-4015b9084fb0",
+      "7e380070-f762-11e1-a439-00145eb45e9a",
+      "7a3679ef-5582-4aaa-81f0-8c2545cafc81",
+      "b740eaa0-0679-41dc-acb7-990d562dfa37",
+      "6ac3f774-d9fb-4796-b3e9-92bf6c81c084",
+      "7bd65a7a-f762-11e1-a439-00145eb45e9a",
+      "b124e1e0-4755-430f-9eab-894f25a9b59c",
+      "861e6afe-f762-11e1-a439-00145eb45e9a",
+      "bf2a4bf0-5f31-11de-b67e-b8a03c50a862",
+      "f934f8e2-32ca-46a7-b2f8-b032a4740454",
+      "902c8fe7-8f38-45b0-854e-c324fed36303",
+      "e45c7d91-81c6-4455-86e3-2965a5739b1f",
+      "b1047888-ae52-4179-9dd5-5448ea342a24",
+      "cb9beff3-a185-486f-975a-732251444158",
+      "4300f8d5-1ae5-49e5-a101-63894b005868",
+      "963a6b96-4d22-4428-86e4-afee52cf4a8e",
+      "40a5e8ac-3d50-4e03-849c-d52defe3ff6b",
+      "07a54454-87c7-4e1e-b2ba-88a9d98d534b",
+      "e0b8cb67-6667-423d-ab71-08021b6485f3",
+      "202cdfcf-0eac-4696-9e48-4797c562ff41",
+      "defb9a47-c1a7-4fb2-9a0b-2da7c5260cad",
+      "f873ef66-231a-4ea3-bd4d-a16f182bf337",
+      "90c853e6-56bd-480b-8e8f-6285c3f8d42b",
+      "a86641c2-9381-4c1e-9d25-32b90f2b5a4b"
+    ],
+    "official_docs": "https://techdocs.gbif.org/en/data-use/download-formats"
+  },
+  "top_hosts": [
+    {
+      "count": 2373,
+      "host": "inaturalist-open-data.s3.amazonaws.com"
+    },
+    {
+      "count": 1602,
+      "host": "www.boldsystems.org"
+    },
+    {
+      "count": 1324,
+      "host": "live.staticflickr.com"
+    },
+    {
+      "count": 1062,
+      "host": "mediaphoto.mnhn.fr"
+    },
+    {
+      "count": 708,
+      "host": "id.digitarium.fi"
+    },
+    {
+      "count": 416,
+      "host": "images.ala.org.au"
+    },
+    {
+      "count": 358,
+      "host": "images.mobot.org"
+    },
+    {
+      "count": 354,
+      "host": "data.nhm.ac.uk"
+    },
+    {
+      "count": 354,
+      "host": "ibss-images.calacademy.org"
+    },
+    {
+      "count": 354,
+      "host": "arter.dk"
+    },
+    {
+      "count": 354,
+      "host": "data.huh.harvard.edu"
+    },
+    {
+      "count": 354,
+      "host": "www.unimus.no"
+    },
+    {
+      "count": 353,
+      "host": "d2jcv3kl45hlgi.cloudfront.net"
+    },
+    {
+      "count": 18,
+      "host": "image.laji.fi"
+    },
+    {
+      "count": 13,
+      "host": "i.vimeocdn.com"
+    },
+    {
+      "count": 1,
+      "host": "d2seqvvyy3b8p2.cloudfront.net"
+    },
+    {
+      "count": 1,
+      "host": "wingeds.world"
+    },
+    {
+      "count": 1,
+      "host": "svampe.databasen.org"
+    }
+  ],
+  "unique_hosts": 18,
+  "url_column": "url"
+}

@@ -168,8 +168,11 @@ files/test
 data
 examples
 CLAUDE.md
-benchmark
+/benchmark/results/
 files/input/biotrove_test_100k_corrected.parquet
 files/input/Biotrove-Train-corrected.parquet
 files/input/biotrove_partitions/
 files/input/biotrove_test_100k_large.parquet
+# Local recovery copies and generated audit inventories
+/archives/2026-09-14/pre-consolidation/
+.DS_Store

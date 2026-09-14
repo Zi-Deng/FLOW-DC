@@ -1,0 +1,41 @@
+{
+  "port_number": 9123,
+  "parquets_directory": "files/input/partitions",
+  "output_directory": "files/output/images",
+
+  "url_col": "url",
+  "label_col": "species",
+
+  "concurrent_downloads": 1000,
+  "timeout_sec": 30,
+  "enable_polite_controller": true,
+
+  "initial_rate": 100.0,
+  "min_rate": 1.0,
+  "max_rate": 10000.0,
+  "per_host_conc_init": 16,
+  "per_host_conc_cap": 512,
+  "control_interval_sec": 0.25,
+
+  "startup_growth_factor": 1.5,
+  "latency_degradation_factor": 1.5,
+  "headroom": 0.85,
+  "probe_interval_sec": 60.0,
+  "probe_increment": 0.05,
+  "backoff_ceiling_factor": 0.7,
+  "backoff_cooldown_sec": 300.0,
+
+  "max_retry_attempts": 3,
+  "retry_backoff_sec": 2.0,
+  "max_retries": 3,
+  "timeout_minutes": 60,
+
+  "naming_mode": "sequential",
+  "output_format": "imagefolder",
+  "create_tar": true,
+  "create_overview": true,
+
+  "task_cores": 4,
+  "task_memory_mb": 8000,
+  "task_disk_mb": 50000
+}

@@ -1,5 +1,7 @@
 # FLOW-DC UI Build Guide
 
+> Implementation status (2026-09-14): `bin/ui_app.py` is a prototype with simulated job execution. This document includes design/usage intentions; use the downloader CLI for actual downloads.
+
 A step-by-step documentation of how the NiceGUI frontend was designed and built for FLOW-DC.
 
 ## Table of Contents

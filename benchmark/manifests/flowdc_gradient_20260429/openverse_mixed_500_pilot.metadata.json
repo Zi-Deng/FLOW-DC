@@ -1,0 +1,53 @@
+{
+  "created_utc": "2026-04-29T13:54:38.056637+00:00",
+  "dataset": "openverse_mixed",
+  "label_column": "label",
+  "manifest_path": "benchmark/manifests/flowdc_gradient_20260429/openverse_mixed_500_pilot.parquet",
+  "rows": 500,
+  "sha256": "09096bab9456a1cde5c8740177cb74a3046787c15205750dc6a8a1fcab246996",
+  "source": "Openverse image search API, original provider URLs",
+  "source_notes": {
+    "api": "https://api.openverse.org/v1/images/",
+    "license_caveat": "Openverse metadata is retained for analysis; licenses should be independently verified for reuse.",
+    "official_docs": "https://docs.openverse.org/api/reference/made_with_ov.html",
+    "queries": [
+      "nature",
+      "bird",
+      "plant",
+      "insect",
+      "fungi",
+      "flower",
+      "tree",
+      "mammal",
+      "butterfly",
+      "museum specimen",
+      "landscape",
+      "ocean",
+      "mountain",
+      "geology",
+      "space",
+      "microscope",
+      "architecture",
+      "archive",
+      "painting",
+      "botany",
+      "wildlife",
+      "river",
+      "forest",
+      "coral"
+    ],
+    "sample": "first rows from fixed full manifest"
+  },
+  "top_hosts": [
+    {
+      "count": 483,
+      "host": "live.staticflickr.com"
+    },
+    {
+      "count": 17,
+      "host": "upload.wikimedia.org"
+    }
+  ],
+  "unique_hosts": 2,
+  "url_column": "url"
+}

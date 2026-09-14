@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Benchmark Report: {{ metadata.name }}</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            background: #f5f5f5;
+            padding: 20px;
+        }
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            border-radius: 10px;
+            margin-bottom: 30px;
+        }
+        header h1 {
+            font-size: 2rem;
+            margin-bottom: 10px;
+        }
+        .meta-info {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 20px;
+            font-size: 0.9rem;
+            opacity: 0.9;
+        }
+        .meta-info span {
+            background: rgba(255,255,255,0.2);
+            padding: 5px 10px;
+            border-radius: 5px;
+        }
+        .section {
+            background: white;
+            border-radius: 10px;
+            padding: 25px;
+            margin-bottom: 25px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .section h2 {
+            color: #667eea;
+            margin-bottom: 20px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #eee;
+        }
+        .charts-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(500px, 1fr));
+            gap: 25px;
+        }
+        .chart-container {
+            background: #fafafa;
+            padding: 20px;
+            border-radius: 8px;
+            border: 1px solid #eee;
+        }
+        .chart-container h3 {
+            margin-bottom: 15px;
+            color: #555;
+            font-size: 1.1rem;
+        }
+        .chart-wrapper {
+            position: relative;
+            height: 300px;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 15px;
+        }
+        th, td {
+            padding: 12px 15px;
+            text-align: left;
+            border-bottom: 1px solid #eee;
+        }
+        th {
+            background: #f8f9fa;
+            font-weight: 600;
+            color: #555;
+        }
+        tr:hover {
+            background: #f8f9fa;
+        }
+        .highlight {
+            background: #e8f5e9 !important;
+            font-weight: 600;
+        }
+        .winner {
+            color: #2e7d32;
+        }
+        .metric-value {
+            font-family: 'Monaco', 'Menlo', monospace;
+        }
+        .footer {
+            text-align: center;
+            color: #999;
+            padding: 20px;
+            font-size: 0.85rem;
+        }
+        @media (max-width: 768px) {
+            .charts-grid {
+                grid-template-columns: 1fr;
+            }
+            .chart-container {
+                min-width: auto;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>{{ metadata.name }}</h1>
+            <div class="meta-info">
+                <span>📅 {{ metadata.timestamp[:10] }}</span>
+                <span>💻 {{ metadata.system_info.platform }} ({{ metadata.system_info.cpu_count }} cores)</span>
+                <span>🐍 Python {{ metadata.system_info.python_version }}</span>
+                <span>📊 {{ metadata.dataset.total_urls }} URLs</span>
+            </div>
+        </header>
+
+        <div class="section">
+            <h2>Performance Comparison</h2>
+            <div class="charts-grid">
+                <div class="chart-container">
+                    <h3>Throughput (MB/s)</h3>
+                    <div class="chart-wrapper">
+                        <canvas id="throughputChart"></canvas>
+                    </div>
+                </div>
+                <div class="chart-container">
+                    <h3>Success Rate (%)</h3>
+                    <div class="chart-wrapper">
+                        <canvas id="successChart"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>Resource Usage</h2>
+            <div class="charts-grid">
+                <div class="chart-container">
+                    <h3>CPU Usage (%)</h3>
+                    <div class="chart-wrapper">
+                        <canvas id="cpuChart"></canvas>
+                    </div>
+                </div>
+                <div class="chart-container">
+                    <h3>Memory Usage (MB)</h3>
+                    <div class="chart-wrapper">
+                        <canvas id="memoryChart"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>Detailed Results</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Tool</th>
+                        <th>Concurrency</th>
+                        <th>Throughput (MB/s)</th>
+                        <th>Images/sec</th>
+                        <th>Success Rate</th>
+                        <th>Avg Time (s)</th>
+                        <th>CPU %</th>
+                        <th>Memory (MB)</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for tool_key, concurrency_results in report.results.items() %}
+                        {% for conc, data in concurrency_results.items() %}
+                        <tr>
+                            <td>{{ tool_key.replace('_', ' ').title() }}</td>
+                            <td class="metric-value">{{ conc }}</td>
+                            <td class="metric-value">{{ "%.2f"|format(data.avg_throughput_mbps) }} ± {{ "%.2f"|format(data.std_throughput_mbps) }}</td>
+                            <td class="metric-value">{{ "%.1f"|format(data.avg_throughput_imgs_per_sec) }}</td>
+                            <td class="metric-value">{{ "%.1f"|format(data.avg_success_rate) }}%</td>
+                            <td class="metric-value">{{ "%.1f"|format(data.avg_elapsed_seconds) }}</td>
+                            <td class="metric-value">{{ "%.1f"|format(data.avg_cpu_percent) }}</td>
+                            <td class="metric-value">{{ "%.0f"|format(data.avg_memory_mb) }}</td>
+                        </tr>
+                        {% endfor %}
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        <div class="section">
+            <h2>Configuration</h2>
+            <table>
+                <tr><th>Parameter</th><th>Value</th></tr>
+                <tr><td>Dataset</td><td>{{ metadata.dataset.path }}</td></tr>
+                <tr><td>Total URLs</td><td>{{ metadata.dataset.total_urls }}</td></tr>
+                <tr><td>Concurrency Levels</td><td>{{ metadata.config.concurrency_levels | join(', ') }}</td></tr>
+                <tr><td>Timeout</td><td>{{ metadata.config.timeout_sec }}s</td></tr>
+                <tr><td>Warmup Runs</td><td>{{ metadata.config.warmup_runs }}</td></tr>
+                <tr><td>Measured Runs</td><td>{{ metadata.config.measured_runs }}</td></tr>
+            </table>
+        </div>
+
+        <div class="footer">
+            Generated by FLOW-DC Benchmark Suite
+        </div>
+    </div>
+
+    <script>
+        const chartData = {{ chart_data | safe }};
+
+        const chartOptions = {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    position: 'bottom',
+                }
+            },
+            scales: {
+                y: {
+                    beginAtZero: true
+                }
+            }
+        };
+
+        // Throughput Chart
+        new Chart(document.getElementById('throughputChart'), {
+            type: 'line',
+            data: chartData.throughput,
+            options: {
+                ...chartOptions,
+                scales: {
+                    ...chartOptions.scales,
+                    x: { title: { display: true, text: 'Concurrency' } },
+                    y: { title: { display: true, text: 'MB/s' }, beginAtZero: true }
+                }
+            }
+        });
+
+        // Success Rate Chart
+        new Chart(document.getElementById('successChart'), {
+            type: 'bar',
+            data: chartData.success_rate,
+            options: {
+                ...chartOptions,
+                scales: {
+                    ...chartOptions.scales,
+                    x: { title: { display: true, text: 'Concurrency' } },
+                    y: { title: { display: true, text: '%' }, beginAtZero: true, max: 100 }
+                }
+            }
+        });
+
+        // CPU Chart
+        new Chart(document.getElementById('cpuChart'), {
+            type: 'line',
+            data: chartData.cpu_usage,
+            options: {
+                ...chartOptions,
+                scales: {
+                    ...chartOptions.scales,
+                    x: { title: { display: true, text: 'Concurrency' } },
+                    y: { title: { display: true, text: '%' }, beginAtZero: true }
+                }
+            }
+        });
+
+        // Memory Chart
+        new Chart(document.getElementById('memoryChart'), {
+            type: 'line',
+            data: chartData.memory_usage,
+            options: {
+                ...chartOptions,
+                scales: {
+                    ...chartOptions.scales,
+                    x: { title: { display: true, text: 'Concurrency' } },
+                    y: { title: { display: true, text: 'MB' }, beginAtZero: true }
+                }
+            }
+        });
+    </script>
+</body>
+</html>

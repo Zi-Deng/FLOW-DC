@@ -1,5 +1,7 @@
 # FLOW-DC Web UI Tutorial
 
+> Implementation status (2026-09-14): `bin/ui_app.py` is a prototype with simulated job execution. This document includes design/usage intentions; use the downloader CLI for actual downloads.
+
 A comprehensive guide to using the FLOW-DC NiceGUI web interface for configuring and monitoring dataset downloads.
 
 ## Table of Contents

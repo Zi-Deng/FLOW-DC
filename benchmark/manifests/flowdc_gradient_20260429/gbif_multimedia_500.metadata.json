@@ -1,0 +1,79 @@
+{
+  "created_utc": "2026-04-29T18:05:38.936314+00:00",
+  "dataset": "gbif_multimedia",
+  "label_column": "label",
+  "manifest_path": "benchmark/manifests/flowdc_gradient_20260429/gbif_multimedia_500.parquet",
+  "rows": 500,
+  "sha256": "40de615ffcedee89d4e49771e11b8459a6c610b3545fda1b0026cfa1f4bc0ed2",
+  "source": "GBIF occurrence search API, direct multimedia identifier URLs",
+  "source_notes": {
+    "calibration_note": "Downsampled after pilot projection to keep each measured run under the 12 minute cap.",
+    "official_docs": "https://techdocs.gbif.org/en/data-use/download-formats",
+    "sampled_from": "benchmark/manifests/flowdc_gradient_20260429/gbif_multimedia_10000.parquet",
+    "sampled_from_sha256": "7aa44610a14ad9fdb60f84db2c41e18294f57bc8c3574ff5352bdf7407c98f41"
+  },
+  "top_hosts": [
+    {
+      "count": 106,
+      "host": "inaturalist-open-data.s3.amazonaws.com"
+    },
+    {
+      "count": 73,
+      "host": "live.staticflickr.com"
+    },
+    {
+      "count": 71,
+      "host": "www.boldsystems.org"
+    },
+    {
+      "count": 54,
+      "host": "mediaphoto.mnhn.fr"
+    },
+    {
+      "count": 33,
+      "host": "id.digitarium.fi"
+    },
+    {
+      "count": 25,
+      "host": "d2jcv3kl45hlgi.cloudfront.net"
+    },
+    {
+      "count": 23,
+      "host": "images.mobot.org"
+    },
+    {
+      "count": 21,
+      "host": "data.huh.harvard.edu"
+    },
+    {
+      "count": 21,
+      "host": "arter.dk"
+    },
+    {
+      "count": 20,
+      "host": "www.unimus.no"
+    },
+    {
+      "count": 18,
+      "host": "ibss-images.calacademy.org"
+    },
+    {
+      "count": 17,
+      "host": "data.nhm.ac.uk"
+    },
+    {
+      "count": 15,
+      "host": "images.ala.org.au"
+    },
+    {
+      "count": 2,
+      "host": "image.laji.fi"
+    },
+    {
+      "count": 1,
+      "host": "i.vimeocdn.com"
+    }
+  ],
+  "unique_hosts": 15,
+  "url_column": "url"
+}

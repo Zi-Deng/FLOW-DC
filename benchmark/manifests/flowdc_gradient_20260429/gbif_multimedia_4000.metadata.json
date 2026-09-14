@@ -1,0 +1,83 @@
+{
+  "created_utc": "2026-04-29T14:07:45.425825+00:00",
+  "dataset": "gbif_multimedia",
+  "label_column": "label",
+  "manifest_path": "benchmark/manifests/flowdc_gradient_20260429/gbif_multimedia_4000.parquet",
+  "rows": 4000,
+  "sha256": "6511b58173af05fad75d97c91fa465949c4f135cd52351eff23da759413fac61",
+  "source": "GBIF occurrence search API, direct multimedia identifier URLs",
+  "source_notes": {
+    "calibration_note": "Downsampled after pilot projection to keep each measured run under the 12 minute cap.",
+    "official_docs": "https://techdocs.gbif.org/en/data-use/download-formats",
+    "sampled_from": "benchmark/manifests/flowdc_gradient_20260429/gbif_multimedia_10000.parquet",
+    "sampled_from_sha256": "7aa44610a14ad9fdb60f84db2c41e18294f57bc8c3574ff5352bdf7407c98f41"
+  },
+  "top_hosts": [
+    {
+      "count": 954,
+      "host": "inaturalist-open-data.s3.amazonaws.com"
+    },
+    {
+      "count": 651,
+      "host": "www.boldsystems.org"
+    },
+    {
+      "count": 497,
+      "host": "live.staticflickr.com"
+    },
+    {
+      "count": 429,
+      "host": "mediaphoto.mnhn.fr"
+    },
+    {
+      "count": 268,
+      "host": "id.digitarium.fi"
+    },
+    {
+      "count": 161,
+      "host": "www.unimus.no"
+    },
+    {
+      "count": 161,
+      "host": "d2jcv3kl45hlgi.cloudfront.net"
+    },
+    {
+      "count": 159,
+      "host": "images.mobot.org"
+    },
+    {
+      "count": 151,
+      "host": "images.ala.org.au"
+    },
+    {
+      "count": 149,
+      "host": "data.nhm.ac.uk"
+    },
+    {
+      "count": 148,
+      "host": "ibss-images.calacademy.org"
+    },
+    {
+      "count": 136,
+      "host": "arter.dk"
+    },
+    {
+      "count": 126,
+      "host": "data.huh.harvard.edu"
+    },
+    {
+      "count": 6,
+      "host": "image.laji.fi"
+    },
+    {
+      "count": 3,
+      "host": "i.vimeocdn.com"
+    },
+    {
+      "count": 1,
+      "host": "svampe.databasen.org"
+    }
+  ],
+  "unique_hosts": 16,
+  "url_column": "url"
+}
