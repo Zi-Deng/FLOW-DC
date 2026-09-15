@@ -1,0 +1,61 @@
+name: Change request
+description: A scoped problem, acceptance contract and evidence plan
+body:
+  - type: dropdown
+    id: type
+    attributes:
+      label: Change type
+      options: [Bug, Feature, Refactor, Data, Infrastructure, Documentation]
+    validations: {required: true}
+  - type: dropdown
+    id: risk
+    attributes:
+      label: Risk tier
+      description: Choose by the worst plausible consequence, not diff size.
+      options: [T0 trivial, T1 ordinary code, T2 behavioral, T3 domain-critical, T4 privileged or expensive]
+    validations: {required: true}
+  - type: textarea
+    id: problem
+    attributes:
+      label: Observable problem
+      description: Exact symptom, supported environment and minimal reproduction.
+    validations: {required: true}
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations: {required: true}
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope and non-goals
+    validations: {required: true}
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Binary or measurable outcomes with a criterion-to-evidence mapping.
+    validations: {required: true}
+  - type: textarea
+    id: validation
+    attributes:
+      label: Validation plan
+      description: Exact commands, fixtures, tolerances and V0–V4 evidence level.
+    validations: {required: true}
+  - type: textarea
+    id: domain
+    attributes:
+      label: Domain impact
+      description: Effect on data, metrics, scientific claims or other domain contracts; write not applicable if none.
+    validations: {required: true}
+  - type: textarea
+    id: budget
+    attributes:
+      label: Budget and stop conditions
+      value: "Use gpt-6-astra for nonreview work and Copilot claude-opus-5 for independent review. One attempted review round by default, including failures: 400 AI credits and 900 seconds. Another round needs supported critical P0/P1 repair verification or explicit user continuation. Reassess after two substantive repair rounds. No dataset or cluster campaign unless authorized."
+    validations: {required: true}
+  - type: textarea
+    id: rollback
+    attributes:
+      label: Risks and rollback
+    validations: {required: true}

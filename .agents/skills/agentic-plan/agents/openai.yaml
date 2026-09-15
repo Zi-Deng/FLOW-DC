@@ -1,0 +1,6 @@
+interface:
+  display_name: "Plan GitHub Issue"
+  short_description: "Publish a criterion-to-evidence implementation plan"
+  default_prompt: "Use $agentic-plan to publish a criterion-to-evidence implementation plan."
+policy:
+  allow_implicit_invocation: true

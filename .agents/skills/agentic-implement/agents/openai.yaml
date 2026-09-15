@@ -1,0 +1,6 @@
+interface:
+  display_name: "Implement Approved Issue"
+  short_description: "Run Astra implementation, checks and draft PR"
+  default_prompt: "Use $agentic-implement to run Astra implementation, checks and draft PR."
+policy:
+  allow_implicit_invocation: true

@@ -1,0 +1,6 @@
+interface:
+  display_name: "Capture GitHub Issue"
+  short_description: "Draft and publish a measurable GitHub issue"
+  default_prompt: "Use $agentic-capture to draft and publish a measurable GitHub issue."
+policy:
+  allow_implicit_invocation: true

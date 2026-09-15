@@ -1,0 +1,6 @@
+interface:
+  display_name: "Agentic Workflow"
+  short_description: "Coordinate an issue through human merge preparation"
+  default_prompt: "Use $agentic-workflow to coordinate an issue through human merge preparation."
+policy:
+  allow_implicit_invocation: true

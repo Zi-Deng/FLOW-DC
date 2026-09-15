@@ -176,3 +176,9 @@ files/input/biotrove_test_100k_large.parquet
 # Local recovery copies and generated audit inventories
 /archives/2026-09-14/pre-consolidation/
 .DS_Store
+
+# Private agent continuity, artifacts and isolated development environment
+/memory/
+/.agentic-local/
+/.venv-agentic/
+.ruff_cache/

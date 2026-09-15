@@ -1,0 +1,6 @@
+# Focused, CPU-only FLOW-DC regression environment (Python 3.12).
+# TaskVine is stubbed by the configuration tests; no cluster runtime is installed.
+aiohttp==3.13.3
+polars==1.37.1
+psutil==7.2.1
+tqdm==4.67.1
