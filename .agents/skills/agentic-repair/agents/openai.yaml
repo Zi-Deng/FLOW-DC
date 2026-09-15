@@ -1,0 +1,6 @@
+interface:
+  display_name: "Repair Reviewed Pull Request"
+  short_description: "Resume the original Astra executor for review fixes"
+  default_prompt: "Use $agentic-repair to resume the original Astra executor for review fixes."
+policy:
+  allow_implicit_invocation: true

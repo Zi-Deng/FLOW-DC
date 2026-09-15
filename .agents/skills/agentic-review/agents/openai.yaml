@@ -1,0 +1,6 @@
+interface:
+  display_name: "Review Pull Request"
+  short_description: "Run fresh isolated Opus review and publish findings"
+  default_prompt: "Use $agentic-review to run fresh isolated Opus review and publish findings."
+policy:
+  allow_implicit_invocation: true
