@@ -14,9 +14,9 @@ This record describes FLOW-DC evidence collected during the September 14, 2026 a
 | Check | Result and scope |
 | --- | --- |
 | Existing FLOW-DC suite | 8 tests passed at consolidation SHA with Python 3.12.12; local HTTP and temporary output directories |
-| Adapted runtime suite | 120 tests passed, including all imported cases and 9 new budget/configuration regressions |
+| Initial adapted runtime suite | 120 tests passed, including all imported cases and 9 new budget/configuration regressions |
 | New budget behavior | Unlimited/default/null diff; finite inclusive UTF-8 boundary; invalid values; empty diff; unchanged private-path guard; separate bounded executor prompt |
-| Full local gate | `make check` passed with the dedicated Python 3.12.12 environment: 8 application tests, 120 runtime tests, scoped Ruff, schema/configuration/CI context checks, all eight skills, workflow YAML and maintained Markdown links |
+| Initial full local gate | `make check` passed with the dedicated Python 3.12.12 environment: 8 application tests, 120 runtime tests, scoped Ruff, schema/configuration/CI context checks, all eight skills, workflow YAML and maintained Markdown links |
 | Skill payload | All eight packages and `agents/openai.yaml` metadata imported and structurally validated; shared contract links adapted for FLOW-DC |
 | GitHub configuration | Four approved labels created and read back; `AGENTIC_COPILOT_ACTIONS_ENABLED=false` set and read back |
 | Sandboxed workflow suite | All 120 workflow tests passed inside the default Codex workspace sandbox after the host fix; external GitHub/model services remain controlled doubles |
@@ -42,6 +42,39 @@ GitHub's check-run API reported integration ID `15368` for both required names o
 that head. These immutable links record that revision; use the current PR checks
 for later documentation or code commits. The four approved labels and the disabled
 hosted-review variable were read back successfully. The [active main ruleset](https://github.com/Zi-Deng/FLOW-DC/rules/23400835) was created after the baseline merge and read back against the complete proposed configuration. It requires both check names from Actions integration 15368, strict up-to-date status, resolved threads, a PR and linear history, and blocks force pushes/deletion with no bypass actors.
+
+## First independent review and repairs
+
+The [first local Opus 5 COMMENT review](https://github.com/Zi-Deng/FLOW-DC/pull/4#pullrequestreview-5205046280)
+completed against head `97e03a7960ac481b0ff2ce9039e62999e2d05b53` and base
+`0e88dbc38449a4e7cdfef5c04aeca8c5bbe94de1`. The packet contained the full 428210-byte
+diff, 184 indexed source entries, three current check-run records, and the public
+issue/plan/PR context. Its 32 omissions were binary or unsupported source types.
+Packet/workspace integrity and publication checks passed. The provider usage file
+identified `claude-opus-5`; it remains a provider report rather than independent model
+attestation. No tests were executed by the reviewer.
+
+The report raised two P2 findings (result-finalization recovery and text encoding),
+two P3 concerns (configuration validation and oversized publication), and questions.
+It also disclosed that it sampled the diff and did not inspect several critical
+runtime/skill files or fully read the issue/plan. Those limits remain attached to the
+unaltered report; successful inference is not complete acceptance coverage.
+
+Repairs add a durable result journal and atomic finalization, pre-request CLI-version
+validation, recovery without another model invocation, explicit UTF-8 text/process
+I/O, complete required configuration validation and a report-size prompt. The existing
+60000-byte publication guard remains. Tests inject report/metadata failures, reject
+altered/stale recovery records, prove one-attempt pipeline recovery, exercise an
+explicitly ASCII process locale and preserve an oversized report without publishing
+or rerunning it. The ordinary C locale enables Python 3.12 UTF-8 mode on this host;
+the encoding reproduction required explicitly disabling that mode and locale coercion.
+
+The repaired implementation passed `make check`: 8 application tests and 133 workflow tests, plus all scoped quality/structural gates. All 133 workflow tests also passed inside the default Codex workspace sandbox. These are coordinator and controlled-fixture results, not model-executed tests.
+
+These repairs change the reviewed head. A fresh independent review is required before
+merge readiness. The first attempted round is consumed; no P0/P1 finding was supported,
+so another invocation requires explicit user continuation under the approved policy.
+The native managed Astra pilot remains a separate post-installation acceptance step.
 
 ## Live rollout acceptance
 

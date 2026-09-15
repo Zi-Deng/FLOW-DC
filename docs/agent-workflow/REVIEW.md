@@ -85,6 +85,34 @@ The review directory is private working state, not a cryptographic attestation a
 its own owner. Its hashes catch accidental edits. A user able to rewrite the manifest
 can rewrite the record, so GitHub permissions and human assessment remain necessary.
 
+## Recover a saved review without another model request
+
+After a successful model response and packet/head/base checks, the helper atomically
+saves `review-result.json` outside the packet. This private journal binds the exact
+UTF-8 report, its digest and the observed CLI version to the input metadata. It then
+atomically writes `review.md` and the final metadata. The CLI version is checked
+before the paid request, so a later version-probe failure cannot strand its output.
+
+If either final-file write fails after the journal is saved, retry `run` using the
+same directory. The helper verifies the journal, packet and current head/base and
+finishes storage without invoking Copilot. The managed `task-review --run --publish`
+path performs the same recovery and retains one attempted round. A completed,
+unaltered journaled report can also be reused without another request. Changed
+completed reports, changed journals and stale snapshots are rejected.
+
+This recovery applies only when a valid journal was durably saved. A failure before
+that point remains incomplete; do not delete records or assume a repeated command
+is free to rerun the model. An older incomplete packet without a journal has no new
+recovery guarantee. Storage failure, budget exhaustion and snapshot staleness can
+still prevent completion and must be reported honestly.
+
+All review text and subprocess text I/O use explicit UTF-8, including when Python's
+UTF-8 mode and locale coercion are disabled. The prompt asks for a report below
+50000 UTF-8 bytes; publication retains the existing 60000-byte hard limit. Oversized
+reports are preserved for inspection and refused without silent truncation or an
+automatic model retry. A provider can exceed a requested output length, so the prompt
+limit is guidance rather than a guarantee.
+
 ## Why the snapshot differs from the PDF's detached checkout
 
 A detached worktree reduces branch mistakes but is not a read-only security boundary:

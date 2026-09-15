@@ -391,7 +391,11 @@ def review_task(
         elif execute and record.get("run_attempted"):
             # Recover a completed report after interruption, but never rerun an
             # uncertain model invocation in this directory.
+            independent.recover_review(repo, record["directory"])
             report_record(repo, state, record)
+            if record["status"] not in {"publishing", "published"}:
+                record["status"] = "reviewed"
+                store.save(state)
         if publish:
             report_record(repo, state, record)
             observed = published_report(repo, state, record)

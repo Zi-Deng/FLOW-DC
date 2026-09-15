@@ -8,7 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from test_workflow import workflow
+from test_workflow import SOURCE, workflow
 
 # The shared module establishes the scripts import path.
 # isort: split
@@ -24,9 +24,9 @@ class FinishGateTests(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         root = Path(temporary.name)
         (root / ".agentic").mkdir()
-        (root / ".agentic/config.json").write_text(
-            json.dumps({"schema_version": 1, "required_checks": ["quality"]})
-        )
+        config = workflow.configuration(SOURCE)
+        config["required_checks"] = ["quality"]
+        (root / ".agentic/config.json").write_text(json.dumps(config), encoding="utf-8")
         self.repo = SimpleNamespace(root=root, name="example/project")
 
     @staticmethod

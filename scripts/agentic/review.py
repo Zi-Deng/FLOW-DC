@@ -16,6 +16,8 @@ import tempfile
 import uuid
 from pathlib import Path, PurePosixPath
 
+from tasks import atomic_json, atomic_text, plain_path
+from tasks import digest as value_digest
 from workflow import Repo, WorkflowError, configuration, positive, run, sha, write_json
 
 TEXT_SUFFIXES = {
@@ -182,7 +184,7 @@ def prepare(repo, number, issue_number, plan_comment, expected_head=None, output
     packet.mkdir()
     manifest = snapshot(repo, head, packet / "source", cfg)
     write_json(packet / "source-index.json", manifest)
-    (packet / "diff.txt").write_text(diff)
+    (packet / "diff.txt").write_text(diff, encoding="utf-8")
     context = {
         "pull_request": pr,
         "issue": issue,
@@ -204,7 +206,7 @@ def prepare(repo, number, issue_number, plan_comment, expected_head=None, output
         ("docs/agent-workflow/REVIEW.md", "review-policy.txt"),
         (cfg["domain_rubric"], "domain-policy.txt"),
     ]:
-        (packet / target).write_text((repo.root / source).read_text())
+        (packet / target).write_text((repo.root / source).read_text(encoding="utf-8"), encoding="utf-8")
     agents = packet / ".github/agents"
     agents.mkdir(parents=True)
     shutil.copyfile(
@@ -232,12 +234,54 @@ def prepare(repo, number, issue_number, plan_comment, expected_head=None, output
 
 def verify_packet(directory):
     directory = Path(directory).resolve()
-    metadata = json.loads((directory / "metadata.json").read_text())
+    metadata = json.loads((directory / "metadata.json").read_text(encoding="utf-8"))
     packet = directory / "packet"
     actual = {str(p.relative_to(packet)): digest(p) for p in packet.rglob("*") if p.is_file()}
     if any(p.is_symlink() for p in packet.rglob("*")) or actual != metadata["files"]:
         raise WorkflowError("Review packet changed after preparation")
     return metadata
+
+
+def recover_review(repo, directory):
+    """Finalize a durably saved model result without starting another model process."""
+    directory = Path(directory).resolve()
+    result_path = plain_path(directory / "review-result.json")
+    if not result_path.exists():
+        return None
+    meta = verify_packet(directory)
+    if repo.name != meta["repository"]:
+        raise WorkflowError("Review packet belongs to another repository")
+    current_pr(repo, meta["pr"], meta["head_sha"], meta["base_sha"])
+    result = json.loads(result_path.read_text(encoding="utf-8"))
+    inputs = {key: value for key, value in meta.items() if key not in {"review_sha256", "copilot_version"}}
+    if (
+        not isinstance(result, dict)
+        or type(result.get("schema_version")) is not int
+        or result.get("schema_version") != 1
+        or result.get("input_digest") != value_digest(inputs)
+        or not isinstance(result.get("body"), str)
+        or not result["body"].strip()
+        or not isinstance(result.get("copilot_version"), str)
+        or not result["copilot_version"].strip()
+        or hashlib.sha256(result["body"].encode("utf-8")).hexdigest() != result.get("review_sha256")
+    ):
+        raise WorkflowError("Saved review result changed or belongs to another packet")
+    report = plain_path(directory / "review.md")
+    if meta.get("review_sha256"):
+        if (
+            meta["review_sha256"] != result["review_sha256"]
+            or meta.get("copilot_version") != result["copilot_version"]
+            or (report.exists() and digest(report) != meta["review_sha256"])
+        ):
+            raise WorkflowError("Completed review report or metadata changed")
+        if report.is_file():
+            return report
+    # The journal survives either final-file write failing. Only an incomplete
+    # report can be restored from it; a completed, altered report is rejected.
+    atomic_text(report, result["body"])
+    meta.update(review_sha256=result["review_sha256"], copilot_version=result["copilot_version"])
+    atomic_json(directory / "metadata.json", meta)
+    return report
 
 
 def review(repo, directory):
@@ -246,6 +290,9 @@ def review(repo, directory):
     if repo.name != meta["repository"]:
         raise WorkflowError("Review packet belongs to another repository")
     current_pr(repo, meta["pr"], meta["head_sha"], meta["base_sha"])
+    recovered = recover_review(repo, directory)
+    if recovered is not None:
+        return recovered
     model = meta["requested_model"]
     if not re.fullmatch(r"claude-[a-z0-9.-]+", model):
         raise WorkflowError("Choose an explicit Claude model ID through Copilot, not auto")
@@ -263,6 +310,10 @@ def review(repo, directory):
     ]:
         if flag not in help_text:
             raise WorkflowError(f"Installed Copilot CLI lacks required capability: {flag}")
+    version = run(["copilot", "--version"]).stdout.strip()
+    if not version:
+        raise WorkflowError("Copilot returned no version; review was not started")
+    version = version.splitlines()[0]
     token = os.environ.get("COPILOT_GITHUB_TOKEN")
     if not token:
         token = run(["gh", "auth", "token", "--hostname", "github.com"]).stdout.strip()
@@ -276,6 +327,7 @@ def review(repo, directory):
         "Report structured findings with severity, original path and lines, trigger, impact, evidence, and fix direction. "
         "End with headings 'Acceptance criteria', 'Validation', and 'Limitations'. State that no tests were executed "
         "by this reviewer, enumerate omitted files that affect confidence, and never claim approval. "
+        "Keep the complete report under 50000 UTF-8 bytes; prioritize material findings and state coverage limits. "
         "If none are supported, explicitly say 'No material findings supported by this review.'"
     )
     # A new config/state directory gives a new session without personal MCP, hooks or memory.
@@ -354,22 +406,29 @@ def review(repo, directory):
         f"· base `{meta['base_sha']}`\n\nRequested model: `{model}`. This is model-generated static review, "
         "not human approval. CI results were supplied as evidence; this reviewer executed no tests.\n\n"
     )
-    (directory / "review.md").write_text(header + response.stdout.strip() + "\n")
-    meta["review_sha256"] = digest(directory / "review.md")
-    meta["copilot_version"] = run(["copilot", "--version"]).stdout.splitlines()[0]
-    write_json(directory / "metadata.json", meta)
-    return directory / "review.md"
+    body = header + response.stdout.strip() + "\n"
+    atomic_json(
+        directory / "review-result.json",
+        {
+            "schema_version": 1,
+            "input_digest": value_digest(meta),
+            "body": body,
+            "review_sha256": hashlib.sha256(body.encode("utf-8")).hexdigest(),
+            "copilot_version": version,
+        },
+    )
+    return recover_review(repo, directory)
 
 
 def publish(repo, directory):
     directory = Path(directory).resolve()
     meta = verify_packet(directory)
-    body = (directory / "review.md").read_text()
+    body = (directory / "review.md").read_text(encoding="utf-8")
     if digest(directory / "review.md") != meta.get("review_sha256"):
         raise WorkflowError("Review report changed; do not silently alter the recorded model output")
     if repo.name != meta["repository"]:
         raise WorkflowError("Wrong repository for review publication")
-    if len(body.encode()) > 60000:
+    if len(body.encode("utf-8")) > 60000:
         raise WorkflowError("Review exceeds the publication budget; summarize separately with attribution")
     current_pr(repo, meta["pr"], meta["head_sha"], meta["base_sha"])
     marker = f"<!-- agentic-review:{meta['head_sha']}:{meta['review_sha256']} -->"

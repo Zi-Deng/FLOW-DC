@@ -26,6 +26,7 @@ def run(argv, *, cwd=None, input=None, check=True, env=None, timeout=120):
         cwd=cwd,
         input=input,
         text=True,
+        encoding="utf-8",
         capture_output=True,
         env=env,
         timeout=timeout,
@@ -169,8 +170,12 @@ class Repo:
 
 
 def configuration(root):
-    result = json.loads((Path(root) / ".agentic/config.json").read_text())
-    if not isinstance(result, dict) or result.get("schema_version") != 1:
+    result = json.loads((Path(root) / ".agentic/config.json").read_text(encoding="utf-8"))
+    if (
+        not isinstance(result, dict)
+        or type(result.get("schema_version")) is not int
+        or result["schema_version"] != 1
+    ):
         raise WorkflowError("Unsupported .agentic/config.json schema")
     result.setdefault("max_diff_bytes", None)
     result.setdefault("managed_max_prompt_bytes", 300_000)
@@ -181,6 +186,28 @@ def configuration(root):
         if type(value) is not int or value <= 0:
             suffix = " or null (unlimited)" if key == "max_diff_bytes" else ""
             raise WorkflowError(f"{key} must be a positive integer{suffix}")
+    for key in (
+        "review_timeout_seconds",
+        "review_max_ai_credits",
+        "max_source_file_bytes",
+        "max_snapshot_bytes",
+    ):
+        if type(result.get(key)) is not int or result[key] <= 0:
+            raise WorkflowError(f"{key} is required and must be a positive integer")
+    for key in ("managed_timeout_seconds", "managed_max_output_bytes"):
+        if key in result and (type(result[key]) is not int or result[key] <= 0):
+            raise WorkflowError(f"{key} must be a positive integer when supplied")
+    for key in ("openai_model", "copilot_model", "domain_rubric"):
+        if not isinstance(result.get(key), str) or not result[key].strip():
+            raise WorkflowError(f"{key} is required and must be a nonempty string")
+    checks = result.get("required_checks")
+    if (
+        not isinstance(checks, list)
+        or not checks
+        or any(not isinstance(item, str) or not item.strip() for item in checks)
+        or len(set(checks)) != len(checks)
+    ):
+        raise WorkflowError("required_checks must be a nonempty list of unique check names")
     return result
 
 
@@ -276,7 +303,7 @@ def draft_pr(repo, title, body):
         raise WorkflowError("Create a draft PR from an issue task worktree")
     if repo.git("status", "--porcelain"):
         raise WorkflowError("Commit the intended changes before opening the draft PR")
-    text = Path(body).read_text()
+    text = Path(body).read_text(encoding="utf-8")
     if not re.search(rf"(?im)^Fixes #{match[1]}\s*$", text):
         raise WorkflowError(f"PR body must include its own line: Fixes #{match[1]}")
     existing = json.loads(
@@ -433,7 +460,7 @@ def launch(repo, role, task, execute=False, managed=False):
             r"issue-[1-9][0-9]*-[a-z0-9-]+", repo.git("branch", "--show-current")
         ):
             raise WorkflowError("Implementation and repair require an issue task worktree")
-    prompt = (repo.root / f".agentic/prompts/{role}.md").read_text()
+    prompt = (repo.root / f".agentic/prompts/{role}.md").read_text(encoding="utf-8")
     prompt += f"\nTask identifier: {task}\nRepository: {repo.root}\n"
     args = [
         "codex",

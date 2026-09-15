@@ -52,7 +52,7 @@ def plain_path(path):
     return path
 
 
-def atomic_json(path, value):
+def atomic_text(path, text):
     path = plain_path(path)
     if path.exists() and not path.is_file():
         raise WorkflowError("State destination is not a regular file")
@@ -60,8 +60,7 @@ def atomic_json(path, value):
     fd, temporary = tempfile.mkstemp(prefix=".pending-", dir=path.parent)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as stream:
-            json.dump(value, stream, indent=2, ensure_ascii=False)
-            stream.write("\n")
+            stream.write(text)
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(temporary, path)
@@ -73,6 +72,10 @@ def atomic_json(path, value):
     finally:
         if os.path.exists(temporary):
             os.unlink(temporary)
+
+
+def atomic_json(path, value):
+    atomic_text(path, json.dumps(value, indent=2, ensure_ascii=False) + "\n")
 
 
 def operation_key(value):

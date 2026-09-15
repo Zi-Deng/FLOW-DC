@@ -76,3 +76,7 @@ One attempted review round per task is an orchestration policy, not a lifetime a
 ## Limits of this research
 
 Static inspection and mocked tests establish specific properties, not an error-free system. The local application suite does not validate live TaskVine, remote storage or research-scale throughput. Native execution, current-head Copilot review, Actions runs, branch protection and human finish require their own recorded evidence. The [verification record](VERIFICATION.md) separates those outcomes and remaining handoffs.
+
+## Review-driven repair evidence
+
+The first FLOW-DC Opus review is linked in [VERIFICATION.md](VERIFICATION.md), with its actual coverage limits. Recovery and encoding concerns were checked against the current code and reproduced through targeted failure injection and an explicitly ASCII process locale. The configuration guard now validates all required fields. Review output is journaled before finalization so a saved result can be recovered without another model request; metadata/report tampering and changed head/base remain blockers. Publication keeps its existing hard size guard and receives an earlier prompt-level size target. These local changes require a new review of the repaired head; the existing report is not silently relabeled as reviewing them.

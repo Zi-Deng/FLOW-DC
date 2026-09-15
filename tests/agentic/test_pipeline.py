@@ -1,5 +1,6 @@
 """PR and independent-review integration using Git fixtures and model doubles."""
 
+import hashlib
 from pathlib import Path
 from unittest.mock import patch
 
@@ -196,6 +197,34 @@ class PipelineTests(PipelineFixture):
         model.assert_not_called()
         state = tasks.TaskStore(self.repo).read("issue-12")
         self.assertEqual(sum(r["run_attempted"] for r in state["review_rounds"]), 1)
+
+    def test_saved_result_recovers_and_publishes_without_another_attempt(self):
+        def interrupted_result(repo, directory):
+            self.model_runs += 1
+            directory = Path(directory)
+            meta = review.verify_packet(directory)
+            body = "No material findings supported. Saved model result.\n"
+            tasks.atomic_json(
+                directory / "review-result.json",
+                {
+                    "schema_version": 1,
+                    "input_digest": tasks.digest(meta),
+                    "body": body,
+                    "review_sha256": hashlib.sha256(body.encode("utf-8")).hexdigest(),
+                    "copilot_version": "test double",
+                },
+            )
+            raise OSError("Interrupted after saving model result")
+
+        with patch.object(review, "review", side_effect=interrupted_result):
+            with self.assertRaisesRegex(OSError, "Interrupted"):
+                pipeline.review_task(self.repo, 12, execute=True)
+        with patch.object(review, "review", side_effect=AssertionError("Must not invoke another model")):
+            result = pipeline.review_task(self.repo, 12, execute=True, publish=True)
+        self.assertEqual(result["status"], "published")
+        self.assertEqual(result["attempted_rounds"], 1)
+        self.assertEqual(self.model_runs, 1)
+        self.assertEqual(len(self.reviews), 1)
 
     def test_report_changes_invalidate_designated_review(self):
         with patch.object(review, "review", side_effect=self.model_double):

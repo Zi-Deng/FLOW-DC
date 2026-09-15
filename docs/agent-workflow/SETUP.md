@@ -60,6 +60,8 @@ If the OS Python lacks `ensurepip`, use an existing healthy Python to create the
 
 This creates a separate environment without installing into the shared `ml` environment. `requirements-test.txt` supplies only the focused downloader-test dependencies. `requirements-dev.txt` adds pinned Ruff and PyYAML. These direct pins are not a complete transitive lock; record `pip freeze` with evidence when exact environment reproduction matters. The full application and TaskVine environment remains described by the root project documentation.
 
+Configuration validation checks every required model, rubric, check-name and positive-integer budget field. Missing or malformed settings produce a named error; `max_diff_bytes` remains the sole nullable unlimited budget. Optional managed timeout/output limits must be positive integers when supplied.
+
 `make check` runs both suites, scoped lint/format checks and skills/configuration/schema/workflow/link validation. It does not run a dataset campaign or HPC job. Individual targets are `test-flowdc`, `test-agentic`, `check-agentic`, `lint` and `check-clean`. Override `PYTHON` and `RUFF` explicitly when using a prepared environment outside the worktree; never install editable project code into a shared environment.
 
 ### Validate the native Codex sandbox
