@@ -280,6 +280,6 @@ datasets or generated model artifacts. Independent review excludes this state.
 The installer includes the eight skills, their metadata and the runtime/operating
 files they depend on. It does not install them globally or change another project's
 model accounts, repository permissions, check names or domain policy. Preserve existing
-project instructions and use [SETUP.md](SETUP.md#existing-projects) to reconcile file
-conflicts. For project-specific rollout, read [NICME](../adoption/NICME.md) or
-[SpiderML](../adoption/SpiderML.md).
+project instructions and use [SETUP.md](SETUP.md#bootstrap-and-existing-projects) to reconcile file
+conflicts. FLOW-DC-specific provenance and deltas are recorded in
+[RESEARCH.md](RESEARCH.md) and [TRACEABILITY.md](TRACEABILITY.md).

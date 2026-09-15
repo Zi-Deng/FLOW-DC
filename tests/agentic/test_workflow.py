@@ -41,6 +41,12 @@ class GitFixture(unittest.TestCase):
             if (SOURCE / item).exists():
                 shutil.copytree(SOURCE / item, self.root / item)
         shutil.copyfile(SOURCE / "AGENTS.md", self.root / "AGENTS.md")
+        # Generic orchestration fixtures use one synthetic check. Production check
+        # names are validated separately against the actual workflow definitions.
+        config_path = self.root / ".agentic/config.json"
+        config = json.loads(config_path.read_text())
+        config["required_checks"] = ["quality"]
+        config_path.write_text(json.dumps(config))
         # Minimal policy text keeps this fixture independent of documentation wording.
         for name in ["REVIEW.md", "domain-review.md"]:
             p = self.root / "docs/agent-workflow" / name
@@ -307,6 +313,44 @@ class ReviewTests(GitFixture):
         (directory / "packet/diff.txt").write_text("tampered")
         with self.assertRaisesRegex(workflow.WorkflowError, "changed"):
             review.verify_packet(directory)
+
+    def test_unlimited_default_accepts_diff_above_old_cap(self):
+        self.commit_task()
+        (self.task_path / "large.txt").write_text("é" * 160_000 + "\n", encoding="utf-8")
+        git(self.task_path, "add", "large.txt")
+        git(self.task_path, "commit", "-m", "large text fixture")
+        self.pr_data["head"]["sha"] = git(self.task_path, "rev-parse", "HEAD")
+        git(self.task_path, "push", "origin", "HEAD:refs/pull/31/head")
+        directory = review.prepare(self.repo, 31, 12, 1234)
+        self.assertGreater((directory / "packet/diff.txt").stat().st_size, 300_000)
+        index = json.loads((directory / "packet/source-index.json").read_text())
+        self.assertIn("omitted", next(item for item in index if item["path"] == "large.txt"))
+
+    def test_opt_in_diff_cap_is_inclusive_and_counts_utf8_bytes(self):
+        self.commit_task()
+        (self.task_path / "code.py").write_text('value = "é"\n', encoding="utf-8")
+        git(self.task_path, "commit", "-am", "unicode diff fixture")
+        self.pr_data["head"]["sha"] = git(self.task_path, "rev-parse", "HEAD")
+        git(self.task_path, "push", "origin", "HEAD:refs/pull/31/head")
+        packet = review.prepare(self.repo, 31, 12, 1234)
+        diff = (packet / "packet/diff.txt").read_text()
+        byte_count = len(diff.encode("utf-8"))
+        self.assertGreater(byte_count, len(diff))
+        cfg = workflow.configuration(self.root)
+        for cap, accepted in [(byte_count, True), (byte_count - 1, False)]:
+            cfg["max_diff_bytes"] = cap
+            with patch.object(review, "configuration", return_value=cfg):
+                if accepted:
+                    self.assertTrue(review.prepare(self.repo, 31, 12, 1234).is_dir())
+                else:
+                    with self.assertRaisesRegex(workflow.WorkflowError, "max_diff_bytes"):
+                        review.prepare(self.repo, 31, 12, 1234)
+
+    def test_unlimited_diff_still_rejects_empty_change(self):
+        self.commit_task()
+        self.pr_data["head"]["sha"] = self.base
+        with self.assertRaisesRegex(workflow.WorkflowError, "Diff is empty"):
+            review.prepare(self.repo, 31, 12, 1234)
 
     def test_symlinks_are_never_dereferenced(self):
         (self.root / "secret-link.py").symlink_to("/etc/passwd")

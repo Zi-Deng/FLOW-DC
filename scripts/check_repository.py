@@ -1,13 +1,17 @@
 #!/usr/bin/env python3
-"""Check template configuration and local Markdown links during development."""
+"""Validate FLOW-DC workflow configuration, skills and maintained workflow links."""
 
+import json
 import re
+import sys
 from pathlib import Path
 from urllib.parse import unquote
 
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "scripts/agentic"))
+from workflow import configuration  # noqa: E402
 
 SKILLS = {
     "agentic-workflow",
@@ -48,6 +52,20 @@ def validate_skills(root):
 
 def main():
     validate_skills(ROOT)
+    config = configuration(ROOT)
+    required = config["required_checks"]
+    assert set(required) == {"flowdc-tests", "agentic-quality"} and len(required) == 2
+    schema = json.loads((ROOT / ".agentic/schemas/executor-result.json").read_text())
+    assert schema["type"] == "object" and schema["additionalProperties"] is False
+    assert set(schema["required"]) == set(schema["properties"]) == {"status", "summary", "checks", "blockers"}
+    assert schema["properties"]["status"] == {
+        "type": "string",
+        "enum": ["completed", "checkpoint", "blocked"],
+    }
+    assert schema["properties"]["summary"] == {"type": "string"}
+    for key in ("checks", "blockers"):
+        assert schema["properties"][key] == {"type": "array", "items": {"type": "string"}}
+    observed_jobs = []
     for path in (ROOT / ".github").rglob("*.yml"):
         # BaseLoader retains the Actions key `on` rather than YAML 1.1's boolean True.
         value = yaml.load(path.read_text(), Loader=yaml.BaseLoader)
@@ -56,15 +74,23 @@ def main():
             assert "on" in value and "jobs" in value, path
             assert "pull_request_target" not in value["on"], path
             assert value["permissions"]["contents"] == "read", path
-            for job in value["jobs"].values():
+            for name, job in value["jobs"].items():
                 assert "timeout-minutes" in job, path
+                if name in required:
+                    observed_jobs.append(name)
+                    assert "pull_request" in value["on"] and "push" in value["on"], path
+                    assert "if" not in job and "continue-on-error" not in job, path
+                    assert job.get("name", name) == name, path
                 for step in job.get("steps", []):
                     if "uses" in step:
                         assert re.fullmatch(r"[^@]+@[0-9a-f]{40}", step["uses"]), step["uses"]
+                        if step["uses"].startswith("actions/checkout@"):
+                            assert step["with"]["persist-credentials"] == "false", path
+    assert sorted(observed_jobs) == sorted(required), "Required check names must match unique CI jobs"
     paths = [
         ROOT / "README.md",
         ROOT / "AGENTS.md",
-        *(ROOT / "docs").rglob("*.md"),
+        *(ROOT / "docs/agent-workflow").rglob("*.md"),
         *(ROOT / ".agents/skills").rglob("*.md"),
     ]
     errors = []
@@ -78,7 +104,9 @@ def main():
                 errors.append(f"{path.relative_to(ROOT)}: missing {target}")
     if errors:
         raise SystemExit("\n".join(errors))
-    print("Workflow YAML and local Markdown links validated")
+    print(
+        "Eight skills, runtime configuration, result schema, CI check names, YAML and workflow links validated"
+    )
 
 
 if __name__ == "__main__":

@@ -1,277 +1,129 @@
-# Setup and adoption
+# Set up the FLOW-DC agentic workflow
 
-Use the local workflow first. Enable hosted review after a representative local PR
-has completed the review loop. The same files support both paths.
+The adopted repository is [Zi-Deng/FLOW-DC](https://github.com/Zi-Deng/FLOW-DC). Use local execution and local Copilot review first. The hosted review workflow is present but deliberately disabled. See [verification](VERIFICATION.md) for the current rollout state; file installation alone does not prove that accounts, CI or branch protection work.
 
-## 1. Install and authenticate the tools
+## 1. Establish a clean control checkout
 
-Use Python 3.12 or newer, current Git and GNU Make. Install GitHub CLI, Codex and Copilot CLI
-from their official distribution channels. This workstation was provisioned with
-GitHub CLI 2.100.0 and Copilot CLI 1.0.83 from release archives whose SHA-256 digests
-were checked against GitHub release metadata. The Golden Path extension was validated
-against installed Codex 0.154.0 on 2026-09-14. These are observed versions, not a
-claim that they remain the latest releases.
+Use a normal clone on the repository's actual default branch, `main`. Keep implementation in sibling issue worktrees. Preserve user edits before updating the control checkout, and use a fast-forward pull once the adoption is merged:
 
-The human finishing script currently targets Linux with atomic no-replace rename
-support. Its [archival requirements and recovery procedure](FINISH.md) are part of
-adoption. Use a healthy Python installation; `python3 -c 'import ctypes'` should
-succeed before relying on the finishing helper. Model sandbox startup must also be
-tested in the environment that will run the managed executor.
+```bash
+git status --short
+git fetch origin
+git pull --ff-only origin main
+```
 
-The process C library must also expose `renameat2` through `ctypes.CDLL(None)`;
-kernel support alone is insufficient. The helper refuses archival if that symbol
-or the filesystem's no-replace operation is unavailable. Installer target paths
-must not contain parent (`..`) components or symlinks; supply a direct target path.
+If fast-forwarding fails, inspect the divergence. Do not reset or force-push an existing checkout to make the helper accept it. The [bootstrap procedure](#bootstrap-and-existing-projects) explains this installation's separate local control clone.
+
+Use credential-free Git remotes. For HTTPS, authenticate the intended account with `gh auth login`, then configure Git with `gh auth setup-git`. Never put a token in the remote URL, task prompt, issue or configuration file. Repository API identity and Copilot inference entitlement are separate concerns.
+
+## 2. Install and verify local tools
+
+The workflow runtime requires Python 3.12+, Git, GitHub CLI, GNU Make, Codex and Copilot CLI. The human finish/archive helper currently targets Linux and requires `renameat2` through the process C library and support on the destination filesystem.
+
+Observed during adoption on September 14, 2026: Ubuntu 24.04.4, Codex 0.154.0, Copilot CLI 1.0.83 and gh 2.100.0. These are tested observations, not a promise that they will remain the latest versions. Install from official releases and inspect new CLI help before upgrading the pinned workflow assumptions.
 
 ```bash
 git --version
 gh --version
 codex --version
 copilot --version
-gh auth login --hostname github.com --git-protocol ssh
 gh auth status
 codex login status
+python3 -c 'import ctypes; print(ctypes.CDLL(None).renameat2)'
 ```
 
-For HTTPS Git remotes, run `gh auth setup-git` after login. SSH remotes use your
-existing SSH authentication; do not upload or replace a key without checking which
-account it identifies. The review fetch uses a temporary Git credential helper for
-private repositories in Actions.
+Codex is authenticated through ChatGPT on this workstation. Managed execution explicitly requests `gpt-6-astra`; the helper does not change the account's global model. The review helper uses `COPILOT_GITHUB_TOKEN` if supplied, otherwise retrieves the active `gh` token internally. Confirm that the inference account can select `claude-opus-5`; CLI installation and successful GitHub API calls do not establish model entitlement. Consult the [Copilot CLI authentication reference](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-command-reference) and [supported models](https://docs.github.com/en/copilot/reference/ai-models/supported-models) before changing account plans.
 
-The reviewer uses `COPILOT_GITHUB_TOKEN` when supplied, otherwise it retrieves the
-active `gh` OAuth token internally without printing it. A classic PAT is not a
-Copilot credential. An explicitly supplied fine-grained token needs **Copilot Requests**.
-A token cannot grant model access that its account lacks. This workflow requires
-an account entitled to an explicit Claude model. GitHub's
-[current plan comparison](https://docs.github.com/en/copilot/get-started/plans)
-lists Free and Student as Auto-only. Verify model access before buying or changing
-a plan. You can keep `gh` authenticated as the repository owner and supply your
-eligible Copilot account's token through `COPILOT_GITHUB_TOKEN`. The model account
-supplies inference access; the publishing credential determines the GitHub review's
-author. Record that distinction when different accounts are deliberately used.
-Keep tokens in the environment or credential store, never `.agentic/config.json`.
-See [GitHub's Copilot authentication reference](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-command-reference).
+### Create the dedicated Python environment
 
-The configured reviewer is `claude-opus-5`, with a 400-AI-credit review limit. Verify
-that the inference account can select that exact model; earlier Sonnet or Fable access
-does not establish Opus access. Read the [Opus access guidance](REVIEW.md#claude-opus-5-access).
-The Copilot Requests token permission and existing environment secret names remain the
-same; selecting a model does not grant account entitlement.
-
-Open Codex and use `/model`; also inspect Copilot's `/model` picker for account availability before
-spending on a project task. The initial names in `.agentic/config.json` are explicit
-requests, not guarantees of entitlement. Codex receives `--model gpt-6-astra` on
-every role launch; no user-wide model setting is modified. See the
-[Codex CLI reference](https://developers.openai.com/codex/cli/reference).
-
-## 2. Validate this checkout
+Preserve the existing research environment. This checkout's old `.venv` is a broken historical environment; the workflow uses `.venv-agentic` instead.
 
 ```bash
-python3 -m venv .venv
-.venv/bin/python -m pip install -r requirements-dev.txt
+python3 -m venv .venv-agentic
+.venv-agentic/bin/python -m pip install -r requirements-dev.txt
 make check
-python3 scripts/agentic/workflow.py memory-init
-python3 scripts/agentic/workflow.py doctor
-git check-ignore memory/README.md
-git ls-files memory
 ```
 
-The final command must print nothing. On systems without `ensurepip`, install the
-OS's Python venv package or create the environment using an existing managed Python.
-For this workstation, `micromamba run -n ml python -m venv .venv` provides that route
-without modifying the shared `ml` environment.
-
-`doctor` checks tools, Git state, local configuration and `gh` authentication. It does
-not prove Copilot entitlement, model access, ruleset enforcement or successful CI.
-Those need the first live PR described below.
-
-## 3. Publish the template
-
-The original owner's selected destination is public `Zi-Deng/agentic-github-template`.
-If adapting these instructions elsewhere, choose your own owner and visibility.
-Before the initial push, inspect `git status`, `git diff --cached`, the file list and
-the local verification report. Do not force-add ignored memory.
+If the OS Python lacks `ensurepip`, use an existing healthy Python to create the venv. On this workstation:
 
 ```bash
-# Only for a fresh directory: git init -b main
-git add .github .agentic scripts tests docs AGENTS.md README.md Makefile \
-  pyproject.toml requirements-dev.txt .gitignore \
-  Issue-to-PR-Development-with-Worktree-Isolation.pdf \
-  Issue-to-PR-Development-with-Worktree-Isolation.tex
-git diff --cached --check
-git commit -m "Initialize issue-to-PR workflow template"
-gh repo create Zi-Deng/agentic-github-template --public --source . --remote origin --push
-gh repo edit Zi-Deng/agentic-github-template --template \
-  --enable-issues --enable-squash-merge --delete-branch-on-merge
+/home/zi/micromamba/envs/ml/bin/python -m venv .venv-agentic
 ```
 
-If the repository or remote already exists, inspect it and use a normal push to its
-intended branch. Do not repeat `repo create`, overwrite a remote or force-push to
-recover from an ambiguous error. Branch protection is configured after a real check
-run exists, so its required names can be verified rather than guessed.
+This creates a separate environment without installing into the shared `ml` environment. `requirements-test.txt` supplies only the focused downloader-test dependencies. `requirements-dev.txt` adds pinned Ruff and PyYAML. These direct pins are not a complete transitive lock; record `pip freeze` with evidence when exact environment reproduction matters. The full application and TaskVine environment remains described by the root project documentation.
 
-## 4. Create labels and a first PR
+`make check` runs both suites, scoped lint/format checks and skills/configuration/schema/workflow/link validation. It does not run a dataset campaign or HPC job. Individual targets are `test-flowdc`, `test-agentic`, `check-agentic`, `lint` and `check-clean`. Override `PYTHON` and `RUFF` explicitly when using a prepared environment outside the worktree; never install editable project code into a shared environment.
 
-Create only the labels you intend to use. The issue form stores risk as a required
-field; it does not magically translate that field into a label.
+### Validate the native Codex sandbox
+
+For the installed Codex 0.154.0, the direct smoke command is:
 
 ```bash
-gh label create agent-assisted --color 2E75B6 --description "Agent-assisted change"
-gh label create risk:domain --color C55A11 --description "Domain evidence required"
-gh label create risk:high --color 9E2B25 --description "Privileged or high consequence change"
-gh label create needs-design --color D4C5F9 --description "Design decision needed"
+codex sandbox --config 'sandbox_mode="workspace-write"' -- /usr/bin/pwd
 ```
 
-Existing labels need no replacement. Use the issue form to create a small, real
-documentation improvement with a measurable criterion. Post its reviewed plan,
-create its worktree, open a draft PR and watch CI. Follow the operating guide for
-the exact commands. Avoid a meaningless empty PR solely to obtain a green check.
+On this host the initial command failed because Ubuntu's AppArmor user-namespace restriction denied operations needed by bubblewrap. A profile attached to the exact Codex binary was prepared under the original checkout's ignored `.agentic-local/host-setup/`, with installer and rollback scripts. Administrator installation and a successful rerun must precede claims of working native managed execution.
 
-## 5. Protect the default branch
+The proposed profile follows Ubuntu's documented application-specific `userns` exception. It does not disable the global restriction. Its executable attachment must be reviewed after Codex upgrades. The host-specific source path and installation status are recorded privately; they are not portable repository configuration. See [Ubuntu's release notes](https://discourse.ubuntu.com/t/ubuntu-24-04-lts-noble-numbat-release-notes/39890) and the [Codex permissions model](https://learn.chatgpt.com/docs/permissions#how-enforcement-works).
+
+## 3. Establish private continuity
+
+Both `/memory/` and `/.agentic-local/` must be ignored before the first private write:
 
 ```bash
-gh pr checks 1 --json name,state,workflow
-python3 scripts/agentic/workflow.py ruleset --check quality > /tmp/agentic-ruleset.json
-cat /tmp/agentic-ruleset.json
-gh api repos/{owner}/{repo}/rulesets --method POST --input /tmp/agentic-ruleset.json
-gh ruleset list
+python3 -B scripts/agentic/workflow.py memory-init
+python3 -B scripts/agentic/workflow.py doctor
+git check-ignore memory/README.md .agentic-local/probe
+git ls-files memory .agentic-local
 ```
 
-Replace `1` with the real PR number and `quality` with the **observed** check name.
-Set `.agentic/config.json` → `required_checks` to the same names. Existing projects
-should normally require their own project check and `agentic-quality`. The template's
-`quality` job runs lint, formatting and its complete workflow tests.
+The last command must print nothing. `doctor` checks local prerequisites and authentication; it does not prove successful model execution, GitHub protection or CI.
 
-The generated ruleset blocks deletion and force pushes, requires linear history,
-requires a PR, resolves review conversations, dismisses stale approvals and requires
-up-to-date passing checks. Status checks are bound to the GitHub Actions integration
-(15368), so a different app cannot satisfy that context by using the same name.
-This GitHub.com integration ID should be revalidated for a different host. There are
-no configured bypass actors. These are concrete parameters for the
-[ruleset API](https://docs.github.com/en/rest/repos/rules#create-a-repository-ruleset).
+Keep human-readable persistent memory in the registered control checkout's `memory/README.md` and task notes. The adoption task note includes the original input prompt verbatim. Git worktrees do not share ignored directories. Copy only necessary notes deliberately when changing control checkouts and identify the authoritative index. Machine-readable task associations, original executor UUIDs, review packets and archives live under the control checkout's `.agentic-local/`; preserve them when relocating a clone.
 
-For a solo maintainer, the required human approval count is zero because an author
-cannot approve their own PR. The maintainer's manual merge is still mandatory policy.
-The scripts do not pretend this creates a distinct human identity or prevents the
-owner from changing their own repository rules. With a second active collaborator,
-add required approvals and real CODEOWNERS entries for `.github/`, `.agentic/` and
-domain-critical paths. Do not install fictional team handles.
+## 4. Verify GitHub integration
 
-When updating an existing ruleset, inspect its ID and settings first, then deliberately
-`PUT` the reviewed JSON to that ID. Do not repeatedly create duplicate rulesets.
-After activation, confirm a failing PR cannot merge and a direct default-branch push
-is blocked using an expendable test branch/repository or the rule evaluation UI.
+The approved labels are `agent-assisted`, `risk:domain`, `risk:high` and `needs-design`. The issue form's risk field does not automatically create or apply a risk label. Apply labels deliberately to the actual task.
 
-## 6. Enable manual Actions review
-
-Create an environment named `copilot-review`, restrict deployments to the default
-branch, and add required reviewers when your plan supports them. Store a fine-grained
-Copilot token in that environment as `COPILOT_REVIEW_TOKEN`. Create
-`copilot-review-publish` for the separate publication job and configure its reviewers.
-Only then set repository variable `AGENTIC_COPILOT_ACTIONS_ENABLED=true`.
-
-### Create and store the reviewer credential
-
-1. Open the [fine-grained token form](https://github.com/settings/personal-access-tokens/new)
-   while signed into the personal account with eligible Copilot access.
-2. Set **Resource owner** to that personal account and choose an expiration date.
-3. For this inference-only token, select **Public repositories**. Repository API
-   access uses separate credentials in the workflow, including for private projects.
-4. In **Permissions**, select the **Account** tab beside **Repositories**, then click
-   **Add permissions**. Search for **Copilot Requests** and choose **Read-only**.
-   The token form used during this setup offered only that access level, matching
-   GitHub's [PAT setup guidance](https://github.github.com/gh-aw/reference/auth/#copilot_github_token).
-5. Leave other optional permissions unselected. **Copilot agent settings** is a
-   different repository permission and is not needed here. If the dropdown says
-   **Select repository permissions**, close it and switch to **Account** first.
-6. Generate the token and store it using the hidden terminal prompt:
+The two required contexts must first appear and pass on a real PR:
 
 ```bash
-gh secret set COPILOT_REVIEW_TOKEN --repo YOUR-OWNER/YOUR-REPO --env copilot-review
+gh pr checks PR_NUMBER --repo Zi-Deng/FLOW-DC --json name,state,workflow
 ```
 
-Do not paste the token into a chat, commit it, or pass its value on the command line.
-The secret authenticates model requests only. The workflow's built-in `GITHUB_TOKEN`
-handles repository reads and the separate COMMENT publication job. Token visibility
-in `gh secret list --env copilot-review` confirms storage, not successful inference;
-the first hosted run must establish that.
+Regular CI uses Ubuntu 24.04, Python 3.12, read-only permissions, pinned action commits, no persisted checkout credentials and bounded job timeouts. `flowdc-tests` runs the eight current application regressions. `agentic-quality` runs the workflow tests, scoped Ruff and structural checks. Both jobs also verify a clean checkout after validation.
 
-After successful local review and secret storage, enable the manual workflow:
+After the baseline PR is merged and both contexts exist, generate and inspect the main ruleset from the control checkout:
 
 ```bash
-gh variable set AGENTIC_COPILOT_ACTIONS_ENABLED --repo YOUR-OWNER/YOUR-REPO --body true
+python3 -B scripts/agentic/workflow.py ruleset \
+  --check flowdc-tests --check agentic-quality > .agentic-local/main-ruleset.json
+cat .agentic-local/main-ruleset.json
+gh api repos/Zi-Deng/FLOW-DC/rulesets
 ```
 
-Follow the [manual review procedure](REVIEW.md#manual-actions-procedure). If the run
-waits for environment approval, open its Actions page, choose **Review deployments**,
-select **copilot-review**, and choose **Approve and deploy**. This is the configured
-maintainer gate, not a token failure. An enabled publication job has a separate gate.
+Create the reviewed ruleset only if it does not already exist; use a deliberate update to its ID otherwise. Read it back afterward. The intended `agentic-default-branch` policy requires a PR, strict up-to-date passing checks from GitHub Actions integration 15368, resolved review conversations and linear history. It blocks deletion and force pushes, and has no bypass actors. Required human approvals are zero for this solo-maintainer repository; a manual maintainer merge remains workflow policy. The owner can still change repository settings. A recorded ruleset response and actual PR checks are stronger evidence than a configuration file alone. See the [GitHub ruleset API](https://docs.github.com/en/rest/repos/rules#create-a-repository-ruleset).
 
-The manual workflow requires PR number, issue number, approved-plan comment ID and
-the exact head SHA. It uses a trusted default-branch checkout, builds a text snapshot,
-and runs Copilot with no GitHub write credential. An optional publication job gets
-PR write permission only after the generation job succeeds. `publish` defaults to
-false. Review artifacts expire after seven days; retain durable findings on the PR.
+## 5. Run a managed task
 
-Organization repositories may qualify for a built-in token path under separate
-Copilot policies. This template deliberately implements the fine-grained-token path
-for the selected personal repository. Do not assume an ordinary Actions token has
-Copilot entitlement. See [Copilot in Actions](https://docs.github.com/en/copilot/how-tos/copilot-cli/automate-copilot-cli/automate-with-actions).
+Use the [skill contract](SKILLS.md), beginning with `$agentic-workflow`. The coordinator owns GitHub writes and the clean control checkout. The dedicated Astra executor owns implementation in the assigned worktree and retains one exact session UUID through continuation and repair. Each Opus review uses a fresh static snapshot and independent session.
 
-## New projects
+The first post-installation pilot is a small, useful FLOW-DC maintainer quick reference. Its acceptance includes a native checkpoint, continuation of that same UUID, a draft PR, both CI checks, local Opus review, explicit feedback assessment and human finish preparation. If the review has no material findings, a no-edit feedback assessment can demonstrate continuation without inventing repairs. A successful model turn alone does not satisfy the whole pilot.
 
-Once this repository is marked as a GitHub template, use **Use this template**, or:
+## 6. Hosted review is opt-in
 
-```bash
-gh repo create YOUR-OWNER/YOUR-PROJECT --template Zi-Deng/agentic-github-template --private --clone
-```
+Keep repository variable `AGENTIC_COPILOT_ACTIONS_ENABLED=false` during this rollout. No hosted reviewer token is being onboarded. Normal CI never invokes a model.
 
-Adapt `AGENTS.md`, the README, validation commands, model configuration and domain
-rubric. Keep the generic runtime and regression tests. Set up labels, rulesets,
-secrets, environments and repository settings in the new repository; those settings
-are not supplied by copying files. Run `memory-init` in every fresh clone.
-See [creating a repository from a template](https://docs.github.com/en/repositories/creating-and-managing-repositories/creating-a-repository-from-a-template).
+A later authorized onboarding should first confirm local review, then create `copilot-review` and `copilot-review-publish` environments restricted to the trusted default branch. Configure environment reviewers where the account plan supports them. Store an eligible Copilot credential in the first environment as `COPILOT_REVIEW_TOKEN` using GitHub's hidden secret prompt; never paste it into a chat or command argument. Set the enabling variable to `true` only after reviewing those settings.
 
-## Existing projects
+The manual workflow accepts PR number, issue number, designated plan-comment ID and exact head SHA. It checks out trusted main, exports PR blobs as data, generates review with the inference token, and optionally publishes through a separate job with narrowly scoped `pull-requests: write`. Publication defaults to false. The publisher has no Copilot secret. Review artifacts are retained for seven days; they contain source/context and should be treated accordingly. Follow [the manual review procedure](REVIEW.md#manual-actions-procedure) and verify generation, hashes, usage and the resulting COMMENT review before claiming hosted review works.
 
-Do not replace the project with this repository or merge unrelated Git histories.
-Inventory the project, establish a clean baseline and create an adoption worktree.
-Preview the copy from the template checkout:
+## Bootstrap and existing projects
 
-```bash
-python3 scripts/agentic/install.py /absolute/path/to/project-adoption-worktree
-```
+This adoption starts from existing consolidation commit `d8c4ec35c9722067968626b8d9dbda8e28bcfa9e`. [Baseline PR #2](https://github.com/Zi-Deng/FLOW-DC/pull/2) publishes that commit separately. Its human merge uses a merge commit to preserve the existing local main ancestry. The workflow adoption and later tasks use squash merges once linear-history protection is active.
 
-The preview reports new, identical and conflicting paths and writes nothing. If
-there are no conflicts, `--apply` installs only workflow-owned files. It does not
-copy the source PDF, this root README, project dependencies, a root Makefile, or private
-memory. It records file hashes in `.agentic/template-origin.json` for future updates.
+The installer was applied to an ignored staging directory from pinned template commit `b4a1df739a15b20b26635602e6b6a21fb08e0ac5`. Its sole existing-file conflict, `AGENTS.md`, was merged by retaining all FLOW-DC instructions and appending workflow guidance. The source template was not modified. `.agentic/template-origin.json` records original payload hashes; [research notes](RESEARCH.md) record the commit and PDF hashes. Local adaptations intentionally differ from those original file hashes.
 
-If files conflict, install into a new temporary staging directory and merge the
-relevant files into the adoption worktree manually. Preserve existing instructions,
-CI jobs, issue forms and project validation. There is intentionally no `--force`
-option. Add `/memory/` and `/.agentic-local/` to the project's `.gitignore`; investigate
-already tracked memory before assuming that ignore rules make it private.
+A separate bootstrap control clone supplies trusted review code before workflow tooling exists on remote main. Its control commits are local implementation scaffolding; never push that clone's `main`. The adoption branch lives in its registered sibling issue worktree and is the only implementation branch published. After the adoption's human merge, update the original clean checkout with a fast-forward pull and use it as the permanent control checkout. Retain the bootstrap clone and its review artifacts until continuity has been reconciled; do not reset it or fabricate a managed executor record to qualify it for automatic finish.
 
-The installer includes `.agents/skills` with all eight entrypoints, their metadata,
-and the supporting helpers and guides. After adoption, launch Codex in the project
-and verify that `$agentic-workflow` and the seven phase skills appear; restart the
-session if discovery has not refreshed. Preserve any existing project skills when
-reconciling conflicts. Read [SKILLS.md](SKILLS.md) for invocation and managed session
-recovery and [FINISH.md](FINISH.md) before using the human finishing script.
-
-The portable `agentic-quality` job tests the workflow infrastructure. It cannot test
-your application automatically. Add or retain a separate deterministic project CI
-job, adapt the domain rubric and require the appropriate observed check names.
-
-## Updates and recovery
-
-Pin the template commit used for adoption in your rollout issue. Review updates as
-ordinary PRs using `.agentic/template-origin.json` to compare installed versions.
-Upgrade CLI versions and action SHAs together with their verification records.
-
-If a push or API write fails, read current remote state before retrying. A task
-worktree left after a failed push is useful recovery material; inspect its branch
-and rerun the push deliberately. Never delete it merely because a command exited
-nonzero. If a review fails or the head changes, keep its private diagnostic directory
-and prepare a fresh snapshot.
+For later template upgrades, stage the pinned installer payload again, inspect conflicts and compare changes against the provenance manifest. Keep FLOW-DC's runtime policy, required check names, application guidance and domain rubric. Do not reapply an upstream file blindly over a local adaptation. See [traceability](TRACEABILITY.md).

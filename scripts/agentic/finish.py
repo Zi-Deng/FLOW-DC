@@ -14,11 +14,12 @@ import uuid
 from pathlib import Path
 from urllib.parse import urlparse
 
-import archives
 import pipeline
 from sessions import session_uuid
 from tasks import TaskStore, digest, plain_path
 from workflow import Repo, WorkflowError, cleanup_task, configuration, positive, run, sha
+
+import archives
 
 NOTE = (
     "This is an operator assessment, not human approval or cryptographic proof. "

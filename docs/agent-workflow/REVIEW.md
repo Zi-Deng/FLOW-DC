@@ -50,12 +50,22 @@ and data directories are excluded; a diff touching such paths is refused before 
 transmitted. This path policy is a baseline, not a content-based secret detector.
 Inspect your own source and augment exclusions for a project's restricted paths.
 
-The default budgets are 300 KB of diff, 250 KB per source file, 12 MB of total text,
-15 minutes and 400 Copilot AI credits. These are operational choices, not claims
-about model capacity or price. Per-file omissions are recorded explicitly; oversized
-diffs and total snapshots fail rather than silently presenting a partial review as
-complete. Credit limits are provider controls and may overshoot by a request already
-in flight. Split broad changes before raising budgets.
+The review diff has **no byte cap by default**: `max_diff_bytes` is `null`, and
+omitting that key also means unlimited. To opt into a cap, set a positive integer
+number of UTF-8 bytes, for example `"max_diff_bytes": 500000`. Boolean, string, zero
+and negative values are invalid. An empty diff is still rejected. A diff exceeding
+an enabled cap fails before packet creation; it is never silently truncated.
+
+Other limits remain: 250000 bytes per source file, 12000000 bytes of source snapshot,
+900 seconds and 400 Copilot AI credits. Source-file omissions are indexed; exceeding
+the total source budget fails. These are operational choices, not claims about model
+capacity or complete coverage. Credit controls can overshoot by an in-flight request.
+A large diff can still exhaust context, time or credits, and an incomplete review
+consumes the task's attempted round. Report coverage honestly.
+
+The managed executor has a separate `managed_max_prompt_bytes` limit, defaulting to
+300000. It must be a positive integer and does not inherit the review diff setting.
+Changing one limit never silently changes the other.
 
 `run` copies the packet to a fresh workspace outside the repository, then uses fresh Copilot state, disabled hooks, no built-in MCP server, no inherited
 provider override and no permission to execute, edit or delegate. Prompt-mode memory

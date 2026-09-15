@@ -52,7 +52,7 @@ body:
     id: budget
     attributes:
       label: Budget and stop conditions
-      value: "Use Astra for non-review roles; Claude through Copilot for review. At most two substantive repair rounds before reassessing the design. No GPU campaign unless separately authorized."
+      value: "Use gpt-6-astra for nonreview work and Copilot claude-opus-5 for independent review. One attempted review round by default, including failures: 400 AI credits and 900 seconds. Another round needs supported critical P0/P1 repair verification or explicit user continuation. Reassess after two substantive repair rounds. No dataset or cluster campaign unless authorized."
     validations: {required: true}
   - type: textarea
     id: rollback

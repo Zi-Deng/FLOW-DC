@@ -133,6 +133,25 @@ class SessionTests(GitFixture):
         self.assertEqual(args[args.index("--add-dir") + 1], str(self.repo.common))
         self.assertEqual(args[args.index("--ask-for-approval") + 1], "never")
 
+    def test_review_cap_does_not_limit_executor_prompt(self):
+        state = tasks.TaskStore(self.repo).read("issue-12")
+        config = workflow.configuration(self.root)
+        config["max_diff_bytes"] = 1
+        with patch.object(sessions, "configuration", return_value=config):
+            prompt = sessions.executor_prompt(self.repo, state, "implement", self.task_path)
+        self.assertGreater(len(prompt.encode("utf-8")), 1)
+
+    def test_unlimited_diff_does_not_disable_executor_prompt_budget(self):
+        state = tasks.TaskStore(self.repo).read("issue-12")
+        config = workflow.configuration(self.root)
+        config["max_diff_bytes"] = None
+        config["managed_max_prompt_bytes"] = 1
+        with (
+            patch.object(sessions, "configuration", return_value=config),
+            self.assertRaisesRegex(workflow.WorkflowError, "Executor input exceeds"),
+        ):
+            sessions.executor_prompt(self.repo, state, "implement", self.task_path)
+
     def test_resume_uses_original_uuid_even_with_a_newer_record(self):
         self.invoke()
         (self.root / ".agentic-local/newer-session.json").write_text(json.dumps({"uuid": OTHER_IDENTITY}))
