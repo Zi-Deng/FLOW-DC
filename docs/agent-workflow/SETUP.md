@@ -16,6 +16,14 @@ If fast-forwarding fails, inspect the divergence. Do not reset or force-push an 
 
 Use credential-free Git remotes. For HTTPS, authenticate the intended account with `gh auth login`, then configure Git with `gh auth setup-git`. Never put a token in the remote URL, task prompt, issue or configuration file. Repository API identity and Copilot inference entitlement are separate concerns.
 
+Uploading `.github/workflows/` over HTTPS also needs a credential authorized for
+workflow updates. During adoption the existing OAuth token lacked that scope, while
+the existing SSH key was verified to authenticate as `Zi-Deng`. This workstation
+therefore retains credential-free HTTPS for fetch and uses
+`git@github.com:Zi-Deng/FLOW-DC.git` as origin's push URL. On another machine, use an
+already verified SSH identity or deliberately authorize the needed HTTPS scope;
+do not silently upload a new key or replace the account.
+
 ## 2. Install and verify local tools
 
 The workflow runtime requires Python 3.12+, Git, GitHub CLI, GNU Make, Codex and Copilot CLI. The human finish/archive helper currently targets Linux and requires `renameat2` through the process C library and support on the destination filesystem.

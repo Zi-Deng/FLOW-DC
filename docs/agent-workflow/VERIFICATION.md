@@ -1,6 +1,6 @@
 # FLOW-DC workflow verification
 
-This record describes FLOW-DC evidence collected during the September 14, 2026 adoption. It does not import upstream results as local proof. The public contract is [issue #3 and its approved plan](https://github.com/Zi-Deng/FLOW-DC/issues/3#issuecomment-5673478789). Update this record with actual run and review links as rollout advances.
+This record describes FLOW-DC evidence collected during the September 14, 2026 adoption. It does not import upstream results as local proof. The public contract is [issue #3 and its approved plan](https://github.com/Zi-Deng/FLOW-DC/issues/3#issuecomment-5673478789); implementation is published in [PR #4](https://github.com/Zi-Deng/FLOW-DC/pull/4). Update this record with actual run and review links as rollout advances.
 
 ## Baseline and provenance
 
