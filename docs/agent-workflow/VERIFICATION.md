@@ -28,6 +28,22 @@ The application suite covers base/gradient downloader consolidation behavior, re
 
 The runtime suite uses real temporary Git repositories and controlled doubles for GitHub and model processes. It exercises worktree identity, durable contract/task state, exact UUID continuation, review integrity, review-round accounting, evidence/finish gates, process cleanup and journaled archival. It never merges a real PR to test destructive behavior.
 
+## GitHub Actions evidence
+
+The first complete adopted code/documentation revision,
+`6492bfcdb002cd1c3f5186f681eb4595be4820e8`, passed both required contexts:
+
+- [FLOW-DC regression run](https://github.com/Zi-Deng/FLOW-DC/actions/runs/34920044821): `flowdc-tests`, success.
+- [Workflow quality run](https://github.com/Zi-Deng/FLOW-DC/actions/runs/34920044832): `agentic-quality`, success.
+- [Push-triggered workflow quality run](https://github.com/Zi-Deng/FLOW-DC/actions/runs/34920041199): success.
+
+GitHub's check-run API reported integration ID `15368` for both required names on
+that head. These immutable links record that revision; use the current PR checks
+for later documentation or code commits. The four approved labels and the disabled
+hosted-review variable were read back successfully. Main currently has no ruleset;
+the proposed active policy is prepared but awaits the prerequisite baseline merge,
+which intentionally uses a merge commit before linear-history enforcement begins.
+
 ## Live rollout acceptance
 
 | Acceptance | Required evidence |
