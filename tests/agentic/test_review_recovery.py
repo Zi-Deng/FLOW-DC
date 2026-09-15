@@ -44,6 +44,16 @@ class ReviewRecoveryTests(GitFixture):
                     raise workflow.WorkflowError("Version probe failed")
                 return subprocess.CompletedProcess(args, 0, "Copilot test double\n", "")
             self.model_calls += 1
+            self.reviewer_environment = kwargs["env"].copy()
+            for key in (
+                "HOME",
+                "COPILOT_HOME",
+                "XDG_CONFIG_HOME",
+                "XDG_CACHE_HOME",
+                "XDG_DATA_HOME",
+                "XDG_STATE_HOME",
+            ):
+                self.assertTrue(Path(kwargs["env"][key]).is_dir())
             return subprocess.CompletedProcess(args, 0, self.model_report, "")
 
         with (
@@ -59,6 +69,21 @@ class ReviewRecoveryTests(GitFixture):
             self.invoke(directory)
         self.assertEqual(self.model_calls, 0)
         self.assertFalse((directory / "review-result.json").exists())
+
+    def test_personal_home_and_provider_overrides_are_not_inherited(self):
+        directory = self.packet()
+        inherited = {
+            "HOME": str(self.parent / "personal-home"),
+            "XDG_CONFIG_HOME": str(self.parent / "personal-config"),
+            "XDG_DATA_HOME": str(self.parent / "personal-data"),
+            "COPILOT_SKILLS_DIRS": str(self.parent / "personal-skills"),
+            "COPILOT_PROVIDER_BASE_URL": "https://example.invalid",
+        }
+        with patch.dict(os.environ, inherited):
+            self.invoke(directory)
+        for key, value in inherited.items():
+            self.assertNotEqual(self.reviewer_environment.get(key), value)
+        self.assertEqual(self.model_calls, 1)
 
     def test_metadata_failure_recovers_and_publishes_exact_output_without_model(self):
         directory = self.packet()

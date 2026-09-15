@@ -16,7 +16,7 @@ import uuid
 from pathlib import Path
 from subprocess import Popen
 
-from tasks import TaskStore, digest, plain_path, verify_contract, workspace
+from tasks import TaskStore, atomic_text, digest, plain_path, private_directory, verify_contract, workspace
 from workflow import WorkflowError, configuration, positive, run, sha
 
 
@@ -284,7 +284,7 @@ def stream_run(store, state, record, args, prompt, path, limits):
             failed_event = True
 
     try:
-        (directory / "prompt.txt").write_text(prompt, encoding="utf-8")
+        atomic_text(directory / "prompt.txt", prompt)
         with (
             (directory / "prompt.txt").open("rb") as input_stream,
             (directory / "stdout.jsonl").open("xb") as output_stream,
@@ -427,7 +427,7 @@ def managed_launch(repo, role, task, execute=False):
         output_bytes = int(cfg.get("managed_max_output_bytes", 12_000_000))
         if timeout <= 0 or output_bytes <= 0:
             raise WorkflowError("Managed execution budgets must be positive")
-        directory.mkdir(parents=True, mode=0o700, exist_ok=False)
+        private_directory(directory, exist_ok=False)
         executor = state.setdefault("executor", {"uuid": None, "runs": []})
         record = {
             "role": role,

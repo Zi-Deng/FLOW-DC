@@ -18,6 +18,9 @@ from pathlib import Path
 
 from workflow import WorkflowError, new_task, positive, run
 
+from archives import DIRECTORY_FLAGS
+from archives import directory as open_directory
+
 COMMANDS = {
     "capture",
     "plan",
@@ -56,7 +59,8 @@ def atomic_text(path, text):
     path = plain_path(path)
     if path.exists() and not path.is_file():
         raise WorkflowError("State destination is not a regular file")
-    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    with open_directory(path.parent, create=True):
+        pass
     fd, temporary = tempfile.mkstemp(prefix=".pending-", dir=path.parent)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as stream:
@@ -76,6 +80,23 @@ def atomic_text(path, text):
 
 def atomic_json(path, value):
     atomic_text(path, json.dumps(value, indent=2, ensure_ascii=False) + "\n")
+
+
+def private_directory(path, *, exist_ok=True):
+    """Create private state without following links or chmodding unrelated ancestors."""
+    path = plain_path(path)
+    with open_directory(path.parent, create=True) as parent:
+        try:
+            os.mkdir(path.name, 0o700, dir_fd=parent)
+        except FileExistsError:
+            if not exist_ok:
+                raise
+        fd = os.open(path.name, DIRECTORY_FLAGS, dir_fd=parent)
+        try:
+            os.fchmod(fd, 0o700)
+        finally:
+            os.close(fd)
+    return path
 
 
 def operation_key(value):
@@ -98,8 +119,8 @@ class TaskStore:
         if ignored.returncode or repo.git("ls-files", ".agentic-local"):
             raise WorkflowError("Control .agentic-local must be ignored and untracked")
         self.repo = repo
-        self.directory = plain_path(repo.main / ".agentic-local/tasks")
-        self.directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+        private_directory(repo.main / ".agentic-local")
+        self.directory = private_directory(repo.main / ".agentic-local/tasks")
 
     def path(self, key):
         return plain_path(self.directory / f"{operation_key(key)}.json")

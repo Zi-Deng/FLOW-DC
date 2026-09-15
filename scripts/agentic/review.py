@@ -16,7 +16,7 @@ import tempfile
 import uuid
 from pathlib import Path, PurePosixPath
 
-from tasks import atomic_json, atomic_text, plain_path
+from tasks import atomic_json, atomic_text, plain_path, private_directory
 from tasks import digest as value_digest
 from workflow import Repo, WorkflowError, configuration, positive, run, sha, write_json
 
@@ -50,6 +50,17 @@ TEXT_SUFFIXES = {
     ".R",
 }
 PRIVATE_PARTS = {"memory", ".agentic-local", ".env", ".ssh", "data", "checkpoints", "weights", "wandb"}
+# FLOW-DC data and historical trees, matched at repository-relative boundaries.
+# Maintained example configs and benchmark source remain available for review.
+PRIVATE_PATHS = (
+    "files/input",
+    "files/output",
+    "files/biotrove_train_stats.json",
+    "benchmark/manifests",
+    "benchmark/results",
+    "playground",
+    "archives",
+)
 
 
 def digest(path):
@@ -60,6 +71,7 @@ def private_path(name):
     path = PurePosixPath(name)
     return (
         bool(PRIVATE_PARTS.intersection(path.parts))
+        or any(path.is_relative_to(prefix) for prefix in PRIVATE_PATHS)
         or path.name.startswith(".env")
         or path.suffix in {".pem", ".key"}
     )
@@ -160,7 +172,7 @@ def prepare(repo, number, issue_number, plan_comment, expected_head=None, output
     repo.git("cat-file", "-e", f"{base}^{{commit}}")
     ancestor = repo.git("merge-base", base, head)
     names = (
-        run(["git", "-C", repo.root, "diff", "--name-only", "-z", ancestor, head])
+        run(["git", "-C", repo.root, "diff", "--no-renames", "--name-only", "-z", ancestor, head])
         .stdout.rstrip("\0")
         .split("\0")
     )
@@ -175,11 +187,12 @@ def prepare(repo, number, issue_number, plan_comment, expected_head=None, output
     if diff_limit is not None and len(diff.encode("utf-8")) > diff_limit:
         raise WorkflowError("Diff exceeds max_diff_bytes; split the PR or explicitly adjust the cap")
     directory = (
-        Path(output).resolve()
+        plain_path(output)
         if output
         else repo.main / ".agentic-local/reviews" / f"pr-{number}-{head[:12]}-{uuid.uuid4().hex[:8]}"
     )
-    directory.mkdir(parents=True, mode=0o700, exist_ok=False)
+    private_directory(repo.main / ".agentic-local")
+    private_directory(directory, exist_ok=False)
     packet = directory / "packet"
     packet.mkdir()
     manifest = snapshot(repo, head, packet / "source", cfg)
@@ -332,6 +345,13 @@ def review(repo, directory):
     )
     # A new config/state directory gives a new session without personal MCP, hooks or memory.
     with tempfile.TemporaryDirectory(prefix="agentic-copilot-") as temporary:
+        reviewer_home = Path(temporary) / "home"
+        reviewer_home.mkdir(mode=0o700)
+        xdg = {}
+        for key in ("XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME"):
+            location = reviewer_home / key.lower()
+            location.mkdir(mode=0o700)
+            xdg[key] = str(location)
         state = Path(temporary) / "state"
         state.mkdir()
         workspace = Path(temporary) / "workspace"
@@ -348,7 +368,6 @@ def review(repo, directory):
             key: os.environ[key]
             for key in [
                 "PATH",
-                "HOME",
                 "LANG",
                 "TMPDIR",
                 "SSL_CERT_FILE",
@@ -360,6 +379,8 @@ def review(repo, directory):
         }
         env.update(
             {
+                "HOME": str(reviewer_home),
+                **xdg,
                 "COPILOT_HOME": str(state),
                 "COPILOT_GITHUB_TOKEN": token,
                 "NO_COLOR": "1",

@@ -229,7 +229,7 @@ def validate_assessment(repo, state, assessment):
     feedback = pipeline.collect_feedback(repo, state["pr"])
     if assessment["feedback_digest"] != digest(feedback):
         raise WorkflowError("Public feedback changed; reassess the complete discussion")
-    expected = pipeline.relevant_records(feedback, assessment["head_sha"])
+    expected = pipeline.relevant_records(feedback)
     records = assessment["records"]
     if not isinstance(records, list) or any(not isinstance(item, dict) for item in records):
         raise WorkflowError("Invalid finding assessment records")

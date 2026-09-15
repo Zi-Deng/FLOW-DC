@@ -1,6 +1,8 @@
 """Managed-model doubles use local Python processes, never a model service."""
 
 import json
+import os
+import stat
 import subprocess
 import sys
 from pathlib import Path
@@ -132,6 +134,19 @@ class SessionTests(GitFixture):
         self.assertEqual(args[args.index("--sandbox") + 1], "workspace-write")
         self.assertEqual(args[args.index("--add-dir") + 1], str(self.repo.common))
         self.assertEqual(args[args.index("--ask-for-approval") + 1], "never")
+
+    def test_session_state_is_private_under_permissive_umask(self):
+        previous = os.umask(0)
+        try:
+            result = self.invoke()
+        finally:
+            os.umask(previous)
+        self.assertEqual(result["status"], "completed")
+        directory = Path(result["directory"])
+        state = self.root / ".agentic-local"
+        for path in (state, state / "sessions", directory.parent, directory):
+            self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o700)
+        self.assertEqual(stat.S_IMODE((directory / "prompt.txt").stat().st_mode), 0o600)
 
     def test_review_cap_does_not_limit_executor_prompt(self):
         state = tasks.TaskStore(self.repo).read("issue-12")

@@ -71,10 +71,57 @@ the encoding reproduction required explicitly disabling that mode and locale coe
 
 The repaired implementation passed `make check`: 8 application tests and 133 workflow tests, plus all scoped quality/structural gates. All 133 workflow tests also passed inside the default Codex workspace sandbox. These are coordinator and controlled-fixture results, not model-executed tests.
 
-These repairs change the reviewed head. A fresh independent review is required before
-merge readiness. The first attempted round is consumed; no P0/P1 finding was supported,
-so another invocation requires explicit user continuation under the approved policy.
-The native managed Astra pilot remains a separate post-installation acceptance step.
+Those repairs changed the reviewed head and required explicit user continuation for
+another review. That continuation produced the second report below. The native
+managed Astra pilot remains a separate post-installation acceptance step.
+
+## Second independent review and dispositions
+
+The [second Opus 5 COMMENT review](https://github.com/Zi-Deng/FLOW-DC/pull/4#pullrequestreview-5206383294)
+completed against head `aef76b5a36f049572525480dc3d05a4305176799` and the same
+`0e88dbc38449a4e7cdfef5c04aeca8c5bbe94de1` base under explicit user continuation.
+It raised one P2 finding, four P3 findings and four questions. Its report is preserved
+unchanged, including its unread-file and public-contract coverage limitations.
+
+The subsequent repair addresses every finding:
+
+| Finding | Disposition |
+| --- | --- |
+| F1: project data paths absent from review exclusions | Add repository-relative exclusions for input/output data, dataset statistics, benchmark manifests/results, playground and archives. Snapshot tests retain maintained example configs and benchmark source. Git fixtures also reject restricted additions, deletions and renames out of a data directory. Public configs are intentionally reviewable; their JSON format alone is not a privacy defect. |
+| F2: finish wrapper lacks executable mode | Commit executable mode for `scripts/finish-task.sh`; the structural gate now checks all three shell wrappers. |
+| F3: private parents use ambient umask | Create all missing state ancestors with mode `0700`, restrict existing state roots, reject symlinked destinations and atomically write executor prompts as `0600`. Tests exercise a permissive umask. Existing `0700` run directories already protected their contents, so readable child files did not establish the report's claimed cross-user content exposure. |
+| F4: duplicate task-branch CI | Restrict the quality workflow's push trigger to `main`, matching application CI, and validate both trigger mappings. PR pushes continue to run both required checks. |
+| F5: installer omits project validation integration | Document the omitted Makefile, dependency, lint and project-check assets in the installer result and setup guide. FLOW-DC contains the manually integrated files. Copying its application-specific gates into arbitrary projects would be inappropriate. |
+
+Question dispositions:
+
+1. **Personal configuration:** give the review process a temporary home and explicit
+   temporary XDG directories in addition to fresh `COPILOT_HOME`. Regression checks
+   verify the child environment and removal of inherited provider/skill overrides.
+   This is configuration-discovery isolation, not a kernel sandbox or proof against
+   a compromised CLI. Actual model execution under the revised environment is a
+   fresh-review step, separate from mocked regression evidence.
+2. **Old-head feedback:** retain assessment of all published findings; remove the
+   unused `head` argument from `relevant_records` and both callers. Advancing the PR
+   must not silently erase an unresolved older finding.
+3. **Provenance:** rechecked all 60 original payload hashes against pinned template
+   commit `b4a1df739a15b20b26635602e6b6a21fb08e0ac5`; all match. FLOW-DC additions and
+   local adaptations are intentionally separate from the original import manifest.
+4. **Post-merge pilot:** still pending by the approved rollout sequence. The adoption
+   PR should leave issue #3 open until its post-installation acceptance is fulfilled.
+
+The repair passed `make check`: **8 application tests and 141 workflow tests**, plus
+scoped lint/formatting and all skill, configuration, schema, workflow and link gates.
+All **141 workflow tests** also passed inside the default Codex workspace sandbox.
+The regression suite uses controlled model/service doubles; no application, benchmark
+source or data artifact was changed. The repair also corrects the documented managed
+recovery flag to `--execute`.
+
+The second report predates these repairs. Current-head review and required Actions
+results must be assessed before marking the PR ready. Two attempts are consumed;
+no supported P0/P1 finding authorizes an automatic extra round. Keep current evidence
+and the explicit continuation decision in the PR rather than treating this historical
+verification record as a live readiness signal.
 
 ## Live rollout acceptance
 

@@ -50,6 +50,13 @@ and data directories are excluded; a diff touching such paths is refused before 
 transmitted. This path policy is a baseline, not a content-based secret detector.
 Inspect your own source and augment exclusions for a project's restricted paths.
 
+FLOW-DC additionally excludes `files/input/`, `files/output/`,
+`files/biotrove_train_stats.json`, `benchmark/manifests/`, `benchmark/results/`,
+`playground/` and `archives/`. These exclusions apply to both source snapshots and
+changed paths, including deletions and renames. Maintained `files/config/` examples
+and benchmark source remain reviewable; being a JSON file does not make a config
+private. Inspect public text and configs for sensitive content before publication.
+
 The review diff has **no byte cap by default**: `max_diff_bytes` is `null`, and
 omitting that key also means unlimited. To opt into a cap, set a positive integer
 number of UTF-8 bytes, for example `"max_diff_bytes": 500000`. Boolean, string, zero
@@ -76,6 +83,12 @@ identity. Inspect `usage.json` and provider session metadata when that matters.
 The tool controls follow the [Copilot CLI reference](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-command-reference)
 and [custom agent configuration](https://docs.github.com/en/copilot/reference/custom-agents-configuration).
 
+The child process receives a temporary home and explicit temporary XDG directories
+as well as fresh `COPILOT_HOME`, so personal home-directory skills and configuration
+are not discovered through the usual paths. Authentication is supplied separately
+through the token environment variable. These settings limit configuration discovery;
+they are not an OS sandbox against a compromised CLI executable.
+
 `publish` rechecks head and base, verifies snapshot and report hashes, and creates a
 COMMENT review with an explicit `commit_id`. Repeated publication of the same report
 returns its existing review URL. Any new head/base requires a new snapshot. Findings
@@ -84,6 +97,10 @@ do not automatically become approval, a green required check, or resolved thread
 The review directory is private working state, not a cryptographic attestation against
 its own owner. Its hashes catch accidental edits. A user able to rewrite the manifest
 can rewrite the record, so GitHub permissions and human assessment remain necessary.
+The private state root and new ancestor/run directories use owner-only access
+(`0700`); task and review entrypoints also restrict an existing state root. Atomic
+records and executor prompts use `0600`. Provider-created files may retain the
+process umask, but their owner-only parent directories prevent access by other users.
 
 ## Recover a saved review without another model request
 
@@ -95,7 +112,7 @@ before the paid request, so a later version-probe failure cannot strand its outp
 
 If either final-file write fails after the journal is saved, retry `run` using the
 same directory. The helper verifies the journal, packet and current head/base and
-finishes storage without invoking Copilot. The managed `task-review --run --publish`
+finishes storage without invoking Copilot. The managed `task-review --execute --publish`
 path performs the same recovery and retains one attempted round. A completed,
 unaltered journaled report can also be reused without another request. Changed
 completed reports, changed journals and stale snapshots are rejected.

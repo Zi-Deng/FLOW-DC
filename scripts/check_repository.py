@@ -52,6 +52,9 @@ def validate_skills(root):
 
 def main():
     validate_skills(ROOT)
+    for name in ("new-task.sh", "cleanup-task.sh", "finish-task.sh"):
+        wrapper = ROOT / "scripts" / name
+        assert wrapper.is_file() and wrapper.stat().st_mode & 0o111 == 0o111, wrapper
     config = configuration(ROOT)
     required = config["required_checks"]
     assert set(required) == {"flowdc-tests", "agentic-quality"} and len(required) == 2
@@ -79,6 +82,7 @@ def main():
                 if name in required:
                     observed_jobs.append(name)
                     assert "pull_request" in value["on"] and "push" in value["on"], path
+                    assert value["on"]["push"] == {"branches": ["main"]}, path
                     assert "if" not in job and "continue-on-error" not in job, path
                     assert job.get("name", name) == name, path
                 for step in job.get("steps", []):

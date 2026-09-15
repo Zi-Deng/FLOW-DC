@@ -137,3 +137,12 @@ The installer was applied to an ignored staging directory from pinned template c
 A separate bootstrap control clone supplies trusted review code before workflow tooling exists on remote main. Its control commits are local implementation scaffolding; never push that clone's `main`. The adoption branch lives in its registered sibling issue worktree and is the only implementation branch published. After the adoption's human merge, update the original clean checkout with a fast-forward pull and use it as the permanent control checkout. Retain the bootstrap clone and its review artifacts until continuity has been reconciled; do not reset it or fabricate a managed executor record to qualify it for automatic finish.
 
 For later template upgrades, stage the pinned installer payload again, inspect conflicts and compare changes against the provenance manifest. Keep FLOW-DC's runtime policy, required check names, application guidance and domain rubric. Do not reapply an upstream file blindly over a local adaptation. See [traceability](TRACEABILITY.md).
+
+The reusable installer deliberately leaves project build and dependency integration
+to the maintainer. It does **not** copy `Makefile`, `requirements-dev.txt`,
+`requirements-test.txt`, `pyproject.toml`, `scripts/check_repository.py` or the
+FLOW-DC application test workflow. Before using the installed `make` commands in a
+different repository, supply equivalent validation targets, dependencies, lint
+configuration and CI jobs for that project. The installer prints this next step.
+FLOW-DC already contains these manually integrated files; its application dependencies
+and project-specific assertions are not generic template requirements.

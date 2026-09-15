@@ -155,7 +155,7 @@ def collect_feedback(repo, pr_number):
     }
 
 
-def relevant_records(feedback, head):
+def relevant_records(feedback):
     """Assess published history, including old-head findings, without assuming defects."""
     result = {}
     for surface, prefix in (("reviews", "review"), ("inline", "inline")):
@@ -215,7 +215,7 @@ def feedback(repo, number):
             "pr": state["pr"],
             "head_sha": pr["head"]["sha"],
             "base_sha": pr["base"]["sha"],
-            "records": relevant_records(contents, pr["head"]["sha"]),
+            "records": relevant_records(contents),
             "feedback_digest": digest(contents),
             "pr_digest": pr_digest(pr),
             "feedback": contents,

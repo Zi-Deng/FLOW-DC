@@ -121,7 +121,12 @@ def install(source, target, apply=False):
         "identical": identical,
         "new_files": [str(p) for p in pending],
         "applied": False,
-        "next": "Merge /memory/ and /.agentic-local/ into .gitignore; adapt AGENTS, domain rubric and project CI. See SETUP.md.",
+        "next": (
+            "Merge /memory/ and /.agentic-local/ into .gitignore; adapt AGENTS, domain rubric and project CI. "
+            "The payload does not install Makefile, requirements-dev.txt, requirements-test.txt, "
+            "pyproject.toml or scripts/check_repository.py. Integrate equivalent project validation "
+            "and CI targets before running the installed make commands. See docs/agent-workflow/SETUP.md."
+        ),
     }
     if apply:
         if conflicts:
