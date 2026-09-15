@@ -1,0 +1,17 @@
+{
+  "checked_at": "2026-09-14T09:28:58.414727-07:00",
+  "archived_source_files_sha256_verified": 95,
+  "retained_or_moved_artifact_files_size_mtime_verified": 53710,
+  "finder_metadata_excluded_from_mtime_check": 4,
+  "benchmark_result_files_sha256_verified": 10241,
+  "git_bundle_verified": true,
+  "regression_tests": {
+    "command": ".venv/bin/python -m unittest discover -s tests -v",
+    "passed": 8,
+    "duration_seconds": 3.219,
+    "network": "loopback HTTP only"
+  },
+  "syntax_checks": "9 changed/imported Python entry points passed py_compile",
+  "splitparquet_cli_help": "passed",
+  "taskvine_runtime": "not installed; config translation tested with mocked runtime, no cluster or cloud jobs submitted"
+}

@@ -1,0 +1,6 @@
+# Benchmark suite dependencies
+img2dataset>=1.45.0
+psutil>=5.9.0
+pyyaml>=6.0
+jinja2>=3.1.0
+polars>=0.20.0

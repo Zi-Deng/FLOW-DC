@@ -21,7 +21,7 @@ The core component is **PAARC (Policy-Aware Adaptive Request Controller)**, a co
 
 ```bash
 # Clone the repository
-git clone https://github.com/zkdeng-uofa/FLOW-DC
+git clone https://github.com/Zi-Deng/FLOW-DC
 cd FLOW-DC
 
 # Create and activate the conda environment
@@ -96,6 +96,23 @@ python bin/download_batch.py --config config.json
 - Automatic retry for transient failures (429, 5xx, timeouts)
 - TTFB-based latency monitoring
 - Supports imagefolder and webdataset output formats
+
+### download_batch_gradient.py
+
+Experimental single-machine downloader variant that swaps the threshold-based PAARC degradation logic for a TIMELY-style queue-delay gradient detector built from `p50_raw - RTprop`.
+
+```bash
+python bin/download_batch_gradient.py --config files/config/spider_test_gradient.json
+```
+
+**Key Features:**
+- Keeps the current FLOW-DC download pipeline, retries, tar creation, and overview reporting
+- Uses a time-normalized, `RTprop`-normalized queue-delay slope as the early-warning congestion signal
+- Splits control roles between proactive gradient shaping and authoritative hard-overload backoff
+- Preserves explicit overload handling for 429/408/5xx/connection errors
+- Emits gradient-specific overview counters (`gradient_hold_events`, `gradient_soft_backoffs`, `gradient_plateau_events`, `post_backoff_grace_events`)
+
+This gradient variant is currently only wired into the single-machine downloader path. It is not yet exposed through `ui_app.py` or the TaskVine orchestration scripts.
 
 ### SplitParquet.py
 
@@ -215,7 +232,7 @@ A web-based interface for configuring downloads and monitoring progress. Built w
 python bin/ui_app.py
 ```
 
-Opens a browser interface at `http://localhost:8080` where you can:
+The UI at `http://localhost:8080` is a prototype: job execution and progress are simulated. Use the downloader CLI for real downloads. Its controls demonstrate how to:
 - Configure all download parameters
 - Load and save configuration files
 - Start and monitor download jobs
@@ -260,7 +277,7 @@ result = await download_single(
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `concurrent_downloads` | int | 1000 | Maximum concurrent download workers |
+| `concurrent_downloads` | int/null | auto | Main downloader: omitted/null/0 sizes workers from host count × C_max, capped at 10,000; a positive value overrides this |
 | `timeout` | int | 30 | Request timeout in seconds |
 | `max_retry_attempts` | int | 3 | Maximum retries for failed downloads |
 | `retry_backoff_sec` | float | 2.0 | Delay between retry attempts |
@@ -270,15 +287,40 @@ result = await download_single(
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `enable_paarc` | bool | true | Enable adaptive per-host rate control |
-| `C_init` | int | 8 | Initial concurrency per host |
+| `C_init` | int | 4 | Initial concurrency per host |
 | `C_min` | int | 2 | Minimum concurrency floor |
-| `C_max` | int | 2000 | Maximum concurrency ceiling |
-| `mu` | float | 1.0 | Utilization factor (0.0-1.0) |
-| `beta` | float | 0.7 | Backoff multiplier on overload |
+| `C_max` | int | 10000 | Maximum concurrency ceiling |
+| `mu` | float | 0.85 | Utilization factor (0.0-1.0) |
+| `beta` | float | 0.5 | Backoff multiplier on overload |
 | `theta_50` | float | 1.5 | P50 latency threshold (× RTprop) |
 | `theta_95` | float | 2.0 | P95 latency threshold (× RTprop) |
-| `probe_rtt_period` | float | 30.0 | Seconds between RTprop refresh |
+| `probe_rtt_period` | float | 10.0 | Seconds between RTprop refresh |
 | `alpha_ema` | float | 0.3 | Latency smoothing factor |
+
+### Gradient PAARC Parameters
+
+These parameters apply only to `download_batch_gradient.py`. The gradient variant retains its experimental defaults of 256 workers, `mu=0.75`, and `rtprop_window=15.0`; the main downloader uses automatic workers, `mu=0.85`, and `rtprop_window=35.0`. Both accept `concurrent_downloads=0` (or JSON null) for automatic sizing. Explicit configurations override defaults.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `gradient_alpha` | float | 0.3 | EMA factor for queue-delay and gradient smoothing |
+| `gradient_threshold` | float | 0.10 | Time-normalized overuse threshold for `gradient_ema` |
+| `gradient_severe_threshold` | float | 0.30 | Severe overuse threshold that triggers the maximum soft multiplicative backoff |
+| `startup_gradient_threshold` | float | 0.15 | STARTUP plateau threshold for the time-normalized `gradient_ema` |
+| `gradient_required_intervals` | int | 2 | Consecutive overuse intervals required before acting in `PROBE_BW` |
+| `startup_gradient_required_intervals` | int | 2 | Consecutive plateau intervals required before exiting `STARTUP` |
+| `gradient_queue_floor_mult` | float | 0.25 | Minimum queue-delay floor relative to `RTprop` before gradient signals are trusted |
+| `gradient_backoff_beta` | float | 0.85 | Soft multiplicative reduction applied on severe gradient overuse |
+| `post_backoff_grace_intervals` | int | 2 | Clean `PROBE_BW` intervals to observe after `BACKOFF` before gradient shaping and additive probe-up resume |
+
+The gradient detector uses interval `p50_raw` as its latency sample, computes `queue_delay = max(0, p50_raw - RTprop)`, smooths that queue-like delay, then computes a time-normalized, `RTprop`-normalized slope from successive queue-delay EMA values. In `PROBE_BW`, the controller uses four regions:
+
+- below queue floor: normal full PAARC probing
+- above queue floor with `gradient_ema <= 0`: cautious probe-up
+- above queue floor with small positive gradient: hold
+- above queue floor with larger positive gradient: proportional or maximum soft backoff
+
+Hard overload signals still take precedence and enter the inherited `BACKOFF` path immediately.
 
 ### Output Options
 
@@ -286,7 +328,8 @@ result = await download_single(
 |-----------|------|---------|-------------|
 | `naming_mode` | string | `sequential` | Filename strategy: `sequential` or `url_based` |
 | `create_tar` | bool | true | Create tar.gz archive of output |
-| `create_overview` | bool | true | Generate JSON overview with statistics |
+| `create_overview` | bool | true | Write an internal `overview.json` before archiving and an external overview containing the archive path |
+| `force_overwrite` | bool | false | Allow deletion of an existing output folder; CLI equivalent: `--force` / `-f` |
 
 ## Input File Format
 
@@ -379,6 +422,7 @@ Throughput scales approximately linearly with the number of workers until networ
 FLOW-DC/
 ├── bin/
 │   ├── download_batch.py         # Main batch downloader with PAARC
+│   ├── download_batch_gradient.py # Experimental gradient PAARC
 │   ├── single_download.py        # Core download module
 │   ├── single_download_gbif.py   # GBIF-specific download module
 │   ├── SplitParquet.py           # Dataset partitioning
@@ -391,10 +435,27 @@ FLOW-DC/
 │   ├── config/                   # Configuration examples
 │   ├── input/                    # Input datasets
 │   └── output/                   # Downloaded results
+├── benchmark/                    # Maintained benchmark code and manifests
+├── tests/                        # Offline consolidation regression checks
+├── archives/                     # Superseded files and local recovery snapshots
 ├── docs/                         # Additional documentation
 ├── environment.yml               # Conda environment
 └── README.md
 ```
+
+## Consolidated Local Development
+
+The September 14, 2026 consolidation incorporates GitHub commit `efdadb2` and preserves the local gradient research and sample-aware controller scheduler. See [the consolidation record](docs/CONSOLIDATION_2026-09-14.md) and [archive index](archives/README.md) for provenance and recovery files.
+
+Benchmark source code, configurations, and manifests are versioned. Generated `benchmark/results/`, download payloads, and local recovery bundles remain Git-ignored. Existing April results remain historical measurements of the pre-consolidation implementation.
+
+Run the focused regression checks with the project environment:
+
+```bash
+python -m unittest discover -s tests -v
+```
+
+These checks exercise both downloaders against a local HTTP server, retries, output preservation, archives/reports, benchmark integration, and controller scheduling. They do not contact dataset servers or submit TaskVine/cloud jobs. The cloud orchestrator translates PAARC settings using the standard TaskVine configuration builder; its upload commands require compressed `.tar.gz` output.
 
 ## Citation
 
@@ -405,7 +466,7 @@ If you use FLOW-DC in your research, please cite:
     author = {Deng, Zi and Merchant, Nirav and Rodriguez, Jeffrey J.},
     title = {FLOW-DC: Flexible Large-scale Orchestrated Workflow for Data Collection},
     year = {2025},
-    url = {https://github.com/zkdeng-uofa/FLOW-DC}
+    url = {https://github.com/Zi-Deng/FLOW-DC}
 }
 ```
 
@@ -413,7 +474,7 @@ If you use FLOW-DC in your research, please cite:
 
 - **Author**: Zi Deng (zkdeng@arizona.edu)
 - **Affiliation**: Electrical and Computer Engineering, University of Arizona
-- **Repository**: https://github.com/zkdeng-uofa/FLOW-DC
+- **Repository**: https://github.com/Zi-Deng/FLOW-DC
 
 ## Acknowledgments
 

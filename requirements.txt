@@ -9,6 +9,7 @@ pyarrow>=14.0
 
 # Async HTTP
 aiohttp>=3.9
+requests>=2.31
 
 # Progress & CLI
 tqdm>=4.66
@@ -17,7 +18,7 @@ tqdm>=4.66
 nicegui>=1.4
 
 # Optional: Distributed Workflow (better installed via conda)
-# ndcctools>=7.14
+# ndcctools==7.15.8
 
 # Optional: Cloud Storage - iRODS/CyVerse (better installed via conda)
 # gocommands

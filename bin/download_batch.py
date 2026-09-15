@@ -418,7 +418,7 @@ Examples:
             create_tar=bool(data.get("create_tar", True)),
             compress_tar=bool(data.get("compress_tar", True)),
             create_overview=bool(data.get("create_overview", True)),
-            force_overwrite=bool(data.get("force_overwrite", False)),
+            force_overwrite=args.force or bool(data.get("force_overwrite", False)),
         )
 
     # Validate required args
@@ -548,6 +548,20 @@ def count_unique_hosts(df: pl.DataFrame, url_col: str) -> int:
 # =============================================================================
 # AIOHTTP TRACING (TTFB MEASUREMENT)
 # =============================================================================
+
+def resolve_worker_count(cfg: Config, df: pl.DataFrame) -> int:
+    """Resolve explicit or host-based concurrency for either downloader."""
+    num_hosts = count_unique_hosts(df, cfg.url_col)
+    print(f"[Load] Unique hosts detected: {num_hosts}")
+    if cfg.concurrent_downloads is not None and cfg.concurrent_downloads > 0:
+        workers = cfg.concurrent_downloads
+        print(f"[Config] Using configured concurrent_downloads: {workers}")
+    else:
+        workers = max(1, min(num_hosts * cfg.C_max, 10000))
+        print(f"[Config] Auto-sized worker pool: {workers} "
+              f"({num_hosts} hosts × {cfg.C_max} C_max)")
+    return workers
+
 
 def build_trace_config() -> aiohttp.TraceConfig:
     """
@@ -1199,27 +1213,38 @@ class PAARCController:
     
     def _calculate_control_interval(self, snap: dict) -> float:
         """
-        Calculate control interval duration.
-        
-        interval = max(k × RTprop, N_min / goodput_rps, T_floor)
-        
-        Ensures both time-based stability and sample-based reliability.
+        Calculate the next control interval duration.
+
+        The live scheduler keeps the existing state-aware cadence:
+        - STARTUP/BACKOFF poll faster using 4 × RTprop with a 100ms floor
+        - INIT/PROBE_BW/PROBE_RTT use k_interval × RTprop with T_floor
+
+        On top of that, the sample-based term ensures we wait long enough to
+        collect roughly N_min successful completions before trusting interval
+        percentiles.
         """
         rtprop = self._get_rtprop()
         goodput_rps = snap.get("goodput_rps", 0)
-        
-        # Time-based: k × RTprop
-        time_based = self.config.k_interval * rtprop
-        
-        # Sample-based: N_min / goodput
+
+        if self.state in (PAARCState.STARTUP, PAARCState.BACKOFF):
+            time_multiplier = 4
+            floor = 0.1
+        else:
+            time_multiplier = self.config.k_interval
+            floor = self.config.T_floor
+
+        # Time-based: state-aware RTprop multiplier.
+        time_based = time_multiplier * rtprop
+
+        # Sample-based: long enough to collect approximately N_min samples.
         if goodput_rps > 0:
             sample_based = self.config.N_min / goodput_rps
         else:
-            sample_based = self.config.T_floor
+            sample_based = floor
 
-        return max(time_based, sample_based, self.config.T_floor)
+        return max(time_based, sample_based, floor)
 
-    async def step_interval(self) -> None:
+    async def step_interval(self) -> dict[str, Any]:
         """
         Execute one control interval step.
 
@@ -1248,7 +1273,8 @@ class PAARCController:
         
         # Skip if no activity
         if snap["total"] == 0:
-            return
+            self._last_interval_time = now
+            return snap
         
         # Print status for debugging
         state_str = self.state.name
@@ -1275,6 +1301,7 @@ class PAARCController:
             await self._step_backoff(snap, now)
         
         self._last_interval_time = now
+        return snap
     
     async def _step_init(self, snap: dict, now: float) -> None:
         """
@@ -1699,19 +1726,11 @@ async def controller_loop(manager: HostControllerManager) -> None:
             
             if now >= next_time:
                 try:
-                    await ctrl.step_interval()
-                    
-                    # Calculate next interval based on RTprop
-                    rtprop = ctrl.metrics.rtprop or 0.2
-                    
-                    # BBR-style: interval = k × RTprop, with floor
-                    if ctrl.state == PAARCState.STARTUP:
-                        interval = max(4 * rtprop, 0.1)  # Faster during ramp-up
-                    elif ctrl.state == PAARCState.BACKOFF:
-                        interval = max(4 * rtprop, 0.1)   # Moderate during recovery
-                    else:
-                        interval = max(8 * rtprop, 0.2)   # Full cycle in steady-state
-                    
+                    snap = await ctrl.step_interval()
+
+                    # Use the controller's state-aware, sample-aware scheduling helper.
+                    interval = ctrl._calculate_control_interval(snap)
+
                     host_next_step[host] = now + interval
                     
                 except Exception as e:
@@ -2153,21 +2172,7 @@ async def main() -> None:
     df = validate_and_load(cfg)
     print(f"[Load] URLs after filtering: {df.height}")
 
-    # Auto-detect hosts and calculate optimal concurrency
-    num_hosts = count_unique_hosts(df, cfg.url_col)
-    print(f"[Load] Unique hosts detected: {num_hosts}")
-
-    # Calculate effective worker count:
-    # - If concurrent_downloads is set, use it as override/cap
-    # - Otherwise, auto-calculate as num_hosts * C_max
-    if cfg.concurrent_downloads is not None and cfg.concurrent_downloads > 0:
-        effective_workers = cfg.concurrent_downloads
-        print(f"[Config] Using configured concurrent_downloads: {effective_workers}")
-    else:
-        # Auto-size: num_hosts * C_max, capped at 10000 to prevent resource exhaustion
-        effective_workers = min(num_hosts * cfg.C_max, 10000)
-        print(f"[Config] Auto-sized worker pool: {effective_workers} "
-              f"({num_hosts} hosts × {cfg.C_max} C_max)")
+    effective_workers = resolve_worker_count(cfg, df)
 
     # Initialize PAARC controller manager if enabled
     manager: Optional[HostControllerManager] = None

@@ -1,0 +1,1047 @@
+\documentclass[11pt, letterpaper]{article}
+
+\usepackage[top=1in, bottom=1in, left=1in, right=1in]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{amsmath, amssymb, amsfonts}
+\usepackage{newtxtext}
+\usepackage{newtxmath}
+\usepackage{microtype}
+\usepackage{bm}
+\usepackage{graphicx}
+\usepackage[font=small, labelfont=bf]{caption}
+\usepackage{subcaption}
+\graphicspath{{./figures/}}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{multirow}
+\usepackage{tabularx}
+\usepackage[dvipsnames]{xcolor}
+\usepackage[colorlinks=true, linkcolor=NavyBlue, citecolor=NavyBlue, urlcolor=NavyBlue]{hyperref}
+\usepackage[numbers, sort&compress]{natbib}
+\usepackage{enumitem}
+\usepackage{setspace}
+\usepackage{fancyhdr}
+\usepackage{lastpage}
+\usepackage{titlesec}
+\usepackage{xspace}
+\usepackage{float}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{siunitx}
+
+\setstretch{1.09}
+
+\setlength{\abovedisplayskip}{8pt plus 2pt minus 4pt}
+\setlength{\belowdisplayskip}{8pt plus 2pt minus 4pt}
+\setlength{\abovedisplayshortskip}{4pt plus 2pt minus 2pt}
+\setlength{\belowdisplayshortskip}{4pt plus 2pt minus 2pt}
+
+\setlength{\parindent}{0.5in}
+\setlength{\parskip}{0pt}
+
+\titleformat{\section}{\normalfont\Large\bfseries}{\thesection.}{0.5em}{}
+\titleformat{\subsection}{\normalfont\large\bfseries}{\thesubsection}{0.5em}{}
+\titleformat{\subsubsection}{\normalfont\normalsize\bfseries}{\thesubsubsection}{0.5em}{}
+\titlespacing*{\section}{0pt}{8pt plus 2pt minus 2pt}{3pt plus 1pt minus 1pt}
+\titlespacing*{\subsection}{0pt}{5pt plus 2pt minus 1pt}{2pt plus 1pt minus 1pt}
+\titlespacing*{\subsubsection}{0pt}{3pt plus 1pt minus 1pt}{1pt plus 1pt minus 1pt}
+
+\pagestyle{fancy}
+\fancyhf{}
+\renewcommand{\headrulewidth}{0pt}
+\fancyfoot[C]{\thepage}
+
+\newcommand{\proposaltitle}{Advancements for Image Classification in Real-World Settings: Innovations in Distributed Dataset Acquisition and Cost-Sensitive Machine Learning}
+\newcommand{\studentname}{Zi K. Deng}
+\newcommand{\advisorname}{Jeffrey J. Rodriguez}
+\newcommand{\advisortitle}{Associate Professor}
+\newcommand{\departmentname}{Department of Electrical \& Computer Engineering}
+\newcommand{\universityname}{The University of Arizona}
+\newcommand{\proposaldate}{\today}
+\newcommand{\ie}{i.e.,\xspace}
+\newcommand{\eg}{e.g.,\xspace}
+\newcommand{\etal}{et~al.\xspace}
+
+\begin{document}
+
+\begin{titlepage}
+\centering
+\vfill
+{\LARGE \textbf{ECE Written Comprehensive Exam\\[6pt] Research Proposal}}
+\vfill
+{\Large \textbf{\proposaltitle}}
+\vfill
+{\large \studentname \\[6pt] \departmentname \\[4pt] \universityname \\[4pt] Tucson, Arizona}
+\vfill
+{\large \textbf{Faculty Advisor}: \advisorname \\[4pt] \advisortitle, \departmentname}
+\vfill
+{\large \textbf{Comprehensive Exam Committee:}\\[6pt]
+Jerzy W. Rozenblit, Professor of Electrical \& Computer Engineering \\[4pt]
+Abhijit Mahalanobis, Associate Professor of Electrical \& Computer Engineering \\[4pt]
+Chicheng Zhang, Assistant Professor of Computer Science}
+\vfill
+{\large \proposaldate}
+\vfill
+\end{titlepage}
+
+\section*{Abstract}
+\addcontentsline{toc}{section}{Abstract}
+
+Deep learning models for image classification have achieved remarkable
+performance on curated benchmarks, yet deploying these models in applied
+domains such as biodiversity monitoring and medical screening exposes two significant gaps. First, constructing training datasets from
+distributed web sources often requires downloading images from multiple
+heterogeneous servers. Many of these servers enforce rate limits that
+existing tools neither detect nor respect, which can lead to systematic download
+failures and biased training data. Second, standard classification objectives
+treat all misclassification errors as equally costed. However, specific errors often carry consequences that differ by orders
+of magnitude, such as misidentifying a dangerous species as harmless or
+undergrading a severe disease stage. This proposal presents two contributions addressing
+these gaps.
+
+In our first contribution, we develop FLOW-DC (Flexible Large-scale
+Orchestrated Workflow for Data Collection), a distributed image downloading
+framework for constructing ML-ready datasets from URL manifests hosted across
+heterogeneous servers. Existing tools such as img2dataset lack
+adaptive rate-control mechanisms: they treat server-side throttling as
+permanent failure, leading to download failures concentrated on the
+small institutional servers that lack large-scale infrastructure. To address this, FLOW-DC introduces PAARC
+(Policy-Aware Adaptive Request Controller), a BBR (Bottleneck Bandwidth and Round-trip propagation time) inspired application-layer
+congestion control algorithm that dynamically adjusts per-host request
+concurrency based on TTFB (time to first byte) latency, HTTP status codes, and connection-level
+error signals. PAARC operates within the TaskVine distributed workflow
+manager, enabling elastic execution across heterogeneous compute
+environments (university HPC clusters, cloud instances, and local
+workstations) without requiring a shared filesystem or synchronized start
+times. FLOW-DC has been deployed at production scale for the construction of
+the 38.7-million-image Biotrove dataset and will be evaluated against
+img2dataset on both content delivery network-based and server-diverse workloads using
+server-side failure rate, scaling efficiency, and class distribution fidelity
+as the primary metrics.
+
+In our second contribution, we address the inability of standard image classifiers to distinguish between misclassification errors of differing cost. In many applied domains, certain prediction errors are far more consequential than others. For example, misidentifying a deadly spider as harmless could delay life-saving treatment, while the reverse error results only in unnecessary caution. Standard cross-entropy training treats all errors as equally costly and provides no mechanism for a domain expert to encode their knowledge on misclassification costs. To address this, we present NICME (Non-Identical Cost Matrix Embedding), a cost-sensitive classification framework that accepts a user-defined misclassification cost matrix and integrates it into both the logit computation and a dedicated regularization term. NICME utilizes LoRA (Low-Rank Adaptation) for fine-tuning to prevent the model from memorizing the training data entirely. NICME will be evaluated across four datasets spanning binary classification to 20-class identification tasks in domains including spider species classification, diabetic retinopathy grading, and pharmacy medication dispensing. It will be compared against standard cross-entropy, as well as the regularization and logit adjustment components applied individually.
+
+\vspace{12pt}
+\noindent\textbf{Keywords:} cost-sensitive learning,
+congestion control, image classification, deep learning,
+cost matrix, distributed download
+
+\newpage
+
+\section{Research Topic and Its Importance}
+\subsection{Introduction}
+\label{sec:research_topic}
+Deep learning models for computer vision have improved at a rapid pace over the past two decades, progressing from the convolutional architectures that first achieved production-grade image classification such as AlexNet and ResNet~\cite{krizhevsky2012,he2016resnet}, to the dominance of transformer-inspired architectures such as ViT, Swin, and ConvNeXt~\cite{dosovitskiy2021image, liu2021swin, liu2022convnext}, and now to the current ecosystem of compute-intensive self-supervised foundation models such as MAE, CLIP, and DINO~\cite{he2022mae, radford2021clip, darcet2025dinov3}. These advances have been matched by a corresponding growth in dataset scale: from CIFAR-10's 60{,}000 images totaling approximately 170~MB~\cite{krizhevsky2009} to LAION-5B's 5.85 billion image-text pairs totaling approximately 220~TB~\cite{schuhmann2022laion5b}. Each generation of models depends on increasingly large and more diverse training corpora to achieve better performance and stronger generalization.
+
+However, the infrastructure and assumptions underlying these benchmark datasets do not reflect the conditions that researchers commonly encounter when building classification systems for applied domains. Benchmark datasets are distributed as self-contained archives with uniform formatting, generally balanced or well-characterized class distributions, and have their images available from high-capacity servers and fast networks~\cite{torralba2011unbiased}. In contrast, constructing a training dataset for domains such as biodiversity monitoring or practical medical screening often requires downloading millions of images from heterogeneous web sources, such as university servers, museum repositories, and citizen-science platforms~\cite{yang2024biotrove}. Many of these resources operate on limited server infrastructure and enforce rate limits that existing download tools neither detect nor respect~\cite{deng2025flowdc}. Once such a dataset is assembled, another gap often emerges at the model training stage: standard classification objectives implicitly assume that all misclassifications are equally damaging, an assumption that breaks down in applied settings where some errors carry severe real-world consequences. Misidentifying a dangerous species as harmless carries a significantly different implication than confusing two harmless species~\cite{deng2026aranet}; similarly, failing to detect a severe stage of diabetic retinopathy carries different consequences than overgrading a mild case~\cite{galdran2020}. The theoretical foundations for incorporating such asymmetric costs into classification have existed for decades~\cite{elkan2001}, yet their integration into modern deep learning architectures remains limited.
+
+This research addresses both gaps through two complementary lines of investigation. First, we have developed a distributed image downloading pipeline that utilizes an application-layer congestion control algorithm to adapt request rates to individual host server capacity and allowances, enabling researchers and groups operating outside of resource-rich organizations to construct large-scale training datasets from server-diverse web sources in a timely manner without triggering rate-limit violations. Second, we are developing a cost-sensitive learning (CSL) framework that accepts a user-defined $N \times N$ misclassification cost matrix as a training hyperparameter, incorporated into a training pipeline that utilizes both cost-sensitive regularization and logit adjustment. We believe the combination of a robust data downloader and a CSL framework decoupled from class imbalance will provide meaningful improvements to practical image classification and strengthen the end-to-end machine learning (ML) pipeline across a variety of application domains.
+
+\subsection{Limitations of Current Cost-Sensitive Learning and Dataset Acquisition Paradigms}
+\label{sec:objectives}
+Our research has identified two specific technical problems that arise when tackling image classification pipelines for real-world applications. The first is the lack of a dataset construction tool that can utilize adaptive per-host congestion control to mitigate server overload and throttling. To be an improved alternative to leading dataset downloaders, such a tool must be able to execute in a distributed manner, ideally across heterogeneous compute environments to accommodate varying infrastructure constraints. The problem with existing tools is that they lack adaptive rate-control mechanisms, treating server-side throttling as permanent failures, and require homogeneous compute cluster infrastructure such as Apache Spark~\cite{zaharia2016spark, beaumont2022img2dataset} that is either unavailable or impractical to set up in many academic settings. The second is the absence of cost-sensitive deep learning methods that operate with user-defined cost matrices on modern vision architectures. Existing approaches either derive cost weights from class frequency statistics rather than domain knowledge~\cite{menon2021logitadjust, khan2018costsensitive}, or have only been validated on outdated network architectures~\cite{chung2016csdnn}. Accordingly, our research objectives are the following:
+
+\paragraph{\textbf{Objective 1: Distributed Downloading with Adaptive Congestion Control.}} Our first objective was to develop a distributed image download system that achieves download throughput comparable to the current state-of-the-art distributed downloaders, but significantly reduces the failure rate from server-side faults such as HTTP 429, 5XX, and connection reset errors.
+
+\paragraph{\textbf{Objective 2: Cost-Sensitive Classification with User-Defined Cost Matrices.}} Our second objective is to develop a cost-sensitive image classification framework that aims to attain higher recall on user-designated high-cost classes than standard cross-entropy loss training and rivals existing cost-sensitive methods. To achieve this, we specifically introduce an $N \times N$ cost matrix as a hyperparameter to be utilized during model training.
+
+\section{Review of Current Technology and Motivation}
+
+\subsection{Distributed Image Dataset Construction}
+
+The growth of web-scale vision datasets has created a need for tools that can
+convert URL manifests, tabular files listing the remote locations of millions
+of images, into locally stored, ML-ready training sets. Two systems have
+emerged as the primary tools for this task: img2dataset, which underpins the
+construction of most large-scale web-crawled vision datasets, and the Imageomics
+distributed-downloader, which was developed specifically for biodiversity image
+acquisition from institutional repositories.
+
+The tool img2dataset, created by Beaumont and central to the construction of LAION-400M,
+LAION-5B, and DataComp, is the most widely adopted open-source tool for
+large-scale image downloading and
+packaging~\cite{schuhmann2022laion5b,beaumont_img2dataset}. Its architecture
+follows a staged pipeline: a reader ingests URL lists from one of thirteen
+supported input formats via PyArrow, a distributor dispatches shards to a pool
+of worker processes, and within each process a thread pool of up to 256 threads
+performs concurrent HTTP downloads using Python's synchronous
+\texttt{urllib.request} library~\cite{beaumont_img2dataset}. Downloaded images
+are resized via OpenCV and written to one of five output formats, with
+WebDataset tar archives recommended for datasets exceeding one million samples. With optimized network speeds, img2dataset achieves approximately 90 samples per second per CPU core, scaling
+to roughly 1,300 images per second on a 16-core machine and approximately
+10,000 images per second across a 10-node Spark
+cluster~\cite{schuhmann2022laion5b}. The tool's largest documented deployment
+downloaded LAION-5B's 5.85 billion image-text pairs using ten AWS c6i.4xlarge
+instances over approximately one week, producing 220~TB of output at 384-pixel
+resolution.
+
+A notable architectural characteristic of img2dataset is its lack of any
+congestion control or host-aware request scheduling. All URLs within a shard are
+downloaded as fast as the thread pool allows, with no throttling based on server
+response times, HTTP status codes, or per-domain rate limits. When a server responds with HTTP~429
+(Too Many Requests), img2dataset treats this as a standard failure, no different than if the content doesn't exist; by
+default, no retries are attempted (\texttt{retries=0}). This design is well
+suited to downloading from content delivery networks (CDNs) such as Cloudflare and AWS
+CloudFront, which tolerate high concurrency without rate limiting. However, when
+the target data resides on smaller institutional servers, as is characteristic
+of biodiversity repositories, museum collections, and regional medical
+archives, the absence of rate control produces cascading failures: excessive
+rate-limiting errors can lead to permanently failed downloads, and in severe cases,
+IP-level blocks from the host server.
+
+The Imageomics distributed-downloader, developed by the TreeOfLife project for
+constructing biodiversity datasets from GBIF (Global Biodiversity Information
+Facility) occurrence records, addresses a different deployment
+scenario~\cite{yang2024biotrove}. This tool is designed around Slurm-based
+queue submission with MPI (message passing interface) for inter-node coordination, making it well suited to
+university HPC clusters where Slurm is the standard job scheduler. The
+distributed-downloader was used to construct portions of the TreeOfLife dataset,
+which aggregates species images from across GBIF's network of over 500
+contributing institutional servers. Unlike img2dataset,
+the distributed-downloader operates in an environment where the target servers
+are heterogeneous in capacity, making the presence of per-host rate
+control a necessity.
+
+However, the distributed-downloader shares several limitations with img2dataset.
+It does not implement per-host congestion control or adaptive rate pacing;
+downloads proceed at the maximum rate the worker can sustain regardless of
+server load signals. Its reliance on MPI requires a fixed world size determined
+at job submission time; workers cannot join or leave the workflow dynamically,
+and the compute resources must belong to a single Slurm-managed cluster. This
+excludes scenarios in which a research group might combine university HPC
+allocations, NSF cloud instances such as Jetstream2, and local workstations into
+a single coordinated download workflow.
+
+The limitations of both systems converge on two gaps. First, neither tool
+implements adaptive per-host request rate control informed by server response
+signals such as TTFB latency, HTTP~429 and 503 codes, or connection-level
+errors. Second, neither supports distributed execution across heterogeneous
+compute environments without requiring a shared filesystem, a common job
+scheduler, or synchronized worker start times. The practical consequence of
+these gaps is that academic research groups attempting to construct training
+datasets from server-diverse sources, the typical case for biodiversity,
+ecology, and regional medical imaging, face systematic download failures
+concentrated on the smallest institutional servers. Because these servers
+disproportionately host images from rare or geographically restricted taxa, the
+resulting dataset underrepresents precisely the classes that are most
+ecologically or clinically relevant, possibly introducing a bias into the training data
+before any model is trained.
+
+\subsection{Cost-Sensitive Deep Learning}
+
+Although cost-sensitive classification and class-imbalanced classification are
+frequently treated as interchangeable in the deep learning literature, they are
+mathematically distinct problems with different objectives and different
+solutions. Class imbalance refers to the setting in which training class
+frequencies are unequal; the standard remedies, oversampling, undersampling,
+and frequency-derived loss reweighting, aim to equalize each class's influence
+on the learned decision boundary. Cost-sensitive classification, by contrast,
+addresses the setting in which different misclassification errors carry different
+real-world penalties. These penalties can be encoded in an $N \times N$ cost matrix $\mathbf{C}$ whose
+entry $C[k,j]$ specifies the cost incurred when a sample of true class~$j$ is
+predicted as class~$k$~\cite{elkan2001}. These costs are determined by domain
+knowledge (clinical severity, ecological consequence, economic impact) and
+need not bear any relationship to class frequencies. The two problems can
+co-occur, but addressing one does not address the other: a class-balanced
+dataset still requires cost-sensitive methods if certain misclassification pairs
+are more consequential than others~\cite{elkan2001,ling2008costsensitive}.
+
+The theoretical foundations for cost-sensitive classification are well
+established. For binary classification, Elkan~\cite{elkan2001} proved that the
+Bayes-optimal decision threshold under an arbitrary $2 \times 2$ cost matrix is
+%
+\begin{equation}
+\label{eq:elkan_threshold}
+p^{*} = \frac{C_{\mathrm{FP}} - C_{\mathrm{TN}}}
+            {C_{\mathrm{FP}} - C_{\mathrm{TN}} + C_{\mathrm{FN}} - C_{\mathrm{TP}}},
+\end{equation}
+%
+where $C_{\mathrm{FP}}$, $C_{\mathrm{TN}}$, $C_{\mathrm{FN}}$, and
+$C_{\mathrm{TP}}$ denote the costs of false positive, true negative, false
+negative, and true positive decisions, respectively. This result shows that any
+economically coherent binary cost matrix reduces to a single degree of freedom
+controlling the decision threshold. For the multiclass setting with $N$ classes,
+Bayes decision theory prescribes the cost-minimizing prediction rule
+%
+\begin{equation}
+\label{eq:bayes_cost_rule}
+\hat{y}(\mathbf{x}) = \operatorname*{arg\,min}_{k \in \{1,\dots,N\}}
+  \sum_{j=1}^{N} C[k,j] \cdot P(Y = j \mid \mathbf{x}),
+\end{equation}
+%
+which selects the class that minimizes expected misclassification cost given the
+posterior class probabilities. This rule requires both a well-calibrated
+probabilistic classifier and an explicit cost matrix, and is the starting point
+for all cost-sensitive
+methods~\cite{elkan2001,domingos1999metacost}. Domingos~\cite{domingos1999metacost}
+operationalized this principle in MetaCost, a wrapper method that uses bagging
+to estimate class probabilities, then relabels each training example with the
+class minimizing expected cost under an arbitrary $N \times N$ matrix. MetaCost
+handles the full multiclass cost-sensitive setting, yet no direct deep learning
+adaptation exists.
+
+Dmochowski et al.~\cite{dmochowski2010jmlr} provided the key theoretical bridge
+to loss-function-based approaches by proving that the cost-weighted negative
+log-likelihood
+%
+\begin{equation}
+\label{eq:cost_weighted_ce}
+\mathcal{L}_{\mathrm{CW}} = -\frac{1}{n}\sum_{i=1}^{n}
+  w_{y_i} \log p_{y_i}(\mathbf{x}_i)
+\end{equation}
+%
+is a tight, convex upper bound on the empirical misclassification cost, where
+$w_{y_i}$ is a per-class weight derived from the cost matrix. This result
+justifies cost-weighted cross-entropy as a surrogate loss for cost-sensitive
+training. However, Dmochowski et al.\ also showed that under model
+misspecification, the risk-minimizing solution varies with the cost ratio,
+meaning that a single set of learned weights may not be optimal across all
+operating points.
+
+Despite these mature theoretical foundations, the translation to deep learning
+has been limited. Chung, Lin, and Yang~\cite{chung2016csdnn} published the first
+work addressing cost-sensitive deep learning with explicit $N \times N$ cost
+matrices. Their CSDNN framework introduced the SOSR (Softmax-based Output and
+Sensitivity-aware Regularization) loss, which embeds cost information directly
+into training, and combined it with cost-aware autoencoders for pre-training.
+Evaluated on MNIST, CIFAR-10, USPS, and SVHN with randomized proportional cost
+matrices, CSDNN demonstrated that incorporating cost information during training
+outperforms approaches that apply cost-sensitive decisions only at prediction
+time. The cost matrices used were arbitrary and not derived from class
+frequencies, making this work genuinely cost-sensitive rather than a
+class-imbalance rebalancing method.
+
+Galdran et al.~\cite{galdran2020} proposed a cost-sensitive regularization
+approach applied to diabetic retinopathy grading. Rather than replacing the
+standard training loss, they introduced an additive cost-sensitive regularizer
+%
+\begin{equation}
+\label{eq:cs_regularizer}
+\mathcal{L}_{\mathrm{CS}}(\mathbf{x}, y) = \sum_{k=1}^{N}
+  M[y, k] \cdot p_k(\mathbf{x}),
+\end{equation}
+%
+where $M$ is an $N \times N$ cost matrix and $p_k(\mathbf{x})$ is the predicted
+probability for class~$k$. This term penalizes the model for assigning
+probability mass to classes whose confusion with the true class~$y$ is costly.
+The total training loss combines a standard objective with the regularizer:
+%
+\begin{equation}
+\label{eq:cs_total_loss}
+\mathcal{L}_{\mathrm{total}} = \mathcal{L}_{\mathrm{base}}
+  + \lambda \cdot \mathcal{L}_{\mathrm{CS}},
+\end{equation}
+%
+where $\lambda$ controls the regularization strength. A key empirical finding
+was that using the cost-sensitive term as the sole training loss causes CNNs to
+collapse to trivial solutions, predicting a single class for all inputs. This
+training instability necessitates the regularization formulation. Applied with
+distance-based cost matrices ($M[i,j] = |i - j|$ for L1 and
+$M[i,j] = (i-j)^2$ for L2) reflecting disease severity, the approach achieved
+a 3--5\% improvement in quadratic-weighted kappa on the EyePACS diabetic
+retinopathy dataset~\cite{galdran2020}. This work remains one of very few
+open-source PyTorch implementations supporting arbitrary $N \times N$ cost
+matrices.
+
+A result with significant implications for this research was established by Chen
+et al.~\cite{chen2025csada}, who identified a fundamental obstacle to
+cost-sensitive training in modern deep networks. They proved that when
+overparameterized neural networks interpolate training data (achieving zero
+training loss), cost-weighted empirical risk minimization collapses to standard
+ERM, because the loss is zero regardless of the cost weights applied. Formally,
+if $\mathcal{L}_{\mathrm{CW}}(\theta^{*}) = 0$ for parameters $\theta^{*}$
+that interpolate the data, then the gradient
+$\nabla_\theta \mathcal{L}_{\mathrm{CW}}(\theta^{*}) = \mathbf{0}$ irrespective
+of the values of the cost weights~$w_y$. This result undermines cost-weighted
+cross-entropy, per-class loss reweighting, and any other approach that modifies
+the loss by multiplicative cost factors when applied to models with sufficient
+capacity to memorize the training set. To address this, Chen et al.\ proposed
+CSADA (Cost-Sensitive Adversarial Data Augmentation), a bi-level optimization
+framework in which the inner loop generates adversarial examples targeted at
+high-cost misclassification pairs via multi-step gradient ascent, and the outer
+loop trains on both the original and adversarial examples with cost-aware
+penalties. Evaluated on MNIST, CIFAR-10, and a pharmacy medication image dataset
+with expert-assigned pairwise costs, CSADA maintained overall accuracy while
+reducing average test cost by 27--48\% relative to standard
+training~\cite{chen2025csada}.
+
+Several specific gaps define the research agenda for cost-sensitive deep learning
+with modern architectures. No Vision Transformer, ConvNeXt, or EfficientNet
+architecture has been paired with explicit $N \times N$ cost matrices, and no SSL (self-supervised learning) foundation model backbone, such as DINOv3, CLIP, or their successors, has been
+fine-tuned with a cost-sensitive objective. No published work combines
+cost-sensitive regularization with logit adjustment, and no work
+has attempted to extend logit adjustment from class priors to arbitrary cost
+matrices. Finally, the overparameterization result of Chen et al.\ suggests that
+parameter-efficient fine-tuning methods, which do not interpolate the training
+data, may be essential for cost matrices to meaningfully influence the learned
+decision boundary, but this interaction has not been investigated. The practical
+consequence is that a domain expert, a clinician who knows that undergrading
+proliferative diabetic retinopathy is far more dangerous than overgrading mild
+disease, or an ecologist who knows that confusing an invasive species with a
+native species has different management consequences than the reverse, currently
+has no existing tool to encode that knowledge into a modern deep learning
+training pipeline.
+
+\section{Proposed Study}
+\label{sec:proposed_study}
+
+\subsection{Overview of Proposed Approach}
+\label{sec:overview}
+
+The proposed research consists of two systems that address complementary stages
+of the applied image classification pipeline. The first system, FLOW-DC
+(Flexible Large-scale Orchestrated Workflow for Data
+Collection)~\cite{deng2025flowdc}, is a distributed image downloading framework
+that constructs ML-ready datasets from URL manifests hosted across heterogeneous
+web servers. The second system, NICME model (Non-Identical Matrix Embedding), is a
+cost-sensitive image classification framework that trains deep learning models
+using explicit $N \times N$ misclassification cost matrices on modern vision
+backbones. The two systems are connected by a shared workflow: FLOW-DC produces
+the training datasets on which NICME model operates, and the class-distribution
+fidelity of the downloaded dataset directly affects the validity of the
+cost-sensitive training that follows.
+
+FLOW-DC extends the manager-worker paradigm of
+TaskVine~\cite{slydelgado2023taskvine} with an application-layer congestion
+control algorithm called PAARC (Policy-Aware Adaptive Request
+Controller)~\cite{deng2025flowdc}. The manager machine partitions a dataset manifest into fixed-length chunks using a host-dispersed partitioning algorithm that separates URLs from the same host across distinct chunks, then assigns these chunks to worker machines as TaskVine tasks.
+
+NICME model is a PyTorch-based image classification framework that extends the
+standard training pipeline with support for user-defined cost matrices.
+The proposed research will extend this framework in two directions. First, we will integrate
+the foundation model backbone
+DINOv3~\cite{darcet2025dinov3} with ViT and ConvNeXt using parameter-efficient fine-tuning via
+LoRA~\cite{hu2022lora}.
+Second, we will develop and evaluate the combined loss function that integrates a cost-sensitive
+regularizer~\cite{galdran2020} and logit adjustment~\cite{menon2021logitadjust}, adapting the logit adjustment term to
+operate with cost-matrix-derived offsets rather than class priors.
+
+\subsection{FLOW-DC: Distributed Downloading with PAARC}
+\label{sec:flowdc}
+
+FLOW-DC addresses Objective~1 through three interacting components: a
+host-aware dataset partitioning algorithm, the PAARC congestion control
+algorithm operating on each worker, and the TaskVine-based distributed
+orchestration layer. This section details each component. The full system
+design and implementation are described in Deng et
+al.~\cite{deng2025flowdc}.
+
+\paragraph{Host-Aware Partitioning.}
+Before distributing work to workers, the manager partitions the dataset
+manifest into chunks that disperse URLs from the same host server across
+distinct partitions. This dispersion is important because it prevents any
+single worker from concentrating requests on one host, distributing the
+load across the worker pool and reducing the likelihood of server-side
+throttling. Let
+$H = \{h_1, h_2, \ldots, h_m\}$ denote the set of $m$ unique hosts extracted
+from the manifest, where each host $h_i$ has URL count $c_i$ and URL set
+$U_i = \{u_{i,1}, u_{i,2}, \ldots, u_{i,c_i}\}$. Let $k$ denote the desired
+number of partitions (a hyperparameter). For each host, the algorithm assigns its URLs to
+partitions via offset round-robin allocation, where the starting partition
+rotates per host to balance the distribution of remainder URLs:
+%
+\begin{equation}
+\label{eq:host_dispersion}
+\forall\; u_{i,j} \in U_i:\quad
+u_{i,j} \longrightarrow P_{((j - 1 + \delta_i) \bmod k) + 1},
+\quad \delta_i = (i-1) \bmod k.
+\end{equation}
+%
+The per-host offset $\delta_i$ rotates the round-robin starting partition for
+each successive host, ensuring that the remainder URLs (those arising when
+$c_i$ is not evenly divisible by $k$) are spread across different partitions
+rather than accumulating in the same low-indexed partitions. This provides two
+simultaneous guarantees: each partition receives exactly
+$\lfloor c_i / k \rfloor$ or $\lceil c_i / k \rceil$ URLs from any single
+host $h_i$, providing optimal per-host dispersion, and global partition sizes
+remain balanced to within at most $\lfloor m / k \rfloor$ URLs of each other
+in the worst case. When $c_i \geq k$, every partition receives at least one
+URL from host $h_i$, ensuring no single worker bears a disproportionate share
+of requests to any server.
+
+\paragraph{PAARC Algorithm.}
+The Policy-Aware Adaptive Request Controller operates on each worker node and
+dynamically adjusts the number of concurrent HTTP requests issued to each host
+server. The primary control variable is the concurrency $C$, the number of
+simultaneous in-flight requests. The download rate
+$R$ emerges naturally from Little's Law, $R = C / T$, where $T$ is the mean
+response time~\cite{deng2025flowdc}. This concurrency-primary design is
+self-regulating: when server latency increases, throughput decreases
+automatically without requiring an explicit rate adjustment.
+
+PAARC monitors time-to-first-byte (TTFB) as its primary latency signal. For
+each control interval, the controller computes the 10th, 50th, and 95th
+percentiles of successful request TTFBs and smooths them with an exponential
+moving average:
+%
+\begin{equation}
+\label{eq:ema}
+p_k^{(t)} = \alpha \cdot p_k^{\mathrm{raw}}
+           + (1 - \alpha) \cdot p_k^{(t-1)},
+\end{equation}
+%
+where $p_k$ denotes the $k$-th percentile and $\alpha=0.3$ is a hyperparameter controlling the smoothing
+factor. The baseline latency RTprop is defined as the minimum observed
+10th-percentile TTFB over a sliding window:
+%
+\begin{equation}
+\label{eq:rtprop}
+\mathrm{RTprop} = \min_{t' \in [t - W,\, t]} p_{10}^{(t')},
+\end{equation}
+%
+where $W = 10$~seconds is a hyperparameter. Latency degradation is detected when median or tail
+latencies exceed threshold multiples of RTprop:
+%
+\begin{equation}
+\label{eq:degradation}
+\mathrm{degraded} = \bigl(p_{50} > \mathrm{RTprop} \times \theta_{50}\bigr)
+  \;\lor\;
+  \bigl(p_{95} > \mathrm{RTprop} \times \theta_{95}\bigr),
+\end{equation}
+%
+with hyperparameters $\theta_{50} = 1.5$ and $\theta_{95} = 2.0$.
+
+\paragraph{PAARC State Machine.}
+PAARC implements a five-state finite state machine governing concurrency
+adjustment decisions~\cite{deng2025flowdc}. In the \textbf{INIT} state, the
+controller operates at the hyperparameter $C_{\mathrm{init}}$ concurrent requests and collects
+initial TTFB samples to establish the RTprop baseline. Upon collecting
+sufficient samples, the controller transitions to \textbf{STARTUP}, where it
+discovers the maximum sustainable concurrency through additive growth. Each
+control interval, the concurrency is increased by a fixed hyperparameter increment $\Delta C_{\mathrm{startup}}$. STARTUP
+terminates when either an overload signal occurs (transitioning to BACKOFF) or a
+latency-based plateau is detected; that is, when the latency degradation
+condition in Equation~\ref{eq:degradation} is triggered using elevated
+hyperparameter thresholds $\theta_{50}^{\mathrm{startup}}$ and
+$\theta_{95}^{\mathrm{startup}}$. Upon plateau detection, PAARC sets the
+concurrency ceiling $C_{\mathrm{ceiling}}$ to the current concurrency and
+computes the operating point:
+%
+\begin{equation}
+\label{eq:operating}
+C_{\mathrm{operating}} = \lfloor C_{\mathrm{ceiling}} \times \mu \rfloor,
+\end{equation}
+%
+where $\mu = 0.75$ is the utilization factor (a hyperparameter), then transitions to the
+steady-state \textbf{PROBE\_BW} phase. In PROBE\_BW, the controller maintains
+concurrency at or below $C_{\mathrm{operating}}$ and periodically probes for
+additional capacity via conservative additive increase. If an overload signal
+occurs, the ceiling is revised downward by a multiplicative decrease hyperparameter
+$\beta = 0.5$ and the controller transitions to \textbf{BACKOFF}. The
+controller periodically enters \textbf{PROBE\_RTT} to refresh the RTprop
+estimate by reducing concurrency by a fraction $\rho$ of the current value:
+%
+\begin{equation}
+\label{eq:probe_rtt}
+C_{\mathrm{probe}} = \max\bigl(C_{\mathrm{min}},\;
+  \lfloor C \times \rho \rfloor\bigr),
+\end{equation}
+%
+where $\rho = 0.5$ and $C_{\mathrm{min}} = 1$ are hyperparameters,
+collecting fresh latency samples at reduced load, then gradually restoring
+concurrency over multiple steps to avoid burst-induced congestion. BACKOFF
+handles recovery from overload conditions (HTTP~429, 5xx, or connection-level
+errors) by enforcing a cooldown period before restoring concurrency to
+$C_{\mathrm{operating}}$ and returning to PROBE\_BW. This design draws on
+BBR's model-based approach to congestion
+control~\cite{cardwell2017bbr} but adapts its mechanisms for the application
+layer, where congestion signals are HTTP status codes and TTFB measurements
+rather than packet-level acknowledgements.
+
+\paragraph{Distributed Execution.}
+The manager instantiates a TaskVine workflow in which each partition is
+submitted as an independent task with declared input files (partition parquet,
+download scripts, configuration JSON) and output files (\eg compressed tar archive,
+JSON summary). Workers connect to the manager utilizing the manager's IP and receive task
+assignments from the pending queue. TaskVine handles input file transfer, task
+scheduling, and result collection. Workers that disconnect mid-workflow do not
+cause data loss; TaskVine detects the disconnection and re-queues incomplete
+tasks for available workers. This elastic participation model requires only
+network reachability between the manager and workers: no shared filesystem, no
+common job scheduler, and no synchronized start
+times~\cite{slydelgado2023taskvine}.
+
+\subsection{NICME: Cost-Sensitive Learning using Logit Adjustment and Regularization}
+\label{sec:loss_function}
+
+The core algorithmic contribution of NICME model is a loss function that
+integrates two cost-sensitive mechanisms, logit adjustment and cost-sensitive
+regularization, into a single training objective. Each mechanism addresses a
+different aspect of cost-aware learning.
+
+The first component is a cost-matrix-driven logit adjustment. For each training
+sample, the model's predicted class
+$\hat{k} = \arg\max_k f_k(\mathbf{x})$ is compared to the true class~$y$. For
+misclassified samples ($\hat{k} \neq y$), the logit corresponding to the
+predicted class is increased proportionally to both the cost of that specific
+misclassification and the logit gap between the predicted and true classes:
+%
+\begin{equation}
+\label{eq:logit_adjust_cost}
+\tilde{f}_{\hat{k}}(\mathbf{x}) = f_{\hat{k}}(\mathbf{x})
+  + C[y, \hat{k}] \cdot \bigl| f_{\hat{k}}(\mathbf{x})
+  - f_y(\mathbf{x}) \bigr|,
+\end{equation}
+%
+where $C[y, \hat{k}]$ is the entry of the user-defined cost matrix
+corresponding to misclassifying true class~$y$ as class~$\hat{k}$, and
+$f_k(\mathbf{x})$ denotes the logit for class~$k$. For correctly classified
+samples, the logits are unchanged. This adjustment amplifies the cross-entropy
+gradient for high-cost misclassifications: when $C[y, \hat{k}]$ is large, the
+modified logit $\tilde{f}_{\hat{k}}$ makes the model appear more confident in
+the costly wrong prediction, producing a stronger corrective gradient during
+backpropagation. The cross-entropy loss is then computed on the adjusted logits:
+%
+\begin{equation}
+\label{eq:ce_adjusted}
+\mathcal{L}_{\mathrm{LA}} = -\frac{1}{n} \sum_{i=1}^{n}
+  \log \frac{\exp(\tilde{f}_{y_i}(\mathbf{x}_i))}
+            {\sum_{k=1}^{N} \exp(\tilde{f}_k(\mathbf{x}_i))}.
+\end{equation}
+
+The second component is a cost-sensitive regularizer introduced by Galdran et
+al.~\cite{galdran2020}, which penalizes the model for assigning probability
+mass to classes whose confusion with the true class is costly. This term
+operates on the original (non-adjusted) logits to ensure the two gradient paths
+are independent:
+%
+\begin{equation}
+\label{eq:cs_reg_nicme}
+\mathcal{L}_{\mathrm{CS}} = \frac{1}{n} \sum_{i=1}^{n} \sum_{k=1}^{N}
+  \bar{M}[y_i, k] \cdot \sigma_k(\mathbf{x}_i),
+\end{equation}
+%
+where $\bar{M}$ is the cost matrix normalized to $[0, 1]$ and
+$\sigma_k(\mathbf{x}_i) = \mathrm{softmax}(f(\mathbf{x}_i))_k$ is the
+predicted probability for class~$k$ computed from the original logits. The
+normalization prevents unbounded penalty magnitudes when cost matrix entries
+span several orders of magnitude.
+
+The combined loss function is:
+%
+\begin{equation}
+\label{eq:combined_loss}
+\mathcal{L}_{\mathrm{NICME}} = \mathcal{L}_{\mathrm{LA}}
+  + \lambda_{\mathrm{eff}} \cdot \mathcal{L}_{\mathrm{CS}},
+\end{equation}
+%
+where $\lambda_{\mathrm{eff}}$ is the effective regularization weight (a hyperparameter). To
+prevent the regularization term from destabilizing early training, a failure
+mode identified by Galdran et al.~\cite{galdran2020}, who found that
+cost-sensitive losses alone cause CNNs to collapse to trivial solutions, we
+apply a linear warmup schedule:
+%
+\begin{equation}
+\label{eq:warmup}
+\lambda_{\mathrm{eff}}(e) = \lambda \cdot \min\!\left(1,\;
+  \frac{e}{E_{\mathrm{warmup}}}\right),
+\end{equation}
+%
+where $e$ is the current epoch and the hyperparameters $E_{\mathrm{warmup}}$
+and $\lambda$ specify the warmup duration in epochs and the target
+regularization strength, respectively. During warmup, the
+model trains primarily on $\mathcal{L}_{\mathrm{LA}}$; the regularizer's
+contribution increases linearly until reaching full strength at epoch
+$E_{\mathrm{warmup}}$.
+
+\paragraph{Backbone Architecture and Parameter-Efficient Fine-Tuning.} 
+NICME model currently implements ResNet-50~\cite{he2016resnet} and
+ConvNeXt~\cite{liu2022convnext} backbones using custom base classes that
+decouple the model architecture from HuggingFace's transformers library. Both
+architectures load ImageNet-pretrained weights and replace the final
+classification head with a linear layer matching the number of target classes.
+Stage freezing is supported: setting the hyperparameter~$s$ (number of frozen stages) freezes
+all parameters in the first $s$ convolutional stages, restricting gradient
+updates to the later stages and the classification head.
+
+The proposed extension integrates DINOv3~\cite{darcet2025dinov3} pretraining combined with ConvNeXt and ViT as backbone architectures via
+parameter-efficient fine-tuning using LoRA (Low-Rank
+Adaptation)~\cite{hu2022lora}. LoRA constrains the weight update to a low-rank
+decomposition: for a pretrained weight matrix
+$\mathbf{W}_0 \in \mathbb{R}^{d \times d}$, the adapted weight is
+%
+\begin{equation}
+\label{eq:lora}
+\mathbf{W} = \mathbf{W}_0 + \mathbf{B}\mathbf{A},
+\end{equation}
+%
+where $\mathbf{B} \in \mathbb{R}^{d \times r}$ and
+$\mathbf{A} \in \mathbb{R}^{r \times d}$ with rank $r \ll d$. Only
+$\mathbf{A}$ and $\mathbf{B}$ are trainable; $\mathbf{W}_0$ remains frozen.
+This reduces the number of trainable parameters to 0.1--2\% of the full model,
+which provides two advantages for cost-sensitive learning. First, it avoids the
+overparameterization collapse identified by Chen et
+al.~\cite{chen2025csada}: because the vast majority of parameters are frozen,
+the model cannot fully interpolate the training data, and the cost weights in
+$\mathcal{L}_{\mathrm{NICME}}$ retain their influence on the learned decision
+boundary. Second, the LIFT result~\cite{tian2024lift} demonstrated that
+lightweight fine-tuning with logit-adjusted loss preserves the class-conditional
+feature distributions learned during pretraining, which heavy fine-tuning
+destroys. LoRA applied to the linear projection layers of DINOv3 and
+ConvNeXt, with rank $r \in \{4, 8, 16\}$ as a hyperparameter, is the
+proposed default configuration.
+
+Post-hoc temperature scaling will be applied as a final calibration step. Given
+a trained model with logits $f(\mathbf{x})$, the calibrated probabilities are
+$\sigma(f(\mathbf{x}) / T)$ where the temperature $T > 0$ is optimized on a
+held-out validation set by minimizing the negative
+log-likelihood~\cite{guo2017calibration}.
+
+The primary metric used to evaluate whether the trained model satisfies the
+user-specified cost preferences is the average test cost (ATC), defined as the
+mean per-sample cost incurred by the model's predictions on the test set:
+\begin{equation}
+\label{eq:atc}
+\mathrm{ATC} = \frac{1}{n} \sum_{i=1}^{n} C[\hat{y}_i, y_i],
+\end{equation}
+%
+where $n$ is the number of test samples, $\hat{y}_i$ is the model's prediction
+for sample $i$, $y_i$ is the true class, and $C[\hat{y}_i, y_i]$ is the
+corresponding entry of the user-specified cost matrix. ATC is the quantity
+that hyperparameter optimization and final model selection will minimize.
+Alongside ATC, we will additionally track per-class recall stratified by cost
+category (high, medium, low), and overall classification accuracy, to confirm that cost reductions are not achieved by
+degrading general classification performance or calibration. 
+
+\subsection{Prior Work and Preliminary Implementations}
+\label{sec:preliminary}
+
+The research proposed in this document is inspired by our work AraNet, a two-stage convolutional neural network for spider species
+classification~\cite{deng2026aranet}. The lessons from AraNet directly motivated both FLOW-DC and NICME model.
+
+\paragraph{AraNet: Spider Species Classification via Multi-Phase Deep Learning.}
+AraNet was developed to address the problem of automated spider species
+identification, a task with applications in habitat monitoring and emergency
+medical treatment~\cite{deng2026aranet}. Two practical challenges encountered during the AraNet project directly
+motivated the present research.
+
+The first was dataset construction. Assembling
+the iNatSpiders1k training set required downloading 548,689 images from
+iNaturalist's AWS-hosted repository. While iNaturalist serves images from a
+single high-capacity S3 endpoint, expanding the dataset to utilize other biodiversity
+data sources, particularly GBIF, which aggregates records across over 500
+institutional servers with varying capacity and rate-limiting
+policies, revealed the limitations of existing download tools. This experience
+motivated the development of FLOW-DC and its PAARC congestion control algorithm.
+
+The second challenge was the recognition that standard accuracy-maximizing
+training does not capture the asymmetric consequences of misclassification in
+safety-relevant domains. In the Australian spider classification task,
+misidentifying a venomous species such as the Sydney funnel-web
+(\textit{Atrax robustus}) as a non-dangerous species could delay life-saving
+medical intervention, while the reverse error (classifying a harmless species
+as dangerous) results in unnecessary caution but no physical harm.
+This observation motivated the development of NICME's cost-matrix-based training framework and directly
+informs the design of the combined loss function described in
+Section~\ref{sec:loss_function}.
+
+\paragraph{FLOW-DC: Production Deployment for Biotrove Dataset}
+FLOW-DC has been deployed at production scale for the construction of the
+Biotrove dataset, a large-scale biodiversity image collection contributed to the
+NeurIPS 2024 Datasets and Benchmarks Track~\cite{yang2024biotrove}. In this
+deployment, FLOW-DC downloaded 38.7~million images totaling 13~TiB from GBIF's
+network of institutional servers using 10 Jetstream2 cloud workers. The core architecture of FLOW-DC including the PAARC algorithm has been constructed~\cite{deng2025flowdc}.
+
+\paragraph{NICME Preliminary Model}
+The prototype NICME model framework has been implemented in PyTorch using the HuggingFace
+Trainer API. The framework currently supports ResNet-50~\cite{he2016resnet} and
+ConvNeXt~\cite{liu2022convnext} backbones with configurable stage freezing, and
+utilizes an augmented cross-entropy loss that integrates logit adjustment with cost matrix values. The
+cost matrix is accepted as a user-defined input and propagated throughout model training.
+
+\section{Proposed Experiments}
+\label{sec:experiments}
+
+The experimental plan is organized around the two research objectives stated in
+Section~\ref{sec:objectives}. For Objective~1 (FLOW-DC), the evaluation
+focuses on rate-limit compliance, server-fault resilience, and scaling behavior rather than raw download
+throughput, since both FLOW-DC and its primary baseline are ultimately
+bottlenecked by available network bandwidth. For Objective~2 (NICME model), the
+evaluation focuses on whether the proposed cost-sensitive loss function lowers
+the average test cost (ATC) induced by a user-specified cost matrix, while
+maintaining overall classification accuracy. Each objective is evaluated against a set of
+baselines selected to isolate the contribution of specific design decisions.
+
+\subsection{Baseline Comparisons}
+\label{sec:baselines}
+
+\paragraph{FLOW-DC Baselines.}
+The primary baseline to evaluate FLOW-DC is \textbf{img2dataset}~\cite{beaumont_img2dataset}, the
+most widely deployed open-source tool for large-scale image downloading. As
+detailed in Section~\ref{sec:flowdc}, img2dataset uses synchronous thread-based
+HTTP via \texttt{urllib.request} with no per-host congestion control, treats
+HTTP~429 responses as permanent failures, and requires Apache PySpark for
+distributed execution. We believe img2dataset is the appropriate primary baseline because
+it represents the current standard against which any new downloading tool must
+be measured, and its published benchmarks (approximately 90 samples per second
+per CPU core, scaling to roughly 10,000 images per second across a 10-node
+Spark cluster~\cite{schuhmann2022laion5b}) provide the throughput reference
+for establishing parity.
+
+\paragraph{NICME Model Baselines.}
+Three baselines are used to evaluate NICME model's cost-sensitive loss function,
+each isolating a different aspect of the proposed approach. All baselines will
+be evaluated using the same backbone architecture, dataset, and training
+hyperparameters to ensure that differences in performance are attributable to
+the loss function rather than to confounding factors.
+
+The first baseline is \textbf{standard cross-entropy} (CE), which assigns
+equal penalty to all misclassification errors:
+%
+\begin{equation}
+\label{eq:baseline_ce}
+\mathcal{L}_{\mathrm{CE}} = -\frac{1}{n} \sum_{i=1}^{n}
+  \log \frac{\exp(f_{y_i}(\mathbf{x}_i))}
+            {\sum_{k=1}^{N} \exp(f_k(\mathbf{x}_i))}.
+\end{equation}
+%
+This is the cost-insensitive baseline against which any cost-sensitive method
+must demonstrate improvement in average test cost (ATC) as defined in
+Equation~\ref{eq:atc}. Standard CE is expected to minimize overall error rate
+but not to preferentially avoid high-cost misclassification pairs.
+
+The second baseline is \textbf{cost-sensitive regularization alone} (NULS-CS),
+as proposed by Galdran et al.~\cite{galdran2020}. This uses the loss
+$\mathcal{L}_{\mathrm{base}} + \lambda \cdot \mathcal{L}_{\mathrm{CS}}$ with
+the regularizer defined in Equation~\ref{eq:cs_regularizer} but without the
+logit adjustment component. NULS-CS achieved a 3--5\% improvement in
+quadratic-weighted kappa on diabetic retinopathy grading using a ResNeXt-50
+backbone~\cite{galdran2020}. This baseline isolates the contribution of the
+logit adjustment term: if NICME model outperforms NULS-CS, the improvement is
+attributable to the cost-matrix-driven logit adjustment described in
+Section~\ref{sec:loss_function}.
+
+The third baseline is \textbf{logit-adjusted cross-entropy} as proposed by
+Menon et al.~\cite{menon2021logitadjust}, which adds the log class prior
+$\log \pi_y$ to each logit. Although
+this method was designed for long-tailed class distributions rather than
+cost-sensitive classification, it is the closest published method to
+NICME model's logit adjustment mechanism and serves as a reference for the
+contribution of replacing class-prior offsets with cost-matrix-derived
+adjustments. On balanced datasets where $\pi_y = 1/N$ for all classes, this
+baseline reduces to standard CE, providing an additional control.
+
+\subsection{Experimental Methodology}
+\label{sec:methodology}
+
+\paragraph{FLOW-DC Experiments.}
+FLOW-DC will be evaluated using two differing manifests that
+separate content delivery network (CDN) based workloads from server-diverse workloads. The first
+manifest is a CDN-dominated control drawn from DataComp
+small~\cite{gadre2023datacomp}, which contains 12.8~million image-text pairs
+derived from Common Crawl. Because Common Crawl-sourced URLs terminate
+predominantly on high-capacity CDN infrastructure, this manifest tests
+throughput parity between FLOW-DC and img2dataset under conditions where
+congestion control provides low benefit; neither tool should trigger rate
+limiting. The second manifest is a server-diverse experimental condition
+constructed by filtering the GBIF occurrence snapshot to a subset of
+approximately 1--3~million URLs spanning 50--100 distinct institutional
+servers. This manifest tests PAARC's core value
+proposition: adaptive throttling on capacity-limited servers.
+
+Both FLOW-DC (with PAARC enabled), and
+img2dataset will be run on both manifests.
+For single-machine experiments, the primary platform is the University of
+Arizona HPC Puma cluster. For distributed
+experiments, 10 Jetstream2 cloud instances will be used (matching the Biotrove dataset generation
+configuration~\cite{deng2025flowdc}). Scaling efficiency will be measured at
+$N = 1, 2, 5, 10$ workers.
+
+\paragraph{FLOW-DC Metrics.}
+The primary throughput metric is the aggregate download rate
+$T_{\mathrm{agg}} = N_{\mathrm{success}} / t_{\mathrm{download}}$ (images per
+second), where $t_{\mathrm{download}}$ excludes partitioning, packaging, and
+transfer time. Both images-per-second and TiB-per-hour will be reported, with
+TiB-per-hour preferred for cross-study comparison because image sizes differ
+across datasets. The primary metric for evaluating rate-limit compliance and
+server-fault resilience is the per-host server-side failure rate (SFR),
+which aggregates all responses indicative of server throttling or overload:
+HTTP~429 (Too Many Requests), 5xx server errors (500, 502, 503, 504),
+connection resets, and request timeouts:
+%
+\begin{equation}
+\label{eq:sfr}
+\mathrm{SFR}(h) = \frac{N_{429}(h) + N_{5xx}(h) + N_{\mathrm{timeout}}(h)
+  + N_{\mathrm{reset}}(h)}{N_{\mathrm{total}}(h)} \times 100\%.
+\end{equation}
+%
+Scaling efficiency is
+defined as:
+%
+\begin{equation}
+\label{eq:scaling}
+E(N) = \frac{T_{\mathrm{agg}}(N)}{N \cdot T_{\mathrm{agg}}(1)},
+\end{equation}
+%
+where $T_{\mathrm{agg}}(N)$ is the aggregate throughput with $N$ workers.
+Output dataset quality is measured by the class distribution fidelity (CDF):
+%
+\begin{equation}
+\label{eq:cdf}
+\mathrm{CDF} = 1 - D_{\mathrm{KL}}\!\left(P_{\mathrm{downloaded}}
+  \;\|\; P_{\mathrm{requested}}\right),
+\end{equation}
+%
+where $P_{\mathrm{downloaded}}$ and $P_{\mathrm{requested}}$ are the class
+frequency distributions of successfully downloaded images versus the original
+manifest.
+
+\paragraph{NICME Model Experiments.}
+NICME model will be evaluated on four datasets of increasing complexity,
+each selected to provide a domain-motivated cost matrix. The first is a binary spider classification
+dataset (2 classes, 500 images per class) distinguishing black widows
+(\textit{Latrodectus}) from false widows (\textit{Steatoda}), two genera that
+are frequently confused due to similar morphology but carry vastly different
+medical consequences. The $2 \times 2$ cost matrix assigns high cost to
+misclassifying a black widow as a false widow (risking delayed antivenom
+treatment) and low cost to the reverse conservative error. This dataset serves
+as the simplest baseline for validating the cost-sensitive loss function in a
+controlled binary setting. The second is the AusSpiders dataset (9 classes,
+64,291 images)~\cite{deng2026aranet}, which extends the binary venomous
+versus non-venomous cost structure to a multiclass setting. The class
+distribution will be balanced by downsampling to equalize class frequencies,
+isolating the effect of the cost matrix from class-imbalance confounds. The
+third is the EyePACS diabetic retinopathy grading
+dataset~\cite{galdran2020}, which provides a 5-class ordinal structure (grades
+0--4) with clinically motivated asymmetric costs: undergrading severe disease
+(e.g., predicting grade~0 for a grade~4 sample) carries higher cost than
+overgrading mild disease. This dataset enables direct comparison with the
+NULS-CS baseline of Galdran et al.~\cite{galdran2020}, who reported QWK scores
+on the same data. The fourth is the Pharmacy Medication Image (PMI) dataset
+(20 classes, 13,955 images)~\cite{chen2025csada}, which contains top-down pill
+images identified by National Drug Code (NDC). Expert costs were assigned by a
+pharmacist to four critical medication-confusion pairs based on clinical
+danger; for example, confusing Amiodarone (a cardiac drug) with Allopurinol (a gout
+medication) risks pulmonary toxicity. Non-critical pairs are assigned
+unit cost. This dataset provides the most complex cost structure and enables
+direct comparison with the CSADA baseline of Chen et
+al.~\cite{chen2025csada}.
+
+For each dataset, all baselines and the proposed
+$\mathcal{L}_{\mathrm{NICME}}$ loss will be trained using the same backbone, the same data splits (80/10/10 train/validation/test, stratified by
+class), and the same training hyperparameters (AdamW optimizer, cosine
+annealing, early stopping on validation loss). To ensure statistical
+reliability, each configuration will be run across a minimum of 5 random seeds.
+
+Optimal hyperparameters will be determined via Bayesian hyperparameter
+optimization (HPO) using Optuna~\cite{akiba2019optuna} with the Tree-structured
+Parzen Estimator (TPE) sampler. For each dataset and backbone combination,
+Optuna will search over the cost-sensitive hyperparameters introduced in
+Section~\ref{sec:loss_function} (the regularization strength~$\lambda$, the
+warmup duration~$E_{\mathrm{warmup}}$, and the LoRA rank~$r$) as well as
+standard training hyperparameters including learning rate, weight decay, and
+batch size. The optimization objective is to minimize ATC on the validation
+split, ensuring that the selected hyperparameters directly optimize the
+cost-sensitive goal rather than overall accuracy.
+
+\paragraph{NICME Model Metrics.}
+The primary metric is the average test cost (ATC) as defined in
+Equation~\ref{eq:atc}. The cost reduction ratio (CRR) will be reported as:
+%
+\begin{equation}
+\label{eq:crr}
+\mathrm{CRR} = \frac{\mathrm{ATC}_{\mathrm{baseline}}
+  - \mathrm{ATC}_{\mathrm{proposed}}}
+  {\mathrm{ATC}_{\mathrm{baseline}}}.
+\end{equation}
+%
+Per-class recall stratified by cost category (high, medium, low) will be
+reported as a secondary metric. Overall classification accuracy and F1-score will also be
+tracked to ensure that cost-sensitive training does not trivially improve
+high-cost recall by degrading performance on other classes. All results will be
+reported as mean $\pm$ standard deviation across seeds, with 95\% confidence
+intervals.
+
+\paragraph{Hardware.}
+FLOW-DC single-machine experiments will use the UofA HPC Puma cluster (AMD EPYC
+7642, 25~Gb/s Ethernet); distributed experiments will use up to 10 Jetstream2
+cloud instances (up to 128 cores, 100~Gbps per node). NICME model training will
+be conducted on the University of Arizona HPC GPU resources, primarily Nvidia
+V100S GPUs (32~GB) and Nvidia A100 GPUs. Local experiments will utilize an Nvidia RTX~5090
+GPU (32~GB) for rapid prototyping.
+
+\section{Risks and Alternatives}
+\label{sec:risks}
+
+\paragraph{Overparameterization collapse under LoRA.}
+The use of LoRA to preserve cost-weight influence has not been empirically
+verified for cost-sensitive objectives. If LoRA-adapted models still achieve
+sufficiently low training loss that cost weights become ineffective, we will
+fall back to investigating cost-sensitive post-hoc decision rules using the Bayes-optimal
+rule (Equation~\ref{eq:bayes_cost_rule}), a two-stage approach that requires no modification to the
+training loss~\cite{elkan2001}.
+
+\paragraph{Combined loss does not outperform individual components.}
+The logit adjustment and regularization terms in
+$\mathcal{L}_{\mathrm{NICME}}$ may interfere destructively rather than
+complement each other. If no configuration of $\lambda$ and
+$E_{\mathrm{warmup}}$ yields improvement over the individual components, the
+contribution shifts to optimization and augmentation on the single best performing method between regularization and logit adjustment.
+
+\section{Resources}
+\label{sec:resources}
+
+All computational, storage, and software resources for the project are accessible through existing
+institutional allocations and personal hardware. Compute time on the
+University of Arizona HPC center (Puma CPU nodes and the shared GPU
+allocation providing Nvidia V100S and A100 GPUs) is available under the
+advisor's standing allocation, and NSF Jetstream2 cloud instances for
+distributed FLOW-DC experiments are covered under an existing usage-based
+allocation. 
+
+\paragraph{Software.}
+All software used in this research is open-source and requires no commercial
+licenses. FLOW-DC is implemented in Python using aiohttp (async HTTP),
+Polars (data processing), and TaskVine (distributed workflow
+management)~\cite{slydelgado2023taskvine}. NICME model is implemented in PyTorch
+with the HuggingFace Trainer API, Optuna for hyperparameter
+optimization~\cite{akiba2019optuna}, and the timm library for pretrained vision
+model access. Version control is managed through GitHub.
+
+\paragraph{Data and Datasets.}
+FLOW-DC experiments will use publicly available URL manifests from
+GBIF (Parquet format, hosted on AWS Open Data) and DataComp
+small~\cite{gadre2023datacomp}. NICME model experiments will use a binary black widow
+versus false widow spider dataset (1,000 images), the AusSpiders dataset
+(64,291 images, curated from iNaturalist)~\cite{deng2026aranet}, the EyePACS
+diabetic retinopathy dataset~\cite{galdran2020}, and the Pharmacy Medication
+Image (PMI) dataset (13,955 images)~\cite{chen2025csada}. All datasets will be
+publicly accessible.
+
+\section{Proposed Schedule}
+\label{sec:schedule}
+
+\begin{table}[H]
+    \centering
+    \footnotesize
+    \renewcommand{\arraystretch}{0.95}
+    \caption{Proposed research timeline.}
+    \label{tab:schedule}
+    \begin{tabular}{@{}lll@{}}
+        \toprule
+        \textbf{Month} & \textbf{Task} & \textbf{Deliverable} \\
+        \midrule
+        Spring 2026 & Oral Qualification Exam & Qualification Exam Pass \\
+        Spring 2026 & FLOW-DC final throughput experiments & FLOW-DC results \\
+        Spring 2026 & FLOW-DC paper draft & FLOW-DC paper \\
+        Spring 2026 & NICME binary model experiments & NICME preliminary results \#1 \\
+        Summer 2026 & Binary Class NICME Paper & NICME paper \#1 \\
+        Summer 2026 & NICME multi-class extension experiments & NICME multiclass results \\
+        Fall 2026 & NICME class imbalance methods integration testing & NICME integration results \\
+        Fall 2026 & NICME extension paper draft & NICME paper \#2 \\
+        Fall 2026 & Dissertation writing & Dissertation paper \\
+        Fall 2026 & Defense preparation & Dissertation defense \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+\newpage
+\begingroup
+\small
+\setlength{\bibsep}{2pt plus 1pt minus 1pt}
+\bibliographystyle{ieeetr}
+\bibliography{references}
+\endgroup
+
+\end{document}

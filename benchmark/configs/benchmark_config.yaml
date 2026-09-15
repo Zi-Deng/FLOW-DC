@@ -1,0 +1,52 @@
+# Benchmark Configuration: FLOW-DC vs img2dataset
+# Run with: python benchmark/run_benchmark.py --config benchmark/configs/benchmark_config.yaml
+
+name: "flowdc-vs-img2dataset"
+
+# Dataset configuration
+dataset:
+  path: "files/input/gbif_url_10000.parquet"
+  url_column: "url"
+  label_column: "species"  # Set to null if no labels
+
+# Output configuration
+output:
+  base_dir: "benchmark/results"
+
+# Tools to benchmark
+tools:
+  flowdc:
+    enabled: true
+    variants:
+      - "paarc_enabled"
+      - "paarc_disabled"
+
+  img2dataset:
+    enabled: true
+    processes: 1  # Number of parallel processes
+    resize_mode: "no"  # Disable resize for fair comparison
+
+# Concurrency levels to test
+# Higher values test scalability; lower values test baseline performance
+concurrency_levels:
+  - 64
+  - 128
+  - 256
+  - 512
+
+# Download settings
+timeout_sec: 30
+
+# Benchmark runs
+warmup_runs: 1  # Discarded runs to warm up caches
+measured_runs: 3  # Number of runs to average
+
+# Resource monitoring
+resource_monitoring:
+  enabled: true
+  sample_interval_sec: 0.5
+
+# Report generation
+reports:
+  json: true
+  html: true

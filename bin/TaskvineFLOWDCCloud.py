@@ -9,7 +9,7 @@ using gocmd (iRODS/CyVerse) or other cloud CLI tools.
 This script:
 1. Reads partition parquet files from a directory
 2. Creates a TaskVine task for each partition
-3. Each task runs download_batch.py with PolicyBBR rate control
+3. Each task runs download_batch.py with PAARC rate control
 4. Each task uploads its output directly to cloud storage
 5. Supports parallel upload while downloading continues
 
@@ -25,13 +25,13 @@ Config file format:
     "url_col": "url",
     "label_col": "species",
     "concurrent_downloads": 1000,
-    "enable_polite_controller": true,
+    "enable_paarc": true,
     "timeout_minutes": 60,
     "max_retries": 3
 }
 """
 
-import ndcctools.taskvine as vine
+from TaskvineFLOWDC import vine, create_partition_config as create_paarc_partition_config
 import json
 import os
 import argparse
@@ -177,39 +177,15 @@ def create_partition_config(base_config: dict, partition_file: str, output_name:
     Returns:
         Config dict suitable for download_batch.py
     """
-    return {
-        "input": partition_file,
-        "input_format": "parquet",
-        "output": output_name,
-        "output_format": base_config.get('output_format', 'imagefolder'),
-        "url": base_config.get('url_col', 'url'),
-        "label": base_config.get('label_col'),
-        "concurrent_downloads": base_config.get('concurrent_downloads', 1000),
-        "timeout": base_config.get('timeout_sec', 30),
-        "enable_polite_controller": base_config.get('enable_polite_controller', True),
-        # PolicyBBR parameters
-        "initial_rate": base_config.get('initial_rate', 100.0),
-        "min_rate": base_config.get('min_rate', 1.0),
-        "max_rate": base_config.get('max_rate', 10000.0),
-        "per_host_conc_init": base_config.get('per_host_conc_init', 16),
-        "per_host_conc_cap": base_config.get('per_host_conc_cap', 512),
-        "control_interval_sec": base_config.get('control_interval_sec', 0.25),
-        # Additional PolicyBBR parameters
-        "startup_growth_factor": base_config.get('startup_growth_factor', 1.5),
-        "latency_degradation_factor": base_config.get('latency_degradation_factor', 1.5),
-        "headroom": base_config.get('headroom', 0.85),
-        "probe_interval_sec": base_config.get('probe_interval_sec', 60.0),
-        "probe_increment": base_config.get('probe_increment', 0.05),
-        "backoff_ceiling_factor": base_config.get('backoff_ceiling_factor', 0.7),
-        "backoff_cooldown_sec": base_config.get('backoff_cooldown_sec', 300.0),
-        # Retry parameters
-        "max_retry_attempts": base_config.get('max_retry_attempts', 3),
-        "retry_backoff_sec": base_config.get('retry_backoff_sec', 2.0),
-        # Output options - always create tar for cloud upload
-        "naming_mode": base_config.get('naming_mode', 'sequential'),
-        "create_tar": True,  # Required for cloud upload
-        "create_overview": base_config.get('create_overview', True),
-    }
+    normalized = dict(base_config)
+    normalized.setdefault('enable_paarc', base_config.get('enable_polite_controller', True))
+    normalized.setdefault('C_init', base_config.get('per_host_conc_init', 8))
+    normalized.setdefault('C_max', base_config.get('per_host_conc_cap', 2000))
+    config = create_paarc_partition_config(normalized, partition_file, output_name)
+    # Cloud commands expect a compressed archive with a .tar.gz suffix.
+    config['create_tar'] = True
+    config['compress_tar'] = True
+    return config
 
 
 def declare_parquet_files(manager, directory: str) -> dict:

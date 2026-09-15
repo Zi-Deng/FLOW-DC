@@ -1,0 +1,23 @@
+{
+  "created_utc": "2026-04-29T13:41:42.614910+00:00",
+  "dataset": "inat_s3",
+  "label_column": "label",
+  "manifest_path": "benchmark/manifests/flowdc_gradient_20260429/inat_s3_20000.parquet",
+  "rows": 20000,
+  "sha256": "a2b6c5343b1add10ad010f91bf038c9c7b53ebe4846a029ac0641e253d6f1317",
+  "source": "iNaturalist Open Data S3 sampled from local FLOW-DC manifest",
+  "source_notes": {
+    "local_source_path": "files/input/inat_filtered_group_2.parquet",
+    "local_source_sha256": "8cd174cd0b2c1f7accc13927d24fdb0f20adf0ead009a89386b57806339c399a",
+    "official_docs": "https://github.com/inaturalist/inaturalist-open-data",
+    "official_note": "Current full iNaturalist metadata object is ~29GB; local FLOW-DC manifest is used as the safe fixed sample."
+  },
+  "top_hosts": [
+    {
+      "count": 20000,
+      "host": "inaturalist-open-data.s3.amazonaws.com"
+    }
+  ],
+  "unique_hosts": 1,
+  "url_column": "url"
+}
