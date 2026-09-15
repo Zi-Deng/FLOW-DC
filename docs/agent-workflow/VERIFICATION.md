@@ -19,7 +19,8 @@ This record describes FLOW-DC evidence collected during the September 14, 2026 a
 | Full local gate | `make check` passed with the dedicated Python 3.12.12 environment: 8 application tests, 120 runtime tests, scoped Ruff, schema/configuration/CI context checks, all eight skills, workflow YAML and maintained Markdown links |
 | Skill payload | All eight packages and `agents/openai.yaml` metadata imported and structurally validated; shared contract links adapted for FLOW-DC |
 | GitHub configuration | Four approved labels created and read back; `AGENTIC_COPILOT_ACTIONS_ENABLED=false` set and read back |
-| AppArmor profile syntax | Proposed executable-specific profile parsed successfully without loading it into the kernel |
+| Sandboxed workflow suite | All 120 workflow tests passed inside the default Codex workspace sandbox after the host fix; external GitHub/model services remain controlled doubles |
+| AppArmor profile and startup | Administrator-installed profile matches the prepared source, is owned by root with mode 0644, and `codex sandbox --config 'sandbox_mode="workspace-write"' -- /usr/bin/pwd` now succeeds |
 | Private memory | Created after local exclusions; full original task prompt and decisions retained outside Git |
 
 The local gate passed without changing application code or historical artifacts. Hosted check links and independent review evidence belong in the adoption PR as they complete.
@@ -40,15 +41,13 @@ The first complete adopted code/documentation revision,
 GitHub's check-run API reported integration ID `15368` for both required names on
 that head. These immutable links record that revision; use the current PR checks
 for later documentation or code commits. The four approved labels and the disabled
-hosted-review variable were read back successfully. Main currently has no ruleset;
-the proposed active policy is prepared but awaits the prerequisite baseline merge,
-which intentionally uses a merge commit before linear-history enforcement begins.
+hosted-review variable were read back successfully. The [active main ruleset](https://github.com/Zi-Deng/FLOW-DC/rules/23400835) was created after the baseline merge and read back against the complete proposed configuration. It requires both check names from Actions integration 15368, strict up-to-date status, resolved threads, a PR and linear history, and blocks force pushes/deletion with no bypass actors.
 
 ## Live rollout acceptance
 
 | Acceptance | Required evidence |
 | --- | --- |
-| Baseline publication | PR #2 is published and locally validated; human merge preserves ancestry |
+| Baseline publication | PR #2 human-merged at `0e88dbc38449a4e7cdfef5c04aeca8c5bbe94de1` on September 15, 2026 UTC; the original checkout fast-forwarded successfully |
 | Adoption CI | Actual `flowdc-tests` and `agentic-quality` success on the committed adoption head |
 | Local independent review | Fresh Copilot Opus 5 invocation, exact head/base, recorded usage and published COMMENT review with findings dispositions |
 | Main protection | Read-back of active `agentic-default-branch` ruleset matching observed check names and Actions integration |
@@ -57,7 +56,7 @@ which intentionally uses a merge commit before linear-history enforcement begins
 | Finish path | Explicit assessment and human command; after the human runs it, verify merge plus artifact archive/cleanup |
 | Hosted review | Deliberately disabled; no hosted entitlement, secret or generation claim |
 
-At initial implementation, the host sandbox test failed with bubblewrap/AppArmor permission errors. A targeted profile and administrator installer/rollback are prepared privately. Syntax validation alone does not establish a loaded profile or a working executor. Human baseline/adoption merges and the post-installation pilot are separate acceptance steps; bootstrap changes must not be assigned a fabricated managed completion record.
+At initial implementation, the host sandbox test failed with bubblewrap/AppArmor permission errors. After the administrator installed the targeted profile, startup succeeded. A separate socket probe remains denied by the default network restriction; the local HTTP application suite therefore runs in the coordinator environment. This is distinct from the repaired namespace-startup failure. The adoption merge and native managed model pilot remain separate acceptance steps; bootstrap changes must not be assigned a fabricated managed completion record.
 
 ## Reproduce focused checks
 

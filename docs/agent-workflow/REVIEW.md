@@ -132,7 +132,7 @@ For scientific changes apply [the domain rubric](domain-review.md).
 
 ## Manual Actions procedure
 
-Complete the protected-environment setup in [SETUP.md](SETUP.md#6-enable-manual-actions-review).
+Complete the protected-environment setup in [SETUP.md](SETUP.md#6-hosted-review-is-opt-in).
 Then use **Actions → manual Copilot review → Run workflow**, on the default branch.
 Select the PR, issue, plan comment ID and exact head. Choose publication only when
 you intend to post the generated report; otherwise download and inspect the artifact.
@@ -176,7 +176,7 @@ Prepare a fresh packet after a model change. Each packet records its requested
 model and budgets at preparation; changing `.agentic/config.json` afterwards does
 not retarget that packet. Check `metadata.json`, `review.md`, and CLI-reported
 `usage.json` for the actual run. Configuration and mocked tests do not prove live
-account access. Historical Sonnet pilot results in `VERIFICATION.md` remain
+account access. Historical Sonnet pilot results in the [upstream verification record](https://github.com/Zi-Deng/agentic-github-template/blob/b4a1df739a15b20b26635602e6b6a21fb08e0ac5/docs/agent-workflow/VERIFICATION.md) remain
 evidence for those earlier runs, not evidence of Opus inference. Historical Fable
 reports are likewise retained under their original model and budgets.
 
