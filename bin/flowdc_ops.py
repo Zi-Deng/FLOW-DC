@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Private local setup and read-only Jetstream2 preflight (Python 3.12+, Linux)."""
+"""Private Jetstream2 setup, preflight and bounded pilot control (Python 3.12+, Linux)."""
 
 import argparse
 import errno
+import importlib.util
 import ipaddress
 import json
 import math
@@ -20,6 +21,12 @@ from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import urlsplit
 from uuid import UUID
+
+if __name__ == "__main__":
+    sys.modules["flowdc_ops"] = sys.modules[__name__]
+
+# Direct scripts already include their directory; embedded library imports must
+# not alter the caller's module search path.
 
 SCHEMA_VERSION = 1
 DIRECTORIES = ("inventory", "releases", "runs")
@@ -601,7 +608,7 @@ def safe_environment(*, local=False):
     return env
 
 
-def run_bounded(argv, *, timeout, local=False, pass_fds=()):
+def run_bounded(argv, *, timeout, local=False, pass_fds=(), classify_errors=False):
     if timeout <= 0:
         raise OpsError(
             "probe_timeout", "The probe time budget expired.", "Inspect access manually and retry.", 1
@@ -634,6 +641,7 @@ def run_bounded(argv, *, timeout, local=False, pass_fds=()):
             1,
         ) from None
     output = bytearray()
+    diagnostics = bytearray()
     total = 0
     deadline = time.monotonic() + timeout
     try:
@@ -665,6 +673,8 @@ def run_bounded(argv, *, timeout, local=False, pass_fds=()):
                         )
                     if key.fileobj is process.stdout:
                         output.extend(chunk)
+                    elif classify_errors:
+                        diagnostics.extend(chunk)
             # Observe exit without releasing the PID. Even after pipe EOF,
             # descendants may remain in this child's process group.
             while os.waitid(os.P_PID, process.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT) is None:
@@ -697,6 +707,14 @@ def run_bounded(argv, *, timeout, local=False, pass_fds=()):
         finally:
             process.stdout.close()
             process.stderr.close()
+    if code and classify_errors:
+        # Return only a fixed category, never stderr or the rejected request.
+        diagnostic = bytes(diagnostics).lower()
+        if b"forbidden" in diagnostic or b"unauthorized" in diagnostic or b"http 403" in diagnostic:
+            return code, b"permission"
+        if b"quota" in diagnostic or b"overlimit" in diagnostic:
+            return code, b"quota"
+        return code, b"provider"
     return code, bytes(output)
 
 
@@ -1297,7 +1315,7 @@ def plan(args):
             "Resolve named prerequisites using a fresh complete inventory and verified per-VM rates with source, time and matching flavor.",
             "This validates a bounded specification only. No resource was activated, and guest/network readiness is not inferred.",
             "Activation is not guaranteed. Stopping guest services does not establish that billing stops; verify provider lifecycle/billing rules manually.",
-            "run, fleet, lifecycle and deployment commands are not implemented. Any later execution requires the approved separate execution stage.",
+            "pilot lifecycle commands require separate explicit preparation and operational authorization; guest deployment and experiments are not implemented.",
         ],
         data={
             "validated": not pending,
@@ -1382,6 +1400,21 @@ def parser():
     pilot.add_argument("--spec", required=True)
     pilot.add_argument("--inventory", required=True)
     pilot.add_argument("--output")
+    siblings = (
+        "flowdc_pilot",
+        "flowdc_pilot_cli",
+        "flowdc_pilot_journal",
+        "flowdc_pilot_provider",
+        "flowdc_pilot_supervisor",
+    )
+    if all(importlib.util.find_spec(name) is not None for name in siblings):
+        from flowdc_pilot_cli import arguments
+
+        arguments(commands)
+    else:
+        unavailable = commands.add_parser("pilot", help="Pilot modules are not installed.")
+        unavailable.add_argument("pilot_args", nargs=argparse.REMAINDER)
+        unavailable.set_defaults(pilot_unavailable=True)
     return result
 
 
@@ -1394,6 +1427,17 @@ def main(argv=None):
             check_output(args.output)
         if args.command == "init":
             result, exit_code = initialize(args), 0
+        elif args.command == "pilot":
+            if getattr(args, "pilot_unavailable", False):
+                raise OpsError(
+                    "pilot_unavailable",
+                    "Pilot modules are not installed.",
+                    "Use the complete reviewed release for pilot commands.",
+                    3,
+                )
+            from flowdc_pilot_cli import run
+
+            result, exit_code = run(args)
         else:
             result, exit_code = {"doctor": doctor, "inventory": inventory, "plan": plan}[args.command](args)
         if getattr(args, "output", None):

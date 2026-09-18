@@ -1,9 +1,11 @@
-# Local Jetstream2 control and read-only preflight
+# Local Jetstream2 control and pilot lifecycle
 
 `bin/flowdc_ops.py` runs on the **local control machine**, using Python 3.12+ on
-Linux. It provides `init`, `doctor`, `inventory`, and `plan`. It does not deploy to
-guests, unlock SSH keys, change systemd settings, install packages, download data,
-or activate resources. `run`, `fleet`, and lifecycle commands are not implemented.
+Linux. It provides `init`, `doctor`, `inventory`, `plan`, and the additive
+[`pilot` lifecycle commands](LIFECYCLE.md). The original four commands remain
+non-activating. Explicit pilot preparation can install a user service; only that
+service can mutate the registered pilot resources after a start request. Guest
+deployment, package installation, SSH unlocking and downloads are not implemented.
 Run as the ordinary operator account with matching real/effective user IDs;
 privileged or setuid execution is not a supported mode. Inventory uses `/bin/bash`,
 and doctor checks that exact executable path. The empty `OS_*` environment case
@@ -192,7 +194,7 @@ Create an owner-private `pilot.json` using the [synthetic pilot example](pilot.e
 Set exactly one manager, one origin, and one worker, using three distinct observed,
 allowlisted UUIDs. Match the snapshot's project, region, and auth URL. Each VM's
 `active_seconds` must be an integer from 1 through 7200. The plan does not track
-past usage or enforce runtime budgets; those belong to the later execution stage.
+past usage or enforce runtime budgets; the separate [pilot journal and supervisor](LIFECYCLE.md) do that.
 
 An inventory must be complete and at most 24 hours old, with no future observation
 time. Supported planning states are ACTIVE, SHUTOFF, SHELVED and SHELVED_OFFLOADED;
@@ -238,7 +240,8 @@ reported other per-VM estimates are partial and the total remains null.
 Exit 0 validates the supplied bounded specification only. It does not reserve
 resources, guarantee activation, verify routes or guest services, or establish
 that stopping guest services stops billing. No resources are unshelved or changed.
-Future execution must honor the approved cumulative two-hour allowance per VM.
+Pilot execution retains the approved cumulative two-hour allowance per VM; see
+[preparation, accounting, shutdown and the emergency procedure](LIFECYCLE.md).
 
 ## JSON outcomes and private artifacts
 
