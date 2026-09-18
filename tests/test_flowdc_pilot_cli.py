@@ -146,6 +146,17 @@ class PilotCliTests(unittest.TestCase):
             provider.assert_not_called()
 
     def test_supervise_sigterm_drains_outstanding_obligations(self):
+        self.exercise_sigterm_cleanup()
+
+    def test_sigterm_retries_busy_stop_and_tick_without_losing_obligations(self):
+        self.exercise_sigterm_cleanup(contended=True)
+
+    def test_sigterm_does_not_treat_corrupt_history_as_transient_contention(self):
+        with self.assertRaises(ops.OpsError) as raised:
+            self.exercise_sigterm_cleanup(contended=True, failure_code="invalid_journal_history")
+        self.assertEqual(raised.exception.code, "invalid_journal_history")
+
+    def exercise_sigterm_cleanup(self, *, contended=False, failure_code="pilot_state_busy"):
         self.invoke(self.args)
         journal = Journal(self.state)
         clock, provider = FakeClock(), FakeProvider()
@@ -155,26 +166,52 @@ class PilotCliTests(unittest.TestCase):
         original_handlers = {sig: signal.getsignal(sig) for sig in (signal.SIGTERM, signal.SIGINT)}
         self.addCleanup(lambda: [signal.signal(sig, handler) for sig, handler in original_handlers.items()])
         sleeps = 0
+        signalled = False
+        busy_stop = 2 if contended else 0
+        busy_tick = 2 if contended else 0
+        supervisor = Supervisor(journal, provider, clock=clock)
+        original_tick = supervisor.tick
+
+        def stop_request(journal, command):
+            nonlocal busy_stop
+            if command == "stop" and busy_stop:
+                busy_stop -= 1
+                self.assertTrue(journal.supervisor_locked())
+                self.assertEqual(sum(vm["account"]["obligation"] for vm in journal.read()["vms"].values()), 3)
+                raise cli.failure(failure_code)
+            return request(journal, command, clock=clock)
+
+        def tick():
+            nonlocal busy_tick
+            if busy_tick and journal.read()["desired"] == "stop":
+                busy_tick -= 1
+                self.assertTrue(journal.supervisor_locked())
+                raise cli.failure(failure_code)
+            original_tick()
 
         def pause(seconds):
-            nonlocal sleeps
+            self.assertEqual(seconds, 2)
+            nonlocal sleeps, signalled
             sleeps += 1
             self.assertLess(sleeps, 100)
             clock.advance(10)
             if sleeps == 1:
                 request(journal, "start", clock=clock)
-            if sum(action == "unshelve" for action, _ in provider.actions) == 3:
+            if not signalled and sum(action == "unshelve" for action, _ in provider.actions) == 3:
+                signalled = True
                 signal.raise_signal(signal.SIGTERM)
 
         with (
             patch.object(cli, "verify_service"),
             patch.object(cli, "Provider", return_value=provider),
-            patch.object(cli, "Supervisor", side_effect=lambda j, p: Supervisor(j, p, clock=clock)),
-            patch.object(cli, "request", side_effect=lambda j, c: request(j, c, clock=clock)),
+            patch.object(cli, "Supervisor", return_value=supervisor),
+            patch.object(supervisor, "tick", side_effect=tick),
+            patch.object(cli, "request", side_effect=stop_request),
             patch.object(cli.time, "sleep", side_effect=pause),
         ):
             _, code = cli.supervise(journal)
         self.assertEqual(code, 0)
+        self.assertEqual((busy_stop, busy_tick), (0, 0))
         self.assertEqual(journal.read()["desired"], "idle")
         self.assertTrue(all(provider.states[key] == "SHELVED_OFFLOADED" for key in VM_IDS))
         self.assertEqual(sum(action == "shelve" for action, _ in provider.actions), 3)

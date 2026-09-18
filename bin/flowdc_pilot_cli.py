@@ -299,12 +299,18 @@ def supervise(journal):
         signal.signal(signal.SIGTERM, stop)
         signal.signal(signal.SIGINT, stop)
         while True:
-            if stopping:
-                request(journal, "stop")
-            supervisor.tick()
-            # Never intentionally abandon a cleanup obligation on termination.
-            if stopping and journal.read()["desired"] == "idle":
-                return ops.outcome("pilot supervise", "ok"), 0
+            try:
+                if stopping:
+                    request(journal, "stop")
+                supervisor.tick()
+                # A stopping systemd unit will not restart an exited process.
+                if stopping and journal.read()["desired"] == "idle":
+                    return ops.outcome("pilot supervise", "ok"), 0
+            except ops.OpsError as exc:
+                if exc.code != "pilot_state_busy":
+                    raise
+                # Retain the verified actor lock and the in-memory stop latch.
+                # Do not bypass journal serialization or retry corruption errors.
             time.sleep(2)
 
 

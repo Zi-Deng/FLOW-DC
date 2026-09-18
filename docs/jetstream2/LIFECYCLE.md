@@ -297,3 +297,17 @@ with real systemd identity checks and synthetic provider/clock injection confine
 the test harness. The second signals the service while three fake obligations exist.
 These checks do not install the production unit, load real credentials, or establish
 live cloud behavior. Installer unit generation is separately covered by unit tests.
+
+During the verified supervision loop, `pilot_state_busy` from a stop request, a
+tick or the final state read is retried after two seconds while retaining the
+single-supervisor lock and the stop signal. Each journal-lock attempt still has
+its two-second acquisition bound. This does not depend on systemd restarting a
+stopping unit: an explicit stop job does not restart an exited process. Other
+errors, including corrupt/unsafe history, are not silently retried as contention.
+
+Signal handling starts only after startup verification, exclusive ownership,
+profile loading and recovery complete. A termination during that earlier startup
+interval can still exit before cleanup; existing obligations then require the
+emergency/manual procedure or a verified subsequent start. No new activation is
+performed in that interval. Keep the service running, use `pilot stop` for normal
+cleanup and verify readiness before relying on graceful unit termination.
