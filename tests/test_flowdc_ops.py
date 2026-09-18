@@ -956,8 +956,19 @@ class PreflightTests(unittest.TestCase):
         self.spec_path.symlink_to(self.inventory_path)
         self.pilot(2)
 
-    def doctor(self, expected, *, ssh_code=0, systemd=(0, b"running\n"), linger=(0, b"yes\n"), missing=()):
+    def doctor(
+        self,
+        expected,
+        *,
+        ssh_code=0,
+        systemd=(0, b"running\n"),
+        linger=(0, b"yes\n"),
+        missing=(),
+        bash_interpreter=True,
+    ):
         def which(name):
+            if name == "/bin/bash":
+                return name if bash_interpreter and "bash" not in missing else None
             return None if name in missing else f"/fake/{name}"
 
         def probe(argv, **kwargs):
@@ -1023,6 +1034,61 @@ class PreflightTests(unittest.TestCase):
                     ["doctor", "--profile", str(self.profile_path), "--state-root", str(self.state)], 3
                 )
         self.assertIn({"name": "ssh_agent", "state": "probe_timeout"}, result["checks"])
+
+    def test_review_doctor_rejects_path_only_bash(self):
+        # PATH has /fake/bash, but the interpreter used by cloud_query is absent.
+        result = self.doctor(3, bash_interpreter=False)
+        self.assertIn({"name": "bash", "state": "missing"}, result["checks"])
+        self.assertIn("/bin/bash", " ".join(result["next_actions"]))
+
+    def test_review_cleanup_wait_timeout_is_json_error_and_closes_streams(self):
+        original_popen = ops.subprocess.Popen
+        children = []
+
+        def popen(*args, **kwargs):
+            child = original_popen(*args, **kwargs)
+            original_wait = child.wait
+            children.append((child, original_wait))
+            waited = False
+
+            def wait(timeout):
+                nonlocal waited
+                if not waited:
+                    waited = True
+                    return original_wait(timeout=timeout)
+                # Deterministically simulate delayed cleanup after a successful
+                # probe. The real fixture child is already reaped; none hangs.
+                self.assertEqual(timeout, 1)
+                raise subprocess.TimeoutExpired(["cleanup-secret-marker"], timeout)
+
+            child.wait = wait
+            return child
+
+        try:
+            with patch.object(ops.subprocess, "Popen", side_effect=popen):
+                result = self.capture(1)
+            self.assertFalse(result["data"]["complete"])
+            self.assertTrue(result["errors"])
+            self.assertTrue(all(error["code"] == "probe_cleanup_timeout" for error in result["errors"]))
+            self.assertTrue(all(child.stdout.closed and child.stderr.closed for child, _ in children))
+        finally:
+            for child, original_wait in children:
+                child.wait = original_wait
+                child.stdout.close()
+                child.stderr.close()
+                original_wait(timeout=1)
+
+    def test_review_flavor_name_id_mismatch_stays_incomplete(self):
+        for server in self.fixture["responses"]["server show"].values():
+            server["flavor"] = "m3.small"
+        flavor = self.fixture["responses"]["flavor show"][FLAVOR]
+        self.fixture["responses"]["flavor show"] = {"m3.small": flavor}
+        self.write_fixture()
+        result = self.capture(1)
+        self.assertFalse(result["data"]["complete"])
+        self.assertEqual(result["data"]["servers"], [])
+        self.assertIn({"name": "flavor_1", "state": "provider_schema"}, result["checks"])
+        self.assertEqual(sum(call[:3] == ["flavor", "show", "m3.small"] for call in self.calls()), 1)
 
     def test_bounded_runner_caps_stderr_and_kills_pipe_holding_descendants(self):
         with self.assertRaises(ops.OpsError) as caught:

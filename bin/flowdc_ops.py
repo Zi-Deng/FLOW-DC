@@ -658,12 +658,22 @@ def run_bounded(argv, *, timeout, local=False, pass_fds=()):
     finally:
         # Also reap a child that closed its pipes, or left descendants after exit.
         try:
-            os.killpg(process.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
-        process.wait(timeout=1)
-        process.stdout.close()
-        process.stderr.close()
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            try:
+                process.wait(timeout=1)
+            except subprocess.TimeoutExpired:
+                raise OpsError(
+                    "probe_cleanup_timeout",
+                    "Subprocess cleanup did not complete within its time budget.",
+                    "Inspect local child processes manually; do not assume the probe has stopped.",
+                    1,
+                ) from None
+        finally:
+            process.stdout.close()
+            process.stderr.close()
 
 
 def readiness_files(profile):
@@ -715,7 +725,10 @@ def doctor(args):
         {"name": "intended_servers", "state": "ok" if profile["intended_server_ids"] else "pending"}
     )
     checks.append({"name": "python", "state": "ok" if sys.version_info >= (3, 12) else "unsupported"})
-    tools = {name: shutil.which(name) for name in ("bash", "ssh", "ssh-add", "systemctl", "loginctl")}
+    tools = {
+        name: shutil.which("/bin/bash" if name == "bash" else name)
+        for name in ("bash", "ssh", "ssh-add", "systemctl", "loginctl")
+    }
     checks.extend({"name": name, "state": "ok" if path else "missing"} for name, path in tools.items())
     probes = (
         ("ssh_agent", "ssh-add", ["-l"]),
@@ -744,6 +757,7 @@ def doctor(args):
         checks=checks,
         next_actions=[
             "For missing/unsafe paths, run init or inspect the configured paths and owner-private permissions. "
+            "Bash must be executable at /bin/bash, the interpreter used by inventory. "
             "Install missing tools only through the coordinator's separate setup operation.",
             "For missing credentials, enroll manually through Horizon Identity > Application Credentials for the correct allocation. "
             "Keep the downloaded OpenRC private; doctor does not validate its contents or authentication.",

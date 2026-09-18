@@ -4,6 +4,10 @@
 Linux. It provides `init`, `doctor`, `inventory`, and `plan`. It does not deploy to
 guests, unlock SSH keys, change systemd settings, install packages, download data,
 or activate resources. `run`, `fleet`, and lifecycle commands are not implemented.
+Run as the ordinary operator account with matching real/effective user IDs;
+privileged or setuid execution is not a supported mode. Inventory uses `/bin/bash`,
+and doctor checks that exact executable path. The empty `OS_*` environment case
+was exercised with Bash 5.2.21; older-shell compatibility is not established.
 
 | Location | Purpose |
 | --- | --- |
@@ -153,16 +157,29 @@ Incompatible client/provider output is an incomplete operational failure, withou
 a fallback to broader commands. No live provider compatibility is claimed by the
 offline tests. Record the administration client version for any later live check.
 
+The verified administration client version is **python-openstackclient 10.3.0**.
+The coordinator's [read-only compatibility record](https://github.com/Zi-Deng/FLOW-DC/pull/6#issuecomment-5724481691)
+at commit `eac509238b01d72f9150992b823cdd5583a01db2` covers context/region,
+22 intended servers, two flavor IDs, compute quota and project-filtered networks.
+It establishes compatibility for that installed client/site, not an untested
+version range. Revalidate before changing the administration client. Flavor lookups
+must return the exact requested identifier; a bare name resolving to a different
+ID remains incomplete rather than relaxing the identity check.
+
 Each cloud process is capped at 20 seconds and 256 KiB combined stdout/stderr;
 inventory has a 90-second total subprocess budget. Each unique flavor is inspected
 once per inventory, including caching failed inspections. Calls are bounded by
 `5 + VM count + unique flavor count`: 28 for 22 VMs sharing one flavor, at most 133
 for the 64-VM inventory bound. Exceeding the time budget leaves the snapshot
 incomplete rather than skipping observations. Local doctor probes have five
-seconds each. Region/network responses have bounded collection sizes. Excess output, timeout, malformed JSON, missing
-resources, wrong UUID/project/site, or any required partial failure cannot produce
-a complete snapshot. Display names, keypair names, metadata, token IDs, raw errors,
-and unrelated provider fields are discarded. The retained data is still private.
+seconds each. Child cleanup gets at most one additional second. A cleanup timeout
+is reported as `probe_cleanup_timeout`, never success; inspect local child
+processes manually rather than assume the probe has stopped.
+Region/network responses have bounded collection sizes. Excess output, timeout,
+malformed JSON, missing resources, wrong UUID/project/site, or any required partial
+failure cannot produce a complete snapshot. Display names, keypair names, metadata,
+token IDs, raw errors, and unrelated provider fields are discarded. The retained
+data is still private.
 
 ## Validate a three-VM pilot offline
 
@@ -253,7 +270,15 @@ python3 -B -m unittest discover -s tests -p test_flowdc_ops.py -v
 python -m unittest discover -s tests -v
 make check
 git diff --check
+ruff check bin/flowdc_ops.py tests/test_flowdc_ops.py
+ruff format --check bin/flowdc_ops.py tests/test_flowdc_ops.py
 ```
+
+Use Ruff from the development environment, or its explicit executable path.
+The existing `make check` lint target covers agentic workflow files; application
+tests are discovered by its unittest target. Run the two focused Ruff commands
+above for the operations CLI and its tests. This unit does not change that gate's
+workflow policy.
 
 Ops tests use temporary directories, synthetic OpenRC files, fake executables and
 mocked local-session probes. They need neither credentials nor network access.
