@@ -18,7 +18,7 @@ Developer validation uses a separate Python 3.12+ environment and `make check`; 
 
 ## Local Jetstream2 operations
 
-The [local operations guide](docs/jetstream2/README.md) documents `python3 bin/flowdc_ops.py init` for creating a private control workspace. This initial checkpoint provides local initialization; readiness inspection, inventory capture, and pilot validation are still being implemented. No VM lifecycle or experiment commands are available.
+The [local operations guide](docs/jetstream2/README.md) documents `python3 bin/flowdc_ops.py` for private workspace initialization, local readiness inspection, scoped read-only OpenStack inventory, and offline three-VM pilot validation. It uses Python 3.12+ without new project dependencies. Enrollment remains manual; VM lifecycle and experiment commands are not implemented.
 
 ## Installation
 
