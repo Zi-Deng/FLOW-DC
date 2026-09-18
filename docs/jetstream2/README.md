@@ -61,6 +61,11 @@ unconfigured context, disabled lingering, or missing tools yield exit 3 and manu
 next actions. A pass means these local prerequisites were observed, not that cloud
 authentication, guest reachability, or persistent services work.
 
+A user manager reporting `degraded` is recorded distinctly as `systemd_user:
+degraded` and deliberately remains pending (exit 3). Inspect
+`systemctl --user --failed` and decide which failed units need attention. This is
+an observed manager state, not an unavailable manager; doctor changes no units.
+
 ## Manual enrollment and the missing-credential checkpoint
 
 Until the operator supplies an application credential, leave `credential_file`
@@ -254,8 +259,20 @@ must already exist with mode 0700 outside Git. Fresh outputs are mode 0600; exis
 files, directories and links are never replaced. Output availability is checked
 before discovery and exclusive creation protects against concurrent collisions.
 Saved partial inventory retains `complete: false` and its failure/pending status.
+If a local wrapper, credential or client fails revalidation after the initial
+readiness gate, inventory stops further discovery and reports a local error with
+manual file-inspection guidance. Unsafe inputs retain exit 2 (`invalid`); local
+I/O failures use exit 1. Malformed provider data remains a separate
+`provider_schema` failure, with the failing probe named in `checks`.
 Do not substitute an edited snapshot for a fresh observation: snapshots are trusted
 local records, not signed cloud attestations.
+
+Subprocess cleanup signals the private process group before reaping its leader,
+including descendants that already closed stdout/stderr. The Linux runner uses
+`waitid` with `WNOWAIT` to observe exit while retaining the child PID. Run the CLI
+as a standalone process with the default `SIGCHLD` disposition; inherited ignore
+or custom child-reaping handlers are rejected. Cleanup still has a bounded wait;
+`probe_cleanup_timeout` requires manual inspection and never means success.
 
 Avoid redirecting stdout to a shared file: shell redirection is outside these
 permission guarantees. Use `--output` for private snapshots. An I/O interruption

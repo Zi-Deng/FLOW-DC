@@ -6,6 +6,7 @@ import importlib.util
 import io
 import json
 import os
+import select
 import stat
 import subprocess
 import sys
@@ -1049,15 +1050,10 @@ class PreflightTests(unittest.TestCase):
             child = original_popen(*args, **kwargs)
             original_wait = child.wait
             children.append((child, original_wait))
-            waited = False
 
             def wait(timeout):
-                nonlocal waited
-                if not waited:
-                    waited = True
-                    return original_wait(timeout=timeout)
-                # Deterministically simulate delayed cleanup after a successful
-                # probe. The real fixture child is already reaped; none hangs.
+                # Exit has been observed with WNOWAIT; this is the sole reaping
+                # wait. Simulate delayed cleanup; finally reaps the real fixture.
                 self.assertEqual(timeout, 1)
                 raise subprocess.TimeoutExpired(["cleanup-secret-marker"], timeout)
 
@@ -1089,6 +1085,201 @@ class PreflightTests(unittest.TestCase):
         self.assertEqual(result["data"]["servers"], [])
         self.assertIn({"name": "flavor_1", "state": "provider_schema"}, result["checks"])
         self.assertEqual(sum(call[:3] == ["flavor", "show", "m3.small"] for call in self.calls()), 1)
+
+    def test_round2_local_revalidation_errors_preserve_identity(self):
+        wrapper = Path(self.profile["wrapper_path"])
+        original_readiness = ops.readiness_files
+        for target, expected_code in ((wrapper, "wrapper_conflict"), (self.credential, "unsafe_permissions")):
+
+            def changed_after_gate(profile, target=target):
+                checks = original_readiness(profile)
+                self.assertTrue(all(check["state"] == "ok" for check in checks))
+                if target == wrapper:
+                    wrapper.write_text("changed-secret-marker")
+                else:
+                    target.chmod(0o644)
+                return checks
+
+            try:
+                with (
+                    self.subTest(target=target.name),
+                    patch.object(ops, "readiness_files", changed_after_gate),
+                ):
+                    result = self.capture(2, save=False)
+                    self.assertFalse(result["data"]["complete"])
+                    self.assertEqual(result["errors"][0]["code"], expected_code)
+                    self.assertIn("local", " ".join(result["next_actions"]).lower())
+                    self.assertEqual(self.calls(), [])
+            finally:
+                wrapper.write_text(ops.WRAPPER)
+                self.credential.chmod(0o600)
+
+    def test_round2_wrapper_short_reads_allow_exact_content(self):
+        original_read = os.read
+        with patch.object(ops.os, "read", side_effect=lambda fd, n: original_read(fd, min(n, 31))):
+            self.invoke(self.init_args, 0)
+            with ops.private_file(self.profile["wrapper_path"], executable=True) as fd:
+                ops.validate_wrapper(fd)
+                self.assertEqual(os.lseek(fd, 0, os.SEEK_CUR), 0)
+
+    def test_round2_short_reads_reject_trailing_bytes_and_bound_size(self):
+        wrapper = Path(self.profile["wrapper_path"])
+        wrapper.write_text(ops.WRAPPER + "x" * ops.MAX_BYTES)
+        original_read = os.read
+        with patch.object(ops.os, "read", side_effect=lambda fd, n: original_read(fd, min(n, 31))):
+            self.invoke(self.init_args, 2)
+            with ops.private_file(str(wrapper), executable=True) as fd:
+                with self.assertRaises(ops.OpsError) as caught:
+                    ops.validate_wrapper(fd)
+                self.assertEqual(caught.exception.code, "wrapper_conflict")
+                self.assertEqual(os.lseek(fd, 0, os.SEEK_CUR), ops.MAX_BYTES + 1)
+
+    def test_round2_invalid_local_snapshot_is_private_and_unusable(self):
+        original_readiness = ops.readiness_files
+
+        def changed_after_gate(profile):
+            checks = original_readiness(profile)
+            self.credential.unlink()  # Disposable synthetic credential only.
+            return checks
+
+        with patch.object(ops, "readiness_files", changed_after_gate):
+            result = self.capture(1)
+        self.assertEqual(result["errors"][0]["code"], "local_io_error")
+        self.assertEqual(self.inventory_path.stat().st_mode & 0o777, 0o600)
+        self.assertFalse(self.pilot(3)["data"]["validated"])
+        self.assertEqual(self.calls(), [])
+
+    def test_round2_provider_transform_error_remains_provider_failure(self):
+        self.fixture["responses"]["configuration show"] = {"region_name": True}
+        self.write_fixture()
+        result = self.capture(1)
+        self.assertEqual(result["errors"][0]["code"], "provider_schema")
+        self.assertEqual(result["status"], "error")
+
+    def test_round2_local_conflict_snapshot_remains_invalid_and_incomplete(self):
+        original_readiness = ops.readiness_files
+
+        def changed_after_gate(profile):
+            checks = original_readiness(profile)
+            Path(profile["wrapper_path"]).write_text("conflict-secret-marker")
+            return checks
+
+        with patch.object(ops, "readiness_files", changed_after_gate):
+            result = self.capture(2)
+        self.assertEqual(result["status"], "invalid")
+        self.assertFalse(result["data"]["complete"])
+        self.assertFalse(self.pilot(3)["data"]["validated"])
+
+    def test_round2_unverified_future_rate_is_invalid(self):
+        self.capture()
+        for verified in (False, True):
+            self.spec["vms"][0]["rate"].update(verified=verified, observed_at="2099-01-01T00:00:00Z")
+            self.write_json(self.spec_path, self.spec)
+            with self.subTest(verified=verified):
+                self.pilot(2)
+
+    def test_round2_degraded_systemd_is_distinct_and_pending(self):
+        result = self.doctor(3, systemd=(1, b"degraded\n"))
+        self.assertIn({"name": "systemd_user", "state": "degraded"}, result["checks"])
+        self.assertIn("systemctl --user --failed", " ".join(result["next_actions"]))
+
+    def test_round2_group_signal_precedes_reaping(self):
+        original_popen, original_killpg = ops.subprocess.Popen, os.killpg
+        children, events = {}, []
+
+        def popen(*args, **kwargs):
+            child = original_popen(*args, **kwargs)
+            original_wait = child.wait
+            children[child.pid] = (child, original_wait)
+
+            def wait(timeout):
+                events.append("reap")
+                return original_wait(timeout=timeout)
+
+            child.wait = wait
+            return child
+
+        def killpg(pid, sig):
+            child, _ = children[pid]
+            self.assertIsNone(child.returncode, "must signal the group before reaping its leader")
+            # WNOWAIT observes without releasing the child's PID. A reaped
+            # child raises ChildProcessError; a live child returns None.
+            os.waitid(os.P_PID, pid, os.WEXITED | os.WNOHANG | os.WNOWAIT)
+            events.append("signal")
+            return original_killpg(pid, sig)
+
+        try:
+            with (
+                patch.object(ops.subprocess, "Popen", side_effect=popen),
+                patch.object(ops.os, "killpg", side_effect=killpg),
+            ):
+                for code in (0, 7):
+                    events.clear()
+                    result, raw = ops.run_bounded(
+                        [sys.executable, "-c", f"print('fixture'); raise SystemExit({code})"], timeout=2
+                    )
+                    self.assertEqual((result, raw), (code, b"fixture\n"))
+                    self.assertEqual(events, ["signal", "reap"])
+        finally:
+            for child, original_wait in children.values():
+                child.wait = original_wait
+                child.stdout.close()
+                child.stderr.close()
+                original_wait(timeout=1)
+
+    def test_round2_descendant_with_closed_output_is_terminated(self):
+        reader, writer = os.pipe()
+        script = """import os, sys, time
+ready_r, ready_w = os.pipe()
+if os.fork() == 0:
+    os.close(ready_r)
+    os.close(1)
+    os.close(2)
+    os.write(ready_w, b'1')
+    os.close(ready_w)
+    time.sleep(3)
+else:
+    os.close(ready_w)
+    os.close(int(sys.argv[1]))
+    os.read(ready_r, 1)
+    os.close(ready_r)
+"""
+        try:
+            code, raw = ops.run_bounded(
+                [sys.executable, "-c", script, str(writer)], timeout=2, pass_fds=(writer,)
+            )
+            self.assertEqual((code, raw), (0, b""))
+            os.close(writer)
+            writer = None
+            self.assertTrue(
+                select.select([reader], [], [], 0.5)[0], "descendant kept its private test pipe open"
+            )
+            self.assertEqual(os.read(reader, 1), b"")
+        finally:
+            os.close(reader)
+            if writer is not None:
+                os.close(writer)
+
+    def test_round2_closed_pipes_do_not_bypass_child_deadline(self):
+        started = ops.time.monotonic()
+        with self.assertRaises(ops.OpsError) as caught:
+            ops.run_bounded(
+                [sys.executable, "-c", "import os,time; os.close(1); os.close(2); time.sleep(3)"],
+                timeout=0.1,
+            )
+        self.assertEqual(caught.exception.code, "probe_timeout")
+        self.assertLess(ops.time.monotonic() - started, 2)
+
+    def test_round2_external_reaper_disposition_starts_no_child(self):
+        for disposition in (ops.signal.SIG_IGN, lambda *args: None):
+            with (
+                self.subTest(disposition=disposition),
+                patch.object(ops.signal, "getsignal", return_value=disposition),
+                patch.object(ops.subprocess, "Popen", side_effect=AssertionError("unsafe child ownership")),
+            ):
+                with self.assertRaises(ops.OpsError) as caught:
+                    ops.run_bounded(["unused"], timeout=1)
+                self.assertEqual(caught.exception.code, "probe_child_management")
 
     def test_bounded_runner_caps_stderr_and_kills_pipe_holding_descendants(self):
         with self.assertRaises(ops.OpsError) as caught:

@@ -266,12 +266,23 @@ def create_profile(fd, value):
     return "created"
 
 
+def read_bounded_file(fd):
+    """Read through EOF, retaining at most one byte beyond the size limit."""
+    content = bytearray()
+    while len(content) <= MAX_BYTES:
+        chunk = os.read(fd, min(65536, MAX_BYTES + 1 - len(content)))
+        if not chunk:
+            break
+        content.extend(chunk)
+    return bytes(content)
+
+
 def create_wrapper(fd):
     try:
         output = os.open("js2", os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o700, dir_fd=fd)
     except FileExistsError:
         with open_private_at(fd, "js2", executable=True) as existing:
-            if os.read(existing, MAX_BYTES + 1) != WRAPPER.encode():
+            if read_bounded_file(existing) != WRAPPER.encode():
                 raise OpsError(
                     "wrapper_conflict",
                     "Existing js2 differs from this tool's trusted wrapper.",
@@ -563,7 +574,7 @@ def validate_client(path):
 
 
 def validate_wrapper(fd):
-    if os.read(fd, MAX_BYTES + 1) != WRAPPER.encode():
+    if read_bounded_file(fd) != WRAPPER.encode():
         raise OpsError(
             "wrapper_conflict",
             "The configured wrapper does not match this tool's fixed program.",
@@ -594,6 +605,15 @@ def run_bounded(argv, *, timeout, local=False, pass_fds=()):
     if timeout <= 0:
         raise OpsError(
             "probe_timeout", "The probe time budget expired.", "Inspect access manually and retry.", 1
+        )
+    # This single-threaded CLI must own reaping; an inherited SIG_IGN or a
+    # custom handler could release the child PID before group cleanup.
+    if signal.getsignal(signal.SIGCHLD) != signal.SIG_DFL:
+        raise OpsError(
+            "probe_child_management",
+            "The process environment does not permit exclusive child management.",
+            "Run the CLI with the default SIGCHLD disposition and no external child reaper.",
+            1,
         )
     try:
         process = subprocess.Popen(
@@ -645,25 +665,28 @@ def run_bounded(argv, *, timeout, local=False, pass_fds=()):
                         )
                     if key.fileobj is process.stdout:
                         output.extend(chunk)
-            try:
-                code = process.wait(timeout=max(0.001, deadline - time.monotonic()))
-            except subprocess.TimeoutExpired:
-                raise OpsError(
-                    "probe_timeout",
-                    "A subprocess exceeded its time budget.",
-                    "Inspect the local tool or provider access manually before retrying.",
-                    1,
-                ) from None
-            return code, bytes(output)
+            # Observe exit without releasing the PID. Even after pipe EOF,
+            # descendants may remain in this child's process group.
+            while os.waitid(os.P_PID, process.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT) is None:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise OpsError(
+                        "probe_timeout",
+                        "A subprocess exceeded its time budget.",
+                        "Inspect the local tool or provider access manually before retrying.",
+                        1,
+                    )
+                time.sleep(min(remaining, 0.01))
     finally:
-        # Also reap a child that closed its pipes, or left descendants after exit.
+        # Signal before wait() reaps the leader, so its PID cannot be recycled
+        # between reaping and killpg(). This also terminates quiet descendants.
         try:
             try:
                 os.killpg(process.pid, signal.SIGKILL)
             except ProcessLookupError:
                 pass
             try:
-                process.wait(timeout=1)
+                code = process.wait(timeout=1)
             except subprocess.TimeoutExpired:
                 raise OpsError(
                     "probe_cleanup_timeout",
@@ -674,6 +697,7 @@ def run_bounded(argv, *, timeout, local=False, pass_fds=()):
         finally:
             process.stdout.close()
             process.stderr.close()
+    return code, bytes(output)
 
 
 def readiness_files(profile):
@@ -746,7 +770,12 @@ def doctor(args):
                 if name == "ssh_agent":
                     state = {0: "ok", 1: "no_identities", 2: "unavailable"}.get(code, "probe_failed")
                 elif name == "systemd_user":
-                    state = "ok" if code == 0 and raw.strip() == b"running" else "not_running_or_unavailable"
+                    if raw.strip() == b"degraded":
+                        state = "degraded"
+                    else:
+                        state = (
+                            "ok" if code == 0 and raw.strip() == b"running" else "not_running_or_unavailable"
+                        )
                 else:
                     state = "ok" if code == 0 and raw.strip() == b"yes" else "disabled_or_unavailable"
         checks.append({"name": name, "state": state})
@@ -764,6 +793,7 @@ def doctor(args):
             "An absent/empty SSH agent says nothing about direct key-file or other SSH authentication. "
             "Inspect ssh-add -l privately and arrange guest access manually; no guest connection was attempted.",
             "Inspect systemctl --user is-system-running and loginctl show-user UID --property=Linger manually. "
+            "A degraded user manager remains pending; inspect systemctl --user --failed for failed units. "
             "Discuss persistence with the operator if needed; this tool does not start services or enable lingering.",
             "Fill verified project/site/UUID context, then run inventory. A local doctor pass is not cloud or guest readiness.",
         ],
@@ -936,7 +966,7 @@ def inventory(args):
         data["complete"] = exit_code == 0
         return outcome(
             "inventory",
-            "ok" if exit_code == 0 else "error" if exit_code == 1 else "pending",
+            {0: "ok", 1: "error", 2: "invalid", 3: "pending"}[exit_code],
             checks=checks,
             errors=errors,
             next_actions=next_actions,
@@ -949,13 +979,32 @@ def inventory(args):
         )
         return finish()
     deadline = time.monotonic() + INVENTORY_SECONDS
+    local_failure = False
 
     def probe(name, action, transform, resource=None):
-        nonlocal exit_code
+        nonlocal exit_code, local_failure
+        if local_failure:
+            return None
+        transforming = False
         try:
-            value = transform(cloud_query(profile, action, resource, deadline=deadline))
+            raw = cloud_query(profile, action, resource, deadline=deadline)
+            transforming = True
+            value = transform(raw)
         except (OpsError, OSError, KeyError, TypeError, ValueError) as exc:
-            if isinstance(exc, OpsError) and exc.exit_code == 3:
+            message = "Read-only observation failed or did not match the requested scope."
+            if not transforming and (
+                isinstance(exc, OSError) or isinstance(exc, OpsError) and exc.exit_code == 2
+            ):
+                local_failure = True
+                code = exc.code if isinstance(exc, OpsError) else "local_io_error"
+                exit_code = 2 if isinstance(exc, OpsError) else 1
+                message = "Local input revalidation failed; further discovery was stopped."
+                next_actions.insert(
+                    0,
+                    "Inspect the local wrapper, credential and client paths, contents and owner-private permissions. "
+                    "Preserve existing files, stop concurrent changes, then rerun doctor and inventory.",
+                )
+            elif isinstance(exc, OpsError) and exc.exit_code == 3:
                 code = exc.code
                 if not exit_code:
                     exit_code = 3
@@ -966,7 +1015,7 @@ def inventory(args):
             errors.append(
                 {
                     "code": code,
-                    "message": "Read-only observation failed or did not match the requested scope.",
+                    "message": message,
                 }
             )
             return None
@@ -1055,6 +1104,7 @@ def validate_spec(path):
     if not isinstance(spec["vms"], list) or len(spec["vms"]) != 3:
         raise schema_error("pilot specification")
     roles, ids = set(), set()
+    now = datetime.now(UTC)
     for vm in spec["vms"]:
         fields(vm, ("role", "id", "active_seconds", "rate"))
         if not isinstance(vm["role"], str) or vm["role"] not in ("manager", "origin", "worker"):
@@ -1069,7 +1119,8 @@ def validate_spec(path):
             rate = fields(vm["rate"], ("su_per_hour", "source", "observed_at", "verified", "flavor_id"))
             number(rate["su_per_hour"])
             rate["source"] = https_url(rate["source"])
-            timestamp(rate["observed_at"])
+            if timestamp(rate["observed_at"]) > now:
+                raise schema_error("rate")
             identifier(rate["flavor_id"])
             if type(rate["verified"]) is not bool:
                 raise schema_error("rate")
@@ -1082,7 +1133,12 @@ def validate_snapshot(path):
         ("schema_version", "operation", "status", "checks", "errors", "next_actions", "data"),
     )
     version(snapshot)
-    if snapshot["operation"] != "inventory" or snapshot["status"] not in ("ok", "pending", "error"):
+    if snapshot["operation"] != "inventory" or snapshot["status"] not in (
+        "ok",
+        "pending",
+        "error",
+        "invalid",
+    ):
         raise schema_error("inventory")
     if not all(isinstance(snapshot[key], list) for key in ("checks", "errors", "next_actions")):
         raise schema_error("inventory")
@@ -1210,8 +1266,6 @@ def plan(args):
         rate = vm["rate"]
         if rate is None or rate["verified"] is not True:
             checks.append({"name": f"{vm['role']}_rate", "state": "missing_or_unverified"})
-        elif timestamp(rate["observed_at"]) > now:
-            raise schema_error("rate")
         elif server is None or rate["flavor_id"] != server["flavor"]["id"]:
             checks.append({"name": f"{vm['role']}_rate", "state": "flavor_mismatch"})
         else:
