@@ -1,0 +1,301 @@
+"""CLI compatibility, installation and sanitized local subprocess boundaries."""
+
+import json
+import os
+import shutil
+import subprocess
+import sys
+import time
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "bin"))
+
+import flowdc_ops as ops
+import flowdc_pilot_cli as cli
+import test_flowdc_ops as bootstrap
+from flowdc_pilot_journal import Journal
+from flowdc_pilot_provider import LIFECYCLE_WRAPPER, Provider
+from test_flowdc_pilot_lifecycle import access
+
+
+class PilotCliTests(unittest.TestCase):
+    def setUp(self):
+        mask = os.umask(0o077)
+        self.addCleanup(os.umask, mask)
+        self.fixture = bootstrap.PreflightTests()
+        self.fixture.setUp()
+        self.addCleanup(self.fixture.doCleanups)
+        self.fixture.capture(save=True)
+        self.root = self.fixture.root
+        self.state = self.fixture.state
+        self.access = self.fixture.config / "access.json"
+        self.access.write_text(json.dumps(access()))
+        self.args = [
+            "pilot",
+            "prepare",
+            "--state-root",
+            str(self.state),
+            "--profile",
+            str(self.fixture.profile_path),
+            "--spec",
+            str(self.fixture.spec_path),
+            "--inventory",
+            str(self.fixture.inventory_path),
+            "--access",
+            str(self.access),
+        ]
+
+    def invoke(self, args):
+        result = subprocess.run(
+            [sys.executable, str(bootstrap.SCRIPT), *args], capture_output=True, text=True, timeout=10
+        )
+        self.assertEqual(result.stderr, "")
+        self.assertNotIn("secret-marker", result.stdout)
+        value = json.loads(result.stdout)
+        self.assertEqual(value["schema_version"], 1)
+        return result.returncode, value
+
+    def test_prepare_has_no_provider_calls_and_preserves_read_only_wrapper(self):
+        before = (self.root / "calls.jsonl").read_bytes()
+        wrapper = (self.fixture.config / "js2").read_bytes()
+        code, value = self.invoke(self.args)
+        self.assertEqual(code, 3)  # Explicit installation has not been requested.
+        self.assertEqual(value["data"]["desired"], "idle")
+        self.assertEqual((self.root / "calls.jsonl").read_bytes(), before)
+        self.assertEqual((self.fixture.config / "js2").read_bytes(), wrapper)
+        self.assertEqual((self.state / "pilot.sqlite3").stat().st_mode & 0o777, 0o600)
+        self.assertEqual(self.invoke(self.args)[0], 3)
+
+    def test_versioned_start_status_stop_reconcile_and_unknown_options(self):
+        self.invoke(self.args)
+        for action in ("start", "status", "stop", "reconcile"):
+            code, value = self.invoke(["pilot", action, "--state-root", str(self.state)])
+            self.assertEqual(code, 3)
+            self.assertEqual(value["schema_version"], 1)
+        code, value = self.invoke(["pilot", "start", "--secret=secret-marker"])
+        self.assertEqual(code, 2)
+        self.assertEqual(value["errors"][0]["code"], "invalid_arguments")
+
+    def test_manual_supervisor_cannot_bypass_user_service(self):
+        self.invoke(self.args)
+        code, value = self.invoke(["pilot", "supervise", "--state-root", str(self.state)])
+        self.assertEqual(code, 3)
+        self.assertEqual(value["errors"][0]["code"], "service_not_installed")
+
+    def test_missing_rates_or_stale_inventory_do_not_register(self):
+        spec = json.loads(self.fixture.spec_path.read_text())
+        spec["vms"][0]["rate"] = None
+        self.fixture.spec_path.write_text(json.dumps(spec))
+        self.assertEqual(self.invoke(self.args)[0], 3)
+        self.assertFalse((self.state / "pilot.sqlite3").exists())
+
+    def test_explicit_install_pins_release_and_is_repeatable_without_replacing_unit(self):
+        self.invoke(self.args)
+        journal = Journal(self.state)
+        interpreter = self.root / "pinned-python"
+        shutil.copyfile(Path(sys.executable).resolve(), interpreter)
+        interpreter.chmod(0o700)
+        with (
+            patch.object(sys, "executable", str(interpreter)),
+            patch.object(Path, "home", return_value=self.root),
+            patch.object(cli, "systemctl", return_value=b"") as systemctl,
+        ):
+            cli.install(journal)
+            first = journal.read()["service"]
+            cli.install(journal)
+            self.assertEqual(first, journal.read()["service"])
+            self.assertIn(
+                (("enable", "--now", "flowdc-pilot.service"),),
+                [(call.args,) for call in systemctl.call_args_list],
+            )
+        unit = self.root / ".config/systemd/user/flowdc-pilot.service"
+        text = unit.read_text()
+        self.assertIn("Restart=always", text)
+        self.assertIn(first["release"], text)
+        self.assertNotIn(str(Path(bootstrap.SCRIPT).parent), text)
+        self.assertEqual(unit.stat().st_mode & 0o777, 0o600)
+        unit.write_text("operator-owned-conflict")
+        with (
+            patch.object(sys, "executable", str(interpreter)),
+            patch.object(Path, "home", return_value=self.root),
+            patch.object(cli, "systemctl"),
+            self.assertRaises(ops.OpsError),
+        ):
+            cli.install(journal)
+        self.assertEqual(unit.read_text(), "operator-owned-conflict")
+
+    def test_fake_harness_refuses_live_shaped_profile_without_changing_journal(self):
+        from pilot_systemd_smoke import validate_fake
+
+        self.invoke(self.args)
+        journal = Journal(self.state)
+        before = journal.read()
+        with self.assertRaisesRegex(RuntimeError, "fake_fixture_required"):
+            validate_fake(journal)
+        self.assertEqual(before, journal.read())
+
+    def test_fake_supervisor_process_survives_foreground_requester(self):
+        from flowdc_pilot_supervisor import heartbeat_fresh
+        from pilot_systemd_smoke import accelerated_clock
+
+        self.invoke(self.args)
+        journal = Journal(self.state)
+        journal.change(lambda record: record.update(service={"unit": "fake-only"}))
+        self.fixture.profile_path.write_text('{"fake_only":true}')
+        smoke = Path(__file__).with_name("pilot_systemd_smoke.py")
+        process = subprocess.Popen(
+            [sys.executable, str(smoke), "--serve", str(self.state)],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        try:
+            deadline = time.monotonic() + 25
+            while not heartbeat_fresh(journal.read(), accelerated_clock()):
+                self.assertIsNone(process.poll())
+                self.assertLess(time.monotonic(), deadline)
+                time.sleep(0.1)
+            requester = subprocess.run(
+                [sys.executable, str(smoke), "--request", str(self.state)], capture_output=True, timeout=5
+            )
+            self.assertEqual(requester.returncode, 0, requester.stderr)
+            self.assertIsNone(process.poll())
+            while time.monotonic() < deadline:
+                record = journal.read()
+                if record["desired"] == "idle" and record.get("fake_actions"):
+                    break
+                time.sleep(0.1)
+            self.assertEqual(record["desired"], "idle")
+            self.assertEqual(sum(action == "unshelve" for action, _ in record["fake_actions"]), 3)
+            self.assertTrue(
+                all(
+                    not vm["account"]["obligation"] and vm["observed"]["state"] == "SHELVED_OFFLOADED"
+                    for vm in record["vms"].values()
+                )
+            )
+            self.assertIsNone(process.poll())
+        finally:
+            process.terminate()
+            process.communicate(timeout=5)
+
+    def test_start_requires_lingering_without_changing_session_settings(self):
+        with patch.object(ops, "run_bounded", return_value=(0, b"no\n")) as run:
+            with self.assertRaises(ops.OpsError) as raised:
+                cli.require_persistent_session()
+            self.assertEqual(raised.exception.code, "user_lingering_required")
+            self.assertEqual(run.call_args.args[0][1], "show-user")
+        with patch.object(ops, "run_bounded", return_value=(0, b"yes\n")):
+            cli.require_persistent_session()
+
+    def test_provider_error_classification_never_returns_diagnostics(self):
+        for diagnostic, category in (
+            ("Quota exceeded secret-marker", b"quota"),
+            ("HTTP 403 Forbidden secret-marker", b"permission"),
+            ("secret-marker", b"provider"),
+        ):
+            code, raw = ops.run_bounded(
+                [
+                    sys.executable,
+                    "-c",
+                    "import sys; print(sys.argv[1],file=sys.stderr);sys.exit(1)",
+                    diagnostic,
+                ],
+                timeout=3,
+                classify_errors=True,
+            )
+            self.assertEqual(code, 1)
+            self.assertEqual(raw, category)
+
+    def test_fixed_lifecycle_wrapper_suppresses_source_output_and_rejects_arbitrary_action(self):
+        wrapper = self.root / "lifecycle"
+        wrapper.write_text(LIFECYCLE_WRAPPER)
+        wrapper.chmod(0o700)
+        result = subprocess.run(
+            [
+                "/bin/bash",
+                "-p",
+                str(wrapper),
+                str(self.fixture.credential),
+                str(self.fixture.client),
+                "delete",
+                bootstrap.SERVERS[0],
+            ],
+            capture_output=True,
+            timeout=5,
+        )
+        self.assertEqual(result.returncode, 64)
+        self.assertEqual(result.stdout, b"")
+        self.assertEqual(result.stderr, b"")
+
+    def test_fixed_adapter_unshelve_uses_verified_allowlist_and_suppresses_openrc_output(self):
+        self.invoke(self.args)
+        record = Journal(self.state).read()
+        group_id = "66666666-6666-4666-8666-666666666666"
+        record["network"]["seen_groups"]["manager"] = group_id
+        interface = record["access"]["interfaces"]["manager"]
+        rules = [
+            {
+                "direction": "ingress",
+                "protocol": "tcp",
+                "remote_ip_prefix": access()["operator_cidr"],
+                "ethertype": "IPv4",
+                "port_range_min": 22,
+                "port_range_max": 22,
+            }
+        ]
+        for role, peer in record["access"]["interfaces"].items():
+            if role != "manager":
+                rules.extend(
+                    {
+                        "direction": "ingress",
+                        "protocol": protocol,
+                        "remote_ip_prefix": peer["fixed_ip"] + "/32",
+                        "ethertype": "IPv4",
+                        "port_range_min": None,
+                        "port_range_max": None,
+                    }
+                    for protocol in ("tcp", "udp", "icmp")
+                )
+        self.fixture.fixture["responses"].update(
+            {
+                "port show": {
+                    "id": interface["port_id"],
+                    "device_id": bootstrap.SERVERS[0],
+                    "project_id": bootstrap.PROJECT.replace("-", ""),
+                    "network_id": interface["network_id"],
+                    "port_security_enabled": True,
+                    "allowed_address_pairs": [],
+                    "fixed_ips": [{"ip_address": interface["fixed_ip"], "subnet_id": interface["subnet_id"]}],
+                    "security_group_ids": [group_id],
+                },
+                "security group": {
+                    "id": group_id,
+                    "project_id": bootstrap.PROJECT,
+                    "description": "flowdc-" + record["network"]["generation"] + "-manager",
+                    "rules": rules,
+                },
+                "server unshelve": {},
+            }
+        )
+        self.fixture.write_fixture()
+        provider = Provider(self.fixture.profile, before_activation=lambda: None)
+        provider.lifecycle(record, bootstrap.SERVERS[0], "unshelve")
+        self.assertEqual(self.fixture.calls()[-1], ["server", "unshelve", bootstrap.SERVERS[0]])
+        self.assertIsNone(provider.verified_record)
+        with self.assertRaises(ops.OpsError):
+            provider.call("unshelve", bootstrap.SERVERS[1])
+
+    def test_network_provider_quota_checkpoint_sanitizes_fixture_diagnostics(self):
+        provider = Provider(self.fixture.profile)
+        # Existing fake client supports a bounded failure before response lookup.
+        self.fixture.fixture["failure"] = {"key": "port show", "action": "fail"}
+        self.fixture.write_fixture()
+        with provider.step(), self.assertRaises(ops.OpsError) as raised:
+            provider.call("port", bootstrap.SERVERS[0])
+        self.assertEqual(raised.exception.code, "provider_request_failed")
+        self.assertNotIn("secret-marker", str(raised.exception))
+
+
+if __name__ == "__main__":
+    unittest.main()
