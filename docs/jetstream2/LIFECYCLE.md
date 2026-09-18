@@ -140,6 +140,16 @@ restart with an outstanding run forces cleanup, rather than replaying unshelve.
 The service retains obligations during unsuccessful cleanup and continues bounded
 attempts. It must stay running while recovery is pending.
 
+An accepted or lost unshelve reply followed by `SHELVED_OFFLOADED` may still
+show the state before activation. Until a settled activation state is observed,
+`activation_completion_unresolved` retains the charged obligation and keeps
+polling, across stop requests and restarts. A later ACTIVE observation triggers
+shelving. If activation never becomes observable, this remains a manual checkpoint;
+contact the cloud operator to establish the request's disposition and preserve the
+journal. Neither elapsed time nor another offloaded observation cancels that intent.
+Cleanup verifies cloud context and VM identity even if selected networking drifts;
+network restoration retains its own stricter attachment checks and can remain pending.
+
 This is local durable state, not a tamper-proof quota service. Deleting both the
 binding and journal, copying all credentials into another independent installation,
 restoring an old backup over current history, or manually activating VMs outside

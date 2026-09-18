@@ -64,6 +64,7 @@ def request(journal, command, *, window=1800, inspection=True, clock=sample_cloc
             record["checkpoint"] = None
             for vm in record["vms"].values():
                 vm["phase"] = "pending"
+                vm["activation_seen"] = False
             journal.event(record, "start_requested", record["window"])
         elif command in ("stop", "reconcile"):
             # Reconciliation is conservative: never resumes activation.
@@ -209,6 +210,18 @@ class Supervisor:
             now = self.clock()
             vm = record["vms"][vm_id]
             vm["observed"] = {"state": state, "clock": asdict(now)}
+            # Offloaded can still be the pre-unshelve state after an accepted or
+            # lost reply. Only a later settled activation state proves that the
+            # activation has left that initial state. Keep watching indefinitely
+            # if no such evidence arrives; elapsed time is not cancellation.
+            if state in ("ACTIVE", "SHUTOFF", "ERROR", "PAUSED", "SUSPENDED", "SHELVED"):
+                vm["activation_seen"] = True
+            unresolved = vm["phase"] in ("unshelve_intent", "requested") and not vm.get(
+                "activation_seen", False
+            )
+            can_settle = settle and not unresolved
+            if settle and unresolved:
+                record["checkpoint"] = "activation_completion_unresolved"
             account = allowance(vm["account"])
             if settle and state != "SHELVED_OFFLOADED" and not account.obligation:
                 # Activity outside the last observed interval has unknown age.
@@ -221,8 +234,8 @@ class Supervisor:
                     shutdown_at_consumed=0,
                     uncertain=True,
                 )
-            vm["account"] = asdict(account.observe(now, state=state) if settle else account.account(now))
-            if settle and state == "SHELVED_OFFLOADED":
+            vm["account"] = asdict(account.observe(now, state=state) if can_settle else account.account(now))
+            if can_settle and state == "SHELVED_OFFLOADED":
                 vm["phase"] = "offloaded"
 
         self.journal.change(update)

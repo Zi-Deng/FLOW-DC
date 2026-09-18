@@ -6,6 +6,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "bin"))
 
@@ -175,6 +176,34 @@ class NetworkTests(unittest.TestCase):
             if self.journal.read()["network"]["rolled_back"]:
                 return
         self.fail("rollback never finished")
+
+    def test_project_filters_use_compact_uuid_with_positive_results(self):
+        self.configure_floating()
+        self.setup_network()
+        for value in (*self.provider.groups.values(), *self.provider.fips.values()):
+            value["project_id"] = PROJECT.replace("-", "")
+        record = self.journal.read()
+        self.assertEqual(len(self.provider.owned_groups(record)), 3)
+        self.assertEqual(len(self.provider.floating(record)), 1)
+        for action, args, _ in self.provider.calls:
+            if action in ("groups", "floating"):
+                self.assertEqual(args, (PROJECT.replace("-", ""),))
+        self.rollback()
+
+    def test_cleanup_does_not_depend_on_missing_or_drifted_port(self):
+        record = self.journal.read()
+        for action, state in (("shelve", "ACTIVE"), ("offload", "SHELVED")):
+            with (
+                self.subTest(action=action),
+                patch.object(
+                    ops, "cloud_query", return_value={"id": VM_IDS[0], "project_id": PROJECT, "status": state}
+                ),
+                patch.object(self.provider, "port", side_effect=ops.invalid_path()) as port,
+                patch.object(self.provider, "call") as call,
+            ):
+                self.provider.lifecycle(record, VM_IDS[0], action)
+                port.assert_not_called()
+                call.assert_called_once_with(action, VM_IDS[0], mutation=True)
 
     def test_setup_restricts_selected_ports_and_rollback_preserves_shared_group(self):
         shared = copy.deepcopy(self.provider.groups[self.provider.original])

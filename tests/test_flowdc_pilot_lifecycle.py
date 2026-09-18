@@ -139,6 +139,62 @@ class LifecycleTests(unittest.TestCase):
                 return
         self.fail("cleanup never became idle")
 
+    def test_delayed_activation_retains_obligation_across_restart(self):
+        for lost_reply, restart in ((False, False), (True, False), (False, True), (True, True)):
+            with self.subTest(lost_reply=lost_reply, restart=restart):
+                original = self.provider.lifecycle
+
+                def delayed(record, vm_id, action, lost_reply=lost_reply, original=original):
+                    if action == "unshelve":
+                        self.provider.actions.append((action, vm_id))
+                        if lost_reply:
+                            raise ops.OpsError("lost_response", "fixed", "fixed", 3)
+                    else:
+                        original(record, vm_id, action)
+
+                self.provider.lifecycle = delayed
+                self.start()
+                self.tick(3)
+                selected = [vm for action, vm in self.provider.actions if action == "unshelve"][-1]
+                request(self.journal, "stop", clock=self.clock)
+                if restart:
+                    self.supervisor.recover()
+                self.tick(30)
+                record = self.journal.read()
+                self.assertEqual(record["desired"], "stop")
+                self.assertTrue(allowance(record["vms"][selected]["account"]).obligation)
+                self.assertEqual(record["checkpoint"], "activation_completion_unresolved")
+                self.provider.states[selected] = "ACTIVE"
+                self.drain()
+                self.assertEqual(self.provider.states[selected], "SHELVED_OFFLOADED")
+                self.provider.lifecycle = original
+
+    def test_sqlite_activity_serializes_auxiliary_inspection(self):
+        # Exercise a real concurrent writer: no SQLite auxiliary file lifecycle
+        # can run while another Journal connection is inspecting/using the DB.
+        code = """import sys
+sys.path.insert(0, sys.argv[1])
+from flowdc_pilot_journal import Journal
+print("ready", flush=True)
+Journal(sys.argv[2]).change(lambda record: record.update(checkpoint="concurrent_test"))
+"""
+        with self.journal.connection():
+            child = subprocess.Popen(
+                [sys.executable, "-c", code, str(Path(ops.__file__).parent), str(self.state)],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            self.assertEqual(child.stdout.readline().strip(), "ready")
+            try:
+                with self.assertRaises(subprocess.TimeoutExpired):
+                    child.wait(timeout=0.2)
+            finally:
+                self.addCleanup(child.communicate, timeout=10)
+        stdout, stderr = child.communicate(timeout=10)
+        self.assertEqual(child.returncode, 0, (stdout, stderr))
+        self.assertEqual(self.journal.read()["checkpoint"], "concurrent_test")
+
     def test_prepare_is_nonactivating_and_repeat_cannot_reset_account(self):
         self.start()
         self.tick(5)

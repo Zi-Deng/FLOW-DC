@@ -93,6 +93,8 @@ def validate_record(record):
                 raise ValueError
             if vm["phase"] not in ("pending", "offloaded", "unshelve_intent", "requested", "verify_offload"):
                 raise ValueError
+            if "activation_seen" in vm and type(vm["activation_seen"]) is not bool:
+                raise ValueError
             if "cleanup_attempt" in vm:
                 ClockSample(**vm["cleanup_attempt"]["clock"])
                 ops.integer(vm["cleanup_attempt"]["order"], 1)
@@ -168,7 +170,10 @@ class Journal:
 
     @contextmanager
     def connection(self):
-        with ops.private_directory(self.root) as parent:
+        with ops.private_directory(self.root) as parent, private_lock(parent, "journal-io.lock"):
+            # Serialize inspection with every local SQLite connection, including
+            # reads: rollback journals may be unlinked during a concurrent commit.
+            # Do not relax any metadata checks or retry arbitrary unsafe paths.
             for name in (DB_NAME, DB_NAME + "-journal", DB_NAME + "-wal", DB_NAME + "-shm"):
                 ops.inspect_child(parent, name, required=name == DB_NAME)
             # The descriptor anchors the private directory for SQLite's auxiliary files.

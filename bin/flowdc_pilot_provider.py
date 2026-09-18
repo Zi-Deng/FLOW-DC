@@ -7,6 +7,7 @@ mutation subprocesses. Only the supervisor constructs this adapter for mutations
 import ipaddress
 import time
 from contextlib import contextmanager
+from uuid import UUID
 
 import flowdc_ops as ops
 from flowdc_pilot_journal import failure
@@ -378,14 +379,15 @@ class Provider:
         with self.step():
             self.context(record)
             state = self.server(record, vm_id)
-            role = record["vms"][vm_id]["role"]
-            port = self.port(record, role)
-            if action == "unshelve" and port["security_group_ids"] != [
-                record["network"]["seen_groups"].get(role)
-            ]:
-                raise failure("activation_network_changed")
             if action == "unshelve":
+                role = record["vms"][vm_id]["role"]
+                port = self.port(record, role)
+                if port["security_group_ids"] != [record["network"]["seen_groups"].get(role)]:
+                    raise failure("activation_network_changed")
                 self.verify_ingress(record, role, self.call("group", record["network"]["seen_groups"][role]))
+            # Context and server identity remain mandatory for cleanup. Port
+            # drift must not prevent shelving this authenticated allowlisted VM;
+            # network rollback separately verifies its own ownership/attachments.
             allowed = {
                 "unshelve": {"SHELVED_OFFLOADED"},
                 "shelve": {"ACTIVE", "SHUTOFF", "ERROR", "PAUSED", "SUSPENDED"},
@@ -422,7 +424,7 @@ class Provider:
     def owned_groups(self, record):
         project = record["spec"]["context"]["project_id"]
         prefix = "flowdc-" + record["network"]["generation"] + "-"
-        rows = self.call("groups", project)
+        rows = self.call("groups", UUID(project).hex)
         ids(rows)
         result = {}
         for row in rows:
@@ -459,7 +461,7 @@ class Provider:
     def floating(self, record):
         project = record["spec"]["context"]["project_id"]
         result = []
-        for resource in ids(self.call("floating", project)):
+        for resource in ids(self.call("floating", UUID(project).hex)):
             value = self.call("floating_show", resource)
             if value.get("id") != resource or ops.uuid_value(field(value, "project_id")) != project:
                 raise failure("floating_identity_mismatch")
