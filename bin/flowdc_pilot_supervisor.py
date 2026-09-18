@@ -201,7 +201,6 @@ class Supervisor:
                     self.checkpoint("activation_state_requires_cleanup")
                     return
                 return
-            # ACTIVE is reported only as a provider observation, never from acceptance.
         except (ops.OpsError, OSError, AccountingError) as exc:
             self.checkpoint(exc.code if isinstance(exc, ops.OpsError) else "pilot_operation_failed")
 

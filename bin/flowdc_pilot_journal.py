@@ -96,6 +96,12 @@ def validate_record(record):
                 raise ValueError
             if "activation_seen" in vm and type(vm["activation_seen"]) is not bool:
                 raise ValueError
+            if "cleanup_intent" in vm:
+                intent = vm["cleanup_intent"]
+                ops.fields(intent, ("action", "clock"))
+                if intent["action"] not in ("shelve", "offload"):
+                    raise ValueError
+                ClockSample(**intent["clock"])
             if "cleanup_attempt" in vm:
                 ClockSample(**vm["cleanup_attempt"]["clock"])
                 ops.integer(vm["cleanup_attempt"]["order"], 1)
@@ -107,15 +113,14 @@ def validate_record(record):
         if service is not None:
             if not isinstance(service, dict) or "unit" not in service:
                 raise ValueError
-            if service["unit"] != "fake-only":
-                ops.fields(service, ("unit", "release", "digest", "interpreter", "interpreter_digest"))
-                ops.absolute_path(service["release"])
-                ops.absolute_path(service["interpreter"])
-                if not all(
-                    isinstance(service[key], str) and len(service[key]) == 64
-                    for key in ("digest", "interpreter_digest")
-                ):
-                    raise ValueError
+            ops.fields(service, ("unit", "release", "digest", "interpreter", "interpreter_digest"))
+            ops.absolute_path(service["release"])
+            ops.absolute_path(service["interpreter"])
+            if not all(
+                isinstance(service[key], str) and len(service[key]) == 64
+                for key in ("digest", "interpreter_digest")
+            ):
+                raise ValueError
         if record["heartbeat"] is not None:
             ClockSample(**record["heartbeat"])
         if record["desired"] not in ("idle", "run", "stop") or not isinstance(record["events"], list):

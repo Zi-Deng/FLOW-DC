@@ -1,5 +1,6 @@
 """Additive pilot CLI and explicit immutable user-service installation."""
 
+import errno
 import hashlib
 import os
 import re
@@ -17,6 +18,18 @@ from flowdc_pilot_provider import Provider, validate_access
 from flowdc_pilot_supervisor import OBSERVATION_SECONDS, Supervisor, heartbeat_fresh, request, sample_clock
 
 UNIT = "flowdc-pilot.service"
+FATAL_SERVICE_EXIT = 78
+PERMANENT_VERIFICATION_FAILURES = {
+    "service_not_installed",
+    "immutable_release_required",
+    "installed_release_changed",
+    "installed_interpreter_changed",
+    "installed_service_unreadable",
+    "user_systemd_invocation_required",
+    "user_systemd_identity_mismatch",
+    "unsafe_path",
+    "unsafe_permissions",
+}
 MODULES = (
     "flowdc_ops.py",
     "flowdc_pilot.py",
@@ -111,8 +124,8 @@ def install(journal):
     interpreter_digest = hashlib.sha256(Path(interpreter).read_bytes()).hexdigest()
     unit = (
         "[Unit]\nDescription=FLOW-DC bounded pilot supervisor\nStartLimitIntervalSec=0\n"
-        "[Service]\nType=simple\nRestart=always\nRestartSec=2\nUMask=0077\n"
-        "NoNewPrivileges=yes\nStandardOutput=null\nStandardError=null\n"
+        "[Service]\nType=simple\nRestart=always\nRestartSec=2\nRestartPreventExitStatus=78\nTimeoutStopSec=infinity\nUMask=0077\n"
+        "NoNewPrivileges=yes\nStandardOutput=null\nStandardError=journal\nLogRateLimitIntervalSec=30s\nLogRateLimitBurst=3\n"
         "Environment=PYTHONNOUSERSITE=1 PYTHONDONTWRITEBYTECODE=1\n"
         f"ExecStart={quote_unit(interpreter)} -E -s {quote_unit(str(release / 'flowdc_ops.py'))} "
         f"pilot supervise --state-root {quote_unit(str(journal.root))}\n"
@@ -192,6 +205,7 @@ def status(journal, operation="pilot status"):
                 "phase": vm["phase"],
                 "provider_state": observed["state"] if observation_fresh else "UNKNOWN",
                 "observation_fresh": observation_fresh,
+                "last_cleanup_request": vm.get("cleanup_intent"),
             }
         )
     pending = (
@@ -250,11 +264,26 @@ def verify_service(record):
 
 
 def supervise(journal):
+    record = journal.read()  # A busy journal is transient, not an integrity verdict.
     try:
-        verify_service(journal.read())
-    except ops.OpsError as exc:
-        journal.change(lambda record, code=exc.code: record.update(desired="stop", checkpoint=code))
-        raise
+        verify_service(record)
+    except (ops.OpsError, OSError) as original:
+        if isinstance(original, OSError):
+            if original.errno not in (errno.ENOENT, errno.EACCES, errno.ENOTDIR, errno.ELOOP):
+                raise  # I/O outages remain retryable, without using an unverified service.
+            exc = failure("installed_service_unreadable")
+        else:
+            exc = original
+        try:
+            journal.change(lambda current, code=exc.code: current.update(desired="stop", checkpoint=code))
+        except (ops.OpsError, OSError):
+            # Preserve the original verification cause even if evidence storage is busy.
+            pass
+        if exc.code in PERMANENT_VERIFICATION_FAILURES:
+            # Only a fixed code is logged. Never run provider code after failed integrity checks.
+            print("FLOW-DC supervisor verification failed: " + exc.code, file=sys.stderr)
+            raise ops.OpsError(exc.code, exc.message, EMERGENCY, FATAL_SERVICE_EXIT) from None
+        raise exc from None
     with journal.supervisor_lock():
         record = journal.read()
         provider = Provider(ops.load_profile(record["profile_path"]))

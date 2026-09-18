@@ -250,3 +250,50 @@ The coordinator must execute this unchanged procedure and the unchanged localhos
 application tests if the executor sandbox lacks those capabilities. Real cloud
 mutation, guest readiness, scientific validity and hard billing guarantees remain
 outside this software validation.
+
+### Service termination and integrity recovery
+
+The installed unit sets `TimeoutStopSec=infinity`. SIGTERM (including a unit stop)
+requests cleanup and the process exits only after verified offload and scoped
+network rollback. A stop can therefore wait indefinitely on an unresolved action,
+network conflict or provider outage. Prefer `pilot stop` and inspect `pilot status`
+while the service continues running. Do not force-kill or power off to claim billing
+has stopped; workstation/user-manager shutdown can still interrupt recovery. Use
+the emergency procedure above if completion cannot be verified.
+
+On service startup, permanent release/interpreter/service identity verification
+failures exit with status 78, which `RestartPreventExitStatus=78` exposes as a failed
+unit without an endless restart loop. `systemctl --user status flowdc-pilot.service`
+and `journalctl --user -u flowdc-pilot.service` show the failed exit and sanitized
+verification code; raw provider diagnostics are never logged. The private checkpoint
+is best effort: contention may prevent storing it, but does not replace the original
+verification error. Transient user-bus/provider/lock failures remain restartable.
+No cleanup code runs after a failed integrity check. Perform emergency cloud cleanup
+manually, preserve the journal and release files, restore the verified runtime through
+trusted operator recovery, then restart the same unit and reconcile. Do not edit
+recorded hashes, discard obligations or create a new allowance to bypass verification.
+Interpreter updates are checked on a subsequent start/restart, not on every tick of
+an already-running process.
+
+`last_cleanup_request` in status is the last durably recorded shelve/offload intent
+and its clock, possibly from an earlier run. It is neither proof of completion nor
+proof that a request is currently in flight; use the separately timestamped provider
+observation. Intents are retained and validated on reload.
+
+A rejected installation can leave a content-addressed release directory. Preservation
+is intentional; do not remove the release referenced by the journal/unit or any
+outstanding recovery. Review unreferenced copies only after all obligations are
+resolved; no automatic release deletion or accounting reset is provided.
+
+The standalone `flowdc_ops.py` read-only commands remain usable without pilot sibling
+modules. An unavailable `pilot` command returns versioned `pilot_unavailable` (exit 3);
+install the complete reviewed release before using it. Internal import defects are
+not hidden as optional-module absence.
+
+For coordinator integration checks, run both `python3 tests/pilot_systemd_smoke.py`
+and `python3 tests/pilot_systemd_smoke.py --sigterm`. Both use a unique transient
+fake unit and the copied production `supervise`/`verify_service` implementation,
+with real systemd identity checks and synthetic provider/clock injection confined to
+the test harness. The second signals the service while three fake obligations exist.
+These checks do not install the production unit, load real credentials, or establish
+live cloud behavior. Installer unit generation is separately covered by unit tests.

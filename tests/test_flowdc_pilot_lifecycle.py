@@ -55,6 +55,16 @@ def access():
     }
 
 
+def synthetic_service():
+    return {
+        "unit": "flowdc-test.service",
+        "release": "/tmp/flowdc-fake-release",
+        "digest": "0" * 64,
+        "interpreter": "/tmp/flowdc-fake-python",
+        "interpreter_digest": "0" * 64,
+    }
+
+
 class FakeClock:
     def __init__(self):
         self.seconds = 0
@@ -121,7 +131,7 @@ class LifecycleTests(unittest.TestCase):
         self.lock = self.journal.supervisor_lock()
         self.lock.__enter__()
         self.addCleanup(self.lock.__exit__, None, None, None)
-        self.journal.change(lambda record: record.update(service={"unit": "fake-only"}))
+        self.journal.change(lambda record: record.update(service=synthetic_service()))
         self.supervisor.recover()
 
     def start(self):
@@ -230,6 +240,15 @@ Journal(sys.argv[2]).change(lambda record: record.update(checkpoint="concurrent_
         stdout, stderr = child.communicate(timeout=10)
         self.assertEqual(child.returncode, 0, (stdout, stderr))
         self.assertEqual(self.journal.read()["checkpoint"], "concurrent_test")
+
+    def test_service_schema_and_cleanup_intent_are_validated(self):
+        with self.assertRaises(ops.OpsError):
+            self.journal.change(lambda record: record.update(service={"unit": "fake-only"}))
+        for intent in ({"action": "delete", "clock": {}}, {"action": "shelve", "clock": {}}):
+            with self.assertRaises(ops.OpsError):
+                self.journal.change(
+                    lambda record, intent=intent: record["vms"][VM_IDS[0]].update(cleanup_intent=intent)
+                )
 
     def test_prepare_is_nonactivating_and_repeat_cannot_reset_account(self):
         self.start()

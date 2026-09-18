@@ -3,6 +3,7 @@
 
 import argparse
 import errno
+import importlib.util
 import ipaddress
 import json
 import math
@@ -24,9 +25,8 @@ from uuid import UUID
 if __name__ == "__main__":
     sys.modules["flowdc_ops"] = sys.modules[__name__]
 
-# Sibling modules are part of the installed, hash-verified release.
-if str(Path(__file__).resolve().parent) not in sys.path:
-    sys.path.insert(0, str(Path(__file__).resolve().parent))
+# Direct scripts already include their directory; embedded library imports must
+# not alter the caller's module search path.
 
 SCHEMA_VERSION = 1
 DIRECTORIES = ("inventory", "releases", "runs")
@@ -710,10 +710,10 @@ def run_bounded(argv, *, timeout, local=False, pass_fds=(), classify_errors=Fals
     if code and classify_errors:
         # Return only a fixed category, never stderr or the rejected request.
         diagnostic = bytes(diagnostics).lower()
-        if b"quota" in diagnostic or b"overlimit" in diagnostic:
-            return code, b"quota"
         if b"forbidden" in diagnostic or b"unauthorized" in diagnostic or b"http 403" in diagnostic:
             return code, b"permission"
+        if b"quota" in diagnostic or b"overlimit" in diagnostic:
+            return code, b"quota"
         return code, b"provider"
     return code, bytes(output)
 
@@ -1400,9 +1400,21 @@ def parser():
     pilot.add_argument("--spec", required=True)
     pilot.add_argument("--inventory", required=True)
     pilot.add_argument("--output")
-    from flowdc_pilot_cli import arguments
+    siblings = (
+        "flowdc_pilot",
+        "flowdc_pilot_cli",
+        "flowdc_pilot_journal",
+        "flowdc_pilot_provider",
+        "flowdc_pilot_supervisor",
+    )
+    if all(importlib.util.find_spec(name) is not None for name in siblings):
+        from flowdc_pilot_cli import arguments
 
-    arguments(commands)
+        arguments(commands)
+    else:
+        unavailable = commands.add_parser("pilot", help="Pilot modules are not installed.")
+        unavailable.add_argument("pilot_args", nargs=argparse.REMAINDER)
+        unavailable.set_defaults(pilot_unavailable=True)
     return result
 
 
@@ -1416,6 +1428,13 @@ def main(argv=None):
         if args.command == "init":
             result, exit_code = initialize(args), 0
         elif args.command == "pilot":
+            if getattr(args, "pilot_unavailable", False):
+                raise OpsError(
+                    "pilot_unavailable",
+                    "Pilot modules are not installed.",
+                    "Use the complete reviewed release for pilot commands.",
+                    3,
+                )
             from flowdc_pilot_cli import run
 
             result, exit_code = run(args)
