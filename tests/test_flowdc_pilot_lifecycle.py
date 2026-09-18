@@ -169,6 +169,42 @@ class LifecycleTests(unittest.TestCase):
                 self.assertEqual(self.provider.states[selected], "SHELVED_OFFLOADED")
                 self.provider.lifecycle = original
 
+    def test_stalled_connection_returns_bounded_busy_checkpoint(self):
+        code = """import sys
+sys.path.insert(0, sys.argv[1])
+import flowdc_ops as ops
+from flowdc_pilot_journal import Journal
+from flowdc_pilot_supervisor import request
+try:
+    journal = Journal(sys.argv[2])
+    if sys.argv[3] == "read":
+        journal.read()
+    else:
+        request(journal, "stop")
+except ops.OpsError as exc:
+    print(exc.code, flush=True)
+    sys.exit(exc.exit_code)
+sys.exit(0)
+"""
+        for operation in ("read", "stop"):
+            with self.subTest(operation=operation), self.journal.connection():
+                child = subprocess.Popen(
+                    [sys.executable, "-c", code, str(Path(ops.__file__).parent), str(self.state), operation],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                )
+                try:
+                    stdout, stderr = child.communicate(timeout=4)
+                finally:
+                    if child.poll() is None:
+                        child.kill()
+                        child.communicate(timeout=2)
+                self.assertEqual(child.returncode, 3, stderr)
+                self.assertEqual(stdout.strip(), "pilot_state_busy")
+        # Contention neither removes the lock nor damages the durable record.
+        self.assertEqual(self.journal.read()["desired"], "idle")
+
     def test_sqlite_activity_serializes_auxiliary_inspection(self):
         # Exercise a real concurrent writer: no SQLite auxiliary file lifecycle
         # can run while another Journal connection is inspecting/using the DB.

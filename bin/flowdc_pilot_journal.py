@@ -4,6 +4,7 @@ import fcntl
 import json
 import os
 import sqlite3
+import time
 from contextlib import contextmanager
 from dataclasses import asdict
 from uuid import uuid4
@@ -153,10 +154,24 @@ def private_lock(parent, name, *, blocking=True):
     fd = os.open(name, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600, dir_fd=parent)
     try:
         ops.private_metadata(os.fstat(fd))
-        try:
-            fcntl.flock(fd, fcntl.LOCK_EX | (0 if blocking else fcntl.LOCK_NB))
-        except BlockingIOError:
-            raise failure("supervisor_already_running") from None
+        deadline = time.monotonic() + 2
+        while True:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if not blocking:
+                    raise failure("supervisor_already_running") from None
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise ops.OpsError(
+                        "pilot_state_busy",
+                        "Another pilot process holds the private state lock.",
+                        "Retry shortly. If contention persists, inspect the stalled local process; "
+                        "keep supervision running and preserve the lock files and journal.",
+                        3,
+                    ) from None
+                time.sleep(min(0.05, remaining))
         yield fd
     finally:
         os.close(fd)

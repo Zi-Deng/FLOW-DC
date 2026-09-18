@@ -130,6 +130,11 @@ budget across verification and subprocesses, with 256 KiB combined output limits
 per subprocess and bounded child cleanup. Each VM's cleanup attempt is at least ten
 boot-time seconds apart (a reboot/backwards boot clock permits immediate retry);
 attempts rotate so one failed VM cannot starve the other two.
+Private journal and registration lock acquisition waits at most two seconds before
+returning `pilot_state_busy` (exit 3). Retry shortly; persistent contention requires
+inspection of the stalled local process. Preserve lock files and journal; do not
+unlink them to bypass serialization. Duplicate supervisors are rejected immediately.
+SQLite's separate two-second busy timeout still applies after lock acquisition.
 There is no unlimited foreground blocking request or automatic budget extension.
 
 Accounting uses CLOCK_BOOTTIME (including suspend), a boot identity and UTC.
