@@ -16,6 +16,10 @@ Future development uses the repository's eight [agentic workflow skills](docs/ag
 
 Developer validation uses a separate Python 3.12+ environment and `make check`; it runs the focused FLOW-DC and workflow suites without a dataset or cluster campaign. Private task context belongs in Git-ignored `memory/`, and workflow state lives in Git-ignored `.agentic-local/`.
 
+## Local Jetstream2 operations
+
+The [local operations guide](docs/jetstream2/README.md) documents `python3 bin/flowdc_ops.py` for private workspace initialization, local readiness inspection, scoped read-only OpenStack inventory, and offline three-VM pilot validation. It uses Python 3.12+ without new project dependencies. Enrollment remains manual; VM lifecycle and experiment commands are not implemented.
+
 ## Installation
 
 ### Prerequisites
