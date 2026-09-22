@@ -214,6 +214,32 @@ class LifecycleTests(unittest.TestCase):
             self.drain()
             self.assertEqual(cli.status(self.journal)[1], 0)
 
+    def test_saved_event_shapes_and_legacy_counts(self):
+        import json
+
+        record = self.journal.read()
+        for event in (
+            None,
+            {},
+            {"kind": 3, "data": {}},
+            {"kind": "checkpoint", "data": []},
+            {"kind": "checkpoint", "data": {}, "count": True},
+            {"kind": "checkpoint", "data": {}, "count": 0},
+        ):
+            record["events"] = [event]
+            with self.journal.connection() as connection:
+                connection.execute("UPDATE pilot SET body=?", (json.dumps(record),))
+                connection.commit()
+            with self.assertRaises(ops.OpsError) as caught:
+                self.journal.read()
+            self.assertEqual(caught.exception.code, "invalid_journal_history")
+        record["events"] = [{"kind": "checkpoint", "data": {"code": "old"}}]
+        with self.journal.connection() as connection:
+            connection.execute("UPDATE pilot SET body=?", (json.dumps(record),))
+            connection.commit()
+        self.journal.change(lambda r: self.journal.event(r, "checkpoint", {"code": "old"}))
+        self.assertEqual(self.journal.read()["events"][0]["count"], 2)
+
     def test_saved_network_shapes_fail_closed(self):
         import copy
         import json

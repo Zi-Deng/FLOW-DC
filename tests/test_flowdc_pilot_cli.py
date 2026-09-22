@@ -307,6 +307,17 @@ class PilotCliTests(unittest.TestCase):
         text = unit.read_text()
         self.assertIn("Restart=always", text)
         self.assertIn("TimeoutStopSec=infinity", text)
+        self.assertIn(" -E -s -B ", text)
+        import shlex
+
+        command = shlex.split(next(line[10:] for line in text.splitlines() if line.startswith("ExecStart=")))
+        result = subprocess.run(
+            command[:4] + ["-c", "import sys; print(sys.dont_write_bytecode)"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        self.assertEqual(result.stdout.strip(), "True")
         self.assertIn("RestartPreventExitStatus=78", text)
         self.assertIn("StandardError=journal", text)
         self.assertIn(first["release"], text)

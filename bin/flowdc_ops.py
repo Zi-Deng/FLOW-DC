@@ -608,7 +608,7 @@ def safe_environment(*, local=False):
     return env
 
 
-def run_bounded(argv, *, timeout, local=False, pass_fds=(), classify_errors=False):
+def run_bounded(argv, *, timeout, local=False, pass_fds=(), classify_errors=False, on_dispatch=None):
     if timeout <= 0:
         raise OpsError(
             "probe_timeout", "The probe time budget expired.", "Inspect access manually and retry.", 1
@@ -645,6 +645,9 @@ def run_bounded(argv, *, timeout, local=False, pass_fds=(), classify_errors=Fals
     total = 0
     deadline = time.monotonic() + timeout
     try:
+        # The child may execute immediately. Durable callers must already retain intent.
+        if on_dispatch is not None:
+            on_dispatch()
         with selectors.DefaultSelector() as selector:
             for stream in (process.stdout, process.stderr):
                 os.set_blocking(stream.fileno(), False)

@@ -245,8 +245,6 @@ class Provider:
         # Bash receives fixed source, never interpolated profile/provider values.
         # Unlike memfd_create this also works with Python builds lacking that API.
         with ops.private_file(self.profile["credential_file"]) as credential:
-            if on_dispatch is not None:
-                on_dispatch()
             code, raw = ops.run_bounded(
                 [
                     "/bin/bash",
@@ -262,6 +260,7 @@ class Provider:
                 timeout=min(ops.CLOUD_SECONDS, self.deadline - time.monotonic()),
                 pass_fds=(credential,),
                 classify_errors=True,
+                on_dispatch=on_dispatch,
             )
         if code:
             codes = {b"quota": "network_quota_pending", b"permission": "provider_permission_pending"}
@@ -616,7 +615,7 @@ class Provider:
                     port.get("network_id") == manager["network_id"]
                     and port.get("device_id") == route["router_id"]
                 ):
-                    connected = any(
+                    connected = connected or any(
                         ip.get("subnet_id") == manager["subnet_id"] for ip in port.get("fixed_ips", [])
                     )
             if not connected:

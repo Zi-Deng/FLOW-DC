@@ -128,8 +128,7 @@ def install(journal):
         "[Unit]\nDescription=FLOW-DC bounded pilot supervisor\nStartLimitIntervalSec=0\n"
         "[Service]\nType=simple\nRestart=always\nRestartSec=2\nRestartPreventExitStatus=78\nTimeoutStopSec=infinity\nUMask=0077\n"
         "NoNewPrivileges=yes\nStandardOutput=null\nStandardError=journal\nLogRateLimitIntervalSec=30s\nLogRateLimitBurst=3\n"
-        "Environment=PYTHONNOUSERSITE=1 PYTHONDONTWRITEBYTECODE=1\n"
-        f"ExecStart={quote_unit(interpreter)} -E -s {quote_unit(str(release / 'flowdc_ops.py'))} "
+        f"ExecStart={quote_unit(interpreter)} -E -s -B {quote_unit(str(release / 'flowdc_ops.py'))} "
         f"pilot supervise --state-root {quote_unit(str(journal.root))}\n"
         "[Install]\nWantedBy=default.target\n"
     ).encode()

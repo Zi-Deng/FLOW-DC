@@ -334,3 +334,20 @@ No human acknowledgement is needed after that evidence-backed resolution.
 state (timeout, execution failure, nonzero exit or unexpected response). Check the
 local loginctl/user-manager installation and retry. `user_lingering_required`
 means the successful probe reported `no`. Neither result permits activation.
+
+The installed interpreter uses explicit `-E -s -B` options: Python environment
+overrides and user-site imports are disabled, and imports do not write bytecode
+into the pinned release. Existing release artifacts are preserved.
+
+A network intent is durable before child creation. Local runner rejection before
+a child starts is recorded as not sent; once a child starts, timeout or loss of
+its result remains ambiguous. A crash before the process-start notification also
+leaves the durable intent ambiguous; absence of a notification is not recovery
+evidence that an operation was never sent.
+
+Audit events are structurally validated and retained, including older entries
+without a duplicate count. No history is truncated to enforce an arbitrary size
+limit. Disk exhaustion and local storage outages can prevent journal progress
+and require the emergency procedure. The 180-second lead schedules initial
+cleanup work; it does not guarantee that retries or provider offload finish.
+The 600-second reserve and conservative accounting remain in effect.

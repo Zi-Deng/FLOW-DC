@@ -179,6 +179,99 @@ class NetworkTests(unittest.TestCase):
                 return
         self.fail("rollback never finished")
 
+    def test_real_runner_dispatch_provenance(self):
+        import signal
+        import time
+        from contextlib import nullcontext
+
+        real_popen = ops.subprocess.Popen
+        for mode in ("expired", "sigchld", "spawn", "timeout"):
+            with self.subTest(mode=mode):
+                self.journal.change(lambda r: r["network"]["intents"].clear())
+                self.journal.change(lambda r: r.update(desired="run"))
+                provider = Provider({"openstack_client": "/synthetic", "credential_file": "/synthetic"})
+                provider.deadline = time.monotonic() + (0.05 if mode == "timeout" else 20)
+                if mode == "expired":
+                    provider.deadline = 0
+                marker = "flowdc-" + self.journal.read()["network"]["generation"] + "-manager"
+
+                def spawn(*args, mode=mode, **kwargs):
+                    if mode == "spawn":
+                        raise OSError("synthetic-private")
+                    return real_popen([sys.executable, "-c", "import time; time.sleep(10)"], **kwargs)
+
+                with (
+                    patch.object(ops, "validate_client"),
+                    patch.object(ops, "private_file", return_value=nullcontext(0)),
+                    patch.object(
+                        ops.signal,
+                        "getsignal",
+                        return_value=signal.SIG_IGN if mode == "sigchld" else signal.SIG_DFL,
+                    ),
+                    patch.object(ops.subprocess, "Popen", side_effect=spawn) as child,
+                ):
+                    with self.assertRaises(ops.OpsError):
+                        provider.network_intent(self.journal, "group-manager", "group_create", marker)
+                self.assertEqual(child.call_count, int(mode in ("spawn", "timeout")))
+                intent = self.journal.read()["network"]["intents"]["group-manager"]
+                self.assertEqual(intent["not_sent"], mode != "timeout")
+                if mode == "timeout":
+                    with self.assertRaises(ops.OpsError) as caught:
+                        self.rollback()
+                    self.assertEqual(caught.exception.code, "unresolved_network_creation")
+                else:
+                    self.rollback()
+                    self.assertTrue(self.journal.read()["network"]["rolled_back"])
+
+    def test_runner_callback_failure_reaps_child(self):
+        child = None
+        real_popen = ops.subprocess.Popen
+
+        def spawn(*args, **kwargs):
+            nonlocal child
+            child = real_popen(*args, **kwargs)
+            return child
+
+        def callback():
+            raise RuntimeError("callback failed")
+
+        with patch.object(ops.subprocess, "Popen", side_effect=spawn):
+            with self.assertRaises(RuntimeError):
+                ops.run_bounded(
+                    [sys.executable, "-c", "import time; time.sleep(10)"], timeout=1, on_dispatch=callback
+                )
+        self.assertIsNotNone(child.returncode)
+        self.assertTrue(child.stdout.closed)
+        self.assertTrue(child.stderr.closed)
+
+    def test_router_connection_is_order_independent(self):
+        self.configure_floating()
+        original = self.provider.call
+        extra = PROJECT
+
+        for order in ("match_first", "match_last", "none"):
+
+            def call(action, *args, order=order, **kwargs):
+                if action == "router_ports":
+                    result = original(action, *args, **kwargs)
+                    self.provider.ports[extra] = dict(
+                        self.provider.ports[self.provider.router_port],
+                        id=extra,
+                        fixed_ips=[{"subnet_id": PROJECT, "ip_address": "10.1.0.1"}],
+                    )
+                    if order == "none":
+                        return [{"ID": extra}]
+                    return result + [{"ID": extra}] if order == "match_first" else [{"ID": extra}] + result
+                return original(action, *args, **kwargs)
+
+            with self.subTest(order=order), patch.object(self.provider, "call", side_effect=call):
+                if order == "none":
+                    with self.assertRaises(ops.OpsError) as caught:
+                        self.provider.route_step(self.journal, self.journal.read(), inspect_only=True)
+                    self.assertEqual(caught.exception.code, "router_not_connected")
+                else:
+                    self.provider.route_step(self.journal, self.journal.read(), inspect_only=True)
+
     def test_creation_dispatch_boundary_and_recovered_rollback(self):
         from contextlib import nullcontext
 
@@ -193,6 +286,11 @@ class NetworkTests(unittest.TestCase):
                 error = ops.OpsError("provider_timeout", "fixed", "fixed", 3)
                 if mode == "guard":
                     provider.before_activation = None
+
+                def dispatched_runner(*args, error=error, **kwargs):
+                    kwargs["on_dispatch"]()
+                    raise error
+
                 with (
                     patch.object(
                         ops, "validate_client", side_effect=FileNotFoundError() if mode == "client" else None
@@ -203,7 +301,7 @@ class NetworkTests(unittest.TestCase):
                         side_effect=PermissionError() if mode == "credential" else None,
                         return_value=nullcontext(123),
                     ),
-                    patch.object(ops, "run_bounded", side_effect=error) as runner,
+                    patch.object(ops, "run_bounded", side_effect=dispatched_runner) as runner,
                 ):
                     with self.assertRaises((ops.OpsError, OSError)):
                         provider.network_intent(self.journal, "group-manager", "group_create", marker)

@@ -3,6 +3,7 @@
 import fcntl
 import json
 import os
+import re
 import sqlite3
 import time
 from contextlib import closing, contextmanager
@@ -125,6 +126,16 @@ def validate_record(record):
             ClockSample(**record["heartbeat"])
         if record["desired"] not in ("idle", "run", "stop") or not isinstance(record["events"], list):
             raise ValueError
+        for event in record["events"]:
+            ops.fields(event, ("kind", "data"), ("count",))
+            if not isinstance(event["kind"], str) or not re.fullmatch(
+                r"[a-z][a-z0-9_]{0,127}", event["kind"]
+            ):
+                raise ValueError
+            if not isinstance(event["data"], dict):
+                raise ValueError
+            if "count" in event:
+                ops.integer(event["count"], 1)
         if record["desired"] == "run" and record["window"] is None:
             raise ValueError
         if record["window"] is not None:
@@ -188,8 +199,6 @@ def validate_record(record):
             if "not_sent" in intent and type(intent["not_sent"]) is not bool:
                 raise ValueError
             if "error" in intent:
-                import re
-
                 if not isinstance(intent["error"], str) or not re.fullmatch(
                     r"[a-z][a-z0-9_]{0,127}", intent["error"]
                 ):
