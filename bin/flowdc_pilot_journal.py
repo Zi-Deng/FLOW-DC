@@ -5,7 +5,7 @@ import json
 import os
 import sqlite3
 import time
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from dataclasses import asdict
 from uuid import uuid4
 
@@ -138,6 +138,14 @@ def validate_record(record):
             ("intents", "original", "ready", "rolled_back", "generation", "seen_groups", "seen_floating"),
             optional=("configured", "route_checked", "floating_id"),
         )
+        if "route_checked" in network and type(network["route_checked"]) is not bool:
+            raise ValueError
+        if "configured" in network and (
+            not isinstance(network["configured"], list)
+            or any(role not in ("manager", "worker", "origin") for role in network["configured"])
+            or len(set(network["configured"])) != len(network["configured"])
+        ):
+            raise ValueError
         ops.uuid_value(network["generation"])
         for key in ("ready", "rolled_back", "seen_floating"):
             if type(network[key]) is not bool:
@@ -354,7 +362,7 @@ def register(profile_path, root, spec, access):
                     },
                 }
                 try:
-                    with sqlite3.connect(f"/proc/self/fd/{parent}/{DB_NAME}") as connection:
+                    with closing(sqlite3.connect(f"/proc/self/fd/{parent}/{DB_NAME}")) as connection:
                         connection.execute("PRAGMA synchronous=FULL")
                         connection.execute("PRAGMA journal_mode=DELETE")
                         connection.execute(f"PRAGMA user_version={JOURNAL_VERSION}")

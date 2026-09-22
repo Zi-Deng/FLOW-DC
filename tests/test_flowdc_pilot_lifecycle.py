@@ -1,6 +1,7 @@
 """Private SQLite and fake-provider lifecycle regressions; no cloud credentials."""
 
 import os
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -148,6 +149,102 @@ class LifecycleTests(unittest.TestCase):
             if self.journal.read()["desired"] == "idle":
                 return
         self.fail("cleanup never became idle")
+
+    def test_idle_stop_does_not_observe_but_reconcile_does(self):
+        with patch.object(
+            self.provider, "observe", side_effect=ops.OpsError("provider_unavailable", "fixed", "fixed", 3)
+        ) as observe:
+            request(self.journal, "stop", clock=self.clock)
+            self.tick()
+            self.assertEqual(self.journal.read()["desired"], "idle")
+            observe.assert_not_called()
+            request(self.journal, "reconcile", clock=self.clock)
+            self.tick()
+            observe.assert_called_once()
+            self.assertEqual(self.journal.read()["desired"], "stop")
+
+    def test_idle_stop_requires_settled_phases_and_network(self):
+        self.journal.change(lambda r: r["vms"][VM_IDS[0]].update(phase="verify_offload"))
+        request(self.journal, "stop", clock=self.clock)
+        self.assertEqual(self.journal.read()["desired"], "stop")
+        self.drain()
+        self.journal.change(lambda r: r["network"].update(rolled_back=False))
+        request(self.journal, "stop", clock=self.clock)
+        self.assertEqual(self.journal.read()["desired"], "stop")
+        self.drain()
+        self.assertIn(("rollback", None), self.provider.actions)
+
+    def test_slow_refresh_after_rollback_finishes_with_fresh_observations(self):
+        request(self.journal, "reconcile", clock=self.clock)
+        self.journal.change(lambda r: r["network"].update(rolled_back=False))
+        observe = self.provider.observe
+        rollback = self.provider.network_step
+
+        def slow_observe(record, vm_id):
+            self.clock.advance(20)
+            return observe(record, vm_id)
+
+        def slow_rollback(journal, *, rollback):
+            self.clock.advance(200)
+            return original_rollback(journal, rollback=rollback)
+
+        original_rollback = rollback
+        with (
+            patch.object(self.provider, "observe", side_effect=slow_observe),
+            patch.object(self.provider, "network_step", side_effect=slow_rollback),
+        ):
+            self.drain()
+        record = self.journal.read()
+        self.assertTrue(record["network"]["rolled_back"])
+        self.assertTrue(
+            all(
+                self.clock().boottime - vm["observed"]["clock"]["boottime"] < 120
+                for vm in record["vms"].values()
+            )
+        )
+
+    def test_optional_network_history_validation(self):
+        for key, value in (
+            ("configured", "manager"),
+            ("configured", ["stranger"]),
+            ("configured", ["manager", "manager"]),
+            ("route_checked", 1),
+        ):
+            with self.subTest(key=key, value=value), self.assertRaises(ops.OpsError):
+                self.journal.change(lambda r, key=key, value=value: r["network"].update({key: value}))
+        self.journal.change(lambda r: r["network"].update(configured=["manager"], route_checked=True))
+
+    def test_registration_closes_connection_on_success_and_failure(self):
+        original_connect = sqlite3.connect
+        for fail in (False, True):
+            connections = []
+
+            class TrackedConnection(sqlite3.Connection):
+                def execute(self, sql, *args, fail=fail):
+                    if fail and sql.startswith("INSERT"):
+                        raise sqlite3.OperationalError("synthetic")
+                    return super().execute(sql, *args)
+
+            def connect(*args, connections=connections, factory=TrackedConnection, **kwargs):
+                connection = original_connect(*args, **kwargs, factory=factory)
+                connections.append(connection)
+                return connection
+
+            config = self.root / ("failed-config" if fail else "ok-config")
+            config.mkdir(mode=0o700)
+            profile = config / "profile.json"
+            profile.write_text("{}")
+            state = config / "state"
+            with patch("flowdc_pilot_journal.sqlite3.connect", side_effect=connect):
+                if fail:
+                    with self.assertRaises(ops.OpsError):
+                        register(profile, state, spec(), access())
+                else:
+                    register(profile, state, spec(), access())
+            self.assertEqual(len(connections), 1)
+            with self.assertRaises(sqlite3.ProgrammingError):
+                connections[0].execute("SELECT 1")
+            self.assertTrue((state / "pilot.sqlite3").exists())
 
     def test_delayed_activation_retains_obligation_across_restart(self):
         for lost_reply, restart in ((False, False), (True, False), (False, True), (True, True)):

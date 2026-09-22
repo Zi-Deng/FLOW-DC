@@ -58,8 +58,10 @@ class NetworkBackend(Provider):
     def context(self, record):
         pass
 
-    def call(self, action, *args, mutation=False):
+    def call(self, action, *args, mutation=False, on_dispatch=None):
         self.validate_call(action, args)
+        if on_dispatch is not None:
+            on_dispatch()
         self.calls.append((action, args, mutation))
         if action == self.fail_action:
             raise ops.OpsError("network_quota_pending", "fixed", "fixed", 3)
@@ -176,6 +178,69 @@ class NetworkTests(unittest.TestCase):
             if self.journal.read()["network"]["rolled_back"]:
                 return
         self.fail("rollback never finished")
+
+    def test_creation_dispatch_boundary_and_recovered_rollback(self):
+        from contextlib import nullcontext
+
+        for mode in ("client", "credential", "guard", "dispatched"):
+            with self.subTest(mode=mode):
+                self.journal.change(lambda r: r["network"]["intents"].clear())
+                self.journal.change(lambda r: r.update(desired="run"))
+                provider = Provider({"openstack_client": "/absent", "credential_file": "/absent"})
+                provider.activating = True
+                provider.before_activation = lambda: None
+                marker = "flowdc-" + self.journal.read()["network"]["generation"] + "-manager"
+                error = ops.OpsError("provider_timeout", "fixed", "fixed", 3)
+                if mode == "guard":
+                    provider.before_activation = None
+                with (
+                    patch.object(
+                        ops, "validate_client", side_effect=FileNotFoundError() if mode == "client" else None
+                    ),
+                    patch.object(
+                        ops,
+                        "private_file",
+                        side_effect=PermissionError() if mode == "credential" else None,
+                        return_value=nullcontext(123),
+                    ),
+                    patch.object(ops, "run_bounded", side_effect=error) as runner,
+                ):
+                    with self.assertRaises((ops.OpsError, OSError)):
+                        provider.network_intent(self.journal, "group-manager", "group_create", marker)
+                intent = self.journal.read()["network"]["intents"]["group-manager"]
+                self.assertEqual(intent["not_sent"], mode != "dispatched")
+                self.assertEqual(runner.call_count, int(mode == "dispatched"))
+                if mode != "dispatched":
+                    self.rollback()
+                    self.assertTrue(self.journal.read()["network"]["rolled_back"])
+                else:
+                    with self.assertRaises(ops.OpsError) as caught:
+                        self.rollback()
+                    self.assertEqual(caught.exception.code, "unresolved_network_creation")
+                    self.assertFalse(self.journal.read()["network"]["rolled_back"])
+
+    def test_unsent_checkpoint_failure_preserves_original_and_ambiguous_intent(self):
+        provider = Provider({"openstack_client": "/absent", "credential_file": "/absent"})
+        marker = "flowdc-" + self.journal.read()["network"]["generation"] + "-manager"
+        change = self.journal.change
+        calls = 0
+
+        def busy_result(update):
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                raise ops.OpsError("pilot_state_busy", "fixed", "fixed", 3)
+            return change(update)
+
+        original = FileNotFoundError("synthetic")
+        with (
+            patch.object(self.journal, "change", side_effect=busy_result),
+            patch.object(ops, "validate_client", side_effect=original),
+        ):
+            with self.assertRaises(FileNotFoundError) as caught:
+                provider.network_intent(self.journal, "group-manager", "group_create", marker)
+        self.assertIs(caught.exception, original)
+        self.assertNotIn("not_sent", self.journal.read()["network"]["intents"]["group-manager"])
 
     def test_project_filters_use_compact_uuid_with_positive_results(self):
         self.configure_floating()

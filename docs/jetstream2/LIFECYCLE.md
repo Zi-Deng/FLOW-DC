@@ -311,3 +311,12 @@ interval can still exit before cleanup; existing obligations then require the
 emergency/manual procedure or a verified subsequent start. No new activation is
 performed in that interval. Keep the service running, use `pilot stop` for normal
 cleanup and verify readiness before relying on graceful unit termination.
+
+A stop request for an already idle registration with all VM phases offloaded,
+no outstanding allowances, and completed network rollback records the request
+without contacting the provider. It does not refresh old observations or claim
+new provider evidence. Use `pilot reconcile` for explicit fresh verification.
+Creation intents rejected locally before the subprocess boundary are recorded as
+not sent, allowing rollback to finish after local access is restored. Once the
+runner might have launched, failures remain ambiguous; a timeout or lost reply
+never proves that creation was not sent. Older ambiguous intents are not relabeled.

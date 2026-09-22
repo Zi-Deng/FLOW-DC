@@ -183,7 +183,7 @@ class Provider:
         else:
             raise failure("invalid_adapter_action", invalid=True)
 
-    def call(self, action, *args, mutation=False):
+    def call(self, action, *args, mutation=False, on_dispatch=None):
         self.validate_call(action, args)
         mutating = action in {
             "unshelve",
@@ -245,6 +245,8 @@ class Provider:
         # Bash receives fixed source, never interpolated profile/provider values.
         # Unlike memfd_create this also works with Python builds lacking that API.
         with ops.private_file(self.profile["credential_file"]) as credential:
+            if on_dispatch is not None:
+                on_dispatch()
             code, raw = ops.run_bounded(
                 [
                     "/bin/bash",
@@ -482,14 +484,25 @@ class Provider:
             journal.event(current, "network_intent", {"key": key})
 
         self.verified_record = journal.change(intent)
+        possibly_dispatched = False
+
+        def dispatched():
+            nonlocal possibly_dispatched
+            possibly_dispatched = True
+
         try:
-            self.call(action, *args, mutation=True)
-        except ops.OpsError as exc:
-            journal.change(
-                lambda current, code=exc.code: current["network"]["intents"][key].update(error=code)
-            )
-            if exc.code == "stop_or_deadline_requested":
-                journal.change(lambda current: current["network"]["intents"][key].update(not_sent=True))
+            self.call(action, *args, mutation=True, on_dispatch=dispatched)
+        except (ops.OpsError, OSError) as exc:
+            code = exc.code if isinstance(exc, ops.OpsError) else "local_provider_io_error"
+            try:
+                journal.change(
+                    lambda current: current["network"]["intents"][key].update(
+                        error=code, not_sent=not possibly_dispatched
+                    )
+                )
+            except (ops.OpsError, OSError):
+                # Preserve the original cause; the durable intent remains conservative.
+                pass
             raise
 
     def network_step(self, journal, *, rollback):

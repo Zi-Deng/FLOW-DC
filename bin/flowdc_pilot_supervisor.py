@@ -67,6 +67,17 @@ def request(journal, command, *, window=1800, inspection=True, clock=sample_cloc
                 vm["activation_seen"] = False
             journal.event(record, "start_requested", record["window"])
         elif command in ("stop", "reconcile"):
+            if (
+                command == "stop"
+                and record["desired"] == "idle"
+                and record["network"]["rolled_back"]
+                and all(
+                    vm["phase"] == "offloaded" and not allowance(vm["account"]).obligation
+                    for vm in record["vms"].values()
+                )
+            ):
+                journal.event(record, "stop_requested", {})
+                return
             # Reconciliation is conservative: never resumes activation.
             if record["desired"] == "idle":
                 for vm in record["vms"].values():
