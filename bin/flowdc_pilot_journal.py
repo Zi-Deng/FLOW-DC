@@ -157,6 +157,43 @@ def validate_record(record):
                 ops.uuid_value(group)
         if not isinstance(network["intents"], dict) or not isinstance(network["seen_groups"], dict):
             raise ValueError
+        for role, group in network["seen_groups"].items():
+            if role not in ("manager", "worker", "origin"):
+                raise ValueError
+            ops.uuid_value(group)
+        # Reuse the fixed adapter's argv grammar, without constructing a provider
+        # or performing any external operation.
+        from flowdc_pilot_provider import Provider
+
+        for key, intent in network["intents"].items():
+            ops.fields(intent, ("action", "args"), optional=("error", "not_sent"))
+            action, args = intent["action"], intent["args"]
+            if not isinstance(args, list) or not all(isinstance(arg, str) for arg in args):
+                raise ValueError
+            Provider.validate_call(None, action, args)
+            if action == "group_create":
+                valid_key = key in ("group-manager", "group-worker", "group-origin")
+            elif action == "attach":
+                valid_key = key in ("attach-manager", "attach-worker", "attach-origin")
+            elif action == "floating_create":
+                valid_key = key == "floating"
+            elif action == "rule":
+                valid_key = key in (
+                    f"rule-{role}-{args[1]}-{args[2]}" for role in ("manager", "worker", "origin")
+                )
+            else:
+                valid_key = False
+            if not valid_key:
+                raise ValueError
+            if "not_sent" in intent and type(intent["not_sent"]) is not bool:
+                raise ValueError
+            if "error" in intent:
+                import re
+
+                if not isinstance(intent["error"], str) or not re.fullmatch(
+                    r"[a-z][a-z0-9_]{0,127}", intent["error"]
+                ):
+                    raise ValueError
         return record
     except (KeyError, TypeError, ValueError, AttributeError, AccountingError, ops.OpsError):
         raise failure("invalid_journal_history") from None

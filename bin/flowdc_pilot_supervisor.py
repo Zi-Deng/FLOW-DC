@@ -213,6 +213,8 @@ class Supervisor:
                     return
                 return
         except (ops.OpsError, OSError, AccountingError) as exc:
+            if isinstance(exc, ops.OpsError) and exc.code == "pilot_state_busy":
+                raise
             self.checkpoint(exc.code if isinstance(exc, ops.OpsError) else "pilot_operation_failed")
 
     def save_observation(self, vm_id, state, *, settle):

@@ -320,3 +320,17 @@ Creation intents rejected locally before the subprocess boundary are recorded as
 not sent, allowing rollback to finish after local access is restored. Once the
 runner might have launched, failures remain ambiguous; a timeout or lost reply
 never proves that creation was not sent. Older ambiguous intents are not relabeled.
+
+Idle does not poll the provider. If `pilot status` reports idle/no obligations but
+`UNKNOWN` observations, run `pilot reconcile`, wait for completed rollback and
+fresh offloaded observations, then inspect status and disable supervision within
+the 120-second freshness interval described above. Repeat reconciliation if that
+interval expires. Stale status remains exit 3; it is not evidence of a new cloud
+failure or a current billing-stop confirmation. Checkpoint events remain in history;
+the current checkpoint clears only after verified cleanup resolves the condition.
+No human acknowledgement is needed after that evidence-backed resolution.
+
+`user_lingering_probe_failed` means loginctl could not establish the lingering
+state (timeout, execution failure, nonzero exit or unexpected response). Check the
+local loginctl/user-manager installation and retry. `user_lingering_required`
+means the successful probe reported `no`. Neither result permits activation.

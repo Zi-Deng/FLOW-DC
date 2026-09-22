@@ -75,9 +75,11 @@ def require_persistent_session():
             timeout=5,
             local=True,
         )
-    except ops.OpsError:
-        raise failure("user_lingering_required") from None
-    if code or raw.strip() != b"yes":
+    except (ops.OpsError, OSError):
+        raise failure("user_lingering_probe_failed") from None
+    if code or raw.strip() not in (b"yes", b"no"):
+        raise failure("user_lingering_probe_failed")
+    if raw.strip() == b"no":
         raise failure("user_lingering_required")
 
 

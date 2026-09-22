@@ -375,6 +375,23 @@ class PilotCliTests(unittest.TestCase):
             process.terminate()
             process.communicate(timeout=5)
 
+    def test_lingering_probe_failure_is_distinct_and_sanitized(self):
+        for result in ((1, b"private diagnostic"), (0, b"unexpected")):
+            with patch.object(ops, "run_bounded", return_value=result):
+                with self.assertRaises(ops.OpsError) as caught:
+                    cli.require_persistent_session()
+            self.assertEqual(caught.exception.code, "user_lingering_probe_failed")
+            self.assertNotIn("private diagnostic", str(caught.exception))
+        for error in (
+            ops.OpsError("probe_timeout", "private diagnostic", "private diagnostic", 3),
+            FileNotFoundError("private diagnostic"),
+        ):
+            with patch.object(ops, "run_bounded", side_effect=error):
+                with self.assertRaises(ops.OpsError) as caught:
+                    cli.require_persistent_session()
+            self.assertEqual(caught.exception.code, "user_lingering_probe_failed")
+            self.assertNotIn("private diagnostic", str(caught.exception))
+
     def test_start_requires_lingering_without_changing_session_settings(self):
         with patch.object(ops, "run_bounded", return_value=(0, b"no\n")) as run:
             with self.assertRaises(ops.OpsError) as raised:

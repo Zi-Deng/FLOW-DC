@@ -150,6 +150,100 @@ class LifecycleTests(unittest.TestCase):
                 return
         self.fail("cleanup never became idle")
 
+    def test_busy_inside_tick_retries_without_checkpoint_or_replayed_unshelve(self):
+        self.start()
+        change = self.journal.change
+        calls = 0
+
+        def busy_intent(update):
+            nonlocal calls
+            calls += 1
+            if calls == 2:  # account succeeds; activation intent contends
+                raise ops.OpsError("pilot_state_busy", "fixed", "fixed", 3)
+            return change(update)
+
+        with patch.object(self.journal, "change", side_effect=busy_intent):
+            with self.assertRaises(ops.OpsError):
+                self.supervisor.tick()
+        self.assertEqual(self.journal.read()["desired"], "run")
+        self.assertIsNone(self.journal.read()["checkpoint"])
+        self.tick(2)  # activation obligations and network setup
+        calls = 0
+
+        def busy_result(update):
+            nonlocal calls
+            calls += 1
+            if calls == 4:  # account, account, unshelve intent, result
+                raise ops.OpsError("pilot_state_busy", "fixed", "fixed", 3)
+            return change(update)
+
+        with patch.object(self.journal, "change", side_effect=busy_result):
+            with self.assertRaises(ops.OpsError):
+                self.supervisor.tick()
+        self.assertEqual(self.journal.read()["vms"][VM_IDS[0]]["phase"], "unshelve_intent")
+        self.tick(6)
+        self.assertEqual(self.provider.actions.count(("unshelve", VM_IDS[0])), 1)
+        self.clock.advance(1200)  # deadline wins even after transient contention
+        calls = 0
+        with patch.object(self.journal, "change", side_effect=busy_intent):
+            with self.assertRaises(ops.OpsError):
+                self.supervisor.tick()
+        self.assertEqual(self.journal.read()["desired"], "stop")
+        self.assertIsNone(self.journal.read()["checkpoint"])
+        self.drain()
+        self.assertTrue(all(not vm["account"]["obligation"] for vm in self.journal.read()["vms"].values()))
+
+    def test_resolved_checkpoint_history_and_expiring_idle_observations(self):
+        import flowdc_pilot_cli as cli
+
+        self.start()
+        self.tick(5)
+        self.supervisor.checkpoint("synthetic_failure")
+        self.drain()
+        record = self.journal.read()
+        self.assertIsNone(record["checkpoint"])
+        self.assertTrue(any(event["kind"] == "checkpoint" for event in record["events"]))
+        with patch.object(cli, "sample_clock", side_effect=self.clock):
+            self.assertEqual(cli.status(self.journal)[1], 0)
+            self.clock.advance(121)
+            self.tick()  # fresh heartbeat, deliberately stale cloud observations
+            value, code = cli.status(self.journal)
+            self.assertEqual(code, 3)
+            self.assertTrue(all(vm["provider_state"] == "UNKNOWN" for vm in value["data"]["vms"]))
+            request(self.journal, "reconcile", clock=self.clock)
+            self.drain()
+            self.assertEqual(cli.status(self.journal)[1], 0)
+
+    def test_saved_network_shapes_fail_closed(self):
+        import copy
+        import json
+
+        original = self.journal.read()
+        marker = "flowdc-" + original["network"]["generation"] + "-manager"
+        valid = {"action": "group_create", "args": [marker]}
+        for bad in (
+            {"seen_groups": {"stranger": PORT_IDS[0]}},
+            {"seen_groups": {"manager": "bad-uuid"}},
+            {"intents": {"group-manager": []}},
+            {"intents": {"group-manager": dict(valid, not_sent=1)}},
+            {"intents": {"group-manager": dict(valid, error="raw diagnostic text")}},
+            {"intents": {"group-manager": dict(valid, args="bad")}},
+            {"intents": {"group-manager": dict(valid, action="offload")}},
+        ):
+            record = copy.deepcopy(original)
+            record["network"].update(bad)
+            with self.journal.connection() as connection:
+                connection.execute("UPDATE pilot SET body=?", (json.dumps(record),))
+                connection.commit()
+            with self.assertRaises(ops.OpsError) as caught:
+                self.journal.read()
+            self.assertEqual(caught.exception.code, "invalid_journal_history")
+        original["network"]["intents"] = {"group-manager": valid}
+        with self.journal.connection() as connection:
+            connection.execute("UPDATE pilot SET body=?", (json.dumps(original),))
+            connection.commit()
+        self.assertEqual(self.journal.read()["network"]["intents"]["group-manager"], valid)
+
     def test_idle_stop_does_not_observe_but_reconcile_does(self):
         with patch.object(
             self.provider, "observe", side_effect=ops.OpsError("provider_unavailable", "fixed", "fixed", 3)
