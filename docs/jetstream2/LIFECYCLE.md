@@ -132,6 +132,13 @@ cleared heartbeat. Only then does the command start the verified service. Exit 0
 means publication and the start request succeeded; verify a fresh heartbeat and
 reconciled offload/rollback before considering any separately authorized activation.
 
+The foreground `systemctl stop` client has a five-second execution timeout plus
+bounded subprocess cleanup. This does not cancel a stop job already accepted by
+systemd: the unit retains `TimeoutStopSec=infinity` to avoid force-killing cleanup.
+If the client times out, maintenance remains blocked at journal version 2. Inspect
+the service and recover only after it has stopped; recovery verifies inactivity
+and exclusive supervisor ownership before changing the installation.
+
 ### Interrupted maintenance
 
 Preserve both releases, the unit, journal and lock files. Run the **new reviewed
@@ -226,8 +233,10 @@ budget across verification and subprocesses, with 256 KiB combined output limits
 per subprocess and bounded child cleanup. Independent owned-group and selected
 topology reads run in batches of at most four, following context validation.
 Every read is joined and checked before mutation; no earlier tick supplies cached
-authorization. Failed batches cancel queued probes and join bounded running probes
-before returning. Mutations remain on the supervisor thread, one action per step.
+authorization. On failure, cancellation is best-effort for probes that have not
+started. The executor joins running probes under their shared deadline before
+returning; later batches are never submitted. Mutations remain on the supervisor
+thread, one action per step.
 Each VM's cleanup attempt is at least ten
 boot-time seconds apart (a reboot/backwards boot clock permits immediate retry);
 attempts rotate so one failed VM cannot starve the other two.

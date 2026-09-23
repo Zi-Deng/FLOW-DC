@@ -272,8 +272,9 @@ class Provider:
         """Join at most four read-only probes under the current step deadline.
 
         Workers only return facts. Validation and every mutation stay on the
-        actor thread. On failure, cancel queued work and join running probes;
-        each runner owns its child and reaps it under the shared deadline.
+        actor thread. Cancellation only stops probes that have not started. The
+        executor context joins all running probes, whose runners own and reap
+        their children under the shared deadline; later batches are not submitted.
         """
         allowed = {"group", "ports", "port", "network", "subnet"}
         for action, *args in requests:

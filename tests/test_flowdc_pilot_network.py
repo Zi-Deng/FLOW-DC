@@ -7,6 +7,7 @@ import tempfile
 import threading
 import time
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import patch
 
@@ -149,22 +150,72 @@ class NetworkBackend(Provider):
         return None
 
 
-class LatencyBackend(NetworkBackend):
-    """Logical read durations; batches use four deterministic parallel lanes.
+class LogicalExecutor(ThreadPoolExecutor):
+    """Real workers; advance synthetic time when the actor joins submitted work.
 
-    This is a synthetic margin regression, not a replay or a cloud measurement.
-    The ordinary 1.3-second reads plus an 8.22-second ports read exceed 20
-    seconds sequentially. No real sleeps or scheduler timing affect this test.
+    No batching policy lives here: submission order comes from Provider.read_batch.
+    Submitting and joining one request at a time therefore charges serial latency.
+    """
+
+    def __init__(self, backend, **kwargs):
+        super().__init__(**kwargs)
+        self.backend = backend
+        self.submitted = backend.arrivals
+
+    def submit(self, *args, **kwargs):
+        future = super().submit(*args, **kwargs)
+        self.submitted += 1
+        executor = self
+
+        class JoinedFuture:
+            def result(self):
+                backend = executor.backend
+                with backend.condition:
+                    if not backend.condition.wait_for(lambda: backend.arrivals == executor.submitted, 2):
+                        raise AssertionError("logical workers did not arrive")
+                    if backend.pending:
+                        backend.now = max(end for end, _ in backend.pending)
+                        for _, ready in backend.pending:
+                            ready.set()
+                        backend.pending.clear()
+                return future.result(timeout=2)
+
+            def cancel(self):
+                return future.cancel()
+
+        return JoinedFuture()
+
+
+class LatencyBackend(NetworkBackend):
+    """Synthetic durations through the inherited production batching loop.
+
+    This is not a replay or cloud measurement, and excludes transport overhead.
+    Real worker threads rendezvous at joins instead of sleeping for API latency.
     """
 
     def __init__(self):
         super().__init__()
         self.now = 100.0
         self.reads = []
+        self.actor = threading.get_ident()
+        self.condition = threading.Condition()
+        self.arrivals = 0
+        self.pending = []
 
     def charge(self, action):
-        self.reads.append(action)
-        self.now += 8.22 if action == "ports" else 1.3
+        with self.condition:
+            self.reads.append(action)
+            end = self.now + (8.22 if action == "ports" else 1.3)
+            if threading.get_ident() == self.actor:
+                self.now = end
+                ready = None
+            else:
+                ready = threading.Event()
+                self.pending.append((end, ready))
+                self.arrivals += 1
+                self.condition.notify_all()
+        if ready is not None and not ready.wait(2):
+            raise AssertionError("logical probe was not joined")
         if self.now >= self.deadline:
             raise ops.OpsError("probe_timeout", "synthetic deadline", "synthetic", 1)
 
@@ -176,18 +227,6 @@ class LatencyBackend(NetworkBackend):
         if not mutation:
             self.charge(action)
         return super().call(action, *args, mutation=mutation, on_dispatch=on_dispatch)
-
-    def read_batch(self, requests):
-        # Model the public batching contract independently of wall-clock timing.
-        results = []
-        for offset in range(0, len(requests), 4):
-            start = end = self.now
-            for action, *args in requests[offset : offset + 4]:
-                self.now = start
-                results.append(self.call(action, *args))
-                end = max(end, self.now)
-            self.now = end
-        return results
 
 
 class ReadBatchTests(unittest.TestCase):
@@ -341,7 +380,13 @@ class NetworkTests(unittest.TestCase):
             }
 
         self.journal.change(pending)
-        with patch("flowdc_pilot_provider.time.monotonic", side_effect=lambda: backend.now):
+        with (
+            patch("flowdc_pilot_provider.time.monotonic", side_effect=lambda: backend.now),
+            patch(
+                "flowdc_pilot_provider.ThreadPoolExecutor",
+                side_effect=lambda **kw: LogicalExecutor(backend, **kw),
+            ),
+        ):
             backend.network_step(self.journal, rollback=False)
         self.assertLess(backend.now, backend.deadline)
         self.assertAlmostEqual(backend.now - 100.0, 14.72)

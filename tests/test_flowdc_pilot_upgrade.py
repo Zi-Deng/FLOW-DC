@@ -219,8 +219,16 @@ class UpgradeTests(unittest.TestCase):
             self.assertEqual(caught.exception.code, "unsupported_journal")
             self.assert_legacy_refuses()
         else:
+            before_start = self.journal.read()
+            self.assertIsNone(before_start["heartbeat"])
             with self.journal.supervisor_lock(), self.assertRaises(ops.OpsError):
                 request(self.journal, "start")
+            # Publication is complete but the replacement service has not started.
+            self.assertFalse(self.journal.supervisor_locked())
+            with self.assertRaises(ops.OpsError) as caught:
+                request(self.journal, "start")
+            self.assertEqual(caught.exception.code, "supervisor_not_ready")
+            self.assertEqual(self.journal.read(), before_start)
         self.args.recover = "complete" if published else direction
         _, code = cli.upgrade_supervisor(self.journal, self.args)
         self.assertEqual(code, 0)
