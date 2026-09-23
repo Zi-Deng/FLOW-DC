@@ -243,7 +243,7 @@ class Journal:
         self.root = ops.absolute_path(str(root))
 
     @contextmanager
-    def connection(self):
+    def connection(self, *, maintenance=False):
         with ops.private_directory(self.root) as parent, private_lock(parent, "journal-io.lock"):
             # Serialize inspection with every local SQLite connection, including
             # reads: rollback journals may be unlinked during a concurrent commit.
@@ -258,7 +258,8 @@ class Journal:
                 )
                 connection.execute("PRAGMA synchronous=FULL")
                 connection.execute("PRAGMA trusted_schema=OFF")
-                if connection.execute("PRAGMA user_version").fetchone()[0] != JOURNAL_VERSION:
+                versions = (JOURNAL_VERSION, 2) if maintenance else (JOURNAL_VERSION,)
+                if connection.execute("PRAGMA user_version").fetchone()[0] not in versions:
                     raise failure("unsupported_journal")
                 yield connection
             except sqlite3.Error:

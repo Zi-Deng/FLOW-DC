@@ -6,6 +6,7 @@ mutation subprocesses. Only the supervisor constructs this adapter for mutations
 
 import ipaddress
 import time
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from uuid import UUID
 
@@ -267,6 +268,34 @@ class Provider:
             raise failure(codes.get(raw, "provider_request_failed"))
         return None if mutation else ops.parse_json(raw)
 
+    def read_batch(self, requests):
+        """Join at most four read-only probes under the current step deadline.
+
+        Workers only return facts. Validation and every mutation stay on the
+        actor thread. Cancellation only stops probes that have not started. The
+        executor context joins all running probes, whose runners own and reap
+        their children under the shared deadline; later batches are not submitted.
+        """
+        allowed = {"group", "ports", "port", "network", "subnet"}
+        for action, *args in requests:
+            if action not in allowed:
+                raise failure("invalid_adapter_action", invalid=True)
+            self.validate_call(action, args)
+        results = []
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            for offset in range(0, len(requests), 4):
+                if time.monotonic() >= self.deadline:
+                    raise failure("probe_timeout")
+                futures = [executor.submit(self.call, *request) for request in requests[offset : offset + 4]]
+                try:
+                    results.extend(future.result() for future in futures)
+                finally:
+                    for future in futures:
+                        future.cancel()
+        if time.monotonic() >= self.deadline:
+            raise failure("probe_timeout")
+        return results
+
     def context(self, record):
         expected = record["spec"]["context"]
         if (
@@ -304,8 +333,11 @@ class Provider:
 
     def port(self, record, role):
         interface = record["access"]["interfaces"][role]
+        return self.validate_port(record, role, self.call("port", interface["port_id"]))
+
+    def validate_port(self, record, role, value):
+        interface = record["access"]["interfaces"][role]
         vm_id = next(key for key, vm in record["vms"].items() if vm["role"] == role)
-        value = self.call("port", interface["port_id"])
         if (
             field(value, "id") != interface["port_id"]
             or field(value, "device_id") != vm_id
@@ -330,6 +362,24 @@ class Provider:
             for vm_id in record["vms"]:
                 if self.server(record, vm_id) != "SHELVED_OFFLOADED":
                     raise failure("initial_offload_required")
+
+    def verify_idle(self, record):
+        """Fresh, read-only offload and rollback proof for idle maintenance."""
+        self.preflight(record)
+        with self.step():
+            self.context(record)
+            if self.owned_groups(record):
+                raise failure("maintenance_network_rollback_required")
+            marker = "flowdc-" + record["network"]["generation"] + "-entry"
+            if any(value.get("description") == marker for value in self.floating(record)):
+                raise failure("maintenance_network_rollback_required")
+        for role in ("manager", "worker", "origin"):
+            with self.step():
+                self.context(record)
+                port = self.topology(record, role)
+                original = record["network"]["original"].get(role)
+                if original is not None and sorted(port["security_group_ids"]) != sorted(original):
+                    raise failure("maintenance_network_rollback_required")
 
     def observe(self, record, vm_id):
         with self.step():
@@ -402,11 +452,17 @@ class Provider:
         """Inspect all selected attachments/routes before changing this interface."""
         interface = record["access"]["interfaces"][role]
         vm_id = next(key for key, vm in record["vms"].items() if vm["role"] == role)
-        if ids(self.call("ports", vm_id)) != [interface["port_id"]]:
+        ports, port, network, subnet = self.read_batch(
+            [
+                ("ports", vm_id),
+                ("port", interface["port_id"]),
+                ("network", interface["network_id"]),
+                ("subnet", interface["subnet_id"]),
+            ]
+        )
+        if ids(ports) != [interface["port_id"]]:
             raise failure("additional_interfaces_require_manual_checkpoint")
-        port = self.port(record, role)
-        network = self.call("network", interface["network_id"])
-        subnet = self.call("subnet", interface["subnet_id"])
+        port = self.validate_port(record, role, port)
         project = record["spec"]["context"]["project_id"]
         if (
             field(network, "id") != interface["network_id"]
@@ -418,8 +474,8 @@ class Provider:
             raise failure("selected_network_identity_mismatch")
         if field(subnet, "host_routes") != []:
             raise failure("nonstandard_routes_require_manual_checkpoint")
-        for group in port["security_group_ids"]:
-            self.call("group", group)  # Inspect existing rules; originals are never edited.
+        # Inspect existing rules; originals are never edited.
+        self.read_batch([("group", group) for group in port["security_group_ids"]])
         return port
 
     def owned_groups(self, record):
@@ -428,6 +484,7 @@ class Provider:
         rows = self.call("groups", UUID(project).hex)
         ids(rows)
         result = {}
+        selected = []
         for row in rows:
             known_role = next(
                 (
@@ -441,7 +498,9 @@ class Provider:
                 raise failure("owned_group_identity_changed")
             if row.get("Name") not in [prefix + role for role in ("manager", "worker", "origin")]:
                 continue
-            value = self.call("group", row["ID"])
+            selected.append(row)
+        values = self.read_batch([("group", row["ID"]) for row in selected])
+        for row, value in zip(selected, values, strict=True):
             if (
                 value.get("description") != row["Name"]
                 or ops.uuid_value(field(value, "project_id")) != project

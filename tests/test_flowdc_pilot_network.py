@@ -4,7 +4,10 @@ import copy
 import os
 import sys
 import tempfile
+import threading
+import time
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import patch
 
@@ -147,6 +150,185 @@ class NetworkBackend(Provider):
         return None
 
 
+class LogicalExecutor(ThreadPoolExecutor):
+    """Real workers; advance synthetic time when the actor joins submitted work.
+
+    No batching policy lives here: submission order comes from Provider.read_batch.
+    Submitting and joining one request at a time therefore charges serial latency.
+    """
+
+    def __init__(self, backend, **kwargs):
+        super().__init__(**kwargs)
+        self.backend = backend
+        self.submitted = backend.arrivals
+
+    def submit(self, *args, **kwargs):
+        future = super().submit(*args, **kwargs)
+        self.submitted += 1
+        executor = self
+
+        class JoinedFuture:
+            def result(self):
+                backend = executor.backend
+                with backend.condition:
+                    if not backend.condition.wait_for(lambda: backend.arrivals == executor.submitted, 2):
+                        raise AssertionError("logical workers did not arrive")
+                    if backend.pending:
+                        backend.now = max(end for end, _ in backend.pending)
+                        for _, ready in backend.pending:
+                            ready.set()
+                        backend.pending.clear()
+                return future.result(timeout=2)
+
+            def cancel(self):
+                return future.cancel()
+
+        return JoinedFuture()
+
+
+class LatencyBackend(NetworkBackend):
+    """Synthetic durations through the inherited production batching loop.
+
+    This is not a replay or cloud measurement, and excludes transport overhead.
+    Real worker threads rendezvous at joins instead of sleeping for API latency.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.now = 100.0
+        self.reads = []
+        self.actor = threading.get_ident()
+        self.condition = threading.Condition()
+        self.arrivals = 0
+        self.pending = []
+
+    def charge(self, action):
+        with self.condition:
+            self.reads.append(action)
+            end = self.now + (8.22 if action == "ports" else 1.3)
+            if threading.get_ident() == self.actor:
+                self.now = end
+                ready = None
+            else:
+                ready = threading.Event()
+                self.pending.append((end, ready))
+                self.arrivals += 1
+                self.condition.notify_all()
+        if ready is not None and not ready.wait(2):
+            raise AssertionError("logical probe was not joined")
+        if self.now >= self.deadline:
+            raise ops.OpsError("probe_timeout", "synthetic deadline", "synthetic", 1)
+
+    def context(self, record):
+        self.charge("context")
+        self.charge("project")
+
+    def call(self, action, *args, mutation=False, on_dispatch=None):
+        if not mutation:
+            self.charge(action)
+        return super().call(action, *args, mutation=mutation, on_dispatch=on_dispatch)
+
+
+class ReadBatchTests(unittest.TestCase):
+    def test_four_read_barrier_and_actor_join(self):
+        provider = Provider({})
+        barrier = threading.Barrier(4, timeout=2)
+        lock = threading.Lock()
+        active = maximum = 0
+        actor = threading.get_ident()
+        workers = set()
+
+        def read(action, resource):
+            nonlocal active, maximum
+            with lock:
+                active += 1
+                maximum = max(maximum, active)
+                workers.add(threading.get_ident())
+            barrier.wait()
+            with lock:
+                active -= 1
+            return resource
+
+        requests = [("group", PROJECT)] * 8
+        with provider.step(), patch.object(provider, "call", side_effect=read):
+            self.assertEqual(provider.read_batch(requests), [PROJECT] * 8)
+        self.assertEqual(maximum, 4)
+        self.assertEqual(active, 0)
+        self.assertNotIn(actor, workers)
+
+    def test_mutation_rejected_before_any_submission(self):
+        provider = Provider({})
+        with provider.step(), patch.object(provider, "call") as call:
+            with self.assertRaises(ops.OpsError):
+                provider.read_batch([("group", PROJECT), ("group_delete", PROJECT)])
+        call.assert_not_called()
+
+    def test_every_batched_request_revalidates_credentials(self):
+        from contextlib import nullcontext
+
+        provider = Provider({"openstack_client": "/synthetic", "credential_file": "/synthetic"})
+        with (
+            provider.step(),
+            patch.object(ops, "validate_client") as client,
+            patch.object(ops, "private_file", side_effect=lambda path: nullcontext(0)) as credential,
+            patch.object(ops, "run_bounded", return_value=(0, b"{}")) as runner,
+        ):
+            self.assertEqual(provider.read_batch([("group", PROJECT)] * 4), [{}, {}, {}, {}])
+        self.assertEqual(client.call_count, 4)
+        self.assertEqual(credential.call_count, 4)
+        self.assertEqual(runner.call_count, 4)
+        with (
+            provider.step(),
+            patch.object(ops, "validate_client"),
+            patch.object(ops, "private_file", side_effect=PermissionError()),
+            patch.object(ops, "run_bounded") as runner,
+            self.assertRaises(PermissionError),
+        ):
+            provider.read_batch([("group", PROJECT)] * 4)
+        runner.assert_not_called()
+
+    def test_expired_batch_does_not_submit(self):
+        provider = Provider({})
+        with patch.object(provider, "call") as call, self.assertRaises(ops.OpsError):
+            provider.read_batch([("group", PROJECT)])
+        call.assert_not_called()
+
+    def test_timed_out_batch_joins_and_reaps_all_children(self):
+        provider = Provider({})
+        children = []
+        lock = threading.Lock()
+        barrier = threading.Barrier(4, timeout=2)
+        real_popen = ops.subprocess.Popen
+
+        def spawn(*args, **kwargs):
+            child = real_popen(*args, **kwargs)
+            with lock:
+                children.append(child)
+            return child
+
+        def read(action, resource):
+            barrier.wait()
+            return ops.run_bounded(
+                [sys.executable, "-c", "import time; time.sleep(10)"],
+                timeout=provider.deadline - time.monotonic(),
+            )
+
+        with (
+            provider.step(),
+            patch.object(provider, "call", side_effect=read),
+            patch.object(ops.subprocess, "Popen", side_effect=spawn),
+        ):
+            provider.deadline = time.monotonic() + 0.2
+            with self.assertRaises(ops.OpsError) as caught:
+                provider.read_batch([("group", PROJECT)] * 8)
+        self.assertEqual(caught.exception.code, "probe_timeout")
+        self.assertEqual(len(children), 4)
+        for child in children:
+            self.assertIsNotNone(child.returncode)
+            self.assertTrue(child.stdout.closed)
+            self.assertTrue(child.stderr.closed)
+
+
 class NetworkTests(unittest.TestCase):
     def setUp(self):
         mask = os.umask(0o077)
@@ -178,6 +360,110 @@ class NetworkTests(unittest.TestCase):
             if self.journal.read()["network"]["rolled_back"]:
                 return
         self.fail("rollback never finished")
+
+    def test_slow_port_read_prepares_rule_within_shared_deadline(self):
+        self.setup_network()
+        backend = LatencyBackend()
+        backend.groups = copy.deepcopy(self.provider.groups)
+        backend.ports = copy.deepcopy(self.provider.ports)
+        record = self.journal.read()
+        manager = record["network"]["seen_groups"]["manager"]
+        backend.groups[manager]["rules"] = []
+
+        def pending(current):
+            current["network"]["configured"].remove("manager")
+            current["network"]["ready"] = False
+            current["network"]["intents"] = {
+                key: value
+                for key, value in current["network"]["intents"].items()
+                if not key.startswith("rule-manager-")
+            }
+
+        self.journal.change(pending)
+        with (
+            patch("flowdc_pilot_provider.time.monotonic", side_effect=lambda: backend.now),
+            patch(
+                "flowdc_pilot_provider.ThreadPoolExecutor",
+                side_effect=lambda **kw: LogicalExecutor(backend, **kw),
+            ),
+        ):
+            backend.network_step(self.journal, rollback=False)
+        self.assertLess(backend.now, backend.deadline)
+        self.assertAlmostEqual(backend.now - 100.0, 14.72)
+        self.assertCountEqual(
+            backend.reads,
+            [
+                "context",
+                "project",
+                "groups",
+                "group",
+                "group",
+                "group",
+                "ports",
+                "port",
+                "network",
+                "subnet",
+                "group",
+            ],
+        )
+        mutations = [call for call in backend.calls if call[2]]
+        self.assertEqual(len(mutations), 1)
+        self.assertEqual(mutations[0][0], "rule")
+
+    def test_maintenance_reads_verify_actual_rollback_without_mutation(self):
+        self.setup_network()
+        self.rollback()
+        self.provider.calls.clear()
+        with patch.object(self.provider, "server", return_value="SHELVED_OFFLOADED"):
+            self.provider.verify_idle(self.journal.read())
+            self.assertFalse(any(call[2] for call in self.provider.calls))
+            self.provider.ports[PORT_IDS[0]]["security_group_ids"] = []
+            with self.assertRaises(ops.OpsError) as caught:
+                self.provider.verify_idle(self.journal.read())
+        self.assertEqual(caught.exception.code, "maintenance_network_rollback_required")
+        with patch.object(self.provider, "server", return_value="ACTIVE"):
+            with self.assertRaises(ops.OpsError) as caught:
+                self.provider.verify_idle(self.journal.read())
+        self.assertEqual(caught.exception.code, "initial_offload_required")
+        self.assertFalse(any(call[2] for call in self.provider.calls))
+
+    def test_failed_group_batch_and_stop_during_topology_never_mutate(self):
+        self.setup_network()
+        manager = self.journal.read()["network"]["seen_groups"]["manager"]
+        self.provider.groups[manager]["rules"] = []
+
+        def pending(current):
+            current["network"]["configured"].remove("manager")
+            current["network"]["ready"] = False
+            current["network"]["intents"] = {
+                key: value
+                for key, value in current["network"]["intents"].items()
+                if not key.startswith("rule-manager-")
+            }
+
+        self.journal.change(pending)
+        self.provider.calls.clear()
+        self.provider.fail_action = "group"
+        with self.assertRaises(ops.OpsError):
+            self.provider.network_step(self.journal, rollback=False)
+        self.assertFalse(any(call[2] for call in self.provider.calls))
+        self.provider.fail_action = None
+        original = self.provider.call
+
+        def stop(action, *args, **kwargs):
+            value = original(action, *args, **kwargs)
+            if action == "ports":
+                self.journal.change(lambda r: r.update(desired="stop"))
+            return value
+
+        with patch.object(self.provider, "call", side_effect=stop):
+            with self.assertRaises(ops.OpsError) as caught:
+                self.provider.network_step(self.journal, rollback=False)
+        self.assertEqual(caught.exception.code, "stop_requested")
+        self.assertFalse(any(call[2] for call in self.provider.calls))
+        self.assertFalse(
+            any(key.startswith("rule-manager-") for key in self.journal.read()["network"]["intents"])
+        )
 
     def test_real_runner_dispatch_provenance(self):
         import signal
