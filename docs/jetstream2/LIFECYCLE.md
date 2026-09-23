@@ -456,10 +456,15 @@ The 600-second reserve and conservative accounting remain in effect.
 
 For upgrade/recovery integration, run `python3 -B tests/pilot_upgrade_smoke.py`
 and `python3 -B tests/pilot_upgrade_smoke.py --rollback`. These create uniquely
-named linked user units pointing to temporary fake-only releases, interrupt after
+named regular files in the real `~/.config/systemd/user` directory pointing to
+temporary fake-only releases, interrupt after
 the binding transition, then complete or roll back through the production
 maintenance code. They verify a resumed real systemd heartbeat and unchanged
-account history. Only their own disposable unit links are removed; evidence and
+account history. Unit names are reserved exclusively; existing files are refused.
+Cleanup verifies the exact fake unit bytes and a stopped service before removing
+only that regular file and reloading the manager. Drift or failed cleanup is a
+nonzero result with retained evidence; the production unit is never selected.
+Fixed provider/guard error codes are included in smoke evidence. Evidence and
 both releases remain under `/tmp/flowdc-upgrade-systemd-fake-*`. Exit 3 is an
 unavailable user bus, not a pass. Unit tests also inject faults at every durable
 transition and exercise the frozen v1 connection guard in separate client

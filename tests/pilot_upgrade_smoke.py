@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """Explicit user-systemd upgrade/recovery test with only temporary fake resources.
 
-Creates a uniquely named linked user unit, never the production service. Source
+Creates a uniquely named regular user unit, never the production service. Source
 injection is confined to temporary test releases; no production test mode exists.
 """
 
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -37,6 +38,30 @@ def wait_ready(journal):
     raise RuntimeError("fake_service_not_ready")
 
 
+def cleanup_unit(unit, path, expected):
+    """Remove only our regular fake unit, after a verified stop; preserve drift."""
+    if (
+        not re.fullmatch(r"flowdc-upgrade-smoke-[0-9a-f]{32}\.service", unit)
+        or path != Path.home() / ".config/systemd/user" / unit
+    ):
+        raise RuntimeError("fake_unit_identity_changed")
+    with ops.private_directory(path.parent, private=False) as parent:
+        with ops.open_private_at(parent, unit) as fd:
+            if ops.read_bounded_file(fd) not in expected:
+                raise RuntimeError("fake_unit_changed")
+        cli.systemctl("stop", unit)
+        lines = cli.systemctl("show", unit, "--property=MainPID", "--property=ActiveState").splitlines()
+        if b"MainPID=0" not in lines or not ({b"ActiveState=inactive", b"ActiveState=failed"} & set(lines)):
+            raise RuntimeError("fake_unit_not_stopped")
+        # A changed/replaced file during stop is not ours to unlink.
+        with ops.open_private_at(parent, unit) as fd:
+            if ops.read_bounded_file(fd) not in expected:
+                raise RuntimeError("fake_unit_changed")
+        os.unlink(unit, dir_fd=parent)
+        os.fsync(parent)
+    cli.systemctl("daemon-reload")
+
+
 def main():
     os.umask(0o077)
     if sys.argv[1:] not in ([], ["--rollback"]):
@@ -44,7 +69,10 @@ def main():
     root = Path(tempfile.mkdtemp(prefix="flowdc-upgrade-systemd-fake-"))
     unit = "flowdc-upgrade-smoke-" + uuid4().hex + ".service"
     result = {"status": "blocked", "fake_only": True, "evidence_root": str(root), "unit": unit}
-    linked = False
+    created = False
+    unit_path = None
+    expected_units = []
+    exit_code = 1
     try:
         # No filesystem or service-manager mutation outside the temporary tree
         # until the existing user manager is confirmed reachable.
@@ -91,18 +119,31 @@ Provider = _FakeIdleProvider
         shutil.copyfile(Path(sys.executable).resolve(), interpreter)
         interpreter.chmod(0o700)
         with (
-            patch.object(Path, "home", return_value=root),
             patch.object(sys, "executable", str(interpreter)),
             patch.object(cli, "UNIT", unit),
             patch.object(cli, "__file__", str(fake_cli)),
         ):
-            # Offline installation only; explicitly link this unique temporary
-            # unit into the real manager, without enabling it for later logins.
+            # Reserve a regular file in the real managed-unit directory. A
+            # systemctl link reports the user's link path, not its temp target.
+            # O_EXCL refuses preexisting units, even if their bytes happen to match.
+            original_digest = hashlib.sha256(
+                b"".join((fake_source / name).read_bytes() for name in cli.MODULES)
+            ).hexdigest()
+            original_service = cli.stage_candidate(journal, original_digest)
+            expected_units.append(cli.service_unit(original_service, journal.root))
+            unit_path = Path.home() / ".config/systemd/user" / unit
+            with ops.private_directory(unit_path.parent, create=True, private=False) as parent:
+                fd = os.open(unit, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=parent)
+                created = True
+                with os.fdopen(fd, "wb") as stream:
+                    stream.write(expected_units[0])
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                os.fsync(parent)
+            # The normal installer verifies the reserved bytes and binds the
+            # journal. Never enable this disposable unit for subsequent logins.
             with patch.object(cli, "systemctl", return_value=b""):
                 cli.install(journal)
-            unit_path = root / ".config/systemd/user" / unit
-            linked = True  # Clean up our unique link even if its response is lost.
-            real_systemctl("link", str(unit_path))
             real_systemctl("daemon-reload")
             real_systemctl("start", unit)
             wait_ready(journal)
@@ -118,6 +159,16 @@ Provider = _FakeIdleProvider
             digest = hashlib.sha256(
                 b"".join((fake_source / name).read_bytes() for name in cli.MODULES)
             ).hexdigest()
+            expected_units.append(
+                cli.service_unit(
+                    dict(
+                        original_service,
+                        digest=digest,
+                        release=str(journal.root / "releases" / ("pilot-" + digest)),
+                    ),
+                    journal.root,
+                )
+            )
             args = SimpleNamespace(
                 expected_current_digest=before["service"]["digest"],
                 expected_candidate_digest=digest,
@@ -164,17 +215,28 @@ Provider = _FakeIdleProvider
             result.update(
                 status="completed", recovered=args.recover, accounts_preserved=True, heartbeat_verified=True
             )
-            return 0
-    except (ops.OpsError, OSError, RuntimeError, subprocess.SubprocessError):
+            exit_code = 0
+    except (ops.OpsError, OSError, RuntimeError, subprocess.SubprocessError) as exc:
         result["checkpoint"] = "fake_upgrade_smoke_failed"
-        return 1
+        result["error_code"] = exc.code if isinstance(exc, ops.OpsError) else "fake_fixture_error"
+        exit_code = 1
     finally:
-        if linked:
-            for action in ("stop", "disable"):
-                subprocess.run(["systemctl", "--user", action, unit], capture_output=True, timeout=10)
-            subprocess.run(["systemctl", "--user", "daemon-reload"], capture_output=True, timeout=5)
+        cleanup_failed = False
+        if created:
+            try:
+                cleanup_unit(unit, unit_path, expected_units)
+                result["unit_removed"] = True
+            except (ops.OpsError, OSError, RuntimeError, subprocess.SubprocessError) as exc:
+                cleanup_failed = True
+                result.update(status="blocked", cleanup_checkpoint="fake_unit_cleanup_failed")
+                result["cleanup_error_code"] = (
+                    exc.code if isinstance(exc, ops.OpsError) else "fake_fixture_error"
+                )
         (root / "result.json").write_text(json.dumps(result, indent=2) + "\n")
         print(json.dumps(result))
+        if cleanup_failed:
+            exit_code = 1
+    return exit_code
 
 
 if __name__ == "__main__":
