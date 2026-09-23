@@ -4,6 +4,8 @@ import copy
 import os
 import sys
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -147,6 +149,117 @@ class NetworkBackend(Provider):
         return None
 
 
+class LatencyBackend(NetworkBackend):
+    """Logical read durations; batches use four deterministic parallel lanes.
+
+    This is a synthetic margin regression, not a replay or a cloud measurement.
+    The ordinary 1.3-second reads plus an 8.22-second ports read exceed 20
+    seconds sequentially. No real sleeps or scheduler timing affect this test.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.now = 100.0
+        self.reads = []
+
+    def charge(self, action):
+        self.reads.append(action)
+        self.now += 8.22 if action == "ports" else 1.3
+        if self.now >= self.deadline:
+            raise ops.OpsError("probe_timeout", "synthetic deadline", "synthetic", 1)
+
+    def context(self, record):
+        self.charge("context")
+        self.charge("project")
+
+    def call(self, action, *args, mutation=False, on_dispatch=None):
+        if not mutation:
+            self.charge(action)
+        return super().call(action, *args, mutation=mutation, on_dispatch=on_dispatch)
+
+    def read_batch(self, requests):
+        # Model the public batching contract independently of wall-clock timing.
+        results = []
+        for offset in range(0, len(requests), 4):
+            start = end = self.now
+            for action, *args in requests[offset : offset + 4]:
+                self.now = start
+                results.append(self.call(action, *args))
+                end = max(end, self.now)
+            self.now = end
+        return results
+
+
+class ReadBatchTests(unittest.TestCase):
+    def test_four_read_barrier_and_actor_join(self):
+        provider = Provider({})
+        barrier = threading.Barrier(4, timeout=2)
+        lock = threading.Lock()
+        active = maximum = 0
+        actor = threading.get_ident()
+        workers = set()
+
+        def read(action, resource):
+            nonlocal active, maximum
+            with lock:
+                active += 1
+                maximum = max(maximum, active)
+                workers.add(threading.get_ident())
+            barrier.wait()
+            with lock:
+                active -= 1
+            return resource
+
+        requests = [("group", PROJECT)] * 8
+        with provider.step(), patch.object(provider, "call", side_effect=read):
+            self.assertEqual(provider.read_batch(requests), [PROJECT] * 8)
+        self.assertEqual(maximum, 4)
+        self.assertEqual(active, 0)
+        self.assertNotIn(actor, workers)
+
+    def test_mutation_rejected_before_any_submission(self):
+        provider = Provider({})
+        with provider.step(), patch.object(provider, "call") as call:
+            with self.assertRaises(ops.OpsError):
+                provider.read_batch([("group", PROJECT), ("group_delete", PROJECT)])
+        call.assert_not_called()
+
+    def test_timed_out_batch_joins_and_reaps_all_children(self):
+        provider = Provider({})
+        children = []
+        lock = threading.Lock()
+        barrier = threading.Barrier(4, timeout=2)
+        real_popen = ops.subprocess.Popen
+
+        def spawn(*args, **kwargs):
+            child = real_popen(*args, **kwargs)
+            with lock:
+                children.append(child)
+            return child
+
+        def read(action, resource):
+            barrier.wait()
+            return ops.run_bounded(
+                [sys.executable, "-c", "import time; time.sleep(10)"],
+                timeout=provider.deadline - time.monotonic(),
+            )
+
+        with (
+            provider.step(),
+            patch.object(provider, "call", side_effect=read),
+            patch.object(ops.subprocess, "Popen", side_effect=spawn),
+        ):
+            provider.deadline = time.monotonic() + 0.2
+            with self.assertRaises(ops.OpsError) as caught:
+                provider.read_batch([("group", PROJECT)] * 8)
+        self.assertEqual(caught.exception.code, "probe_timeout")
+        self.assertEqual(len(children), 4)
+        for child in children:
+            self.assertIsNotNone(child.returncode)
+            self.assertTrue(child.stdout.closed)
+            self.assertTrue(child.stderr.closed)
+
+
 class NetworkTests(unittest.TestCase):
     def setUp(self):
         mask = os.umask(0o077)
@@ -178,6 +291,48 @@ class NetworkTests(unittest.TestCase):
             if self.journal.read()["network"]["rolled_back"]:
                 return
         self.fail("rollback never finished")
+
+    def test_slow_port_read_prepares_rule_within_shared_deadline(self):
+        self.setup_network()
+        backend = LatencyBackend()
+        backend.groups = copy.deepcopy(self.provider.groups)
+        backend.ports = copy.deepcopy(self.provider.ports)
+        record = self.journal.read()
+        manager = record["network"]["seen_groups"]["manager"]
+        backend.groups[manager]["rules"] = []
+
+        def pending(current):
+            current["network"]["configured"].remove("manager")
+            current["network"]["ready"] = False
+            current["network"]["intents"] = {
+                key: value
+                for key, value in current["network"]["intents"].items()
+                if not key.startswith("rule-manager-")
+            }
+
+        self.journal.change(pending)
+        with patch("flowdc_pilot_provider.time.monotonic", side_effect=lambda: backend.now):
+            backend.network_step(self.journal, rollback=False)
+        self.assertLess(backend.now, backend.deadline)
+        self.assertCountEqual(
+            backend.reads,
+            [
+                "context",
+                "project",
+                "groups",
+                "group",
+                "group",
+                "group",
+                "ports",
+                "port",
+                "network",
+                "subnet",
+                "group",
+            ],
+        )
+        mutations = [call for call in backend.calls if call[2]]
+        self.assertEqual(len(mutations), 1)
+        self.assertEqual(mutations[0][0], "rule")
 
     def test_real_runner_dispatch_provenance(self):
         import signal
