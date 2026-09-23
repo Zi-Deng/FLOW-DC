@@ -362,6 +362,24 @@ class Provider:
                 if self.server(record, vm_id) != "SHELVED_OFFLOADED":
                     raise failure("initial_offload_required")
 
+    def verify_idle(self, record):
+        """Fresh, read-only offload and rollback proof for idle maintenance."""
+        self.preflight(record)
+        with self.step():
+            self.context(record)
+            if self.owned_groups(record):
+                raise failure("maintenance_network_rollback_required")
+            marker = "flowdc-" + record["network"]["generation"] + "-entry"
+            if any(value.get("description") == marker for value in self.floating(record)):
+                raise failure("maintenance_network_rollback_required")
+        for role in ("manager", "worker", "origin"):
+            with self.step():
+                self.context(record)
+                port = self.topology(record, role)
+                original = record["network"]["original"].get(role)
+                if original is not None and sorted(port["security_group_ids"]) != sorted(original):
+                    raise failure("maintenance_network_rollback_required")
+
     def observe(self, record, vm_id):
         with self.step():
             self.context(record)

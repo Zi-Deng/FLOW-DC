@@ -13,7 +13,16 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import flowdc_ops as ops
-from flowdc_pilot_journal import EMERGENCY, Journal, allowance, failure, register
+from flowdc_pilot_journal import (
+    EMERGENCY,
+    Journal,
+    allowance,
+    encode,
+    failure,
+    private_lock,
+    register,
+    validate_record,
+)
 from flowdc_pilot_provider import Provider, validate_access
 from flowdc_pilot_supervisor import OBSERVATION_SECONDS, Supervisor, heartbeat_fresh, request, sample_clock
 
@@ -43,7 +52,7 @@ MODULES = (
 def arguments(commands):
     pilot = commands.add_parser("pilot", help="Prepare and control the bounded pilot.", allow_abbrev=False)
     actions = pilot.add_subparsers(dest="pilot_command", required=True)
-    for action in ("prepare", "start", "status", "stop", "reconcile", "supervise"):
+    for action in ("prepare", "start", "status", "stop", "reconcile", "supervise", "upgrade-supervisor"):
         parser = actions.add_parser(action, allow_abbrev=False)
         parser.add_argument("--state-root", default=str(Path.home() / ".local/share/flowdc-ops"))
         if action == "prepare":
@@ -52,6 +61,13 @@ def arguments(commands):
             parser.add_argument("--inventory", required=True)
             parser.add_argument("--access", required=True)
             parser.add_argument("--install-supervisor", action="store_true")
+        if action == "upgrade-supervisor":
+            parser.add_argument("--expected-current-digest", required=True)
+            parser.add_argument("--expected-candidate-digest", required=True)
+            parser.add_argument(
+                "--candidate-source", help="Absolute directory of the six reviewed candidate modules."
+            )
+            parser.add_argument("--recover", choices=("complete", "rollback"))
         if action == "start":
             parser.add_argument("--window-seconds", type=int, default=1800)
             parser.add_argument(
@@ -105,6 +121,17 @@ def write_new(parent, name, content, *, mode=0o600):
     os.fsync(parent)
 
 
+def service_unit(service, root):
+    return (
+        "[Unit]\nDescription=FLOW-DC bounded pilot supervisor\nStartLimitIntervalSec=0\n"
+        "[Service]\nType=simple\nRestart=always\nRestartSec=2\nRestartPreventExitStatus=78\nTimeoutStopSec=infinity\nUMask=0077\n"
+        "NoNewPrivileges=yes\nStandardOutput=null\nStandardError=journal\nLogRateLimitIntervalSec=30s\nLogRateLimitBurst=3\n"
+        f"ExecStart={quote_unit(service['interpreter'])} -E -s -B {quote_unit(str(Path(service['release']) / 'flowdc_ops.py'))} "
+        f"pilot supervise --state-root {quote_unit(str(root))}\n"
+        "[Install]\nWantedBy=default.target\n"
+    ).encode()
+
+
 def install(journal):
     source = Path(__file__).resolve().parent
     content = {name: (source / name).read_bytes() for name in MODULES}
@@ -124,17 +151,6 @@ def install(journal):
         ):
             raise failure("unsafe_interpreter", invalid=True)
     interpreter_digest = hashlib.sha256(Path(interpreter).read_bytes()).hexdigest()
-    unit = (
-        "[Unit]\nDescription=FLOW-DC bounded pilot supervisor\nStartLimitIntervalSec=0\n"
-        "[Service]\nType=simple\nRestart=always\nRestartSec=2\nRestartPreventExitStatus=78\nTimeoutStopSec=infinity\nUMask=0077\n"
-        "NoNewPrivileges=yes\nStandardOutput=null\nStandardError=journal\nLogRateLimitIntervalSec=30s\nLogRateLimitBurst=3\n"
-        f"ExecStart={quote_unit(interpreter)} -E -s -B {quote_unit(str(release / 'flowdc_ops.py'))} "
-        f"pilot supervise --state-root {quote_unit(str(journal.root))}\n"
-        "[Install]\nWantedBy=default.target\n"
-    ).encode()
-    unit_root = Path.home() / ".config/systemd/user"
-    with ops.private_directory(unit_root, create=True, private=False) as parent:
-        write_new(parent, UNIT, unit)
     service = {
         "unit": UNIT,
         "release": str(release),
@@ -142,6 +158,10 @@ def install(journal):
         "interpreter": interpreter,
         "interpreter_digest": interpreter_digest,
     }
+    unit = service_unit(service, journal.root)
+    unit_root = Path.home() / ".config/systemd/user"
+    with ops.private_directory(unit_root, create=True, private=False) as parent:
+        write_new(parent, UNIT, unit)
 
     def save(current):
         if current["service"] not in (None, service):
@@ -151,6 +171,289 @@ def install(journal):
     journal.change(save)
     systemctl("daemon-reload")
     systemctl("enable", "--now", UNIT)
+
+
+def trusted_bytes(path, *, executable=False):
+    """Read pinned source/interpreter through a checked, non-symlink descriptor."""
+    path = ops.absolute_path(str(path))
+    with ops.private_directory(path.parent, private=False) as parent:
+        fd = os.open(path.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
+        try:
+            info = os.fstat(fd)
+            if (
+                not stat.S_ISREG(info.st_mode)
+                or info.st_uid not in (0, os.geteuid(), os.stat("/").st_uid)
+                or info.st_mode & 0o022
+                or (executable and not info.st_mode & 0o111)
+            ):
+                raise failure("unsafe_release_file")
+            with os.fdopen(os.dup(fd), "rb") as stream:
+                raw = stream.read(64 * 1024 * 1024 + 1)
+                if len(raw) > 64 * 1024 * 1024:
+                    raise failure("release_file_limit")
+                return raw
+        finally:
+            os.close(fd)
+
+
+def verify_release(service, root):
+    if (
+        service["unit"] != UNIT
+        or not re.fullmatch(r"[0-9a-f]{64}", service["digest"])
+        or service["release"] != str(root / "releases" / ("pilot-" + service["digest"]))
+    ):
+        raise failure("unexpected_release_provenance")
+    with ops.private_directory(Path(service["release"])) as parent:
+        content = []
+        for name in MODULES:
+            with ops.open_private_at(parent, name) as fd:
+                content.append(ops.read_bounded_file(fd))
+    if hashlib.sha256(b"".join(content)).hexdigest() != service["digest"]:
+        raise failure("installed_release_changed")
+    interpreter = trusted_bytes(service["interpreter"], executable=True)
+    if hashlib.sha256(interpreter).hexdigest() != service["interpreter_digest"]:
+        raise failure("installed_interpreter_changed")
+
+
+def stage_candidate(journal, expected, source=None):
+    source = ops.absolute_path(source) if source is not None else Path(__file__).resolve().parent
+    content = {name: trusted_bytes(source / name) for name in MODULES}
+    digest = hashlib.sha256(b"".join(content.values())).hexdigest()
+    if digest != expected:
+        raise failure("candidate_release_mismatch")
+    for name, raw in content.items():
+        try:
+            compile(raw, name, "exec")
+        except (SyntaxError, ValueError):
+            raise failure("invalid_candidate_source") from None
+    interpreter = str(Path(sys.executable).resolve())
+    service = {
+        "unit": UNIT,
+        "release": str(journal.root / "releases" / ("pilot-" + digest)),
+        "digest": digest,
+        "interpreter": interpreter,
+        "interpreter_digest": hashlib.sha256(trusted_bytes(interpreter, executable=True)).hexdigest(),
+    }
+    with ops.private_directory(Path(service["release"]), create=True) as parent:
+        for name, raw in content.items():
+            write_new(parent, name, raw)
+    verify_release(service, journal.root)
+    return service
+
+
+def unit_bytes():
+    path = Path.home() / ".config/systemd/user" / UNIT
+    with ops.private_directory(path.parent, private=False) as parent:
+        with ops.open_private_at(parent, path.name) as fd:
+            return ops.read_bounded_file(fd)
+
+
+def verify_unit_origin(*, stopped=False, reloaded=False):
+    raw = systemctl(
+        "show",
+        UNIT,
+        "--property=FragmentPath",
+        "--property=DropInPaths",
+        "--property=NeedDaemonReload",
+        "--property=MainPID",
+        "--property=ActiveState",
+    )
+    lines = raw.decode("utf-8", errors="replace").splitlines()
+    expected = {
+        "FragmentPath=" + str(Path.home() / ".config/systemd/user" / UNIT),
+        "DropInPaths=",
+    }
+    if reloaded:
+        expected.add("NeedDaemonReload=no")
+    if stopped:
+        expected.add("MainPID=0")
+        if not ({"ActiveState=inactive", "ActiveState=failed"} & set(lines)):
+            raise failure("maintenance_service_not_stopped")
+    if not expected.issubset(lines):
+        raise failure("unexpected_unit_provenance")
+
+
+def require_idle(record):
+    if (
+        record["desired"] != "idle"
+        or not record["network"]["rolled_back"]
+        or record["network"]["ready"]
+        or any(
+            vm["phase"] != "offloaded"
+            or allowance(vm["account"]).obligation
+            or vm["observed"] is None
+            or vm["observed"]["state"] != "SHELVED_OFFLOADED"
+            for vm in record["vms"].values()
+        )
+    ):
+        raise failure("maintenance_idle_required")
+
+
+def maintenance_state(connection):
+    row = connection.execute("SELECT body FROM pilot_maintenance ORDER BY id DESC LIMIT 1").fetchone()
+    if row is None:
+        raise failure("maintenance_history_required")
+    value = ops.parse_json(row[0])
+    ops.fields(value, ("old", "candidate", "phase"))
+    validate_record(value["old"])
+    require_idle(value["old"])
+    if value["old"]["service"] is None or value["candidate"] is None:
+        raise failure("maintenance_history_required")
+    if value["phase"] not in ("blocked", "unit", "binding", "published_complete", "published_rollback"):
+        raise failure("maintenance_history_required")
+    # Validate the candidate binding using the unchanged journal schema.
+    validate_record(dict(value["old"], service=value["candidate"]))
+    return value
+
+
+def maintenance_record(connection):
+    row = connection.execute("SELECT body FROM pilot WHERE id=1").fetchone()
+    if row is None:
+        raise failure("missing_journal_history")
+    return validate_record(ops.parse_json(row[0]))
+
+
+def maintenance_update(journal, phase, *, service=None, publish=False):
+    with journal.connection(maintenance=True) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        value = maintenance_state(connection)
+        current = maintenance_record(connection)
+        old = value["old"]
+        if current not in (old, dict(old, service=value["candidate"])):
+            raise failure("maintenance_history_changed")
+        if service is not None:
+            if service not in (old["service"], value["candidate"]):
+                raise failure("maintenance_history_changed")
+            current = dict(old, service=service)
+        if publish:
+            # A legacy start checks heartbeat even while we still own the actor lock.
+            current["heartbeat"] = None
+        connection.execute("UPDATE pilot SET body=? WHERE id=1", (encode(current),))
+        value["phase"] = phase
+        connection.execute(
+            "UPDATE pilot_maintenance SET body=? WHERE id=(SELECT max(id) FROM pilot_maintenance)",
+            (encode(value),),
+        )
+        if publish:
+            connection.execute("PRAGMA user_version=1")
+        connection.commit()
+
+
+def replace_unit(expected, target):
+    from uuid import uuid4
+
+    path = Path.home() / ".config/systemd/user" / UNIT
+    with ops.private_directory(path.parent, private=False) as parent:
+        with ops.open_private_at(parent, UNIT) as fd:
+            if ops.read_bounded_file(fd) not in expected:
+                raise failure("unexpected_unit_content")
+        temporary = ".flowdc-upgrade-" + uuid4().hex
+        write_new(parent, temporary, target)
+        os.replace(temporary, UNIT, src_dir_fd=parent, dst_dir_fd=parent)
+        os.fsync(parent)
+
+
+def upgrade_supervisor(journal, args):
+    """Durably exclude even legacy actors before stopping or replacing a service.
+
+    Journal version 2 exists only during maintenance. Both old and new ordinary
+    clients refuse it. The snapshot and version transition share one transaction;
+    no external backup is substituted for the live account history.
+    """
+    for digest in (args.expected_current_digest, args.expected_candidate_digest):
+        if not re.fullmatch(r"[0-9a-f]{64}", digest):
+            raise failure("expected_release_digest_required", invalid=True)
+    with (
+        ops.private_directory(journal.root) as parent,
+        private_lock(parent, "maintenance.lock", blocking=False),
+    ):
+        if args.recover:
+            with journal.connection(maintenance=True) as connection:
+                value = maintenance_state(connection)
+                version = connection.execute("PRAGMA user_version").fetchone()[0]
+            old, candidate = value["old"], value["candidate"]
+        else:
+            old = journal.read()
+            require_idle(old)
+            if old["service"] is None or old["service"]["digest"] != args.expected_current_digest:
+                raise failure("current_release_mismatch")
+            verify_release(old["service"], journal.root)
+            if unit_bytes() != service_unit(old["service"], journal.root):
+                raise failure("unexpected_unit_content")
+            verify_unit_origin(reloaded=True)
+            candidate = stage_candidate(
+                journal, args.expected_candidate_digest, getattr(args, "candidate_source", None)
+            )
+            # Re-read under the legacy journal lock: an intervening start wins
+            # and makes maintenance refuse, never overwrites its obligations.
+            with journal.connection() as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                current = maintenance_record(connection)
+                require_idle(current)
+                if current["service"] != old["service"]:
+                    raise failure("current_release_mismatch")
+                old = current
+                value = {"old": old, "candidate": candidate, "phase": "blocked"}
+                connection.execute(
+                    "CREATE TABLE IF NOT EXISTS pilot_maintenance (id INTEGER PRIMARY KEY, body TEXT NOT NULL)"
+                )
+                connection.execute("INSERT INTO pilot_maintenance(body) VALUES (?)", (encode(value),))
+                connection.execute("PRAGMA user_version=2")
+                connection.commit()
+            version = 2
+        if (
+            old["service"]["digest"] != args.expected_current_digest
+            or candidate["digest"] != args.expected_candidate_digest
+        ):
+            raise failure("maintenance_release_mismatch")
+        verify_release(old["service"], journal.root)
+        verify_release(candidate, journal.root)
+        target = old["service"] if args.recover == "rollback" else candidate
+        phase = "published_rollback" if args.recover == "rollback" else "published_complete"
+        if version == 1:
+            # Publication already committed. Do not restore a snapshot over any
+            # later activity. An idempotent completion may only start its service.
+            if value["phase"] != phase or journal.read() != dict(old, service=target, heartbeat=None):
+                raise failure("maintenance_already_published")
+            if unit_bytes() != service_unit(target, journal.root):
+                raise failure("unexpected_unit_content")
+            verify_unit_origin(reloaded=True)
+        else:
+            if unit_bytes() not in (
+                service_unit(old["service"], journal.root),
+                service_unit(candidate, journal.root),
+            ):
+                raise failure("unexpected_unit_content")
+            verify_unit_origin()
+            systemctl("stop", UNIT)
+            verify_unit_origin(stopped=True)
+            with journal.supervisor_lock():
+                # Read-only fresh cloud verification. No accounting/state rewrite
+                # and no provider mutation is allowed in this maintenance path.
+                Provider(ops.load_profile(old["profile_path"])).verify_idle(old)
+                verify_release(old["service"], journal.root)
+                verify_release(candidate, journal.root)
+                replace_unit(
+                    (service_unit(old["service"], journal.root), service_unit(candidate, journal.root)),
+                    service_unit(target, journal.root),
+                )
+                maintenance_update(journal, "unit")
+                systemctl("daemon-reload")
+                verify_unit_origin(stopped=True, reloaded=True)
+                maintenance_update(journal, "binding", service=target)
+                if unit_bytes() != service_unit(target, journal.root):
+                    raise failure("unexpected_unit_content")
+                verify_release(target, journal.root)
+                maintenance_update(journal, phase, service=target, publish=True)
+        systemctl("start", UNIT)
+    return ops.outcome(
+        "pilot upgrade-supervisor",
+        "ok",
+        data={"release_digest": target["digest"], "accounts_preserved": True},
+        next_actions=[
+            "Verify supervisor heartbeat and provenance with pilot status, then reconcile before any start."
+        ],
+    ), 0
 
 
 def prepare(args):
@@ -224,6 +527,7 @@ def status(journal, operation="pilot status"):
             "context": record["spec"]["context"],
             "desired": record["desired"],
             "supervisor_ready": ready,
+            "supervisor_release_digest": record["service"]["digest"] if record["service"] else None,
             "checkpoint": record["checkpoint"],
             "vms": vms,
             "network_ready": record["network"]["ready"],
@@ -321,6 +625,8 @@ def run(args):
         if args.pilot_command == "prepare":
             return prepare(args)
         journal = Journal(args.state_root)
+        if args.pilot_command == "upgrade-supervisor":
+            return upgrade_supervisor(journal, args)
         if args.pilot_command == "supervise":
             return supervise(journal)
         if args.pilot_command in ("start", "stop", "reconcile"):

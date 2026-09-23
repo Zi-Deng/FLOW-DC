@@ -64,6 +64,102 @@ start requires verified `Linger=yes`, checked read-only through `loginctl`. If i
 needs enabling, the operator must arrange that separately; cleanup remains available
 without this start prerequisite. Enabled user units restart when that user's manager starts.
 
+## Upgrade an idle supervisor without replenishing allowance
+
+After human merge, use the complete reviewed checkout and the intended Python
+interpreter. Run `pilot reconcile` using the existing registration, then wait for
+idle, no obligations, completed rollback, and fresh `SHELVED_OFFLOADED`
+observations. Do not stop an active supervisor to force an upgrade. Preserve the
+private state tree and old immutable release; never restore an earlier database
+over current accounting.
+
+The explicit maintenance command requires two full SHA-256 digests. Obtain the
+installed module digest from `pilot status` using the new checkout
+(`data.supervisor_release_digest`); this is a read-only operation against the
+existing v1 journal. Compute the candidate digest from the six modules in their
+fixed order, using that same reviewed checkout:
+
+```bash
+python3 -B -c 'import hashlib, pathlib, sys; sys.path.insert(0,"bin"); from flowdc_pilot_cli import MODULES; print(hashlib.sha256(b"".join((pathlib.Path("bin") / n).read_bytes() for n in MODULES)).hexdigest())'
+python3 -B bin/flowdc_ops.py pilot upgrade-supervisor \
+  --state-root "$HOME/.local/share/flowdc-ops" \
+  --expected-current-digest "$PILOT_OLD_DIGEST" \
+  --expected-candidate-digest "$PILOT_NEW_DIGEST"
+python3 -B bin/flowdc_ops.py pilot status
+python3 -B bin/flowdc_ops.py pilot reconcile
+```
+
+Set `PILOT_OLD_DIGEST` and `PILOT_NEW_DIGEST` to the verified values before invoking
+the command, and retain them privately for recovery. This digest describes source
+bytes, not a Git commit or interpreter digest. By default the candidate is this
+CLI's source directory. `--candidate-source ABSOLUTE_DIRECTORY` selects another
+complete reviewed tree or preserved release, still requiring its exact digest.
+This lets the new CLI install an older reviewed release without executing the
+older CLI during maintenance. The command separately validates
+and pins the running interpreter's resolved path and contents, and verifies the
+old installed interpreter against its existing binding. It refuses unexpected
+source bytes, edited installed releases/units, unit drop-ins, alternate fragments,
+unsafe paths and changed interpreters. Interpreter damage must be repaired through
+trusted operator recovery before either upgrade or rollback can proceed.
+
+Maintenance preserves registration, context, access facts, VM identities, events,
+network history and **every account field exactly**, including consumption and
+uncertainty. It changes only the service binding and clears the heartbeat at
+publication. An uncertain allowance stays uncertain; upgrading cannot make it
+usable. The old release and full pre-maintenance JSON record remain in the private
+journal's retained `pilot_maintenance` history table (one row per attempt). This is a transactionally captured
+state backup, not an external snapshot to copy over a newer journal.
+
+An exclusive maintenance lock serializes upgrades. Before stopping the service,
+a short journal transaction checks idle state and publishes SQLite
+`user_version=2` with the backup and candidate binding. The record body stays
+schema 1. Ordinary clients, **including old CLIs and supervisors**, reject version
+2 as `unsupported_journal`; they cannot accept a start during a crashed upgrade.
+The new CLI also requires explicit `--recover` to access maintenance. A start
+committed before this transaction wins: upgrade refuses without clearing it.
+
+With activation excluded, the command stops the unit, verifies that it is stopped,
+and acquires the supervisor lock. Fresh read-only provider checks verify context,
+all three offloaded VM identities, absence of owned groups/floating entries, and
+restored selected-port attachments. No cloud mutation occurs. A failed or uncertain
+read leaves the maintenance checkpoint intact. Each provider step still has its
+20-second deadline; the complete foreground maintenance operation has several
+steps. The 600-second reserve and 180-second lead are unchanged.
+
+The unit is replaced atomically, the user manager reloads and verifies its origin,
+the journal binding changes, and a final transaction publishes version 1 with a
+cleared heartbeat. Only then does the command start the verified service. Exit 0
+means publication and the start request succeeded; verify a fresh heartbeat and
+reconciled offload/rollback before considering any separately authorized activation.
+
+### Interrupted maintenance
+
+Preserve both releases, the unit, journal and lock files. Run the **new reviewed
+checkout**, with the same two recorded digests and state root, adding exactly one:
+
+- `--recover complete` to finish the verified candidate installation.
+- `--recover rollback` to restore the verified old installation before publication.
+
+Both paths repeat fresh read-only idle verification before changing the unit. They
+never clear obligations, reduce consumption, edit allowances or delete history.
+Unexpected unit bytes, altered backups, source/interpreter drift or provider
+uncertainty leave activation blocked for operator investigation.
+
+| Interrupted boundary | Durable state and recovery |
+| --- | --- |
+| Candidate staging, before maintenance transaction | Existing v1 service remains authoritative. Retry only after resolving a partial/conflicting staged release; existing files are never overwritten in place. |
+| Maintenance transaction or service stop | Snapshot and version 2 commit together. Either no maintenance began, or ordinary clients refuse. Recover either direction. |
+| Unit replacement, before/after phase record or daemon reload | Version 2 remains. Recovery accepts only the verified old or candidate unit, repeats stop/reload, and selects the requested release. |
+| Journal binding update | Version 2 remains; the body must exactly match the backup with either recorded service. Recover either direction. |
+| Publication, before service start | Version 1 and the final phase commit together, heartbeat cleared. Retry the same published direction to request start if no subsequent activity changed the record. |
+| After service resumed | Publication is final. If recovery reports `maintenance_already_published`, inspect status/provenance. A later rollback is a new guarded upgrade from the new CLI with reversed digests and `--candidate-source` pointing to the preserved old release; never overwrite intervening state. |
+
+If fresh checks discover active/unknown resources during maintenance, use the
+emergency offload procedure through an authorized independent control path.
+Maintenance deliberately does not activate or mutate cloud resources to resolve
+uncertainty. Do not manually set the journal back to version 1. Normal reconcile
+is available again only after verified recovery/publication.
+
 ## Start, inspect, stop and reconcile
 
 ```bash
@@ -127,7 +223,12 @@ An 1800-second inspection therefore enters cleanup by approximately 1020 seconds
 in normal operation, before the required 1200-second threshold. Provider failures
 can defeat completion despite that reserve. Each adapter step shares one 20-second
 budget across verification and subprocesses, with 256 KiB combined output limits
-per subprocess and bounded child cleanup. Each VM's cleanup attempt is at least ten
+per subprocess and bounded child cleanup. Independent owned-group and selected
+topology reads run in batches of at most four, following context validation.
+Every read is joined and checked before mutation; no earlier tick supplies cached
+authorization. Failed batches cancel queued probes and join bounded running probes
+before returning. Mutations remain on the supervisor thread, one action per step.
+Each VM's cleanup attempt is at least ten
 boot-time seconds apart (a reboot/backwards boot clock permits immediate retry);
 attempts rotate so one failed VM cannot starve the other two.
 Private journal and registration lock acquisition waits at most two seconds before
@@ -225,7 +326,8 @@ compatibility record does not validate these new mutations or network response s
    `flowdc-pilot.service` with `systemctl --user disable --now flowdc-pilot.service`
    for tool rollback. Preserve unit contents, releases, journal, binding, credentials
    and prior artifacts. Select a reviewed release through an explicit installation
-   change after cleanup; the installer deliberately refuses silently replacing a unit.
+   change after cleanup using `pilot upgrade-supervisor` above; first-time preparation
+   deliberately refuses silently replacing a unit.
 
 ## Validation without cloud mutation
 
@@ -351,3 +453,17 @@ limit. Disk exhaustion and local storage outages can prevent journal progress
 and require the emergency procedure. The 180-second lead schedules initial
 cleanup work; it does not guarantee that retries or provider offload finish.
 The 600-second reserve and conservative accounting remain in effect.
+
+For upgrade/recovery integration, run `python3 -B tests/pilot_upgrade_smoke.py`
+and `python3 -B tests/pilot_upgrade_smoke.py --rollback`. These create uniquely
+named linked user units pointing to temporary fake-only releases, interrupt after
+the binding transition, then complete or roll back through the production
+maintenance code. They verify a resumed real systemd heartbeat and unchanged
+account history. Only their own disposable unit links are removed; evidence and
+both releases remain under `/tmp/flowdc-upgrade-systemd-fake-*`. Exit 3 is an
+unavailable user bus, not a pass. Unit tests also inject faults at every durable
+transition and exercise the frozen v1 connection guard in separate client
+processes, without needing repository history in CI. These tests do not validate
+live cloud recovery. Post-merge operational validation remains a separate bounded
+checkpoint within the actual remaining allowance; preserve failed and successful
+run evidence separately and verify final offload and rollback.

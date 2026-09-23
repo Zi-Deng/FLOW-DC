@@ -224,6 +224,36 @@ class ReadBatchTests(unittest.TestCase):
                 provider.read_batch([("group", PROJECT), ("group_delete", PROJECT)])
         call.assert_not_called()
 
+    def test_every_batched_request_revalidates_credentials(self):
+        from contextlib import nullcontext
+
+        provider = Provider({"openstack_client": "/synthetic", "credential_file": "/synthetic"})
+        with (
+            provider.step(),
+            patch.object(ops, "validate_client") as client,
+            patch.object(ops, "private_file", side_effect=lambda path: nullcontext(0)) as credential,
+            patch.object(ops, "run_bounded", return_value=(0, b"{}")) as runner,
+        ):
+            self.assertEqual(provider.read_batch([("group", PROJECT)] * 4), [{}, {}, {}, {}])
+        self.assertEqual(client.call_count, 4)
+        self.assertEqual(credential.call_count, 4)
+        self.assertEqual(runner.call_count, 4)
+        with (
+            provider.step(),
+            patch.object(ops, "validate_client"),
+            patch.object(ops, "private_file", side_effect=PermissionError()),
+            patch.object(ops, "run_bounded") as runner,
+            self.assertRaises(PermissionError),
+        ):
+            provider.read_batch([("group", PROJECT)] * 4)
+        runner.assert_not_called()
+
+    def test_expired_batch_does_not_submit(self):
+        provider = Provider({})
+        with patch.object(provider, "call") as call, self.assertRaises(ops.OpsError):
+            provider.read_batch([("group", PROJECT)])
+        call.assert_not_called()
+
     def test_timed_out_batch_joins_and_reaps_all_children(self):
         provider = Provider({})
         children = []
@@ -314,6 +344,7 @@ class NetworkTests(unittest.TestCase):
         with patch("flowdc_pilot_provider.time.monotonic", side_effect=lambda: backend.now):
             backend.network_step(self.journal, rollback=False)
         self.assertLess(backend.now, backend.deadline)
+        self.assertAlmostEqual(backend.now - 100.0, 14.72)
         self.assertCountEqual(
             backend.reads,
             [
@@ -333,6 +364,61 @@ class NetworkTests(unittest.TestCase):
         mutations = [call for call in backend.calls if call[2]]
         self.assertEqual(len(mutations), 1)
         self.assertEqual(mutations[0][0], "rule")
+
+    def test_maintenance_reads_verify_actual_rollback_without_mutation(self):
+        self.setup_network()
+        self.rollback()
+        self.provider.calls.clear()
+        with patch.object(self.provider, "server", return_value="SHELVED_OFFLOADED"):
+            self.provider.verify_idle(self.journal.read())
+            self.assertFalse(any(call[2] for call in self.provider.calls))
+            self.provider.ports[PORT_IDS[0]]["security_group_ids"] = []
+            with self.assertRaises(ops.OpsError) as caught:
+                self.provider.verify_idle(self.journal.read())
+        self.assertEqual(caught.exception.code, "maintenance_network_rollback_required")
+        with patch.object(self.provider, "server", return_value="ACTIVE"):
+            with self.assertRaises(ops.OpsError) as caught:
+                self.provider.verify_idle(self.journal.read())
+        self.assertEqual(caught.exception.code, "initial_offload_required")
+        self.assertFalse(any(call[2] for call in self.provider.calls))
+
+    def test_failed_group_batch_and_stop_during_topology_never_mutate(self):
+        self.setup_network()
+        manager = self.journal.read()["network"]["seen_groups"]["manager"]
+        self.provider.groups[manager]["rules"] = []
+
+        def pending(current):
+            current["network"]["configured"].remove("manager")
+            current["network"]["ready"] = False
+            current["network"]["intents"] = {
+                key: value
+                for key, value in current["network"]["intents"].items()
+                if not key.startswith("rule-manager-")
+            }
+
+        self.journal.change(pending)
+        self.provider.calls.clear()
+        self.provider.fail_action = "group"
+        with self.assertRaises(ops.OpsError):
+            self.provider.network_step(self.journal, rollback=False)
+        self.assertFalse(any(call[2] for call in self.provider.calls))
+        self.provider.fail_action = None
+        original = self.provider.call
+
+        def stop(action, *args, **kwargs):
+            value = original(action, *args, **kwargs)
+            if action == "ports":
+                self.journal.change(lambda r: r.update(desired="stop"))
+            return value
+
+        with patch.object(self.provider, "call", side_effect=stop):
+            with self.assertRaises(ops.OpsError) as caught:
+                self.provider.network_step(self.journal, rollback=False)
+        self.assertEqual(caught.exception.code, "stop_requested")
+        self.assertFalse(any(call[2] for call in self.provider.calls))
+        self.assertFalse(
+            any(key.startswith("rule-manager-") for key in self.journal.read()["network"]["intents"])
+        )
 
     def test_real_runner_dispatch_provenance(self):
         import signal
