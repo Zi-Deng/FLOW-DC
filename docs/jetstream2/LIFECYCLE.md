@@ -4,7 +4,10 @@ The additive `pilot` commands manage exactly the manager, worker and origin in o
 registered specification. Preparation is local and non-activating. `start` asks an
 independent user-systemd service to prepare selected networking and unshelve the
 three existing VMs. No command creates, deletes, resizes or rebuilds a VM, deploys
-guests or downloads data. The original `js2` wrapper remains read-only.
+guests or downloads data. The separate [experiment CLI](EXPERIMENTS.md) adds those
+operations and calls the verified installed pilot for lifecycle requests. It does
+not change this controller release or allowance. The original `js2` wrapper remains
+read-only.
 
 **Implementation/review authorizes zero live cloud mutations.** The commands below
 are the post-merge operational procedure, conditional on separate activation

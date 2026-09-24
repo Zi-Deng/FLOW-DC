@@ -1,0 +1,10 @@
+{
+  "enable_paarc": true,
+  "concurrent_downloads": 4,
+  "C_init": 2,
+  "C_min": 1,
+  "C_max": 4,
+  "max_retry_attempts": 3,
+  "retry_backoff_sec": 0.2,
+  "timeout_sec": 10
+}
