@@ -7,10 +7,18 @@ import tarfile
 from collections import Counter
 from pathlib import PurePosixPath
 
-from flowdc_experiment_data import LIMIT, ExperimentError, digest, encode, parse, require
+from flowdc_experiment_data import (
+    ARCHIVE_MEMBER_LIMIT,
+    LIMIT,
+    ExperimentError,
+    digest,
+    encode,
+    parse,
+    require,
+)
 
 
-def members(raw, maximum, count=4096):
+def members(raw, maximum, count=ARCHIVE_MEMBER_LIMIT):
     require(len(raw) <= maximum, "artifact_size_limit")
     if raw.startswith(b"\x1f\x8b"):
         with gzip.GzipFile(fileobj=io.BytesIO(raw)) as compressed:

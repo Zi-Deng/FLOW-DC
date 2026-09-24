@@ -456,6 +456,75 @@ sys.exit(cli.main())
                 runner.kill()
             runner.communicate()
 
+    def test_cleanup_uses_configured_budget_for_slow_outstanding_stops(self):
+        selected, manifest, state = self.prepare()
+        manifest["spec"]["bounds"]["stop_seconds"] = 120
+        self.store.claim(selected)
+        state["services"] = [
+            {"role": "manager", "case": "previous", "stopped": True},
+            {"role": "worker", "case": "previous", "stopped": True},
+            {"role": "origin", "case": "all"},
+            {"role": "manager", "case": "current"},
+            {"role": "worker", "case": "current"},
+        ]
+        elapsed, calls = [0], []
+
+        class Controller:
+            def call(self, action, **kwargs):
+                calls.append(action)
+                return {}
+
+        class SlowStop:
+            def call(self, role, action, case, seconds):
+                calls.append((role, case))
+                elapsed[0] += min(seconds, 15)
+                if seconds < 15:
+                    raise data.ExperimentError("subprocess_timeout")
+
+        with (
+            patch.object(cli.time, "monotonic", lambda: elapsed[0]),
+            patch.object(cli, "clean", return_value=True),
+        ):
+            cli.cleanup(self.store, selected, manifest, state, Controller(), SlowStop())
+        self.assertEqual(calls[0], "stop")
+        self.assertEqual(state["guest_cleanup"], "verified")
+        self.assertEqual(state["cleanup"], "verified")
+        self.assertEqual(elapsed[0], 45)
+        self.assertIsNone(self.store.owner())
+        self.assertNotIn(("manager", "previous"), calls)
+
+    def test_expired_case_reports_specific_deadline_before_status(self):
+        selected, manifest, _ = self.prepare()
+        self.infrastructure(manifest)
+        real_clock, offset = time.monotonic, [0]
+        base = cli.Transport
+
+        class ExpiredLaunch(base):
+            def call(self, role, action, case="all", **kwargs):
+                if action == "launch" and role == "worker":
+                    offset[0] += 400
+                if action == "status" and kwargs["seconds"] <= 0:
+                    raise data.ExperimentError("deadline_expired")
+                return super().call(role, action, case, **kwargs)
+
+        with (
+            patch.object(cli.time, "monotonic", lambda: real_clock() + offset[0]),
+            patch.object(cli, "Transport", ExpiredLaunch),
+        ):
+            code, result = self.invoke("run", selected)
+        self.assertEqual(code, 3)
+        self.assertIn("case_deadline_expired", result["data"]["errors"])
+        self.assertNotIn("deadline_expired", result["data"]["errors"])
+
+    def test_partition_row_admission_matches_nested_archive_bound(self):
+        value = dict(self.value)
+        value.pop("fixture")
+        value["partitions"] = [{"path": str(self.path), "rows": 4093}]
+        data.specification(value)
+        value["partitions"][0]["rows"] = 4094
+        with self.assertRaises(data.ExperimentError):
+            data.specification(value)
+
     def test_failed_guest_cleanup_retains_owner_but_stops_cloud(self):
         selected, manifest, _ = self.prepare()
         calls = self.infrastructure(manifest)

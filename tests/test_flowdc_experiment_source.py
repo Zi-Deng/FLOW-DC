@@ -65,6 +65,17 @@ class SourceTests(unittest.TestCase):
             ):
                 source.read_source(self.repo, revision)
 
+    def test_hex_named_refs_do_not_override_object_ids(self):
+        (self.repo / source.SOURCE_PATHS[0]).write_text("later")
+        later = self.commit_all()
+        self.git("branch", self.commit[:12], later)
+        manifest, files = source.read_source(self.repo, self.commit[:12])
+        self.assertEqual(manifest["commit"], self.commit)
+        self.assertEqual(files, self.contents)
+        self.git("tag", "deadbeef", later)
+        with self.assertRaises(source.SourceError):
+            source.read_source(self.repo, "deadbeef")
+
     def test_rejects_noncommit_object(self):
         blob = self.git("rev-parse", f"{self.commit}:{source.SOURCE_PATHS[0]}")
         with self.assertRaisesRegex(source.SourceError, "source_commit_required"):

@@ -66,7 +66,14 @@ def read_source(repository, revision):
     repository = Path(repository)
     if not repository.is_absolute() or not repository.is_dir():
         raise SourceError("source_repository_invalid")
-    commit = _git(repository, "rev-parse", "--verify", "--end-of-options", revision).decode().strip()
+    # Disambiguate objects directly: rev-parse --verify gives hex-named refs
+    # precedence over abbreviated IDs, even when followed by ^{commit}.
+    candidates = _git(repository, "rev-parse", "--disambiguate=" + revision.lower()).decode().splitlines()
+    if not candidates:
+        raise SourceError("source_git_unavailable")
+    if len(candidates) != 1:
+        raise SourceError("source_commit_invalid")
+    commit = candidates[0]
     if not re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", commit):
         raise SourceError("source_commit_invalid")
     if _git(repository, "cat-file", "-t", commit) != b"commit\n":

@@ -291,16 +291,18 @@ def cleanup(store, selected, manifest, state, controller, transport=None):
     guest_ok = all(service.get("stopped") for service in state["services"])
     if transport is not None:
         guest_ok = True
-        guest_deadline = min(deadline, time.monotonic() + 30)
-        for service in reversed(state["services"]):
-            if service.get("stopped"):
-                continue
+        # Cloud stop has already been requested. Share half the remaining stop
+        # window among outstanding services, reserving the rest for cloud proof.
+        now = time.monotonic()
+        guest_deadline = now + max(0, deadline - now) / 2
+        outstanding = [s for s in reversed(state["services"]) if not s.get("stopped")]
+        for index, service in enumerate(outstanding):
             try:
                 transport.call(
                     service["role"],
                     "stop",
                     service["case"],
-                    seconds=min(10, guest_deadline - time.monotonic()),
+                    seconds=(guest_deadline - time.monotonic()) / (len(outstanding) - index),
                 )
                 service["stopped"] = True
             except Exception:
@@ -439,6 +441,7 @@ def run(store, selected, manifest, state):
             launch("manager", case["name"], end - time.monotonic())
             launch("worker", case["name"], end - time.monotonic())
             while True:
+                require(time.monotonic() < end, "case_deadline_expired")
                 result = transport.call(
                     "manager", "status", case["name"], seconds=min(10, end - time.monotonic())
                 )
@@ -453,7 +456,8 @@ def run(store, selected, manifest, state):
                     save(store, selected, state)
                     break
                 require(time.monotonic() < end, "case_deadline_expired")
-                time.sleep(1)
+                time.sleep(min(1, max(0, end - time.monotonic())))
+            require(time.monotonic() < work_end, "work_deadline_expired")
             transport.call("worker", "stop", case["name"], seconds=min(10, work_end - time.monotonic()))
             next(s for s in state["services"] if s["role"] == "worker" and s["case"] == case["name"])[
                 "stopped"

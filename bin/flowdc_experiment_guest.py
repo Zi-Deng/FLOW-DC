@@ -337,7 +337,15 @@ def origin_server(root, port=8000):
             if not match or match[1] not in allowed or int(match[2]) >= 64:
                 self.send_error(404)
                 return
-            check(sum(counts.values()) < 2048)
+            if sum(counts.values()) >= 2048:
+                if not self.server.fixture_exhausted:
+                    log.write(
+                        json.dumps({"path": self.path, "source": self.client_address[0], "status": 429})
+                        + "\n"
+                    )
+                self.server.fixture_exhausted = True
+                self.send_error(429)
+                return
             counts[self.path] = counts.get(self.path, 0) + 1
             injected = int(match[2]) == 0 and counts[self.path] == 1
             log.write(
@@ -365,22 +373,44 @@ def origin_server(root, port=8000):
         log.close()
         raise
     server.fixture_log = log
+    server.fixture_exhausted = False
     return server
 
 
 def origin(root):
     server = origin_server(root)
     try:
-        server.serve_forever()
+        # Exit after sending the bounded refusal; shutdown() from the serving
+        # thread would deadlock. systemd still supplies the overall runtime cap.
+        while not server.fixture_exhausted:
+            server.handle_request()
     finally:
         server.server_close()
         server.fixture_log.close()
 
 
+def collection_paths(base):
+    # Bound directory enumeration too, before allocating the transfer manifest.
+    seen = 0
+
+    def walk(directory, depth):
+        nonlocal seen
+        check(depth <= 32)
+        with os.scandir(directory) as entries:
+            for entry in entries:
+                seen += 1
+                check(seen <= 4096)
+                yield Path(entry.path)
+                if entry.is_dir(follow_symlinks=False):
+                    yield from walk(entry.path, depth + 1)
+
+    yield from walk(base, 0)
+
+
 def collect(root, role, case, maximum):
     base = root if role == "origin" else root / "results" / case
     private_path(base)
-    paths = [root / "origin.jsonl"] if role == "origin" else sorted(base.rglob("*"))
+    paths = [root / "origin.jsonl"] if role == "origin" else collection_paths(base)
     if role == "worker":
         paths = [base / "worker.log"]
     # Bound packaging BEFORE producing any transfer; refuse symlinks even in logs.
@@ -395,7 +425,7 @@ def collect(root, role, case, maximum):
         check(total + 10240 <= maximum and len(regular) < 4096)
         regular.append(path)
     with tarfile.open(fileobj=sys.stdout.buffer, mode="w|") as archive:
-        for path in regular:
+        for path in sorted(regular):
             archive.add(path, arcname=str(path.relative_to(base)), recursive=False)
 
 

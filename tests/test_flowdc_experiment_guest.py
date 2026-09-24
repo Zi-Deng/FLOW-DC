@@ -62,6 +62,75 @@ class GuestProtocolTests(unittest.TestCase):
         )
         self.assertNotEqual(result.returncode, 0)
 
+    def test_collection_bounds_directory_traversal_before_packaging(self):
+        self.root.mkdir(mode=0o700)
+        base = self.root / "results/case"
+        base.mkdir(parents=True, mode=0o700)
+        for index in range(4097):
+            (base / str(index)).mkdir(mode=0o700)
+        output = io.BytesIO()
+        with patch.object(guest.sys, "stdout") as stdout:
+            stdout.buffer = output
+            with self.assertRaises(ValueError):
+                guest.collect(self.root, "manager", "case", LIMIT)
+        self.assertEqual(output.getvalue(), b"")
+
+    def test_real_downloader_archive_member_boundary(self):
+        from download_batch import create_tar
+        from flowdc_experiment_data import ExperimentError
+        from single_download import determine_file_path, save_imagefolder
+
+        self.root.mkdir(mode=0o700)
+        output = self.root / "output_part-000"
+        output.mkdir()
+        (output / "overview.json").write_text("{}")
+        for index in range(4093):
+            path = determine_file_path(str(output), "imagefolder", None, f"image-{index}.png")
+            self.assertTrue(save_imagefolder(b"fixture", path, str(index), "", None, [])[0])
+        archive = Path(create_tar(str(output)))
+        self.assertEqual(len(members(archive.read_bytes(), LIMIT)), 4096)
+        (output / "output/one-too-many.png").write_bytes(b"fixture")
+        archive = Path(create_tar(str(output)))
+        with self.assertRaisesRegex(ExperimentError, "archive_member_limit"):
+            members(archive.read_bytes(), LIMIT)
+
+    def test_origin_request_limit_has_bounded_explicit_refusal(self):
+        from types import SimpleNamespace
+
+        self.root.mkdir(mode=0o700)
+        (self.root / "guest.json").write_bytes(
+            encode({"cases": ["on"], "addresses": {"origin": "127.0.0.1"}})
+        )
+        (self.root / "images").mkdir()
+        (self.root / "images/0.png").write_bytes(b"fixture")
+        captured = []
+
+        def server_boundary(address, handler):
+            captured.append(handler)
+            return SimpleNamespace()
+
+        with patch.object(guest, "HTTPServer", server_boundary):
+            server = guest.origin_server(self.root)
+        try:
+            handler = object.__new__(captured[0])
+            handler.path, handler.client_address = "/on/0.png", ("127.0.0.1", 1)
+            handler.server, handler.wfile = server, io.BytesIO()
+            with (
+                patch.object(handler, "send_error") as error,
+                patch.object(handler, "send_response"),
+                patch.object(handler, "send_header"),
+                patch.object(handler, "end_headers"),
+            ):
+                for _ in range(2050):
+                    handler.do_GET()
+            self.assertEqual(error.call_args.args[0], 429)
+            self.assertTrue(server.fixture_exhausted)
+            rows = [json.loads(line) for line in (self.root / "origin.jsonl").read_text().splitlines()]
+            self.assertEqual(len(rows), 2049)
+            self.assertEqual(rows[-1]["status"], 429)
+        finally:
+            server.fixture_log.close()
+
     def test_guest_rejects_traversal_without_writing_outside_owned_root(self):
         raw = io.BytesIO()
         with tarfile.open(fileobj=raw, mode="w") as archive:

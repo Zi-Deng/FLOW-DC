@@ -15,6 +15,9 @@ from uuid import uuid4
 import flowdc_ops as ops
 
 LIMIT = 64 * 1024 * 1024
+ARCHIVE_MEMBER_LIMIT = 4096
+# Maintained imagefolder tar: root directory, image subdirectory, overview, and images.
+MAX_PARTITION_ROWS = ARCHIVE_MEMBER_LIMIT - 3
 ROLES = ("manager", "worker", "origin")
 
 
@@ -144,7 +147,7 @@ def specification(value):
         for part in parts:
             fields(part, ("path", "rows"), ("expected_sha256",))
             ops.absolute_path(part["path"])
-            integer(part["rows"], 1, 1000000)
+            integer(part["rows"], 1, MAX_PARTITION_ROWS)
             if "expected_sha256" in part:
                 hashes = part["expected_sha256"]
                 require(isinstance(hashes, list) and len(hashes) == part["rows"])
@@ -237,7 +240,8 @@ def parquet_rows(raw, column):
     except ImportError:
         raise ExperimentError("local_polars_required") from None
     try:
-        frame = pl.read_parquet(io.BytesIO(raw), columns=[column])
+        frame = pl.read_parquet(io.BytesIO(raw), columns=[column], n_rows=MAX_PARTITION_ROWS + 1)
+        require(1 <= frame.height <= MAX_PARTITION_ROWS, "partition_row_limit")
         require(frame[column].dtype == pl.String and frame[column].null_count() == 0, "invalid_partition")
         require(all(re.match(r"https?://[^\s]+$", url) for url in frame[column]), "invalid_partition")
         require(frame[column].n_unique() == frame.height, "duplicate_partition_urls")
