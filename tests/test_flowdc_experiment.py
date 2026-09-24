@@ -456,6 +456,121 @@ sys.exit(cli.main())
                 runner.kill()
             runner.communicate()
 
+    def test_cloud_stop_precedes_slow_cleanup_bookkeeping(self):
+        selected, manifest, state = self.prepare()
+        elapsed, dispatched = [0], []
+        original = cli.save
+
+        def slow_save(*args, **kwargs):
+            elapsed[0] += 2
+            return original(*args, **kwargs)
+
+        class Controller:
+            def call(self, action, seconds):
+                if seconds <= 0:
+                    raise data.ExperimentError("deadline_expired")
+                dispatched.append(action)
+                return {}
+
+        with patch.object(cli.time, "monotonic", lambda: elapsed[0]), patch.object(cli, "save", slow_save):
+            cli.cleanup(self.store, selected, manifest, state, Controller())
+        self.assertEqual(dispatched, ["stop"])
+        self.assertEqual(state["cleanup"], "uncertain")
+
+    def test_partition_reads_use_remaining_aggregate_staging_budget(self):
+        self.value.pop("fixture")
+        partitions = []
+        for index in range(3):
+            path = self.root / f"large-{index}.parquet"
+            path.write_bytes(b"x" * (100000 if index == 0 else 600000))
+            partitions.append({"path": str(path), "rows": 1})
+        self.value["partitions"] = partitions
+        self.path.write_bytes(data.encode(self.value))
+        real_read, attempts = cli.read_file, []
+
+        def observed_read(path, maximum=data.LIMIT, **kwargs):
+            if str(path).endswith(".parquet"):
+                attempts.append(maximum)
+            return real_read(path, maximum, **kwargs)
+
+        with (
+            patch.object(cli, "LIMIT", 2 * 1048576),
+            patch.object(cli, "read_file", observed_read),
+            patch.object(cli, "parquet_rows", return_value=1),
+        ):
+            with self.assertRaisesRegex(data.ExperimentError, "staging_size_limit"):
+                cli.prepare(self.path)
+        self.assertEqual(len(attempts), 2)
+        self.assertLess(attempts[0], 524288)
+        self.assertEqual(attempts[0] - attempts[1], 100000)
+
+    def test_partition_validation_cached_per_distinct_url_column(self):
+        import polars as pl
+
+        path = self.root / "input.parquet"
+        pl.DataFrame(
+            {"url": ["https://example.invalid/a"], "alternate": ["https://example.invalid/b"]}
+        ).write_parquet(path)
+        self.value.pop("fixture")
+        self.value["partitions"] = [{"path": str(path), "rows": 1}]
+        self.path.write_bytes(data.encode(self.value))
+        with patch.object(cli, "parquet_rows", wraps=cli.parquet_rows) as validate:
+            cli.prepare(self.path)
+        self.assertEqual(validate.call_count, 1)
+        case = self.value["cases"][1]
+        Path(case["config"]).write_bytes(data.encode({"enable_paarc": False, "url_col": "alternate"}))
+        with patch.object(cli, "parquet_rows", wraps=cli.parquet_rows) as validate:
+            cli.prepare(self.path)
+        self.assertEqual({c.args[1] for c in validate.call_args_list}, {"url", "alternate"})
+
+    def test_completed_worker_and_origin_validation_survives_interruption(self):
+        for boundary in ("origin_acquire", "terminal_save"):
+            with self.subTest(boundary=boundary):
+                selected, manifest, state = self.prepare()
+                self.infrastructure(manifest)
+                self.fake_captures.update(members(self.store.read(selected, "bundle.tar"), data.LIMIT))
+                transport = cli.Transport()
+                original_call, original_save = transport.call, cli.save
+
+                def call(role, action, *args, boundary=boundary, original_call=original_call, **kwargs):
+                    if role == "origin" and boundary == "origin_acquire":
+                        raise SystemExit("process loss")
+                    return original_call(role, action, *args, **kwargs)
+
+                def save(store, selected, current, *args, original_save=original_save):
+                    if current["workload"] == "passed":
+                        raise SystemExit("process loss")
+                    return original_save(store, selected, current, *args)
+
+                with (
+                    patch.object(transport, "call", call),
+                    patch.object(cli, "save", save),
+                    self.assertRaises(SystemExit),
+                ):
+                    cli.collect_outputs(
+                        self.store, selected, manifest, state, transport, time.monotonic() + 20
+                    )
+                restored = self.store.json(selected, "state.json")
+                self.assertTrue(restored["collected"]["paarc-off-worker"]["valid"])
+                if boundary == "terminal_save":
+                    self.assertTrue(restored["collected"]["origin"]["valid"])
+                    cli.collect_outputs(self.store, selected, manifest, restored, None, time.monotonic() + 20)
+                    self.assertEqual(restored["workload"], "passed")
+
+    def test_nonrun_interrupt_returns_fixed_json_and_restores_umask(self):
+        selected, _, _ = self.prepare()
+        previous = os.umask(0o027)
+        try:
+            with patch.object(cli, "load", side_effect=KeyboardInterrupt):
+                code, result = self.invoke("status", selected)
+            self.assertEqual(code, 2)
+            self.assertEqual(result["error"], "experiment_interrupted")
+            self.assertEqual(os.umask(0o027), 0o027)
+            with self.store.lock():
+                pass
+        finally:
+            os.umask(previous)
+
     def test_cleanup_uses_configured_budget_for_slow_outstanding_stops(self):
         selected, manifest, state = self.prepare()
         manifest["spec"]["bounds"]["stop_seconds"] = 120

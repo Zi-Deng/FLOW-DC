@@ -181,9 +181,15 @@ Every SSH/child process has a deadline and output cap, with process-group cleanu
 Artifact decompression and hashing run in a bounded child. Collection cannot consume
 the separate `stop_seconds` budget (default 300). On normal completion, named guest
 services are stopped/verified before final collection. On failure or lost start
-acknowledgement, cloud stop is requested first. Half the remaining configured stop
+acknowledgement, the runner attempts cloud stop before cleanup bookkeeping or guest
+operations, within the original stop deadline. Scheduling stalls or process loss can
+still prevent dispatch; an expired deadline is never extended. Half the remaining configured stop
 window is shared among outstanding guest services; the rest is reserved for fresh cloud-cleanup
 evidence. Already stopped services do not consume that budget.
+The controller's fixed 600-second reserve and 180-second action lead protect its
+independent shutdown/accounting boundary. `stop_seconds` is a separate client
+cleanup/evidence-wait limit (1–1800 seconds); changing it never changes that reserve.
+A short client limit may return incomplete while supervision continues.
 SIGINT/SIGTERM retain evidence and enter cleanup; SIGKILL, power loss, disconnection
 or provider outage can prevent local follow-through. The unchanged independent
 pilot supervisor remains authoritative for cloud obligations.
@@ -192,7 +198,9 @@ CLI JSON uses schema version 1. Exit 0 from `run` requires workload pass, verifi
 cloud cleanup, verified guest cleanup, and no retained errors. Exit 3 is incomplete;
 exit 2 is a refused operation. `status` exit 0 means the local record was read,
 not that the experiment passed. `stop` exit 0 means cleanup verified, not workload
-success. Failed-run diagnostics remain visible even if a later collection succeeds.
+success. `workload` describes the latest artifact-validation outcome and can become
+`passed` after collection recovery. Earlier execution/collection errors remain in
+`errors`, so recovery does not turn a failed run into a successful run/collect exit.
 Cloud success requires fresh selected-VM `SHELVED_OFFLOADED` observations, settled
 accounts without uncertainty, idle healthy supervision and verified network rollback.
 A stop acknowledgement, cached observation or workload pass alone is insufficient.
@@ -218,6 +226,11 @@ runs/exp-.../artifacts-CASE-worker-UUID.tar
 runs/exp-.../artifacts-origin-UUID.tar
 runs/exp-.../validation-CASE.json     # observed hashes, expected verification, overviews
 ```
+
+Supplied partition reads are limited by the remaining aggregate staging budget,
+including one staged copy per case and the source/configuration/helper payloads.
+Cases sharing a URL column reuse its validation. These are staged-byte bounds,
+not a bound on Parquet decompression or total process RSS.
 
 Preparation bounds source to 4 MiB, staging to 64 MiB, cases to 8 and partitions to
 32 (up to 4093 rows each: the 4096-member nested archive limit reserves the

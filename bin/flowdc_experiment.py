@@ -49,31 +49,6 @@ def prepare(path):
         cases.append({"name": case["name"], "config": config})
         originals[case["name"]] = raw
         files[f"configs/{case['name']}.json"] = encode(config)
-    if spec["fixture"]:
-        require(
-            len(cases) == 2 and {case["config"]["enable_paarc"] for case in cases} == {False, True},
-            "fixture_requires_both_paarc_modes",
-        )
-        require(all(case["config"].get("url_col", "url") == "url" for case in cases), "fixture_url_column")
-        generated, partitions = generate(
-            record["access"]["interfaces"]["origin"]["fixed_ip"], [case["name"] for case in cases]
-        )
-        files.update(generated)
-    else:
-        partitions = {case["name"]: [] for case in cases}
-        for index, part in enumerate(spec["partitions"]):
-            raw = read_file(part["path"])
-            filename = f"part-{index:03}.parquet"
-            for case in cases:
-                require(
-                    parquet_rows(raw, case["config"].get("url_col", "url")) == part["rows"],
-                    "partition_row_count_mismatch",
-                )
-                files[f"inputs/{case['name']}/{filename}"] = raw
-                selected = {"name": filename, "rows": part["rows"]}
-                if "expected_sha256" in part:
-                    selected["expected_sha256"] = part["expected_sha256"]
-                partitions[case["name"]].append(selected)
     helper = Path(__file__).with_name("flowdc_experiment_guest.py").read_bytes()
     files["guest.py"] = helper
     files["guest.json"] = encode(
@@ -86,6 +61,44 @@ def prepare(path):
             "addresses": {role: record["access"]["interfaces"][role]["fixed_ip"] for role in ROLES},
         }
     )
+    if spec["fixture"]:
+        require(
+            len(cases) == 2 and {case["config"]["enable_paarc"] for case in cases} == {False, True},
+            "fixture_requires_both_paarc_modes",
+        )
+        require(all(case["config"].get("url_col", "url") == "url" for case in cases), "fixture_url_column")
+        generated, partitions = generate(
+            record["access"]["interfaces"]["origin"]["fixed_ip"], [case["name"] for case in cases]
+        )
+        files.update(generated)
+    else:
+        partitions = {case["name"]: [] for case in cases}
+        staged_bytes = sum(map(len, files.values()))
+        for index, part in enumerate(spec["partitions"]):
+            maximum = (LIMIT - 1048576 - 1 - staged_bytes) // len(cases)
+            require(maximum > 0, "staging_size_limit")
+            try:
+                raw = read_file(part["path"], maximum)
+            except ExperimentError as exc:
+                if error_code(exc) == "input_size_limit":
+                    raise ExperimentError("staging_size_limit") from exc
+                raise
+            staged_bytes += len(raw) * len(cases)
+            rows_by_column = {
+                column: parquet_rows(raw, column)
+                for column in {case["config"].get("url_col", "url") for case in cases}
+            }
+            filename = f"part-{index:03}.parquet"
+            for case in cases:
+                require(
+                    rows_by_column[case["config"].get("url_col", "url")] == part["rows"],
+                    "partition_row_count_mismatch",
+                )
+                files[f"inputs/{case['name']}/{filename}"] = raw
+                selected = {"name": filename, "rows": part["rows"]}
+                if "expected_sha256" in part:
+                    selected["expected_sha256"] = part["expected_sha256"]
+                partitions[case["name"]].append(selected)
     require(sum(map(len, files.values())) < LIMIT - 1048576, "staging_size_limit")
     archive = bundle(files)
     require(len(archive) <= LIMIT, "staging_size_limit")
@@ -256,6 +269,7 @@ def collect_outputs(store, selected, manifest, state, transport, deadline):
             worker_raw = acquire(key, "worker", case["name"])
             validate(worker_raw, "worker")
             state["collected"][key]["valid"] = True
+            save(store, selected, state)
         except Exception as exc:
             failures.append(error_code(exc))
     if manifest["spec"]["fixture"]:
@@ -269,6 +283,7 @@ def collect_outputs(store, selected, manifest, state, transport, deadline):
             )
             store.save(selected, "validation-origin.json", report)
             state["collected"]["origin"]["valid"] = True
+            save(store, selected, state)
         except Exception as exc:
             failures.append(error_code(exc))
     state["workload"] = "failed" if failures else "passed"
@@ -279,15 +294,15 @@ def collect_outputs(store, selected, manifest, state, transport, deadline):
 def cleanup(store, selected, manifest, state, controller, transport=None):
     deadline = time.monotonic() + manifest["spec"]["bounds"]["stop_seconds"]
     try:
-        save(store, selected, state, "stopping")
-    except Exception:
-        state["errors"].append("cleanup_record_write_failed")
-    try:
-        # Request cloud stop BEFORE trying any guest operation. Failure or hanging
-        # guest collection cannot delay this bounded independent cleanup path.
+        # Dispatch before local bookkeeping or guest operations. Ownership and
+        # activation intent are already durable; no expired budget is extended.
         controller.call("stop", seconds=min(10, deadline - time.monotonic()))
     except Exception as exc:
         state["errors"].append(error_code(exc))
+    try:
+        save(store, selected, state, "stopping")
+    except Exception:
+        state["errors"].append("cleanup_record_write_failed")
     guest_ok = all(service.get("stopped") for service in state["services"])
     if transport is not None:
         guest_ok = True
@@ -653,6 +668,7 @@ def main(argv=None):
         )
         return 0 if successful else 3
     except (
+        KeyboardInterrupt,
         ExperimentError,
         SourceError,
         ops.OpsError,

@@ -204,7 +204,13 @@ class DownloaderFixtureTests(unittest.TestCase):
             # The maintained guest origin implementation chooses an ephemeral local
             # port for this test only; production CLI has no port override.
             server = origin_server(root, port=0)
-            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            server.timeout = 0.1
+
+            def serve():
+                with patch.object(guest, "origin_server", return_value=server):
+                    guest.origin(root)
+
+            thread = threading.Thread(target=serve, daemon=True)
             thread.start()
             try:
                 files, expected = generate("127.0.0.1", config["cases"])
@@ -275,10 +281,10 @@ class DownloaderFixtureTests(unittest.TestCase):
                         [row["status"] for row in rows if row["path"] == f"/{name}/0.png"], [503, 200]
                     )
             finally:
-                server.shutdown()
-                server.server_close()
-                server.fixture_log.close()
+                server.fixture_exhausted = True
                 thread.join(timeout=5)
+                self.assertFalse(thread.is_alive())
+                self.assertTrue(server.fixture_log.closed)
 
 
 if __name__ == "__main__":
