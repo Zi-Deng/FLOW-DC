@@ -20,7 +20,7 @@ import flowdc_experiment_data as data
 import flowdc_experiment_transport as transport
 import flowdc_ops as ops
 from flowdc_experiment_artifacts import bundle, members
-from flowdc_experiment_process import execute
+from flowdc_experiment_process import CANCEL_CHECK, execute
 from flowdc_pilot_journal import register
 from test_flowdc_pilot_lifecycle import access, spec
 
@@ -669,6 +669,62 @@ sys.exit(cli.main())
 
 
 class ArchiveAndProcessTests(unittest.TestCase):
+    def test_cancellation_after_stdout_eof(self):
+        started = time.monotonic()
+
+        def cancel():
+            if time.monotonic() - started >= 0.2:
+                raise data.ExperimentError("cancellation_requested")
+
+        token = CANCEL_CHECK.set(cancel)
+        try:
+            with self.assertRaisesRegex(data.ExperimentError, "cancellation_requested"):
+                execute(
+                    [sys.executable, "-c", "import os,time; os.close(1); time.sleep(2)"],
+                    seconds=3,
+                )
+        finally:
+            CANCEL_CHECK.reset(token)
+        self.assertLess(time.monotonic() - started, 1.5)
+
+    def test_deadline_after_stdout_eof(self):
+        started = time.monotonic()
+        with self.assertRaisesRegex(data.ExperimentError, "subprocess_timeout"):
+            execute(
+                [sys.executable, "-c", "import os,time; os.close(1); time.sleep(2)"],
+                seconds=0.2,
+            )
+        self.assertLess(time.monotonic() - started, 1.5)
+
+    def test_group_cleanup_precedes_reaping_exited_leader(self):
+        real_killpg = os.killpg
+        observed = []
+
+        def kill_owned_group(pid, sig):
+            # WNOWAIT proves the real child remains waitable at signaling time.
+            status = os.waitid(os.P_PID, pid, os.WEXITED | os.WNOHANG | os.WNOWAIT)
+            observed.append(status)
+            return real_killpg(pid, sig)
+
+        with patch("flowdc_experiment_process.os.killpg", kill_owned_group):
+            code, output = execute([sys.executable, "-c", "print('done'); raise SystemExit(7)"], seconds=3)
+        self.assertEqual((code, output), (7, b"done\n"))
+        self.assertEqual(len(observed), 1)
+        self.assertEqual(observed[0].si_status, 7)
+
+    def test_nondefault_child_management_refused_before_spawn(self):
+        for disposition in (signal.SIG_IGN, lambda *args: None):
+            with (
+                patch("flowdc_experiment_process.signal.getsignal", return_value=disposition),
+                patch(
+                    "flowdc_experiment_process.subprocess.Popen",
+                    side_effect=AssertionError("unexpected child spawn"),
+                ) as spawn,
+                self.assertRaisesRegex(data.ExperimentError, "subprocess_child_management"),
+            ):
+                execute([sys.executable, "-c", "pass"], seconds=1)
+            spawn.assert_not_called()
+
     def test_unsafe_archives_and_size_limit(self):
         for filename, kind in (
             ("../escape", tarfile.REGTYPE),

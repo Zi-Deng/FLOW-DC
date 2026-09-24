@@ -130,7 +130,7 @@ is refused; no history or account fields are reset.
 
 ```bash
 STATE=/absolute/existing/flowdc-state
-RUN=exp-REPLACE_WITH_RETURNED_32_HEX_DIGITS
+RUN=exp-0123456789abcdef0123456789abcdef  # Replace with the complete returned run ID.
 
 # Requires separate operational activation authorization.
 python bin/flowdc_experiment.py run --state-root "$STATE" --run-id "$RUN"

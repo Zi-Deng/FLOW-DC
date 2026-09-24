@@ -23,6 +23,10 @@ def execute(argv, *, seconds, maximum=262144, data=b""):
     check_cancel()
     if seconds <= 0:
         raise ExperimentError("deadline_expired")
+    # This CLI owns child reaping; automatic/external reapers can release a PID
+    # before group cleanup. Require the default disposition before spawning.
+    if signal.getsignal(signal.SIGCHLD) != signal.SIG_DFL:
+        raise ExperimentError("subprocess_child_management")
     environment = {
         k: v
         for k, v in os.environ.items()
@@ -60,19 +64,29 @@ def execute(argv, *, seconds, maximum=262144, data=b""):
                         output.extend(chunk)
                         if len(output) > maximum:
                             raise ExperimentError("subprocess_output_limit")
-                try:
-                    code = process.wait(timeout=max(0.001, deadline - time.monotonic()))
-                except subprocess.TimeoutExpired:
-                    raise ExperimentError("subprocess_timeout") from None
-            return code, bytes(output)
+                # EOF does not imply exit. Observe without reaping, retaining PID
+                # ownership until the process group has been signaled below.
+                while os.waitid(os.P_PID, process.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT) is None:
+                    check_cancel()
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise ExperimentError("subprocess_timeout")
+                    time.sleep(min(remaining, 0.01))
     except OSError:
         raise ExperimentError("subprocess_unavailable") from None
     finally:
         if process is not None:
-            # Also reap descendants that kept running after the group leader exited.
+            # Signal before reaping the leader, preventing PID reuse before killpg.
+            # This also stops descendants that closed stdout but kept running.
             try:
-                os.killpg(process.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            process.wait()
-            process.stdout.close()
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                try:
+                    code = process.wait(timeout=1)
+                except subprocess.TimeoutExpired:
+                    raise ExperimentError("subprocess_cleanup_timeout") from None
+            finally:
+                process.stdout.close()
+    return code, bytes(output)

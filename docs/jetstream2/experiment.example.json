@@ -7,14 +7,14 @@
     "revision": "REPLACE_WITH_EXPLICIT_COMMIT_HEX"
   },
   "ssh": {
-    "user": "ubuntu",
+    "user": "exouser",
     "identity_file": "/absolute/private/existing_identity",
     "known_hosts": "/absolute/private/existing_known_hosts"
   },
   "guest": {
-    "root": "/home/ubuntu/flowdc-experiments",
-    "python": "/home/ubuntu/existing-env/bin/python",
-    "worker": "/home/ubuntu/existing-env/bin/vine_worker",
+    "root": "/home/exouser/flowdc-experiments",
+    "python": "/home/exouser/existing-env/bin/python",
+    "worker": "/home/exouser/existing-env/bin/vine_worker",
     "service_mode": "system"
   },
   "fixture": true,
