@@ -4,9 +4,11 @@ import contextlib
 import io
 import json
 import os
+import shutil
 import signal
 import subprocess
 import sys
+import sysconfig
 import tarfile
 import tempfile
 import time
@@ -600,7 +602,7 @@ sys.exit(cli.main())
     def test_actual_controller_status_uses_immutable_release(self):
         from dataclasses import asdict
 
-        from flowdc_pilot_cli import MODULES, service_unit
+        from flowdc_pilot_cli import MODULES, service_unit, trusted_bytes
         from flowdc_pilot_supervisor import sample_clock
 
         content = [(REPO / "bin" / name).read_bytes() for name in MODULES]
@@ -609,7 +611,54 @@ sys.exit(cli.main())
         release.mkdir(mode=0o700, parents=True)
         for name, raw in zip(MODULES, content, strict=True):
             (release / name).write_bytes(raw)
-        interpreter = str(Path(sys.executable).resolve())
+        # Model a setup-python cache whose writable ancestor is not trusted.
+        cache = self.root / "tool-cache"
+        cache.mkdir(mode=0o700)
+        cache.chmod(0o777)
+        cached_python = cache / "python"
+        shutil.copyfile(Path(sys.executable).resolve(), cached_python)
+        cached_python.chmod(0o700)
+        with self.assertRaises(ops.OpsError):
+            trusted_bytes(cached_python, executable=True)
+        # Copy the runnable installation layout, not just its executable: hosted
+        # Python uses a shared library and discovers stdlib relative to its prefix.
+        prefix = self.root / "private-python"
+        (prefix / "bin").mkdir(mode=0o700, parents=True)
+        library = prefix / "lib"
+        library.mkdir(mode=0o700)
+        version = f"python{sys.version_info.major}.{sys.version_info.minor}"
+        shutil.copytree(
+            sysconfig.get_path("stdlib"),
+            library / version,
+            ignore=shutil.ignore_patterns("site-packages", "dist-packages", "__pycache__"),
+        )
+        if sysconfig.get_config_var("Py_ENABLE_SHARED"):
+            for shared in Path(sysconfig.get_config_var("LIBDIR")).glob(f"lib{version}.so*"):
+                shutil.copyfile(shared, library / shared.name)
+        private_python = prefix / "bin" / "python"
+        shutil.copyfile(cached_python, private_python)
+        private_python.chmod(0o700)
+        interpreter = str(private_python)
+        self.assertEqual(trusted_bytes(private_python, executable=True), cached_python.read_bytes())
+        runtime = subprocess.run(
+            [
+                interpreter,
+                "-E",
+                "-s",
+                "-B",
+                "-c",
+                "import json, sys, encodings, hashlib, selectors; "
+                "print(json.dumps([sys.prefix, encodings.__file__, list(sys.version_info[:2])]))",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        self.assertEqual(runtime.returncode, 0, runtime.stderr)
+        runtime_prefix, encoding_path, runtime_version = json.loads(runtime.stdout)
+        self.assertEqual(Path(runtime_prefix), prefix)
+        self.assertTrue(Path(encoding_path).is_relative_to(prefix))
+        self.assertGreaterEqual(runtime_version, [3, 12])
         service = {
             "unit": "flowdc-pilot.service",
             "release": str(release),
@@ -662,6 +711,12 @@ sys.exit(cli.main())
             )
             with self.assertRaisesRegex(data.ExperimentError, "insufficient_allowance"):
                 controller.preflight(1800)
+            original_interpreter = private_python.read_bytes()
+            private_python.write_bytes(b"tampered")
+            with self.assertRaises(ops.OpsError) as raised:
+                controller.call("start")
+            self.assertEqual(raised.exception.code, "installed_interpreter_changed")
+            private_python.write_bytes(original_interpreter)
             (release / MODULES[0]).write_text("tampered")
             with self.assertRaises(ops.OpsError) as raised:
                 controller.call("start")
