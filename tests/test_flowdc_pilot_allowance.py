@@ -369,6 +369,31 @@ class GrantTransitionTests(unittest.TestCase):
         with self.assertRaises(ops.OpsError):
             self.apply(start=ClockSample("fake-boot", 1, 100001))
 
+    def test_idle_ticks_preserve_smoke_snapshot_and_old_window_is_not_admission(self):
+        from flowdc_pilot_supervisor import Supervisor, request
+        from test_flowdc_pilot_lifecycle import FakeProvider
+
+        # A completed run may retain its prior window. Idle ticks must not
+        # produce observations/events or consume allowance in this state.
+        self.journal.change(lambda r: r.update(window={"seconds": 1800, "inspection": True}))
+        snapshot = self.journal.read()
+        provider = FakeProvider()
+        supervisor = Supervisor(self.journal, provider, clock=self.clock)
+        for _ in range(3):
+            self.clock.advance()
+            supervisor.tick()
+        current = self.journal.read()
+        self.assertEqual(dict(current, heartbeat=None), dict(snapshot, heartbeat=None))
+        self.assertEqual(provider.actions, [])
+        _, _, granted = self.apply(snapshot=snapshot)
+        self.assertEqual(granted["window"], snapshot["window"])
+        self.clock.advance()
+        supervisor.tick()
+        self.assertEqual(dict(self.journal.read(), heartbeat=None), dict(granted, heartbeat=None))
+        with self.journal.supervisor_lock():
+            request(self.journal, "start", window=1200, clock=self.clock)
+        self.assertEqual(self.journal.read()["window"], {"seconds": 1200, "inspection": True})
+
     def test_unhealthy_snapshot_refused_without_grant(self):
         for mutation in (
             lambda r: r.update(checkpoint="test_checkpoint"),
@@ -396,6 +421,7 @@ class GrantCliTests(unittest.TestCase):
         with (
             patch.object(cli, "require_persistent_session"),
             patch.object(cli, "verify_grant_controller"),
+            patch.object(cli, "verify_grant_local"),
             patch.object(ops, "load_profile", return_value={}),
             patch.object(cli, "Provider") as adapter,
         ):
@@ -489,7 +515,7 @@ class GrantCliTests(unittest.TestCase):
                 with self.assertRaises(ops.OpsError):
                     cli.verify_grant_controller(self.journal, self.before, clock=self.clock)
 
-    def test_commit_rechecks_local_provenance_and_liveness(self):
+    def test_post_provider_controller_probe_refuses_before_commit(self):
         from unittest.mock import patch
 
         import flowdc_pilot_cli as cli
@@ -771,6 +797,107 @@ class GrantExperimentTests(unittest.TestCase):
             )
         finally:
             case.doCleanups()
+
+
+class GrantControllerCompositionTests(unittest.TestCase):
+    """Real install/digest/unit/actor checks; only external commands are fake."""
+
+    def setUp(self):
+        from contextlib import ExitStack
+        from unittest.mock import patch
+
+        import flowdc_pilot_cli as cli
+
+        GrantTransitionTests.setUp(self)
+        self.context = ExitStack()
+        self.addCleanup(self.context.close)
+        self.context.enter_context(patch.object(Path, "home", return_value=self.root))
+        # Match the existing upgrade fixture's private pinned interpreter.
+        import shutil
+
+        interpreter = self.root / "pinned-python"
+        shutil.copyfile(Path(sys.executable).resolve(), interpreter)
+        interpreter.chmod(0o700)
+        self.context.enter_context(patch.object(sys, "executable", str(interpreter)))
+        self.calls = []
+
+        def local_command(argv, *, timeout, local):
+            self.assertTrue(local)
+            self.assertEqual(timeout, 5)
+            # A real competing journal flock must be available during external
+            # probes. This fails immediately if a probe moves into the commit.
+            with ops.private_directory(self.journal.root) as parent:
+                with journal.private_lock(parent, "journal-io.lock", blocking=False):
+                    pass
+            self.calls.append(argv)
+            if argv[:2] == ["/usr/bin/loginctl", "show-user"]:
+                return 0, b"yes\n"
+            self.assertEqual(argv[:2], ["/usr/bin/systemctl", "--user"])
+            unit = self.root / ".config/systemd/user" / cli.UNIT
+            return 0, (
+                f"FragmentPath={unit}\nDropInPaths=\nNeedDaemonReload=no\nMainPID=123\nActiveState=active\n"
+            ).encode()
+
+        self.context.enter_context(patch.object(ops, "run_bounded", side_effect=local_command))
+        self.journal.change(lambda r: r.update(service=None))
+        cli.install(self.journal)
+        service = self.journal.read()["service"]
+        self.context.enter_context(patch.object(cli, "__file__", service["release"] + "/flowdc_pilot_cli.py"))
+        self.context.enter_context(self.journal.supervisor_lock())
+        self.context.enter_context(patch.object(ops, "load_profile", return_value={}))
+        self.provider = self.context.enter_context(patch.object(cli, "Provider"))
+        self.before = self.journal.read()
+        self.request["expected_binding_sha256"] = journal.allowance_binding_sha256(self.before)
+        self.path.write_text(json.dumps(self.request))
+        self.calls.clear()
+
+    def test_real_composition_keeps_external_probes_outside_transaction(self):
+        import flowdc_pilot_cli as cli
+
+        value, code = cli.extend_allowance(self.journal, str(self.path), clock=self.clock)
+        self.assertEqual(code, 0)
+        self.assertEqual(value["data"]["result"], "applied")
+        self.assertEqual(sum(argv[0] == "/usr/bin/loginctl" for argv in self.calls), 2)
+        self.assertEqual(sum(argv[0] == "/usr/bin/systemctl" for argv in self.calls), 2)
+        self.provider.return_value.verify_idle.assert_called_once()
+        self.assertEqual(len(journal.grant_receipts(self.journal.read())), 1)
+
+    def test_real_local_recheck_rolls_back_unit_drift_after_external_probes(self):
+        from unittest.mock import patch
+
+        import flowdc_pilot_cli as cli
+
+        commit = self.journal.extend_allowance
+        unit = self.root / ".config/systemd/user" / cli.UNIT
+
+        def changed(*args, **kwargs):
+            unit.write_bytes(unit.read_bytes() + b"# unexpected edit\n")
+            return commit(*args, **kwargs)
+
+        with patch.object(self.journal, "extend_allowance", side_effect=changed):
+            with self.assertRaises(ops.OpsError) as caught:
+                cli.extend_allowance(self.journal, str(self.path), clock=self.clock)
+        self.assertEqual(caught.exception.code, "unexpected_unit_content")
+        self.assertEqual(self.journal.read(), self.before)
+
+    def test_real_experiment_owner_protocol_and_lock_are_compatible(self):
+        import flowdc_pilot_cli as cli
+        from flowdc_experiment_data import Store
+
+        (self.journal.root / "runs").mkdir()
+        store = Store(self.journal.root)
+        with store.lock():
+            selected = store.create()
+            store.claim(selected)
+            with self.assertRaises(ops.OpsError):
+                cli.extend_allowance(self.journal, str(self.path), clock=self.clock)
+        with self.assertRaises(ops.OpsError) as caught:
+            cli.extend_allowance(self.journal, str(self.path), clock=self.clock)
+        self.assertEqual(caught.exception.code, "active_experiment_owner")
+        with store.lock():
+            store.release(selected)
+        value, code = cli.extend_allowance(self.journal, str(self.path), clock=self.clock)
+        self.assertEqual((code, value["data"]["result"]), (0, "applied"))
 
 
 if __name__ == "__main__":

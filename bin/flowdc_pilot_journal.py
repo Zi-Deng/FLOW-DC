@@ -465,8 +465,9 @@ class Journal:
     def extend_allowance(self, request, snapshot, verification_start, *, clock, recheck):
         """Atomic exception to binding immutability, after read-only provider proof.
 
-        Caller holds experiment then maintenance locks. recheck performs only local
-        provenance/liveness checks; no provider calls may run inside this method.
+        Caller holds experiment then maintenance locks. recheck performs only
+        filesystem/heartbeat/actor-lock checks. Provider calls and subprocess
+        probes must finish before entering this transaction.
         """
         from flowdc_pilot_supervisor import OBSERVATION_SECONDS
 

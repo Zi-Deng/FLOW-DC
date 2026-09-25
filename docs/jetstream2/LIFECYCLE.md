@@ -128,8 +128,11 @@ The command holds the experiment-operation lock then maintenance lock and refuse
 an active experiment owner (a merely prepared run does not own the controller).
 It freshly verifies provider context, VM identity/offload, owned-resource absence
 and original port groups, without provider writes. Those calls occur outside the
-SQLite transaction. The commit rechecks the snapshot and local provenance;
-only harmless idle heartbeat progress is ignored. Changed events, observations,
+SQLite transaction. Local user-session and service-manager subprocess probes run
+again immediately before the transaction, outside its journal lock. Under the
+lock, the commit rechecks the snapshot, pinned release/interpreter and unit files,
+heartbeat and actor lock without launching subprocesses; only harmless idle
+heartbeat progress is ignored. Changed events, observations,
 accounts, binding, desired/window/network state or checkpoints cause refusal.
 Verification must stay within the existing 120-second freshness bound, on one
 boot, without backward clocks or excessive wall/boot-clock drift.
@@ -147,8 +150,11 @@ release changes, without redoing provider verification or increasing any limit.
 Reusing the UUID with changed content is refused. If the response is lost, retain
 and retry **the same private file**. Never mint another ID to resolve an uncertain
 response. A pre-commit failure leaves limits, consumption and receipts unchanged;
-a committed grant survives response loss. Other clients' intervening writes are
-preserved. Ordinary journal changes cannot edit/remove/add grant receipts, lower
+a committed grant survives response loss. A refused invocation may still create
+the private `runs/` directory and the experiment/maintenance lock files needed to
+serialize access; these are coordination artifacts, not allowance changes. Keep
+those lock files in place. Other clients' intervening writes are preserved. Ordinary
+journal changes cannot edit/remove/add grant receipts, lower
 consumption, clear uncertainty or change registered limits. Legacy controllers
 accept schema 1 receipts as ordinary events and retain them during their normal
 read/start/accounting operations; they do not expose the new grant command.

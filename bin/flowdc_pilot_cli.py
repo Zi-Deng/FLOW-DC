@@ -479,6 +479,14 @@ def upgrade_supervisor(journal, args):
 
 
 def verify_grant_controller(journal, record, *, clock=sample_clock):
+    """Probe the local session/manager only outside the journal transaction."""
+    verify_grant_local(journal, record, clock=clock)
+    require_persistent_session()
+    verify_unit_origin(reloaded=True, running=True)
+
+
+def verify_grant_local(journal, record, *, clock=sample_clock):
+    """Recheck pinned files, heartbeat and actor lock without subprocesses."""
     service = record["service"]
     if service is None:
         raise failure("service_not_installed")
@@ -487,11 +495,9 @@ def verify_grant_controller(journal, record, *, clock=sample_clock):
         or str(Path(sys.executable).resolve()) != service["interpreter"]
     ):
         raise failure("immutable_release_required")
-    require_persistent_session()
     verify_release(service, journal.root)
     if unit_bytes() != service_unit(service, journal.root):
         raise failure("unexpected_unit_content")
-    verify_unit_origin(reloaded=True, running=True)
     if not heartbeat_fresh(record, clock()) or not journal.supervisor_locked():
         raise failure("supervisor_not_ready")
 
@@ -545,12 +551,17 @@ def extend_allowance(journal, path, *, clock=sample_clock):
         verify_grant_controller(journal, record, clock=clock)
         start = clock()
         Provider(ops.load_profile(record["profile_path"])).verify_idle(record)
+        # Manager/session probes may wait for D-Bus. Keep them out of the I/O
+        # lock so idle supervision can publish heartbeats while they run. Read
+        # the latest heartbeat here; commit still compares to the original proof
+        # snapshot and refuses every other intervening state change.
+        verify_grant_controller(journal, journal.read(), clock=clock)
         receipt, applied, current = journal.extend_allowance(
             request_value,
             record,
             start,
             clock=clock,
-            recheck=lambda current: verify_grant_controller(journal, current, clock=clock),
+            recheck=lambda current: verify_grant_local(journal, current, clock=clock),
         )
         return grant_outcome(receipt, applied, current)
 
