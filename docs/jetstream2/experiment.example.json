@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "state_root": "/absolute/existing/flowdc-state",
+  "registration_id": "11111111-1111-4111-8111-111111111111",
+  "source": {
+    "repository": "/absolute/reviewed/FLOW-DC",
+    "revision": "REPLACE_WITH_EXPLICIT_COMMIT_HEX"
+  },
+  "ssh": {
+    "user": "exouser",
+    "identity_file": "/absolute/private/existing_identity",
+    "known_hosts": "/absolute/private/existing_known_hosts"
+  },
+  "guest": {
+    "root": "/home/exouser/flowdc-experiments",
+    "python": "/home/exouser/existing-env/bin/python",
+    "worker": "/home/exouser/existing-env/bin/vine_worker",
+    "service_mode": "system"
+  },
+  "fixture": true,
+  "cases": [
+    {"name": "paarc-on", "config": "/absolute/reviewed/FLOW-DC/files/config/experiment-paarc-on.json"},
+    {"name": "paarc-off", "config": "/absolute/reviewed/FLOW-DC/files/config/experiment-paarc-off.json"}
+  ],
+  "bounds": {
+    "window_seconds": 1800,
+    "stop_after_seconds": 900,
+    "phase_seconds": 300,
+    "deployment_min_seconds": 30,
+    "min_case_seconds": 30,
+    "collect_seconds": 60,
+    "stop_seconds": 300,
+    "output_bytes": 268435456,
+    "memory_mb": 8192,
+    "disk_mb": 2048,
+    "cores": 4
+  }
+}
