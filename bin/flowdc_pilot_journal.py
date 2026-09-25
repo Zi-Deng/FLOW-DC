@@ -1,6 +1,7 @@
 """Private, singleton pilot journal. No transaction spans a provider call."""
 
 import fcntl
+import hashlib
 import json
 import os
 import re
@@ -11,7 +12,7 @@ from dataclasses import asdict
 from uuid import uuid4
 
 import flowdc_ops as ops
-from flowdc_pilot import AccountingError, Allowance, ClockSample
+from flowdc_pilot import ALLOWANCE_SECONDS, AccountingError, Allowance, ClockSample
 
 JOURNAL_VERSION = 1
 DB_NAME = "pilot.sqlite3"
@@ -32,6 +33,55 @@ def failure(code, *, invalid=False):
 
 def encode(value):
     return json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False)
+
+
+def allowance_binding_sha256(record):
+    """Pin registration and installed service without exposing private inputs.
+
+    This digest is an expectation, not operator authorization or readiness proof.
+    Mutable accounting and heartbeat state require a separate commit-time check.
+    """
+    binding = {key: record[key] for key in ("registration_id", "profile_path", "spec", "access", "service")}
+    return hashlib.sha256(encode(binding).encode("utf-8")).hexdigest()
+
+
+def validate_grant_request(value):
+    """Validate a finite, equal three-role grant without changing any state."""
+    try:
+        ops.fields(
+            value,
+            (
+                "schema_version",
+                "grant_id",
+                "registration_id",
+                "expected_binding_sha256",
+                "expected_limits_seconds",
+                "additional_seconds",
+            ),
+        )
+        ops.version(value)
+        ops.uuid_value(value["grant_id"])
+        ops.uuid_value(value["registration_id"])
+        digest = value["expected_binding_sha256"]
+        if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
+            raise ValueError
+        addition = ops.integer(value["additional_seconds"], 1, 1800)
+        limits = ops.fields(value["expected_limits_seconds"], ("manager", "worker", "origin"))
+        for limit in limits.values():
+            ops.integer(limit, 1, ALLOWANCE_SECONDS - addition)
+    except (TypeError, ValueError, ops.OpsError):
+        raise failure("invalid_allowance_grant", invalid=True) from None
+    return value
+
+
+def grant_request_digest(value):
+    # Preserve request content, including UUID spelling, for conflict detection.
+    return hashlib.sha256(encode(validate_grant_request(value)).encode("utf-8")).hexdigest()
+
+
+def load_grant_request(path):
+    """Use the existing bounded, private, no-link strict JSON input boundary."""
+    return validate_grant_request(ops.read_document(path))
 
 
 def allowance(value):
