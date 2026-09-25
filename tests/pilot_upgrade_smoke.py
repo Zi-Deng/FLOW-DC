@@ -62,7 +62,7 @@ def cleanup_unit(unit, path, expected):
     cli.systemctl("daemon-reload")
 
 
-def main():
+def main(*, grant_check=None):
     os.umask(0o077)
     if sys.argv[1:] not in ([], ["--rollback"]):
         return 2
@@ -86,7 +86,11 @@ def main():
         config.mkdir()
         profile = config / "profile.json"
         profile.write_text('{"fake_only":true}')
-        journal = register(profile, root / "state", spec(), access())
+        selected = spec()
+        if grant_check is not None:
+            for vm in selected["vms"]:
+                vm["active_seconds"] = 3600
+        journal = register(profile, root / "state", selected, access())
         source = Path(cli.__file__).resolve().parent
         fake_source = root / "source"
         fake_source.mkdir()
@@ -154,6 +158,9 @@ Provider = _FakeIdleProvider
                     vm["observed"] = {"state": "SHELVED_OFFLOADED", "clock": asdict(sample_clock())}
 
             journal.change(settled)
+            if grant_check is not None:
+                grant_check(journal, root, original_service)
+                result["grant_application_replay_refusal_verified"] = True
             before = journal.read()
             fake_cli.write_text(fake_cli.read_text() + "\n# synthetic next release\n")
             digest = hashlib.sha256(

@@ -39,7 +39,11 @@ class UpgradeTests(unittest.TestCase):
         config.mkdir()
         profile = config / "profile.json"
         profile.write_text("{}")
-        self.journal = register(profile, self.root / "state", spec(), access())
+        selected = spec()
+        if getattr(self, "grant_fixture", False):
+            for vm in selected["vms"]:
+                vm["active_seconds"] = 3600
+        self.journal = register(profile, self.root / "state", selected, access())
         self.calls = []
         self.home = patch.object(Path, "home", return_value=self.root)
         self.home.start()
@@ -53,7 +57,7 @@ class UpgradeTests(unittest.TestCase):
             for index, vm in enumerate(record["vms"].values()):
                 vm["observed"] = {"state": "SHELVED_OFFLOADED", "clock": asdict(sample_clock())}
                 vm["account"]["consumed"] = 123.5 + index
-                vm["account"]["uncertain"] = index == 1
+                vm["account"]["uncertain"] = index == 1 and not getattr(self, "grant_fixture", False)
             record["heartbeat"] = asdict(sample_clock())
 
         self.journal.change(settled)
@@ -95,6 +99,50 @@ class UpgradeTests(unittest.TestCase):
         self.assertEqual(cli.unit_bytes(), cli.service_unit(service, self.journal.root))
         cli.verify_release(service, self.journal.root)
         cli.verify_release(self.before["service"], self.journal.root)
+
+    def test_granted_history_and_subsequent_consumption_survive_upgrade_and_rollback(self):
+        from uuid import uuid4
+
+        from flowdc_pilot_journal import allowance_binding_sha256, grant_receipts
+
+        case = UpgradeTests()
+        case.grant_fixture = True
+        case.setUp()
+        try:
+            before = case.journal.read()
+            request_value = {
+                "schema_version": 1,
+                "grant_id": str(uuid4()),
+                "registration_id": before["registration_id"],
+                "expected_binding_sha256": allowance_binding_sha256(before),
+                "expected_limits_seconds": dict.fromkeys(("manager", "worker", "origin"), 3600),
+                "additional_seconds": 600,
+            }
+            case.journal.extend_allowance(
+                request_value, before, sample_clock(), clock=sample_clock, recheck=lambda r: None
+            )
+            case.before = case.journal.read()
+            case.exercise_fault("binding", "rollback")
+            # A later successful upgrade then rollback must capture *current*
+            # history, including consumption after the earlier maintenance.
+            case.args.recover = None
+            cli.upgrade_supervisor(case.journal, case.args)
+            case.journal.change(
+                lambda r: [
+                    vm["account"].update(consumed=vm["account"]["consumed"] + 7) for vm in r["vms"].values()
+                ]
+            )
+            latest = case.journal.read()
+            case.args.expected_current_digest = case.digest
+            case.args.expected_candidate_digest = before["service"]["digest"]
+            case.args.candidate_source = before["service"]["release"]
+            cli.upgrade_supervisor(case.journal, case.args)
+            after = case.journal.read()
+            self.assertEqual(after, dict(latest, service=before["service"], heartbeat=None))
+            self.assertEqual(len(grant_receipts(after)), 1)
+            self.assertTrue(all(vm["account"]["limit"] == 4200 for vm in after["vms"].values()))
+        finally:
+            case.doCleanups()
 
     def test_upgrade_preserves_complete_history_and_old_release(self):
         result, code = cli.upgrade_supervisor(self.journal, self.args)
