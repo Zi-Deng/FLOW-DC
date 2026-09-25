@@ -4,7 +4,7 @@
 [installed pilot](LIFECYCLE.md). It uses exactly the registered manager, one worker
 and origin. It neither creates VMs nor installs packages, enrolls credentials,
 upgrades the supervisor, renews allowance or changes PAARC. The six pilot modules
-and their journal/accounting remain unchanged.
+and their accounting remain controlled by the pilot, independently of experiment IDs.
 
 **These instructions do not authorize activation.** Running the new CLI against
 cloud guests is a later, separately authorized operational checkpoint. Local
@@ -18,6 +18,18 @@ Polars environment locally. Use the existing registered state root, reviewed
 installed pilot release, healthy supervisor, and persistent local user manager
 (`Linger=yes`). The requested window must fit every VM's remaining cumulative
 allowance. A fresh run identity never replenishes it.
+
+A separately approved [finite pilot grant](LIFECYCLE.md#explicit-finite-allowance-extension)
+can increase cumulative limits while the controller is verified idle. It does not
+change ACCESS SUs or authorize this runner to activate VMs. Both a grant (registered
+specification change) and a supervisor upgrade (service change) invalidate an old
+prepared run's binding. Preserve the old manifest as history; do not edit it to
+match. After final installation/grant verification, prepare a new unique run and
+check its pinned source/config/input hashes and all three remaining balances for
+the unchanged requested window. Never raise the window or silently issue a grant
+to make preparation/execution succeed. An active experiment owner blocks a grant;
+a merely prepared run has no owner. Grant receipts describe historical allowance
+changes, not fresh readiness or a successful download.
 
 Before authorizing activation, privately verify that each guest already has:
 

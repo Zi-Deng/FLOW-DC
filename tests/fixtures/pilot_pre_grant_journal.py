@@ -1,8 +1,8 @@
+# Frozen from e2c8324fc7b9916f199f44002d95e97982202b18:bin/flowdc_pilot_journal.py.
+# Retained legacy behavior for shallow-CI compatibility tests; do not modernize.
 """Private, singleton pilot journal. No transaction spans a provider call."""
 
-import copy
 import fcntl
-import hashlib
 import json
 import os
 import re
@@ -13,13 +13,7 @@ from dataclasses import asdict
 from uuid import uuid4
 
 import flowdc_ops as ops
-from flowdc_pilot import (
-    ALLOWANCE_SECONDS,
-    CLOCK_TOLERANCE_SECONDS,
-    AccountingError,
-    Allowance,
-    ClockSample,
-)
+from flowdc_pilot import AccountingError, Allowance, ClockSample
 
 JOURNAL_VERSION = 1
 DB_NAME = "pilot.sqlite3"
@@ -40,150 +34,6 @@ def failure(code, *, invalid=False):
 
 def encode(value):
     return json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False)
-
-
-def allowance_binding_sha256(record):
-    """Pin registration and installed service without exposing private inputs.
-
-    This digest is an expectation, not operator authorization or readiness proof.
-    Mutable accounting and heartbeat state require a separate commit-time check.
-    """
-    binding = {key: record[key] for key in ("registration_id", "profile_path", "spec", "access", "service")}
-    return hashlib.sha256(encode(binding).encode("utf-8")).hexdigest()
-
-
-def validate_grant_request(value):
-    """Validate a finite, equal three-role grant without changing any state."""
-    try:
-        ops.fields(
-            value,
-            (
-                "schema_version",
-                "grant_id",
-                "registration_id",
-                "expected_binding_sha256",
-                "expected_limits_seconds",
-                "additional_seconds",
-            ),
-        )
-        ops.version(value)
-        ops.uuid_value(value["grant_id"])
-        ops.uuid_value(value["registration_id"])
-        digest = value["expected_binding_sha256"]
-        if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
-            raise ValueError
-        addition = ops.integer(value["additional_seconds"], 1, 1800)
-        limits = ops.fields(value["expected_limits_seconds"], ("manager", "worker", "origin"))
-        for limit in limits.values():
-            ops.integer(limit, 1, ALLOWANCE_SECONDS - addition)
-    except (TypeError, ValueError, ops.OpsError):
-        raise failure("invalid_allowance_grant", invalid=True) from None
-    return value
-
-
-def grant_request_digest(value):
-    # Preserve request content, including UUID spelling, for conflict detection.
-    return hashlib.sha256(encode(validate_grant_request(value)).encode("utf-8")).hexdigest()
-
-
-def load_grant_request(path):
-    """Use the existing bounded, private, no-link strict JSON input boundary."""
-    return validate_grant_request(ops.read_document(path))
-
-
-def grant_receipts(record):
-    return [event for event in record["events"] if event["kind"] == "allowance_granted"]
-
-
-def validate_grant_receipts(record):
-    identities = set()
-    previous = {}
-    selected = {vm["role"]: vm for vm in record["spec"]["vms"]}
-    for event in grant_receipts(record):
-        ops.fields(event, ("kind", "data"))
-        receipt = ops.fields(event["data"], ("request", "request_sha256", "roles", "clock"))
-        request = validate_grant_request(receipt["request"])
-        identity = ops.uuid_value(request["grant_id"])
-        if identity in identities or ops.uuid_value(request["registration_id"]) != record["registration_id"]:
-            raise ValueError
-        identities.add(identity)
-        if receipt["request_sha256"] != grant_request_digest(request):
-            raise ValueError
-        ClockSample(**receipt["clock"])
-        ops.fields(receipt["roles"], ("manager", "worker", "origin"))
-        for role, entry in receipt["roles"].items():
-            ops.fields(entry, ("vm_id", "old_limit_seconds", "new_limit_seconds", "consumed_seconds"))
-            old = request["expected_limits_seconds"][role]
-            new = old + request["additional_seconds"]
-            account = allowance(record["vms"][selected[role]["id"]]["account"])
-            consumed = entry["consumed_seconds"]
-            # Allowance validates finite nonnegative consumption, including zero.
-            Allowance(limit=new, consumed=consumed)
-            if (
-                entry["vm_id"] != selected[role]["id"]
-                or type(entry["old_limit_seconds"]) is not int
-                or type(entry["new_limit_seconds"]) is not int
-                or entry["old_limit_seconds"] != old
-                or entry["new_limit_seconds"] != new
-                or account.limit < new
-                or account.consumed < consumed
-                or (role in previous and (old != previous[role][0] or consumed < previous[role][1]))
-            ):
-                raise ValueError
-            previous[role] = (new, consumed)
-    for role, (limit, _) in previous.items():
-        if selected[role]["active_seconds"] != limit:
-            raise ValueError
-
-
-def find_grant_receipt(record, request):
-    digest = grant_request_digest(request)
-    for event in grant_receipts(record):
-        receipt = event["data"]
-        if ops.uuid_value(receipt["request"]["grant_id"]) == ops.uuid_value(request["grant_id"]):
-            if receipt["request_sha256"] != digest or receipt["request"] != request:
-                raise failure("allowance_grant_conflict", invalid=True)
-            return copy.deepcopy(receipt)
-    return None
-
-
-def require_grant_idle(record):
-    if (
-        record["desired"] != "idle"
-        or record["checkpoint"] is not None
-        or not record["network"]["rolled_back"]
-        or record["network"]["ready"]
-        or any(
-            vm["phase"] != "offloaded"
-            or allowance(vm["account"]).obligation
-            or allowance(vm["account"]).uncertain
-            or vm["observed"] is None
-            or vm["observed"]["state"] != "SHELVED_OFFLOADED"
-            for vm in record["vms"].values()
-        )
-    ):
-        raise failure("allowance_idle_required")
-
-
-def require_grant_expectation(record, request):
-    validate_grant_request(request)
-    if (
-        ops.uuid_value(request["registration_id"]) != record["registration_id"]
-        or request["expected_binding_sha256"] != allowance_binding_sha256(record)
-        or request["expected_limits_seconds"]
-        != {vm["role"]: vm["active_seconds"] for vm in record["spec"]["vms"]}
-    ):
-        raise failure("allowance_expectation_changed")
-
-
-def require_grant_interval(start, end, maximum_age):
-    if (
-        start.boot_id != end.boot_id
-        or not 0 <= end.boottime - start.boottime <= maximum_age
-        or not 0 <= end.utc - start.utc <= maximum_age
-        or abs((end.utc - start.utc) - (end.boottime - start.boottime)) > CLOCK_TOLERANCE_SECONDS
-    ):
-        raise failure("allowance_verification_expired")
 
 
 def allowance(value):
@@ -355,7 +205,6 @@ def validate_record(record):
                     r"[a-z][a-z0-9_]{0,127}", intent["error"]
                 ):
                     raise ValueError
-        validate_grant_receipts(record)
         return record
     except (KeyError, TypeError, ValueError, AttributeError, AccountingError, ops.OpsError):
         raise failure("invalid_journal_history") from None
@@ -441,7 +290,6 @@ class Journal:
                     for key in ("schema_version", "registration_id", "profile_path", "spec", "access")
                 }
             )
-            receipts = encode(grant_receipts(record))
             previous = {key: allowance(vm["account"]) for key, vm in record["vms"].items()}
             update(record)
             validate_record(record)
@@ -452,8 +300,6 @@ class Journal:
                 }
             ):
                 raise failure("immutable_journal_binding")
-            if receipts != encode(grant_receipts(record)):
-                raise failure("immutable_allowance_receipts")
             for key, old in previous.items():
                 new = allowance(record["vms"][key]["account"])
                 if new.consumed < old.consumed or (old.uncertain and not new.uncertain):
@@ -461,75 +307,6 @@ class Journal:
             connection.execute("UPDATE pilot SET body=? WHERE id=1", (encode(record),))
             connection.commit()
             return record
-
-    def extend_allowance(self, request, snapshot, verification_start, *, clock, recheck):
-        """Atomic exception to binding immutability, after read-only provider proof.
-
-        Caller holds experiment then maintenance locks. recheck performs only
-        filesystem/heartbeat/actor-lock checks. Provider calls and subprocess
-        probes must finish before entering this transaction.
-        """
-        from flowdc_pilot_supervisor import OBSERVATION_SECONDS
-
-        validate_grant_request(request)
-        with self.connection() as connection:
-            connection.execute("BEGIN IMMEDIATE")
-            row = connection.execute("SELECT body FROM pilot WHERE id=1").fetchone()
-            if row is None:
-                raise failure("missing_journal_history")
-            current = validate_record(ops.parse_json(row[0]))
-            receipt = find_grant_receipt(current, request)
-            if receipt is not None:
-                return receipt, False, current
-            # Only idle heartbeat progress is harmless. Observations, events and
-            # accounts remain part of this comparison, including start-stop cycles.
-            if encode(dict(current, heartbeat=None)) != encode(dict(snapshot, heartbeat=None)):
-                raise failure("allowance_state_changed")
-            require_grant_idle(current)
-            require_grant_expectation(current, request)
-            recheck(current)
-            now = clock()
-            require_grant_interval(verification_start, now, OBSERVATION_SECONDS)
-            if snapshot["heartbeat"] is not None and current["heartbeat"] is not None:
-                require_grant_interval(
-                    ClockSample(**snapshot["heartbeat"]),
-                    ClockSample(**current["heartbeat"]),
-                    OBSERVATION_SECONDS,
-                )
-            candidate = copy.deepcopy(current)
-            receipt = {
-                "request": copy.deepcopy(request),
-                "request_sha256": grant_request_digest(request),
-                "roles": {},
-                "clock": asdict(now),
-            }
-            for vm in candidate["spec"]["vms"]:
-                account = candidate["vms"][vm["id"]]["account"]
-                old = vm["active_seconds"]
-                new = old + request["additional_seconds"]
-                receipt["roles"][vm["role"]] = {
-                    "vm_id": vm["id"],
-                    "old_limit_seconds": old,
-                    "new_limit_seconds": new,
-                    "consumed_seconds": account["consumed"],
-                }
-                vm["active_seconds"] = new
-                account["limit"] = new
-            candidate["events"].append({"kind": "allowance_granted", "data": receipt})
-            validate_record(candidate)
-            # Explicit inverse allowlist: everything except these six limits and
-            # the one new receipt must be byte-for-byte equivalent canonical JSON.
-            preserved = copy.deepcopy(candidate)
-            preserved["events"].pop()
-            for vm in preserved["spec"]["vms"]:
-                old = request["expected_limits_seconds"][vm["role"]]
-                vm["active_seconds"] = old
-                preserved["vms"][vm["id"]]["account"]["limit"] = old
-            if encode(preserved) != encode(current):
-                raise failure("invalid_allowance_transition")
-            connection.execute("UPDATE pilot SET body=? WHERE id=1", (encode(candidate),))
-            connection.commit()
-            return copy.deepcopy(receipt), True, candidate
 
     def event(self, record, kind, data):
         # Events are embedded in the same atomic record as the state transition.

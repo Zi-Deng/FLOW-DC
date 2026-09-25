@@ -17,10 +17,16 @@ from flowdc_pilot_journal import (
     EMERGENCY,
     Journal,
     allowance,
+    allowance_binding_sha256,
     encode,
     failure,
+    find_grant_receipt,
+    grant_receipts,
+    load_grant_request,
     private_lock,
     register,
+    require_grant_expectation,
+    require_grant_idle,
     validate_record,
 )
 from flowdc_pilot_provider import Provider, validate_access
@@ -52,7 +58,16 @@ MODULES = (
 def arguments(commands):
     pilot = commands.add_parser("pilot", help="Prepare and control the bounded pilot.", allow_abbrev=False)
     actions = pilot.add_subparsers(dest="pilot_command", required=True)
-    for action in ("prepare", "start", "status", "stop", "reconcile", "supervise", "upgrade-supervisor"):
+    for action in (
+        "prepare",
+        "start",
+        "status",
+        "stop",
+        "reconcile",
+        "supervise",
+        "upgrade-supervisor",
+        "extend-allowance",
+    ):
         parser = actions.add_parser(action, allow_abbrev=False)
         parser.add_argument("--state-root", default=str(Path.home() / ".local/share/flowdc-ops"))
         if action == "prepare":
@@ -68,6 +83,8 @@ def arguments(commands):
                 "--candidate-source", help="Absolute directory of the six reviewed candidate modules."
             )
             parser.add_argument("--recover", choices=("complete", "rollback"))
+        if action == "extend-allowance":
+            parser.add_argument("--grant", required=True)
         if action == "start":
             parser.add_argument("--window-seconds", type=int, default=1800)
             parser.add_argument(
@@ -248,7 +265,7 @@ def unit_bytes():
             return ops.read_bounded_file(fd)
 
 
-def verify_unit_origin(*, stopped=False, reloaded=False):
+def verify_unit_origin(*, stopped=False, reloaded=False, running=False):
     raw = systemctl(
         "show",
         UNIT,
@@ -265,6 +282,11 @@ def verify_unit_origin(*, stopped=False, reloaded=False):
     }
     if reloaded:
         expected.add("NeedDaemonReload=no")
+    if running and (
+        "ActiveState=active" not in lines
+        or not any(re.fullmatch(r"MainPID=[1-9][0-9]*", line) for line in lines)
+    ):
+        raise failure("supervisor_not_ready")
     if stopped:
         expected.add("MainPID=0")
         if not ({"ActiveState=inactive", "ActiveState=failed"} & set(lines)):
@@ -456,6 +478,94 @@ def upgrade_supervisor(journal, args):
     ), 0
 
 
+def verify_grant_controller(journal, record, *, clock=sample_clock):
+    """Probe the local session/manager only outside the journal transaction."""
+    verify_grant_local(journal, record, clock=clock)
+    require_persistent_session()
+    verify_unit_origin(reloaded=True, running=True)
+
+
+def verify_grant_local(journal, record, *, clock=sample_clock):
+    """Recheck pinned files, heartbeat and actor lock without subprocesses."""
+    service = record["service"]
+    if service is None:
+        raise failure("service_not_installed")
+    if (
+        str(Path(__file__).resolve().parent) != service["release"]
+        or str(Path(sys.executable).resolve()) != service["interpreter"]
+    ):
+        raise failure("immutable_release_required")
+    verify_release(service, journal.root)
+    if unit_bytes() != service_unit(service, journal.root):
+        raise failure("unexpected_unit_content")
+    if not heartbeat_fresh(record, clock()) or not journal.supervisor_locked():
+        raise failure("supervisor_not_ready")
+
+
+def grant_outcome(receipt, applied, record):
+    return ops.outcome(
+        "pilot extend-allowance",
+        "ok",
+        data={
+            "result": "applied" if applied else "already_applied",
+            "receipt": receipt,
+            "current_balances": {
+                vm["role"]: asdict(allowance(vm["account"])) for vm in record["vms"].values()
+            },
+            "current_readiness_verified": False,
+        },
+        next_actions=[
+            "Receipt confirms historical application only. Inspect pilot status; any later start "
+            "requires its own readiness checks. Re-prepare experiments against the new binding."
+        ],
+    ), 0
+
+
+def extend_allowance(journal, path, *, clock=sample_clock):
+    request_value = load_grant_request(path)
+    record = journal.read()
+    receipt = find_grant_receipt(record, request_value)
+    if receipt is not None:
+        return grant_outcome(receipt, False, record)
+    # Match the experiment owner protocol without importing uninstalled modules.
+    # Fixed lock order: experiment, maintenance, then the short journal I/O lock.
+    with (
+        ops.private_directory(journal.root / "runs", create=True) as runs,
+        private_lock(runs, "experiment.lock", blocking=False),
+        ops.private_directory(journal.root) as parent,
+        private_lock(parent, "maintenance.lock", blocking=False),
+    ):
+        record = journal.read()
+        receipt = find_grant_receipt(record, request_value)
+        if receipt is not None:
+            return grant_outcome(receipt, False, record)
+        try:
+            with ops.open_private_at(runs, "active-experiment.json") as fd:
+                owner = ops.fields(ops.parse_json(ops.read_bounded_file(fd)), ("run_id",))
+            if owner["run_id"] is not None:
+                raise failure("active_experiment_owner")
+        except FileNotFoundError:
+            pass
+        require_grant_expectation(record, request_value)
+        require_grant_idle(record)
+        verify_grant_controller(journal, record, clock=clock)
+        start = clock()
+        Provider(ops.load_profile(record["profile_path"])).verify_idle(record)
+        # Manager/session probes may wait for D-Bus. Keep them out of the I/O
+        # lock so idle supervision can publish heartbeats while they run. Read
+        # the latest heartbeat here; commit still compares to the original proof
+        # snapshot and refuses every other intervening state change.
+        verify_grant_controller(journal, journal.read(), clock=clock)
+        receipt, applied, current = journal.extend_allowance(
+            request_value,
+            record,
+            start,
+            clock=clock,
+            recheck=lambda current: verify_grant_local(journal, current, clock=clock),
+        )
+        return grant_outcome(receipt, applied, current)
+
+
 def prepare(args):
     # Offline validated facts gate registration; supervisor performs fresh cloud
     # identity/state validation before any activation or network mutation.
@@ -524,6 +634,8 @@ def status(journal, operation="pilot status"):
         "pending" if pending else "ok",
         data={
             "registration_id": record["registration_id"],
+            "allowance_binding_sha256": allowance_binding_sha256(record),
+            "allowance_grants": [event["data"] for event in grant_receipts(record)],
             "context": record["spec"]["context"],
             "desired": record["desired"],
             "supervisor_ready": ready,
@@ -625,6 +737,8 @@ def run(args):
         if args.pilot_command == "prepare":
             return prepare(args)
         journal = Journal(args.state_root)
+        if args.pilot_command == "extend-allowance":
+            return extend_allowance(journal, args.grant)
         if args.pilot_command == "upgrade-supervisor":
             return upgrade_supervisor(journal, args)
         if args.pilot_command == "supervise":

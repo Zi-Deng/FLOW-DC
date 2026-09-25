@@ -67,6 +67,160 @@ start requires verified `Linger=yes`, checked read-only through `loginctl`. If i
 needs enabling, the operator must arrange that separately; cleanup remains available
 without this start prerequisite. Enabled user units restart when that user's manager starts.
 
+## Explicit finite allowance extension
+
+`pilot extend-allowance --state-root PATH --grant PATH` is the only supported
+exception to registered-limit immutability. It increases each enrolled role's
+cumulative limit by the same integer **1–1,800 seconds**, never above **7,200
+seconds per VM**. It preserves consumed time, selected identities, registration,
+access, rate records and all prior history. It does not replenish ACCESS SUs,
+purchase credits, reserve availability, activate VMs or run guest SSH. Normal
+start admission, shutdown reserve (600 seconds), scheduler lead (180 seconds)
+and provider preflight still apply independently.
+
+Only the explicitly authorized local operator should create and invoke a grant.
+A UUID/digest detects retries and conflicts; it is not an authorization token.
+There is no default grant and no grant during prepare/start/status/reconcile or
+upgrade. Additional grants require separate authorization and new request IDs.
+
+Use a bounded private JSON file: owned by the invoking user, regular, mode 0600,
+single hard link, with no symlink path components and an owner-private parent.
+The schema has **exactly** these keys (replace the illustrative UUIDs, digest and
+limits with the reviewed current values):
+
+```json
+{
+  "schema_version": 1,
+  "grant_id": "11111111-1111-4111-8111-111111111111",
+  "registration_id": "22222222-2222-4222-8222-222222222222",
+  "expected_binding_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "expected_limits_seconds": {"manager": 3608, "worker": 3595, "origin": 3602},
+  "additional_seconds": 600
+}
+```
+
+`pilot status` exposes `registration_id`, the current account limits/consumption,
+`allowance_binding_sha256`, and `allowance_grants`. The digest is SHA-256 of UTF-8
+JSON with sorted keys, compact separators, ASCII escaping (`ensure_ascii=True`)
+and no non-finite values for the object
+containing `registration_id`, `profile_path`, `spec`, `access`, and `service` from
+the registered journal. It therefore pins the installed controller as well as the
+three VM identities and old limits without copying private access inputs into the
+request. JSON key order/whitespace does not affect the request digest. Preserve
+all request values, including UUID spelling, for retries. Missing/extra keys,
+booleans, fractional values, duplicate JSON keys, non-finite numbers, extra roles,
+stale expectations and ceiling overflow are refused.
+
+Invoke the **registered installed** interpreter and release, after its guarded
+upgrade; a checkout CLI cannot grant against a different running release:
+
+```bash
+"$PILOT_PYTHON" -E -s -B "$PILOT_RELEASE/flowdc_ops.py" pilot extend-allowance \
+  --state-root "$PILOT_STATE" --grant "$GRANT_PATH"
+```
+
+The variables are operator-reviewed absolute paths to the registered interpreter,
+immutable release, existing state root and private grant file. New grants require
+verified release/interpreter/unit provenance, a persistent user session, live
+supervisor actor lock and fresh heartbeat, idle state, no checkpoint, no account
+obligation or uncertainty, settled offload phases and completed network rollback.
+The command holds the experiment-operation lock then maintenance lock and refuses
+an active experiment owner (a merely prepared run does not own the controller).
+It freshly verifies provider context, VM identity/offload, owned-resource absence
+and original port groups, without provider writes. Those calls occur outside the
+SQLite transaction. Local user-session and service-manager subprocess probes run
+again immediately before the transaction, outside its journal lock. Under the
+lock, the commit rechecks the snapshot, pinned release/interpreter and unit files,
+heartbeat and actor lock without launching subprocesses; only harmless idle
+heartbeat progress is ignored. Changed events, observations,
+accounts, binding, desired/window/network state or checkpoints cause refusal.
+Verification must stay within the existing 120-second freshness bound, on one
+boot, without backward clocks or excessive wall/boot-clock drift.
+
+Success is a versioned outcome with `data.result` equal to `applied` or
+`already_applied`, a durable `receipt`, separately labeled `current_balances`,
+and `current_readiness_verified: false`. A receipt contains the complete request
+and its digest, per-role VM ID, old/new limits, unchanged consumed totals and
+commit clock. It proves historical application, not current readiness. Status
+may still report pending after a grant because idle observations age; the grant
+does not refresh stored observations or make a later start unconditional.
+
+A matching retry returns the existing receipt, even after later consumption or
+release changes, without redoing provider verification or increasing any limit.
+Reusing the UUID with changed content is refused. If the response is lost, retain
+and retry **the same private file**. Never mint another ID to resolve an uncertain
+response. A pre-commit failure leaves limits, consumption and receipts unchanged;
+a committed grant survives response loss. A refused invocation may still create
+the private `runs/` directory and the experiment/maintenance lock files needed to
+serialize access; these are coordination artifacts, not allowance changes. Keep
+those lock files in place. Other clients' intervening writes are preserved. Ordinary
+journal changes cannot edit/remove/add grant receipts, lower
+consumption, clear uncertainty or change registered limits. Legacy controllers
+accept schema 1 receipts as ordinary events and retain them during their normal
+read/start/accounting operations; they do not expose the new grant command.
+
+| Refusal | Supported recovery |
+| --- | --- |
+| Changed binding/limits | Inspect current status and the existing receipt. Reassess authorization; do not automatically regenerate expectations. |
+| Conflicting grant ID | Recover the original request and receipt. Changed content is not a retry. |
+| Active owner or lock contention | Finish/recover the existing experiment or maintenance operation through its supported commands, then inspect again. Never remove locks/owner files to force a grant. |
+| Stale proof, provider mismatch or network rollback mismatch | Preserve evidence; verify cloud identity and original attachments. Use supported reconcile/recovery as appropriate, then repeat fresh verification. |
+| Provenance failure or dead supervisor | Repair the verified installation through guarded upgrade/recovery; do not bypass release checks. |
+| Obligations, active state or uncertainty | Keep supervision running and follow the cleanup/recovery procedure. Uncertainty cannot be cleared by granting time. |
+
+The original enrollment specification file is not rewritten. Re-running prepare
+with its obsolete lower limits refuses the mismatch rather than resetting the
+registration. If an export is needed, read `Journal(PILOT_STATE).read()["spec"]`
+using the installed journal module into a new private file; never replace the
+journal or treat an old input file as authority over current accounting.
+
+### Post-merge runbook for issue #14
+
+This runbook authorizes no action by itself. The approved issue #14 plan bounds
+its first operational grant to **+600 seconds per role, once**, after human merge.
+Do not install unmerged source or activate/download as part of this procedure.
+
+1. Confirm human merge of the reviewed commit and successful required CI. Verify
+   clean checkouts, then stage the six reviewed modules using the guarded upgrade
+   procedure below. Privately save the old/new release digests, unit provenance,
+   registration, exact consumed balances/limits and complete history. Retain both
+   immutable releases. Stop for changed identities, uncertainty or activity.
+2. Repeat fresh read-only cloud offload/network checks and guarded idle upgrade.
+   Verify fresh heartbeat and unchanged limits, consumption and history. Use
+   recorded complete/rollback recovery on interruption; never restore a database
+   snapshot over later activity.
+3. Inspect status from the final installed release. Compare exact values against
+   the saved baseline. The planned old limits are 3,608/3,595/3,602 seconds; the
+   planned new limits are 4,208/4,195/4,202. If balances, identities or limits differ,
+   reassess whether this exact grant still suffices. Do not increase the grant.
+4. Create the private request once with a fresh UUID, exact registration, binding
+   digest and old limits. Review `additional_seconds: 600` and all three resulting
+   remaining balances against the unchanged 1,800-second window before invoking
+   the installed command above. Retain the file outside Git.
+5. Save the receipt and status privately. Verify exactly one receipt, all three
+   new limits, unchanged consumed totals, idle supervision and no obligations.
+   A lost response is recovered by the identical request, not a second grant.
+6. The service upgrade and limit change both invalidate old prepared experiment
+   bindings. Preserve old runs; prepare a **new unique offline run** after the
+   final binding is verified. Pin the merged product commit, inspect hashes and
+   private permissions, and confirm every remaining balance supports its same
+   1,800-second window. Update the private handoff with receipt/run IDs and exact
+   inspection commands. This is not evidence of successful live execution.
+7. Stop before activation. Refresh allocation balance/end-date facts and obtain
+   the separately bounded live-experiment authorization in the next task.
+
+A committed grant is never undone by reducing limits or consumption. A later
+compatible guarded rollback takes a new snapshot of current history and retains
+all grants and subsequent consumption; it does not restore the pre-grant account.
+
+For fake-only service evidence, run `/usr/bin/python3.12 -B tests/pilot_allowance_smoke.py`.
+It reuses the disposable upgrade harness with a unique fake unit and private
+`/tmp` state, exercises refusal/application/replay through the installed CLI, then
+checks preservation through interrupted upgrade recovery. It needs the local user
+manager and persistent session; exit 3 means unavailable infrastructure, not a
+pass. No live profile is loaded. Evidence and the grant receipt remain in the
+reported temporary directory, and the harness removes only its verified fake unit.
+
 ## Upgrade an idle supervisor without replenishing allowance
 
 After human merge, use the complete reviewed checkout and the intended Python
