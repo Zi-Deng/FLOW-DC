@@ -36,6 +36,12 @@ It does not source credentials, authenticate, contact the cloud or write a journ
 Exit 0 reports `offload_runtime: supported`, `cloud_readiness: not_assessed`;
 it establishes neither permission nor deployment readiness. See the
 [runtime requirements](README.md#explicit-offload-runtime-prerequisite).
+An unsupported runtime returns exit 3 with `offload_runtime_unsupported`,
+`offload_runtime: unsupported` and `cloud_readiness: not_assessed`. Its next action
+is to have the administrator provide a supported, trusted administration runtime
+and rerun this offline check. The check does not assess VM cleanup obligations;
+existing supervision and lifecycle recovery instructions continue to apply to
+any separately active pilot.
 
 Create mode-0600 `access.json` outside Git from [the synthetic example](access.example.json).
 Supply the exact selected port, network, subnet and fixed IPv4 address for each

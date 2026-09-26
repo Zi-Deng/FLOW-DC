@@ -1,6 +1,7 @@
 """Actual provider subprocess with an isolated, credential-free fake SDK venv."""
 
 import copy
+import io
 import json
 import os
 import shutil
@@ -8,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
@@ -264,6 +266,50 @@ class OffloadTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(value["data"]["cloud_readiness"], "not_assessed")
         self.assertEqual(self.requests(), [])
+
+    def test_runtime_check_cli_refusal_is_an_offline_local_prerequisite(self):
+        (self.runtime / "pyvenv.cfg").chmod(0o660)
+        self.credential.unlink()
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with (
+            patch.object(cli.ops, "load_profile", return_value=self.profile),
+            patch.object(cli, "Journal", side_effect=AssertionError("journal forbidden")),
+            patch.object(ops, "private_file", side_effect=AssertionError("OpenRC forbidden")),
+            patch.object(ops, "cloud_query", side_effect=AssertionError("cloud forbidden")),
+            patch.object(subprocess, "Popen", side_effect=AssertionError("child forbidden")),
+            redirect_stdout(stdout),
+            redirect_stderr(stderr),
+        ):
+            code = ops.main(["pilot", "runtime-check", "--profile", str(self.root / "profile.json")])
+        value = json.loads(stdout.getvalue())
+        self.assertEqual(code, 3)
+        self.assertEqual(value["errors"][0]["code"], "offload_runtime_unsupported")
+        self.assertEqual(value["status"], "pending")
+        self.assertEqual(value["operation"], "pilot runtime-check")
+        self.assertEqual(value["data"]["offload_runtime"], "unsupported")
+        self.assertEqual(value["data"]["cloud_readiness"], "not_assessed")
+        self.assertIs(value["data"]["request_acceptance_is_completion"], False)
+        actions = " ".join(value["next_actions"])
+        self.assertIn("administration runtime", actions)
+        self.assertIn("pilot runtime-check", actions)
+        self.assertNotIn("Horizon", actions)
+        self.assertNotIn("reconcile", actions)
+        self.assertNotIn("secret-canary", stdout.getvalue())
+        self.assertEqual(stderr.getvalue(), "")
+        self.assertEqual(self.requests(), [])
+
+    def test_lifecycle_cleanup_refusal_retains_emergency_guidance(self):
+        stdout = io.StringIO()
+        with (
+            patch.object(cli, "Journal", return_value=self.journal),
+            patch.object(cli, "request", side_effect=cli.failure("provider_request_failed")),
+            redirect_stdout(stdout),
+        ):
+            code = ops.main(["pilot", "stop", "--state-root", str(self.root / "state")])
+        value = json.loads(stdout.getvalue())
+        self.assertEqual(code, 3)
+        self.assertEqual(value["errors"][0]["code"], "provider_request_failed")
+        self.assertEqual(value["next_actions"], [cli.EMERGENCY])
 
     def test_hostile_parent_python_and_cloud_configuration_are_not_loaded(self):
         malicious = self.root / "malicious"

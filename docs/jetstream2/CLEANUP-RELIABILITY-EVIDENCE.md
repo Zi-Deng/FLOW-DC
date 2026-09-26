@@ -213,10 +213,37 @@ error responses do not reach the child output. Provider-source SHA-256 in the
 fixture results binds the exact tested contents: base
 `7ea97be3bf9d1ee90e814d25879043a6ccfe7c2b89599178c6bdf866dd5d825b`, repaired
 `90d0faaacd12418ed9c4789c7712be490e37b5ecbfd92d9581fa67ccc4a5a8d1`.
-The coordinator's separate host harness, without the synthetic interface override,
-and final committed-head gates still need rerunning. Normal CI remains independent
-of these optional SDK packages; the stricter lightweight constructor check runs
-in the ordinary pilot suite.
+The coordinator's separate host harness also passed without the synthetic
+interface override, against the repaired provider hash above. Host gate results
+and their source commits are recorded below. Normal CI remains independent of
+these optional SDK packages; the stricter lightweight constructor check runs in
+the ordinary pilot suite.
+
+## Offline runtime refusal guidance
+
+The negative `pilot runtime-check` path at
+`e6c34b1e8a1382800bec105e550390b53c043e5c` correctly refused an unsupported
+administration runtime, but returned generic `pilot` output with emergency cloud
+cleanup instructions. A regression now exercises the public CLI against a
+synthetic group-writable venv configuration, forbidding journal construction,
+OpenRC access, provider reads and child creation. It failed before the correction
+(exit **1**, `pilot` instead of `pilot runtime-check`) and passes afterwards.
+The same failure was reproduced against an exported pre-correction commit:
+
+```bash
+issue17_guidance_base=$(mktemp -d /tmp/flowdc-guidance-base-XXXXXX)
+git archive e6c34b1e8a1382800bec105e550390b53c043e5c bin tests | tar -x -C "$issue17_guidance_base"
+cp tests/test_flowdc_pilot_offload.py "$issue17_guidance_base/tests/"
+.venv-agentic/bin/python -B -m unittest discover -s "$issue17_guidance_base/tests" -p 'test_flowdc_pilot_offload.py' -k test_runtime_check_cli_refusal_is_an_offline_local_prerequisite -v
+```
+
+The repaired CLI retains exit **3** and `offload_runtime_unsupported`, reports
+`cloud_readiness: not_assessed`, and directs the operator to local administration
+runtime setup followed by another offline check. The separate lifecycle-failure
+regression retains the existing emergency recovery guidance. The focused command
+`.venv-agentic/bin/python -B -m unittest discover -s tests -p 'test_flowdc_pilot_offload.py' -v`
+exits **0**, with all **15** tests passing. No installed runtime, permissions,
+profile or credential file was changed.
 
 ## Validation and remaining host checks
 
@@ -239,11 +266,21 @@ no source or test assertion was changed. Earlier worker HTTP-fixture and user-bu
 permission errors were environmental; no checks were skipped or weakened.
 These checkpoint results do **not** validate subsequent implementation changes.
 
+On `e6c34b1e8a1382800bec105e550390b53c043e5c`, the coordinator reran all seven
+commands above with exit **0** and confirmed the source stayed unchanged.
+`make check` passed **316 maintained + 141 workflow tests (457 total)**.
+All five fake-service smokes passed, including ordinary/SIGTERM cleanup, upgrade,
+rollback and allowance preservation with the new diagnostic event. The public
+real-SDK transport fixture also passed all four cases on that head. A separate
+coordinator transport harness passed without the synthetic local-interface
+override, against identical provider contents verified by SHA-256
+`90d0faaacd12418ed9c4789c7712be490e37b5ecbfd92d9581fa67ccc4a5a8d1`.
+
 The implementation's worker checks are:
 
 | Command | Exit / result |
 | --- | --- |
-| `.venv-agentic/bin/python -B -m unittest discover -s tests -p 'test_flowdc_pilot*.py' -v` | 0; 176 tests |
+| `.venv-agentic/bin/python -B -m unittest discover -s tests -p 'test_flowdc_pilot*.py' -v` | 0; 178 tests after the offline guidance correction |
 | `.venv-agentic/bin/python -B -m unittest discover -s tests -p 'test_flowdc_experiment.py' -v` | 0; 35 tests |
 | `.venv-agentic/bin/python -B -m unittest discover -s tests -p 'test_flowdc_ops.py' -v` | 0; 80 tests |
 | `.venv-agentic/bin/python -B -m unittest discover -s tests -p 'test_flowdc_pilot_diagnostics.py' -v` | 0; 8 tests, including oversized/nonfinite number rejection |
@@ -251,8 +288,10 @@ The implementation's worker checks are:
 | Targeted `ruff check` and `ruff format --check` on the changed Python files (listed in PR handoff) | 0 |
 | `git diff --check` | 0 |
 
-Final clean-head `make check`, the complete `test_flowdc_experiment*.py` suite,
-and all five user-systemd smokes still require the coordinator's host environment.
+After the offline guidance correction, final clean-head `make check`, the complete
+`test_flowdc_experiment*.py` suite and all five user-systemd smokes require a fresh
+run in the coordinator's host environment. The earlier successful host run does
+not validate a later head.
 The restricted worker cannot create the existing HTTP fixture sockets or reach
 the user bus; it does not re-probe those known restrictions or widen permissions.
 The upgraded fake-service fixture now includes the diagnostic event in its full

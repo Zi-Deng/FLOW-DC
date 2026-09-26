@@ -748,7 +748,26 @@ def run(args):
         if args.pilot_command == "prepare":
             return prepare(args)
         if args.pilot_command == "runtime-check":
-            Provider(ops.load_profile(args.profile)).runtime_check()
+            try:
+                Provider(ops.load_profile(args.profile)).runtime_check()
+            except ops.OpsError as exc:
+                if exc.code != "offload_runtime_unsupported":
+                    raise
+                return ops.outcome(
+                    "pilot runtime-check",
+                    "pending",
+                    errors=[{"code": exc.code, "message": exc.message}],
+                    next_actions=[
+                        "Have the administrator provide a supported, trusted administration runtime "
+                        "as described in docs/jetstream2/README.md#explicit-offload-runtime-prerequisite, "
+                        "then rerun pilot runtime-check. Cloud readiness has not been assessed."
+                    ],
+                    data={
+                        "offload_runtime": "unsupported",
+                        "cloud_readiness": "not_assessed",
+                        "request_acceptance_is_completion": False,
+                    },
+                ), exc.exit_code
             return ops.outcome(
                 "pilot runtime-check",
                 "ok",
