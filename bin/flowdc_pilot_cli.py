@@ -77,9 +77,10 @@ def arguments(commands):
         "runtime-check",
     ):
         parser = actions.add_parser(action, allow_abbrev=False)
-        parser.add_argument("--state-root", default=str(Path.home() / ".local/share/flowdc-ops"))
         if action == "runtime-check":
             parser.add_argument("--profile", required=True)
+        else:
+            parser.add_argument("--state-root", default=str(Path.home() / ".local/share/flowdc-ops"))
         if action == "prepare":
             parser.add_argument("--profile", required=True)
             parser.add_argument("--spec", required=True)

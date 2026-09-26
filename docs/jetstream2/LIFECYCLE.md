@@ -33,6 +33,8 @@ python3 bin/flowdc_ops.py pilot runtime-check \
 
 This imports the already installed SDK through the validated administration venv.
 It does not source credentials, authenticate, contact the cloud or write a journal.
+The profile selects the administration environment. This offline command rejects
+`--state-root`; lifecycle commands still accept it to select their journal.
 Exit 0 reports `offload_runtime: supported`, `cloud_readiness: not_assessed`;
 it establishes neither permission nor deployment readiness. See the
 [runtime requirements](README.md#explicit-offload-runtime-prerequisite).
@@ -412,7 +414,9 @@ detail and selected-port/topology reads run in batches of at most four, followin
 context validation. Rollback freshly checks all saved role ports together, including
 already restored ports, before its next mutation. Floating resources are listed
 first and every returned detail is identity/project checked, including unrelated
-resources; the collection limit remains 128.
+resources; the collection limit remains 128. This is an input bound, not a guarantee
+that all 128 details fit one step. More resources or slower responses can exhaust
+the shared deadline even with batching.
 Every read is joined and checked before mutation; no earlier tick supplies cached
 authorization. On failure, cancellation is best-effort for probes that have not
 started. The executor joins running probes under their shared deadline before
@@ -484,10 +488,18 @@ quota, explicit HTTP conflict/transient responses, timeout, prerequisite and unk
 failures are distinguished conservatively. Categories do not authorize retries or
 release obligations. No raw provider text, arguments, credentials, environment or
 URLs enter these entries. The existing checkpoint code remains in `checkpoint`.
-Only the diagnostic ring rotates; accounting, lifecycle/network intentions and
-allowance receipts are retained. A diagnostic write failure cannot undo the stop
-already recorded. Older records without this event remain valid, and older releases
-can retain it as an ordinary event through guarded idle rollback.
+For instrumented provider, OS and accounting failures, these bounded summaries
+replace new per-failure `checkpoint` history events. The top-level `checkpoint`
+holds the latest fixed code; the diagnostic ring groups by phase, action, role,
+category and dispatch possibility. It is not a complete chronological log of every
+failure or every past checkpoint code. Repeated equivalent failures update the
+count and first/last timestamps; old summaries can leave the 32-entry ring.
+Only that ring rotates. All existing events, including prior checkpoint events,
+accounting, lifecycle/network intentions and allowance receipts are retained.
+A diagnostic write failure can omit the new summary, but cannot undo the stop or
+latest checkpoint code already recorded. Older records without this event remain
+valid, and older releases can retain it as an ordinary event through guarded idle
+rollback.
 
 Rollback starts after registered obligations are confirmed offloaded. It removes
 only the recorded pilot-owned floating entry, restores exact original selected-port

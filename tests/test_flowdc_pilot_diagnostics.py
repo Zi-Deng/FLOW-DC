@@ -86,6 +86,38 @@ class DiagnosticTests(unittest.TestCase):
         self.assertEqual(value["data"]["cleanup_diagnostics"], entries)
         self.assertIsNone(ops.safe_diagnostic({"elapsed_seconds": 10**400})["elapsed_seconds"])
 
+    def test_alternating_failure_summary_retains_existing_checkpoint_history(self):
+        self.journal.change(
+            lambda record: record["events"].extend(
+                [
+                    {"kind": "checkpoint", "data": {"code": "probe_timeout"}, "count": 2},
+                    {"kind": "checkpoint", "data": {"code": "provider_request_failed"}},
+                ]
+            )
+        )
+        before = self.journal.read()
+        provider = Provider({})
+        for index in range(100):
+            code = "probe_timeout" if index % 2 == 0 else "provider_request_failed"
+            error = ops.OpsError(code, "fixed", "fixed", 3)
+            with provider.step("cleanup"):
+                provider.diagnose(error, "offload", (), True)
+            self.supervisor.checkpoint(code, error.diagnostic)
+            self.assertEqual(self.journal.read()["checkpoint"], code)
+            self.case.clock.advance()
+        after = self.journal.read()
+        self.assertEqual(
+            [event for event in after["events"] if event["kind"] != "cleanup_diagnostics"], before["events"]
+        )
+        entries = cleanup_diagnostics(after)
+        self.assertEqual({entry["category"] for entry in entries}, {"timeout", "unknown"})
+        self.assertEqual(len(entries), 2)
+        self.assertTrue(all(entry["count"] == 50 for entry in entries))
+        self.assertTrue(all(entry["first_utc"] < entry["last_utc"] for entry in entries))
+        for key in ("vms", "network", "registration_id", "spec"):
+            self.assertEqual(after[key], before[key])
+        self.assertEqual(after["desired"], "stop")
+
     def test_journal_rejects_malformed_diagnostics_and_accepts_legacy_events(self):
         original = self.journal.read()
         validate_record(copy.deepcopy(original))
@@ -174,6 +206,7 @@ class DiagnosticTests(unittest.TestCase):
             self.supervisor.checkpoint("provider_request_failed", {"phase": "cleanup"})
         record = self.journal.read()
         self.assertEqual(record["desired"], "stop")
+        self.assertEqual(record["checkpoint"], "provider_request_failed")
         self.assertEqual(record["vms"], accounted)
         self.assertTrue(
             any(accounted[key]["account"]["consumed"] > before[key]["account"]["consumed"] for key in before)

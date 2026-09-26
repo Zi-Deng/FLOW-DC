@@ -92,6 +92,8 @@ class Connection:
         self.session.request("/synthetic", "POST")
         record({"operation": "offload", "id": resource})
         value = fixture()
+        if value.get("raw_fd") in (1, 2):
+            os.write(value["raw_fd"], b"secret-canary-offload raw SDK output\n")
         if value.get("lost_ack"):
             os._exit(7)
         if value.get("delay"):
@@ -266,6 +268,28 @@ class OffloadTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(value["data"]["cloud_readiness"], "not_assessed")
         self.assertEqual(self.requests(), [])
+
+    def test_runtime_check_rejects_state_root_and_lifecycle_still_accepts_it(self):
+        stderr = io.StringIO()
+        with redirect_stderr(stderr), self.assertRaises(ops.OpsError) as caught:
+            ops.parser().parse_args(
+                [
+                    "pilot",
+                    "runtime-check",
+                    "--profile",
+                    "/synthetic/profile",
+                    "--state-root",
+                    "/synthetic/state",
+                ]
+            )
+        self.assertEqual(caught.exception.exit_code, 2)
+        self.assertEqual(caught.exception.code, "invalid_arguments")
+        self.assertEqual(stderr.getvalue(), "")
+        args = ops.parser().parse_args(["pilot", "runtime-check", "--profile", "/synthetic/profile"])
+        self.assertFalse(hasattr(args, "state_root"))
+        for action in ("status", "stop", "reconcile", "supervise"):
+            args = ops.parser().parse_args(["pilot", action, "--state-root", "/synthetic/state"])
+            self.assertEqual(args.state_root, "/synthetic/state")
 
     def test_runtime_check_cli_refusal_is_an_offline_local_prerequisite(self):
         (self.runtime / "pyvenv.cfg").chmod(0o660)
@@ -490,6 +514,27 @@ class OffloadTests(unittest.TestCase):
             with self.subTest(value=value), self.assertRaises(ops.OpsError) as caught:
                 self.provider.sdk_result(0, json.dumps(value).encode())
             self.assertEqual(caught.exception.code, "provider_schema")
+
+    def test_raw_child_fd_output_is_discarded_and_corrupt_stdout_fails_closed(self):
+        before = self.journal.read()
+        for fd in (1, 2):
+            with self.subTest(fd=fd):
+                (self.runtime / "requests.jsonl").unlink(missing_ok=True)
+                self.fixture["raw_fd"] = fd
+                self.save_fixture()
+                if fd == 1:
+                    with self.assertRaises(ops.OpsError) as caught:
+                        self.dispatch()
+                    self.assertEqual(caught.exception.code, "provider_schema")
+                    self.assertIs(caught.exception.diagnostic["dispatch_possible"], True)
+                    self.assertNotIn("secret-canary", str(caught.exception))
+                    self.assertNotIn("secret-canary", json.dumps(caught.exception.diagnostic))
+                else:
+                    self.dispatch()
+                self.assertEqual(self.requests(), [{"operation": "offload", "id": VM_IDS[0]}])
+                self.assertEqual(self.journal.read(), before)
+                value, _ = cli.status(self.journal)
+                self.assertNotIn("secret-canary", json.dumps(value))
 
 
 if __name__ == "__main__":

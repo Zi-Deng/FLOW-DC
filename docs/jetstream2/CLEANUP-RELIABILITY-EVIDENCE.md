@@ -247,6 +247,10 @@ profile or credential file was changed.
 
 ## Validation and remaining host checks
 
+Results below belong to their named source commits. Later source changes require
+new validation; the PR body carries the latest final-head evidence after the
+coordinator supplies it. A pre-handoff pending note is not a failed test result.
+
 On the first checkpoint `1557d840b860708883bd59a461f23827b06a5e16`, the coordinator
 reported these exact host commands with exit **0**:
 
@@ -276,7 +280,16 @@ coordinator transport harness passed without the synthetic local-interface
 override, against identical provider contents verified by SHA-256
 `90d0faaacd12418ed9c4789c7712be490e37b5ecbfd92d9581fa67ccc4a5a8d1`.
 
-The implementation's worker checks are:
+On the reviewed commit `5b67004a0eb4557de1020e9f7e968aae974e04aa`, those seven host
+commands again exited **0**, with source unchanged. `make check` passed **318
+maintained + 141 workflow tests (459 total)**. The separate command
+`.venv-agentic/bin/python -B -m unittest discover -s tests -p 'test_flowdc_experiment*.py' -v`
+exited **0** with **52 tests**. The public SDK fixture passed all four cases on that
+head, and the offline runtime check returned the expected **exit 3** with local
+setup guidance and cloud readiness unassessed. This resolved the earlier pending
+host-validation note without changing the tested commit.
+
+The implementation's pre-review worker checks are:
 
 | Command | Exit / result |
 | --- | --- |
@@ -288,10 +301,10 @@ The implementation's worker checks are:
 | Targeted `ruff check` and `ruff format --check` on the changed Python files (listed in PR handoff) | 0 |
 | `git diff --check` | 0 |
 
-After the offline guidance correction, final clean-head `make check`, the complete
-`test_flowdc_experiment*.py` suite and all five user-systemd smokes require a fresh
-run in the coordinator's host environment. The earlier successful host run does
-not validate a later head.
+The review repair below changes the source after `5b67004`. Final clean-head
+`make check`, the complete `test_flowdc_experiment*.py` suite and all five
+user-systemd smokes require a fresh run in the coordinator's host environment.
+The earlier successful host run does not validate a later head.
 The restricted worker cannot create the existing HTTP fixture sockets or reach
 the user bus; it does not re-probe those known restrictions or widen permissions.
 The upgraded fake-service fixture now includes the diagnostic event in its full
@@ -303,7 +316,50 @@ The real installed SDK passed the offline transport cases above in the isolated
 test runtime. The refused administration interpreter remains unexecuted. These
 fixtures do not establish real cloud permission, endpoint availability or deployed
 runtime readiness. Deployment/runtime repair remains a later operational checkpoint.
-Independent review of this boundary is still required.
+The [first static review](https://github.com/Zi-Deng/FLOW-DC/pull/18#pullrequestreview-5324441601)
+applies to `5b67004`; a changed head requires fresh independent review under the
+repository's continuation policy.
+
+## Review repair and assessment regressions
+
+The F2 regression overlays the maintained test onto the reviewed source and fails
+with exit **1** because `runtime-check` accepts the unused `--state-root` option:
+
+```bash
+issue17_review_base=$(mktemp -d /tmp/flowdc-review-base-XXXXXX)
+git archive 5b67004a0eb4557de1020e9f7e968aae974e04aa bin tests | tar -x -C "$issue17_review_base"
+cp tests/test_flowdc_pilot_offload.py "$issue17_review_base/tests/"
+.venv-agentic/bin/python -B -m unittest discover -s "$issue17_review_base/tests" -p 'test_flowdc_pilot_offload.py' -k test_runtime_check_rejects_state_root_and_lifecycle_still_accepts_it -v
+```
+
+The repaired parser rejects that option with the existing structured
+`invalid_arguments` error / exit **2**, while lifecycle commands retain it.
+`.venv-agentic/bin/python -B -m unittest discover -s tests -p 'test_flowdc_pilot_offload.py' -v`
+exits **0** with **17 tests** after the repair.
+The full focused command
+`.venv-agentic/bin/python -B -m unittest discover -s tests -p 'test_flowdc_pilot*.py' -v`
+exits **0** with **181 tests** on the repair contents.
+
+For F1, the diagnostic suite already asserted that repeated failures add no
+unbounded checkpoint events and leave every pre-existing non-diagnostic event
+unchanged. The added alternating-failure test retains older checkpoint events
+and counts, exercises the real diagnostic category mapping for 100 alternating
+timeout/request failures, verifies the latest top-level code on every write,
+and leaves two summaries counted 50 times each. This is bounded evidence, not a
+complete chronology of every historical code. The diagnostic-write-failure test
+also checks that the latest code and stop survive. Before any production repair,
+`.venv-agentic/bin/python -B -m unittest discover -s tests -p 'test_flowdc_pilot_diagnostics.py' -v`
+exited **0** with **9 tests**; the supervisor/journal behavior is unchanged.
+
+For F3, an actual SDK child fixture writes secret-canary bytes directly to file
+descriptors 1 and 2 after recording its single offload request. Corrupted stdout
+produces a fixed `provider_schema` refusal with dispatch uncertainty retained;
+stderr noise is discarded. Neither raw output reaches public errors, diagnostics
+or status, and neither path changes the journal. Before any production repair,
+`.venv-agentic/bin/python -B -m unittest discover -s tests -p 'test_flowdc_pilot_offload.py' -k test_raw_child_fd_output_is_discarded_and_corrupt_stdout_fails_closed -v`
+exited **0**. Python stream redirection does not promise descriptor-level isolation;
+the existing parent protocol rejects malformed output and retains the output cap.
+The production SDK transport is unchanged.
 
 These are V0/V1 software and V2 local fake-service results. They do not reconstruct
 the September 25 provider failures, promise a provider-latency bound, establish an
