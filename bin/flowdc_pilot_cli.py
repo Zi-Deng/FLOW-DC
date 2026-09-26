@@ -30,7 +30,14 @@ from flowdc_pilot_journal import (
     validate_record,
 )
 from flowdc_pilot_provider import Provider, validate_access
-from flowdc_pilot_supervisor import OBSERVATION_SECONDS, Supervisor, heartbeat_fresh, request, sample_clock
+from flowdc_pilot_supervisor import (
+    OBSERVATION_SECONDS,
+    Supervisor,
+    cleanup_diagnostics,
+    heartbeat_fresh,
+    request,
+    sample_clock,
+)
 
 UNIT = "flowdc-pilot.service"
 FATAL_SERVICE_EXIT = 78
@@ -67,9 +74,12 @@ def arguments(commands):
         "supervise",
         "upgrade-supervisor",
         "extend-allowance",
+        "runtime-check",
     ):
         parser = actions.add_parser(action, allow_abbrev=False)
         parser.add_argument("--state-root", default=str(Path.home() / ".local/share/flowdc-ops"))
+        if action == "runtime-check":
+            parser.add_argument("--profile", required=True)
         if action == "prepare":
             parser.add_argument("--profile", required=True)
             parser.add_argument("--spec", required=True)
@@ -641,6 +651,7 @@ def status(journal, operation="pilot status"):
             "supervisor_ready": ready,
             "supervisor_release_digest": record["service"]["digest"] if record["service"] else None,
             "checkpoint": record["checkpoint"],
+            "cleanup_diagnostics": cleanup_diagnostics(record),
             "vms": vms,
             "network_ready": record["network"]["ready"],
             "network_rolled_back": record["network"]["rolled_back"],
@@ -736,6 +747,17 @@ def run(args):
     try:
         if args.pilot_command == "prepare":
             return prepare(args)
+        if args.pilot_command == "runtime-check":
+            Provider(ops.load_profile(args.profile)).runtime_check()
+            return ops.outcome(
+                "pilot runtime-check",
+                "ok",
+                data={
+                    "offload_runtime": "supported",
+                    "cloud_readiness": "not_assessed",
+                    "request_acceptance_is_completion": False,
+                },
+            ), 0
         journal = Journal(args.state_root)
         if args.pilot_command == "extend-allowance":
             return extend_allowance(journal, args.grant)

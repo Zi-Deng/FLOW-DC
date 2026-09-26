@@ -23,6 +23,20 @@ three VMs must be observed `SHELVED_OFFLOADED`. Limits must be greater than 600 
 no more than 7200 seconds. The service revalidates cloud context and initial states
 before creating activation intentions; a snapshot alone never authorizes mutation.
 
+Check the configured administration environment's explicit-offload prerequisite
+offline before any separately authorized activation:
+
+```bash
+python3 bin/flowdc_ops.py pilot runtime-check \
+  --profile "$HOME/.config/flowdc/profile.json"
+```
+
+This imports the already installed SDK through the validated administration venv.
+It does not source credentials, authenticate, contact the cloud or write a journal.
+Exit 0 reports `offload_runtime: supported`, `cloud_readiness: not_assessed`;
+it establishes neither permission nor deployment readiness. See the
+[runtime requirements](README.md#explicit-offload-runtime-prerequisite).
+
 Create mode-0600 `access.json` outside Git from [the synthetic example](access.example.json).
 Supply the exact selected port, network, subnet and fixed IPv4 address for each
 role, plus the operator's exact `/32` source address. This initial bounded adapter
@@ -387,8 +401,12 @@ An 1800-second inspection therefore enters cleanup by approximately 1020 seconds
 in normal operation, before the required 1200-second threshold. Provider failures
 can defeat completion despite that reserve. Each adapter step shares one 20-second
 budget across verification and subprocesses, with 256 KiB combined output limits
-per subprocess and bounded child cleanup. Independent owned-group and selected
-topology reads run in batches of at most four, following context validation.
+per subprocess and bounded child cleanup. Independent owned-group, floating-IP
+detail and selected-port/topology reads run in batches of at most four, following
+context validation. Rollback freshly checks all saved role ports together, including
+already restored ports, before its next mutation. Floating resources are listed
+first and every returned detail is identity/project checked, including unrelated
+resources; the collection limit remains 128.
 Every read is joined and checked before mutation; no earlier tick supplies cached
 authorization. On failure, cancellation is best-effort for probes that have not
 started. The executor joins running probes under their shared deadline before
@@ -450,6 +468,21 @@ establish whether the side effect occurred. Fixed `network_quota_pending` and
 printing diagnostics. Unexpected output remains `provider_request_failed` or
 `provider_schema`; inspect the provider privately for details.
 
+Status adds `cleanup_diagnostics`: at most 32 recent, sanitized entries stored in
+one ordinary journal event. Each entry has fixed `phase`, `action`, `role`, and
+`category`; `dispatch_possible`; elapsed/remaining step seconds; and `count`,
+`first_utc`, `last_utc`. Equivalent failures coalesce. Unknown facts are `unknown`
+or JSON `null`; finite budget values are clamped to 0–20 seconds. Dispatch possible
+means the request could have been sent, never that it was applied. Permission,
+quota, explicit HTTP conflict/transient responses, timeout, prerequisite and unknown
+failures are distinguished conservatively. Categories do not authorize retries or
+release obligations. No raw provider text, arguments, credentials, environment or
+URLs enter these entries. The existing checkpoint code remains in `checkpoint`.
+Only the diagnostic ring rotates; accounting, lifecycle/network intentions and
+allowance receipts are retained. A diagnostic write failure cannot undo the stop
+already recorded. Older records without this event remain valid, and older releases
+can retain it as an ordinary event through guarded idle rollback.
+
 Rollback starts after registered obligations are confirmed offloaded. It removes
 only the recorded pilot-owned floating entry, restores exact original selected-port
 attachments, and deletes only owned groups with no remaining attached ports.
@@ -464,6 +497,21 @@ Explicit offload is admin-only by default in OpenStack; local tests cannot estab
 this allocation's permission or automatic-offload policy. The older read-only
 compatibility record does not validate these new mutations or network response shapes.
 
+OpenStackClient **10.3.0** skips an initially `SHELVED` server in
+`server shelve --offload`: it can return normally without calling the offload API.
+The [offline reproduction](CLEANUP-RELIABILITY-EVIDENCE.md) uses a fake compute
+service; this latent defect is not an established cause of the September 25 delay.
+Only explicit offload now uses a fixed SDK child program, within the existing
+immutable provider module. Ordinary reads, unshelve and shelve keep their CLI route.
+The child rechecks the authenticated project, configured region, exact enrolled VM
+and fresh `SHELVED` state, then calls `compute.shelve_offload_server` once, with no
+automatic request retry or configuration/endpoint override. A changed state remains
+pending for fresh observation. Both acknowledgement and lost response retain the
+durable cleanup intent and chargeable obligation. Only a subsequent verified
+`SHELVED_OFFLOADED` observation settles it; absent task metadata is not completion.
+The [Compute API](https://docs.openstack.org/api-ref/compute/#shelve-server-shelve-action)
+describes asynchronous completion; software checks cannot grant provider permission.
+
 ## Exact manual checkpoint and emergency procedure
 
 1. Keep the supervisor enabled. Save `pilot status` privately and identify the
@@ -473,13 +521,15 @@ compatibility record does not validate these new mutations or network response s
    allocation/project and region. Inspect each registered VM by UUID. For every VM
    not confirmed SHELVED_OFFLOADED, request Shelve. Inspect again; acknowledgement,
    guest shutdown and SHELVED alone are insufficient.
-3. If it remains SHELVED and separate operational authorization/access permits it,
-   the equivalent trusted-administration CLI action is
-   `openstack server shelve --offload REGISTERED_UUID`, followed by
-   `openstack server show REGISTERED_UUID -f json -c id -c project_id -c status`.
-   Recheck allocation/region before each command. If denied or stuck, immediately
-   contact the allocation/cloud operator for verified offload. Do not substitute
-   delete/rebuild/resize, activate another VM, or claim a billing guarantee.
+3. If it remains SHELVED, keep the reviewed supervisor performing its narrowly
+   scoped SDK offload and inspect status. Do not use OpenStackClient 10.3.0's
+   `server shelve --offload` return code as dispatch evidence. If the supervisor is
+   unavailable, the runtime prerequisite is refused, or provider permission is
+   denied, contact the allocation/cloud operator for separately authorized offload
+   of the exact registered UUIDs in the verified project/region. Independently
+   inspect `server show ... -f json -c id -c project_id -c status` afterward.
+   Do not substitute delete/rebuild/resize, activate another VM, or clear an
+   obligation based on acknowledgement.
 4. Restore workstation access, keep the same journal, then run `pilot reconcile`
    and inspect status. Resolve named quota/permission or routing facts privately.
    For ambiguous network creation, have the provider operator reconcile the exact
