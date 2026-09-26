@@ -5,9 +5,12 @@ mutation subprocesses. Only the supervisor constructs this adapter for mutations
 """
 
 import ipaddress
+import os
+import stat
 import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
+from pathlib import Path
 from uuid import UUID
 
 import flowdc_ops as ops
@@ -24,7 +27,6 @@ shift 3
 case "$flowdc_action" in
   unshelve) [[ $# == 1 ]] || exit 64; command=(server unshelve "$1");;
   shelve) [[ $# == 1 ]] || exit 64; command=(server shelve "$1");;
-  offload) [[ $# == 1 ]] || exit 64; command=(server shelve --offload "$1");;
   port) command=(port show "$1" -f json);;
   ports) command=(port list --server "$1" -f json -c ID);;
   network) command=(network show "$1" -f json);;
@@ -49,6 +51,202 @@ case "$flowdc_action" in
 esac
 readonly -a command
 """ + ops.WRAPPER.split("readonly -a command\n", 1)[1]
+
+
+# The only SDK operation is shelve_offload_server. Keep the program in this
+# immutable module so the installed release still consists of six modules.
+OFFLOAD_PROGRAM = r"""
+import contextlib
+import json
+import logging
+import os
+import sys
+import time
+from pathlib import Path
+from urllib.parse import urlsplit
+from uuid import UUID
+
+def main():
+    dispatched = False
+    try:
+        mode, prefix, project, region, auth_url, vm_id, deadline = sys.argv[1:]
+        if (mode not in ("check", "offload") or sys.version_info < (3, 12)
+                or sys.prefix != prefix or sys.base_prefix == sys.prefix
+                or sys.executable != str(Path(prefix) / "bin/python")
+                or not sys.flags.isolated or not sys.flags.no_user_site):
+            return "offload_runtime_unsupported", "prerequisite", False
+        import requests
+        from keystoneauth1.identity.v3 import ApplicationCredential
+        from keystoneauth1.session import Session
+        from openstack.config.cloud_region import CloudRegion
+        from openstack.connection import Connection
+        from openstack.compute.v2._proxy import Proxy
+        if not callable(getattr(Proxy, "shelve_offload_server", None)):
+            return "offload_runtime_unsupported", "prerequisite", False
+        if mode == "check":
+            return "offload_runtime_ready", "ok", False
+        parsed = urlsplit(auth_url)
+        if (parsed.scheme != "https" or not parsed.hostname or parsed.username
+                or parsed.password or parsed.query or parsed.fragment
+                or os.environ.get("OS_AUTH_URL", "").rstrip("/") != auth_url.rstrip("/")
+                or os.environ.get("OS_REGION_NAME") != region
+                or os.environ.get("OS_AUTH_TYPE") != "v3applicationcredential"):
+            return "cloud_context_mismatch", "identity", False
+        UUID(project)
+        UUID(vm_id)
+        remaining = float(deadline) - time.monotonic()
+        if not 0 < remaining <= 20:
+            return "probe_timeout", "timeout", False
+        auth = ApplicationCredential(
+            auth_url=auth_url,
+            application_credential_id=os.environ["OS_APPLICATION_CREDENTIAL_ID"],
+            application_credential_secret=os.environ["OS_APPLICATION_CREDENTIAL_SECRET"],
+        )
+        # Prevent reauthentication replay, HTTP/connection retries, redirects,
+        # proxy/netrc/environment overrides and logging of request bodies.
+        class SingleRequestSession(Session):
+            def request(self, *args, **kwargs):
+                self.timeout = float(deadline) - time.monotonic()
+                if self.timeout <= 0:
+                    raise TimeoutError
+                kwargs.update(allow_reauth=False, connect_retries=0,
+                              status_code_retries=0, redirect=False, log=False)
+                return super().request(*args, **kwargs)
+        transport = requests.Session()
+        transport.trust_env = False
+        session = SingleRequestSession(auth=auth, session=transport, verify=True,
+                                       timeout=remaining, connect_retries=0, redirect=False)
+        # Direct CloudRegion construction never invokes a clouds.yaml, vendor
+        # profile, environment or auth-cache loader. Connection constructs the
+        # network/image mixins even for compute; supply their required keys
+        # explicitly, with those unused facilities disabled.
+        config = CloudRegion(name="flowdc-offload", session=session, auth_plugin=auth,
+            config={"region_name": region, "interface": "public", "verify": True,
+                    "compute_api_version": "2.1", "connect_retries": 0,
+                    "status_code_retries": 0, "secgroup_source": None,
+                    "image_api_use_tasks": False}, cache_auth=False)
+        if str(UUID(session.get_project_id())) != project:
+            return "cloud_context_mismatch", "identity", False
+        connection = Connection(config=config)
+        compute = connection.compute
+        server = compute.get_server(vm_id)
+        if str(UUID(server.id)) != vm_id or str(UUID(server.project_id)) != project:
+            return "server_identity_mismatch", "identity", False
+        if server.status != "SHELVED":
+            return "lifecycle_state_pending", "state", False
+        if time.monotonic() >= float(deadline):
+            return "probe_timeout", "timeout", False
+        dispatched = True
+        compute.shelve_offload_server(vm_id)
+        return "offload_acknowledged", "ok", True
+    except (ImportError, AttributeError):
+        return "offload_runtime_unsupported", "prerequisite", dispatched
+    except TimeoutError:
+        return "probe_timeout", "timeout", dispatched
+    except Exception as exc:
+        status = getattr(exc, "status_code", None) or getattr(exc, "http_status", None)
+        category = "unknown"
+        if type(status) is int:
+            if status in (401, 403):
+                category = "permission"
+            elif status == 409:
+                category = "conflict"
+            elif status in (429, 500, 502, 503, 504):
+                category = "transient"
+        code = "provider_permission_pending" if category == "permission" else "provider_request_failed"
+        return code, category, dispatched
+
+logging.disable(logging.CRITICAL)
+with open(os.devnull, "w") as sink, contextlib.redirect_stdout(sink), contextlib.redirect_stderr(sink):
+    code, category, dispatched = main()
+print(json.dumps({"code": code, "category": category, "dispatch_possible": dispatched}))
+"""
+
+# Reuse the exact OpenRC allowlist, suppress its output, and pass only nonsecret
+# bindings/program text in argv. Credentials remain in the child's environment.
+OFFLOAD_WRAPPER = (
+    r"""set +x +v
+set -eu -o pipefail
+readonly flowdc_credential=$1 flowdc_python=$2 flowdc_program=$3
+shift 3
+"""
+    + ops.WRAPPER.split("readonly -a command\n", 1)[1].split('exec "$flowdc_client"', 1)[0]
+    + r"""
+exec "$flowdc_python" -I -B -c "$flowdc_program" "$@"
+"""
+)
+
+
+def offload_runtime(client):
+    """Validate a supported venv, retaining the lexical symlink interpreter path."""
+    try:
+        ops.validate_client(client)
+        path = ops.absolute_path(client)
+        if path.name != "openstack" or path.parent.name != "bin":
+            raise ValueError
+        prefix = path.parent.parent
+        python = path.parent / "python"
+        # Match the ancestor walk's root-owner treatment in a user namespace.
+        owners = (0, os.stat("/").st_uid, os.geteuid())
+
+        def read_runtime_file(value):
+            with ops.private_directory(value.parent, private=False) as parent:
+                fd = os.open(value.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
+                try:
+                    info = os.fstat(fd)
+                    if (
+                        not stat.S_ISREG(info.st_mode)
+                        or info.st_uid not in owners
+                        or info.st_mode & 0o022
+                        or info.st_size > ops.MAX_BYTES
+                    ):
+                        raise ValueError
+                    return ops.read_bounded_file(fd).decode("utf-8")
+                finally:
+                    os.close(fd)
+
+        if read_runtime_file(path).splitlines()[0] != "#!" + str(python):
+            raise ValueError
+        config = {}
+        for line in read_runtime_file(prefix / "pyvenv.cfg").splitlines():
+            key, separator, value = line.partition("=")
+            if separator:
+                if key.strip() in config:
+                    raise ValueError
+                config[key.strip()] = value.strip()
+        if config.get("include-system-site-packages") != "false":
+            raise ValueError
+        version = tuple(int(part) for part in config["version"].split(".")[:2])
+        if len(version) != 2 or version < (3, 12):
+            raise ValueError
+        with ops.private_directory(
+            prefix / "lib" / f"python{version[0]}.{version[1]}" / "site-packages", private=False
+        ):
+            pass
+        home = ops.absolute_path(config["home"])
+        with ops.private_directory(home, private=False):
+            pass
+        current = python
+        for _ in range(8):
+            with ops.private_directory(current.parent, private=False) as parent:
+                info = os.stat(current.name, dir_fd=parent, follow_symlinks=False)
+                if info.st_uid not in owners:
+                    raise ValueError
+                if not stat.S_ISLNK(info.st_mode):
+                    if (
+                        not stat.S_ISREG(info.st_mode)
+                        or info.st_mode & 0o022
+                        or not info.st_mode & 0o111
+                        or not os.access(current, os.X_OK)
+                        or current.parent != home
+                    ):
+                        raise ValueError
+                    return str(python), str(prefix)
+                target = Path(os.readlink(current.name, dir_fd=parent))
+                current = ops.absolute_path(str(target if target.is_absolute() else current.parent / target))
+        raise ValueError
+    except (ops.OpsError, OSError, ValueError, KeyError, IndexError, UnicodeError):
+        raise failure("offload_runtime_unsupported") from None
 
 
 def validate_access(path):
@@ -119,17 +317,82 @@ class Provider:
         self.activating = False
         self.verified_record = None
         self.deadline = 0
+        self.started = None
+        self.phase = self.role = "unknown"
 
     @contextmanager
-    def step(self):
-        self.deadline = time.monotonic() + ops.CLOUD_SECONDS
+    def step(self, phase="unknown", role="unknown"):
+        self.started = time.monotonic()
+        self.deadline = self.started + ops.CLOUD_SECONDS
+        self.phase, self.role = phase, role
         self.verified_record = None
         try:
             yield
         except (KeyError, TypeError, ValueError, AttributeError):
-            raise failure("provider_schema") from None
+            error = failure("provider_schema")
+            self.diagnose(error)
+            raise error from None
+        except (ops.OpsError, OSError) as exc:
+            if not hasattr(exc, "diagnostic"):
+                self.diagnose(exc)
+            raise
         finally:
             self.verified_record = None
+            self.started = None
+            self.phase = self.role = "unknown"
+
+    def diagnose(self, error, action="unknown", args=(), dispatch_possible=None):
+        role = self.role
+        record = self.verified_record
+        if record and args and args[0] is not None:
+            for vm_id, vm in record["vms"].items():
+                selected = record["access"]["interfaces"][vm["role"]]["port_id"]
+                group = record["network"]["seen_groups"].get(vm["role"])
+                if args[0] in (vm_id, selected, group):
+                    role = vm["role"]
+                    break
+        code = getattr(error, "code", "")
+        category = getattr(error, "provider_category", None)
+        if category is None:
+            category = {
+                "probe_timeout": "timeout",
+                "probe_start_failed": "local",
+                "probe_child_management": "local",
+                "probe_cleanup_timeout": "local",
+                "probe_output_limit": "output_limit",
+                "offload_runtime_unsupported": "prerequisite",
+                "provider_permission_pending": "permission",
+                "network_quota_pending": "quota",
+                "cloud_context_mismatch": "identity",
+                "context_binding_mismatch": "identity",
+                "server_identity_mismatch": "identity",
+                "lifecycle_state_pending": "state",
+            }.get(code, "local" if isinstance(error, OSError) else "unknown")
+        now = time.monotonic()
+        error.diagnostic = ops.safe_diagnostic(
+            {
+                "phase": self.phase,
+                "role": role,
+                "action": action,
+                "category": category,
+                "dispatch_possible": getattr(error, "dispatch_possible", dispatch_possible),
+                "elapsed_seconds": now - self.started if self.started is not None else None,
+                "remaining_seconds": self.deadline - now if self.started is not None else None,
+            }
+        )
+
+    def query(self, action, resource=None):
+        dispatched = False
+
+        def sent():
+            nonlocal dispatched
+            dispatched = True
+
+        try:
+            return ops.cloud_query(self.profile, action, resource, deadline=self.deadline, on_dispatch=sent)
+        except (ops.OpsError, OSError) as exc:
+            self.diagnose(exc, action, (resource,), dispatched)
+            raise
 
     def validate_call(self, action, args):
         single_ids = {
@@ -185,6 +448,21 @@ class Provider:
             raise failure("invalid_adapter_action", invalid=True)
 
     def call(self, action, *args, mutation=False, on_dispatch=None):
+        dispatched = False
+
+        def sent():
+            nonlocal dispatched
+            dispatched = True
+            if on_dispatch is not None:
+                on_dispatch()
+
+        try:
+            return self._call(action, *args, mutation=mutation, on_dispatch=sent)
+        except (ops.OpsError, OSError) as exc:
+            self.diagnose(exc, action, args, dispatched)
+            raise
+
+    def _call(self, action, *args, mutation=False, on_dispatch=None):
         self.validate_call(action, args)
         mutating = action in {
             "unshelve",
@@ -242,6 +520,8 @@ class Provider:
             if self.before_activation is None:
                 raise failure("supervisor_guard_required")
             self.before_activation()
+        if action == "offload":
+            return self.offload(args[0], on_dispatch=on_dispatch)
         ops.validate_client(self.profile["openstack_client"])
         # Bash receives fixed source, never interpolated profile/provider values.
         # Unlike memfd_create this also works with Python builds lacking that API.
@@ -265,8 +545,89 @@ class Provider:
             )
         if code:
             codes = {b"quota": "network_quota_pending", b"permission": "provider_permission_pending"}
-            raise failure(codes.get(raw, "provider_request_failed"))
+            error = failure(codes.get(raw, "provider_request_failed"))
+            error.provider_category = {
+                b"permission": "permission",
+                b"quota": "quota",
+                b"conflict": "conflict",
+                b"transient": "transient",
+            }.get(raw, "unknown")
+            raise error
         return None if mutation else ops.parse_json(raw)
+
+    def sdk_result(self, code, raw, *, checking=False):
+        if code:
+            raise failure("offload_runtime_unsupported" if checking else "provider_request_failed")
+        try:
+            result = ops.fields(ops.parse_json(raw), ("code", "category", "dispatch_possible"))
+            combinations = {
+                "offload_runtime_unsupported": ({"prerequisite"}, {False, True}),
+                "cloud_context_mismatch": ({"identity"}, {False}),
+                "server_identity_mismatch": ({"identity"}, {False}),
+                "lifecycle_state_pending": ({"state"}, {False}),
+                "probe_timeout": ({"timeout"}, {False, True}),
+                "provider_permission_pending": ({"permission"}, {False, True}),
+                "provider_request_failed": ({"conflict", "transient", "unknown"}, {False, True}),
+            }
+            expected = "offload_runtime_ready" if checking else "offload_acknowledged"
+            combinations[expected] = ({"ok"}, {not checking})
+            categories, dispatched = combinations[result["code"]]
+            if (
+                result["category"] not in categories
+                or type(result["dispatch_possible"]) is not bool
+                or result["dispatch_possible"] not in dispatched
+            ):
+                raise ValueError
+        except (ops.OpsError, KeyError, TypeError, ValueError):
+            raise failure("offload_runtime_unsupported" if checking else "provider_schema") from None
+        expected = "offload_runtime_ready" if checking else "offload_acknowledged"
+        if result["code"] != expected:
+            error = failure(result["code"])
+            error.provider_category = result["category"]
+            error.dispatch_possible = result["dispatch_possible"]
+            raise error
+
+    def runtime_check(self):
+        """Offline prerequisite check: never open the credential or a cloud session."""
+        with self.step("runtime_check"):
+            python, prefix = offload_runtime(self.profile["openstack_client"])
+            code, raw = ops.run_bounded(
+                [python, "-I", "-B", "-c", OFFLOAD_PROGRAM, "check", prefix, "", "", "", "", "0"],
+                timeout=self.deadline - time.monotonic(),
+            )
+            self.sdk_result(code, raw, checking=True)
+
+    def offload(self, vm_id, *, on_dispatch=None):
+        if self.verified_record is None or vm_id not in self.verified_record["vms"]:
+            raise failure("verified_adapter_scope_required")
+        python, prefix = offload_runtime(self.profile["openstack_client"])
+        expected = self.verified_record["spec"]["context"]
+        with ops.private_file(self.profile["credential_file"]) as credential:
+            code, raw = ops.run_bounded(
+                [
+                    "/bin/bash",
+                    "-p",
+                    "-c",
+                    OFFLOAD_WRAPPER,
+                    "flowdc-offload",
+                    f"/proc/self/fd/{credential}",
+                    python,
+                    OFFLOAD_PROGRAM,
+                    "offload",
+                    prefix,
+                    expected["project_id"],
+                    expected["region"],
+                    expected["auth_url"],
+                    vm_id,
+                    str(self.deadline),
+                ],
+                timeout=self.deadline - time.monotonic(),
+                pass_fds=(credential,),
+                on_dispatch=on_dispatch,
+            )
+        # Even a successful SDK return is only acknowledgement. The supervisor
+        # retains its durable intent/obligation until a later fresh observation.
+        self.sdk_result(code, raw)
 
     def read_batch(self, requests):
         """Join at most four read-only probes under the current step deadline.
@@ -276,7 +637,7 @@ class Provider:
         executor context joins all running probes, whose runners own and reap
         their children under the shared deadline; later batches are not submitted.
         """
-        allowed = {"group", "ports", "port", "network", "subnet"}
+        allowed = {"group", "ports", "port", "network", "subnet", "floating_show"}
         for action, *args in requests:
             if action not in allowed:
                 raise failure("invalid_adapter_action", invalid=True)
@@ -305,9 +666,9 @@ class Provider:
             or not set(record["vms"]).issubset(self.profile["intended_server_ids"])
         ):
             raise failure("context_binding_mismatch")
-        context = ops.cloud_query(self.profile, "context", deadline=self.deadline)
+        context = self.query("context")
         urls = [context[key] for key in ("auth_url", "auth.auth_url") if context.get(key)]
-        project = ops.cloud_query(self.profile, "project", deadline=self.deadline)
+        project = self.query("project")
         if (
             field(context, "region_name") != expected["region"]
             or not urls
@@ -320,7 +681,7 @@ class Provider:
     def server(self, record, vm_id):
         if vm_id not in record["vms"]:
             raise failure("vm_not_allowlisted")
-        value = ops.cloud_query(self.profile, "server", vm_id, deadline=self.deadline)
+        value = self.query("server", vm_id)
         if (
             ops.uuid_value(field(value, "id")) != vm_id
             or ops.uuid_value(field(value, "project_id")) != record["spec"]["context"]["project_id"]
@@ -357,7 +718,7 @@ class Provider:
         return value
 
     def preflight(self, record):
-        with self.step():
+        with self.step("preflight"):
             self.context(record)
             for vm_id in record["vms"]:
                 if self.server(record, vm_id) != "SHELVED_OFFLOADED":
@@ -366,7 +727,7 @@ class Provider:
     def verify_idle(self, record):
         """Fresh, read-only offload and rollback proof for idle maintenance."""
         self.preflight(record)
-        with self.step():
+        with self.step("idle_verification"):
             self.context(record)
             if self.owned_groups(record):
                 raise failure("maintenance_network_rollback_required")
@@ -374,7 +735,7 @@ class Provider:
             if any(value.get("description") == marker for value in self.floating(record)):
                 raise failure("maintenance_network_rollback_required")
         for role in ("manager", "worker", "origin"):
-            with self.step():
+            with self.step("idle_verification", role):
                 self.context(record)
                 port = self.topology(record, role)
                 original = record["network"]["original"].get(role)
@@ -382,7 +743,8 @@ class Provider:
                     raise failure("maintenance_network_rollback_required")
 
     def observe(self, record, vm_id):
-        with self.step():
+        role = record["vms"].get(vm_id, {}).get("role", "unknown")
+        with self.step("cleanup" if record["desired"] == "stop" else "observation", role):
             self.context(record)
             return self.server(record, vm_id)
 
@@ -427,7 +789,8 @@ class Provider:
         if action not in ("unshelve", "shelve", "offload"):
             raise failure("unsupported_lifecycle_action")
         self.activating = action == "unshelve"
-        with self.step():
+        role = record["vms"].get(vm_id, {}).get("role", "unknown")
+        with self.step("activation" if action == "unshelve" else "cleanup", role):
             self.context(record)
             state = self.server(record, vm_id)
             if action == "unshelve":
@@ -445,7 +808,9 @@ class Provider:
                 "offload": {"SHELVED"},
             }
             if state not in allowed[action]:
-                raise failure("lifecycle_state_pending")
+                error = failure("lifecycle_state_pending")
+                self.diagnose(error, action, (vm_id,), False)
+                raise error
             self.call(action, vm_id, mutation=True)
 
     def topology(self, record, role):
@@ -520,13 +885,12 @@ class Provider:
 
     def floating(self, record):
         project = record["spec"]["context"]["project_id"]
-        result = []
-        for resource in ids(self.call("floating", UUID(project).hex)):
-            value = self.call("floating_show", resource)
+        resources = ids(self.call("floating", UUID(project).hex))
+        values = self.read_batch([("floating_show", resource) for resource in resources])
+        for resource, value in zip(resources, values, strict=True):
             if value.get("id") != resource or ops.uuid_value(field(value, "project_id")) != project:
                 raise failure("floating_identity_mismatch")
-            result.append(value)
-        return result
+        return values
 
     def network_intent(self, journal, key, action, *args):
         """Never blindly retry create after a lost response, even if list is empty."""
@@ -566,7 +930,7 @@ class Provider:
     def network_step(self, journal, *, rollback):
         record = journal.read()
         self.activating = not rollback
-        with self.step():
+        with self.step("network_rollback" if rollback else "network_setup"):
             self.context(record)
             groups = self.owned_groups(record)
 
@@ -748,8 +1112,18 @@ class Provider:
             )
             self.call("floating_delete", owned[0]["id"], mutation=True)
             return
+        # Read every selected port under this step's shared deadline. Join and
+        # validate the complete batch on the actor before deciding on a mutation;
+        # already restored roles must still be freshly verified on every step.
+        roles = list(record["network"]["original"])
+        values = self.read_batch(
+            [("port", record["access"]["interfaces"][role]["port_id"]) for role in roles]
+        )
+        ports = {
+            role: self.validate_port(record, role, value) for role, value in zip(roles, values, strict=True)
+        }
         for role, original in record["network"]["original"].items():
-            port = self.port(record, role)
+            port = ports[role]
             current = sorted(port["security_group_ids"])
             group = groups.get(role)
             if current != original:

@@ -70,6 +70,91 @@ STATES = {
 }
 PLAN_STATES = {"ACTIVE", "SHUTOFF", "SHELVED", "SHELVED_OFFLOADED"}
 
+# Only these fixed facts may enter a cleanup diagnostic. Provider text, argv,
+# endpoints and environment values are never copied into this structure.
+DIAGNOSTIC_PHASES = {
+    "unknown",
+    "preflight",
+    "observation",
+    "activation",
+    "cleanup",
+    "network_setup",
+    "network_rollback",
+    "idle_verification",
+    "runtime_check",
+}
+DIAGNOSTIC_ACTIONS = {
+    "unknown",
+    "context",
+    "project",
+    "server",
+    "unshelve",
+    "shelve",
+    "offload",
+    "port",
+    "ports",
+    "network",
+    "subnet",
+    "router",
+    "router_ports",
+    "groups",
+    "group",
+    "group_ports",
+    "group_create",
+    "group_delete",
+    "rule",
+    "attach",
+    "floating",
+    "floating_show",
+    "floating_create",
+    "floating_delete",
+}
+DIAGNOSTIC_CATEGORIES = {
+    "unknown",
+    "permission",
+    "quota",
+    "conflict",
+    "transient",
+    "timeout",
+    "prerequisite",
+    "identity",
+    "state",
+    "local",
+    "output_limit",
+}
+
+
+def safe_diagnostic(value):
+    value = value if isinstance(value, dict) else {}
+
+    def choice(key, allowed):
+        candidate = value.get(key)
+        return candidate if isinstance(candidate, str) and candidate in allowed else "unknown"
+
+    def seconds(key):
+        candidate = value.get(key)
+        if type(candidate) not in (int, float):
+            return None
+        try:
+            if not math.isfinite(candidate):
+                return None
+        except OverflowError:
+            return None
+        return round(max(0.0, min(CLOUD_SECONDS, candidate)), 3)
+
+    return {
+        "phase": choice("phase", DIAGNOSTIC_PHASES),
+        "action": choice("action", DIAGNOSTIC_ACTIONS),
+        "role": choice("role", {"manager", "worker", "origin"}),
+        "category": choice("category", DIAGNOSTIC_CATEGORIES),
+        "dispatch_possible": value.get("dispatch_possible")
+        if type(value.get("dispatch_possible")) is bool
+        else None,
+        "elapsed_seconds": seconds("elapsed_seconds"),
+        "remaining_seconds": seconds("remaining_seconds"),
+    }
+
+
 # This program is fixed; no profile values are inserted into shell source. Only
 # the explicitly selected, operator-trusted OpenRC is sourced. The Python caller
 # validates and pins wrapper/credential files, supplies a minimal environment and
@@ -717,6 +802,10 @@ def run_bounded(argv, *, timeout, local=False, pass_fds=(), classify_errors=Fals
             return code, b"permission"
         if b"quota" in diagnostic or b"overlimit" in diagnostic:
             return code, b"quota"
+        if re.search(rb"\bhttp(?:/\d(?:\.\d)?\s+|\s+|\s*:\s*)409\b", diagnostic):
+            return code, b"conflict"
+        if re.search(rb"\bhttp(?:/\d(?:\.\d)?\s+|\s+|\s*:\s*)(429|500|502|503|504)\b", diagnostic):
+            return code, b"transient"
         return code, b"provider"
     return code, bytes(output)
 
@@ -822,7 +911,7 @@ def doctor(args):
     ), 3 if pending else 0
 
 
-def cloud_query(profile, action, resource=None, *, deadline):
+def cloud_query(profile, action, resource=None, *, deadline, on_dispatch=None):
     validate_client(profile["openstack_client"])
     with private_file(profile["wrapper_path"], executable=True) as wrapper:
         validate_wrapper(wrapper)
@@ -838,15 +927,26 @@ def cloud_query(profile, action, resource=None, *, deadline):
             if resource is not None:
                 argv.append(resource)
             code, raw = run_bounded(
-                argv, timeout=min(CLOUD_SECONDS, deadline - time.monotonic()), pass_fds=(wrapper, credential)
+                argv,
+                timeout=min(CLOUD_SECONDS, deadline - time.monotonic()),
+                pass_fds=(wrapper, credential),
+                classify_errors=True,
+                on_dispatch=on_dispatch,
             )
     if code:
-        raise OpsError(
+        error = OpsError(
             "provider_failed",
             "Read-only discovery failed; provider output was suppressed.",
             "Inspect application-credential validity, allocation access, OpenRC format and client compatibility privately.",
             1,
         )
+        error.provider_category = {
+            b"permission": "permission",
+            b"quota": "quota",
+            b"conflict": "conflict",
+            b"transient": "transient",
+        }.get(raw, "unknown")
+        raise error
     try:
         return parse_json(raw)
     except OpsError:

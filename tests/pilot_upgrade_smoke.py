@@ -25,7 +25,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "bin"))
 import flowdc_ops as ops
 import flowdc_pilot_cli as cli
 from flowdc_pilot_journal import register
-from flowdc_pilot_supervisor import heartbeat_fresh, sample_clock
+from flowdc_pilot_supervisor import heartbeat_fresh, sample_clock, save_diagnostic
 from test_flowdc_pilot_lifecycle import access, spec
 
 
@@ -156,6 +156,19 @@ Provider = _FakeIdleProvider
                 for index, vm in enumerate(record["vms"].values()):
                     vm["account"]["consumed"] = 234.5 + index
                     vm["observed"] = {"state": "SHELVED_OFFLOADED", "clock": asdict(sample_clock())}
+                save_diagnostic(
+                    record,
+                    {
+                        "phase": "cleanup",
+                        "action": "offload",
+                        "role": "manager",
+                        "category": "conflict",
+                        "dispatch_possible": True,
+                        "elapsed_seconds": 5.0,
+                        "remaining_seconds": 15.0,
+                    },
+                    sample_clock().utc,
+                )
 
             journal.change(settled)
             if grant_check is not None:
