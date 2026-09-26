@@ -154,6 +154,70 @@ retained ownership and unchanged collected artifacts, followed by cleanup-only
 stop exit 0 with no new start. The original incomplete output and historical
 errors are retained. No runner defaults, reserve or allowance limits change.
 
+## Real SDK constructor and transport integration
+
+A coordinator fake-HTTP run with the real SDK exposed an integration defect in
+`cd646682ea628f65fba249348003d3267cb98a59`: after synthetic authentication,
+`Connection(config=...)` raised `KeyError('secgroup_source')` before offload.
+The original lightweight fake did not enforce the real constructor's requirements.
+Source inspection also found the required `image_api_use_tasks` key. The repair
+supplies just these two fixed keys (`None` and `False`) for the unused network/image
+facilities; it does not load packaged defaults, clouds.yaml, vendor profiles or
+inherited environment configuration. The fake constructor now enforces both keys.
+With that stronger fixture, the existing one-offload regression exited **1** against
+the unrepaired provider before the production change, then passed after it.
+
+`tests/pilot_sdk_transport.py` is a maintained optional reproduction using the actual
+fixed child and the existing installed SDK packages. Tested versions were
+openstacksdk **4.20.0**, keystoneauth1 **5.17.0**, and requests **2.34.2**. It creates a
+private `--without-pip` test venv with trusted `/usr/bin/python3.12`, adds only the
+explicitly supplied existing SDK directory through a test-only `.pth`, and installs
+no package. It never executes the refused administration interpreter or reads real
+OpenRC/profile files. Its unique hook replaces `requests.Session.send` with synthetic
+auth/catalog/server/action responses and forbids socket connects. Local interface
+enumeration is an explicit empty synthetic set. Initial worker attempts without
+that local-interface fixture exited **1** on the sandbox's `PermissionError` from
+the SDK's IPv6 availability probe; that was a fixture/environment limitation, and
+production interface probing was not changed.
+
+From the task root, with the already available SDK directory (no installation):
+
+```bash
+issue17_sdk_base=$(mktemp -d /tmp/flowdc-sdk-constructor-base-XXXXXX)
+git archive cd646682ea628f65fba249348003d3267cb98a59 bin | tar -x -C "$issue17_sdk_base"
+.venv-agentic/bin/python -B tests/pilot_sdk_transport.py \
+  --sdk-site-packages "$HOME/.local/share/flowdc-ops/venv/lib/python3.12/site-packages" \
+  --provider-source "$issue17_sdk_base/bin" \
+  --output "$issue17_sdk_base/base-result.json"
+.venv-agentic/bin/python -B tests/pilot_sdk_transport.py \
+  --sdk-site-packages "$HOME/.local/share/flowdc-ops/venv/lib/python3.12/site-packages" \
+  --output "$issue17_sdk_base/repaired-result.json"
+```
+
+The base command exits **1**: all four cases stop after the token request, with
+`provider_request_failed`, category `unknown`, dispatch false and the missing
+`secgroup_source` exception. The repaired command exits **0**. Each case records
+one token request, compute discovery, fresh selected-server GET, and exactly one
+POST to `/v2.1/servers/22222222-2222-4222-8222-000000000001/action` with
+`{"shelveOffload": null}` and `OpenStack-API-Version: compute 2.1`.
+
+| Synthetic action response | Fixed result | Category | Offload requests |
+| --- | --- | --- | ---: |
+| 202 | `offload_acknowledged` | `ok` | 1 |
+| 403 | `provider_permission_pending` | `permission` | 1 |
+| 409 | `provider_request_failed` | `conflict` | 1 |
+| 503 | `provider_request_failed` | `transient` | 1 |
+
+No automatic mutation retry occurs for the refusals. Secret canaries in synthetic
+error responses do not reach the child output. Provider-source SHA-256 in the
+fixture results binds the exact tested contents: base
+`7ea97be3bf9d1ee90e814d25879043a6ccfe7c2b89599178c6bdf866dd5d825b`, repaired
+`90d0faaacd12418ed9c4789c7712be490e37b5ecbfd92d9581fa67ccc4a5a8d1`.
+The coordinator's separate host harness, without the synthetic interface override,
+and final committed-head gates still need rerunning. Normal CI remains independent
+of these optional SDK packages; the stricter lightweight constructor check runs
+in the ordinary pilot suite.
+
 ## Validation and remaining host checks
 
 On the first checkpoint `1557d840b860708883bd59a461f23827b06a5e16`, the coordinator
@@ -196,11 +260,11 @@ history-preservation assertion through both upgrade and rollback, including the
 allowance-smoke path. Exact final SHA, command exit statuses, `make check-clean`,
 CI and independent review belong in the PR handoff once available.
 
-The installed SDK was inspected but its new offload path was not executed through
-the refused administration runtime. The actual fixed child/fake-SDK tests do not
-establish compatibility of every deployed SDK transport or cloud permission.
-Deployment/runtime repair remains a later operational checkpoint. Independent
-review of this boundary is still required.
+The real installed SDK passed the offline transport cases above in the isolated
+test runtime. The refused administration interpreter remains unexecuted. These
+fixtures do not establish real cloud permission, endpoint availability or deployed
+runtime readiness. Deployment/runtime repair remains a later operational checkpoint.
+Independent review of this boundary is still required.
 
 These are V0/V1 software and V2 local fake-service results. They do not reconstruct
 the September 25 provider failures, promise a provider-latency bound, establish an

@@ -117,11 +117,14 @@ def main():
         session = SingleRequestSession(auth=auth, session=transport, verify=True,
                                        timeout=remaining, connect_retries=0, redirect=False)
         # Direct CloudRegion construction never invokes a clouds.yaml, vendor
-        # profile, environment or auth-cache loader.
+        # profile, environment or auth-cache loader. Connection constructs the
+        # network/image mixins even for compute; supply their required keys
+        # explicitly, with those unused facilities disabled.
         config = CloudRegion(name="flowdc-offload", session=session, auth_plugin=auth,
             config={"region_name": region, "interface": "public", "verify": True,
                     "compute_api_version": "2.1", "connect_retries": 0,
-                    "status_code_retries": 0}, cache_auth=False)
+                    "status_code_retries": 0, "secgroup_source": None,
+                    "image_api_use_tasks": False}, cache_auth=False)
         if str(UUID(session.get_project_id())) != project:
             return "cloud_context_mismatch", "identity", False
         connection = Connection(config=config)

@@ -71,6 +71,13 @@ class Proxy:
 
 class Connection:
     def __init__(self, *, config):
+        # The real SDK's _NetworkCommon and ImageCloudMixin constructors index
+        # these keys even for a compute-only request. Keep that requirement at
+        # this boundary so a sparse CloudRegion cannot falsely pass the fake.
+        self.secgroup_source = config.kwargs["config"]["secgroup_source"]
+        self.image_api_use_tasks = config.kwargs["config"]["image_api_use_tasks"]
+        assert self.secgroup_source is None
+        assert self.image_api_use_tasks is False
         self.compute = self
         self.session = config.kwargs["session"]
         assert self.session.kwargs["session"].trust_env is False
