@@ -276,7 +276,7 @@ class Provider:
         executor context joins all running probes, whose runners own and reap
         their children under the shared deadline; later batches are not submitted.
         """
-        allowed = {"group", "ports", "port", "network", "subnet"}
+        allowed = {"group", "ports", "port", "network", "subnet", "floating_show"}
         for action, *args in requests:
             if action not in allowed:
                 raise failure("invalid_adapter_action", invalid=True)
@@ -520,13 +520,12 @@ class Provider:
 
     def floating(self, record):
         project = record["spec"]["context"]["project_id"]
-        result = []
-        for resource in ids(self.call("floating", UUID(project).hex)):
-            value = self.call("floating_show", resource)
+        resources = ids(self.call("floating", UUID(project).hex))
+        values = self.read_batch([("floating_show", resource) for resource in resources])
+        for resource, value in zip(resources, values, strict=True):
             if value.get("id") != resource or ops.uuid_value(field(value, "project_id")) != project:
                 raise failure("floating_identity_mismatch")
-            result.append(value)
-        return result
+        return values
 
     def network_intent(self, journal, key, action, *args):
         """Never blindly retry create after a lost response, even if list is empty."""
@@ -748,8 +747,18 @@ class Provider:
             )
             self.call("floating_delete", owned[0]["id"], mutation=True)
             return
+        # Read every selected port under this step's shared deadline. Join and
+        # validate the complete batch on the actor before deciding on a mutation;
+        # already restored roles must still be freshly verified on every step.
+        roles = list(record["network"]["original"])
+        values = self.read_batch(
+            [("port", record["access"]["interfaces"][role]["port_id"]) for role in roles]
+        )
+        ports = {
+            role: self.validate_port(record, role, value) for role, value in zip(roles, values, strict=True)
+        }
         for role, original in record["network"]["original"].items():
-            port = self.port(record, role)
+            port = ports[role]
             current = sorted(port["security_group_ids"])
             group = groups.get(role)
             if current != original:
