@@ -6,6 +6,44 @@ and draft [PR #21](https://github.com/Zi-Deng/FLOW-DC/pull/21). The
 [measurement specification](HTTP-MEASUREMENT.md) defines the new semantics; the
 [research contract](MANUSCRIPT-READINESS.md) retains the open scientific gates.
 
+## Final implementation validation
+
+The coordinator validated stable commit
+`8efd15dafa75258b89ab1b4bd94bf3a83ce51f5f` in its existing localhost-capable
+environment: Python 3.12.12 (conda-forge), aiohttp 3.13.3, Polars 1.37.1 and YARL
+1.24.5. The validation wrapper exited **0** with identical before/after source and
+test hashes and the same head throughout. The executor inspected the logs and
+verified each recorded hash against both the Git blobs and working files.
+These tests were executed by the coordinator, not inside the socket-restricted
+executor. The final evidence update changes documentation only.
+
+| Coordinator command | Exit / result |
+| --- | --- |
+| `/mnt/storage/github/FLOW-DC/.venv-agentic/bin/python -B -m unittest discover -s tests -p test_http_measurement.py -v` | **0**; **39 tests**, no failures/errors/skips, 27.772 s (27.926 s command time). |
+| `make check PYTHON=/mnt/storage/github/FLOW-DC/.venv-agentic/bin/python RUFF=/mnt/storage/github/FLOW-DC/.venv-agentic/bin/ruff` | **0**; **360 product tests** in 104.794 s and **141 workflow tests** in 21.537 s; scoped Ruff lint/format and repository configuration/link validation pass. Total command time 126.701 s. |
+| `make check-clean PYTHON=/mnt/storage/github/FLOW-DC/.venv-agentic/bin/python` | **0**; `git diff --check` and clean tracked/untracked status check pass. |
+
+The `make check` log explicitly executes
+`/mnt/storage/github/FLOW-DC/.venv-agentic/bin/python -B -m unittest discover -s tests -v`;
+that is the required full unittest run, not an omitted check or a second claimed
+execution. It includes consolidation coverage for both downloaders' retries,
+archive modes, overview contents and overwrite consent. All HTTP tests use local
+fixtures and temporary outputs. No cloud or external dataset campaign ran.
+
+| Validated file | SHA-256 |
+| --- | --- |
+| `bin/download_batch.py` | `59d78cdc05d4f09232a2e9e2c8062d128e6b189bc342034fe427263c130d85be` |
+| `bin/single_download.py` | `1552d27c34018a4ea36e4afc7dd9b279c222d1fb9cbcb3f4cbd2713090cc3b15` |
+| `bin/download_batch_gradient.py` | `7194f975dde612347c038aa949128afc2c7ee259d89d93dc489dd2a0bb4d1f0c` |
+| `tests/test_http_measurement.py` | `c174fc683f2703285c0cfc420060bd0552cb454d298f395c0fd7afba6679cae3` |
+
+Implementation and required local validation are complete. The executor's socket
+restriction was handled through real coordinator execution, not waived or hidden.
+At the coordinator handoff, GitHub `agentic-quality` had succeeded and `flowdc-tests`
+was still running on `8efd15d`. The coordinator must confirm CI on the final
+documentation head and run the configured independent review. Neither CI completion
+nor independent-review/merge readiness is asserted here.
+
 ## Failing-base evidence
 
 Checkpoint `8977a71659bde7c2da6d1099c62f23f987296956` added tests/documentation
@@ -76,8 +114,8 @@ and the original-authority permit. The repair transfers permits before the next
 connector acquisition, releasing the old permit first. It changes admission plumbing,
 not controller equations. Tests additionally cover cancellation while acquiring the
 destination permit or smoothing, reciprocal redirects, capacity limits, bounded
-3xx waits, and a redirect with an unfinished response body. These added localhost
-cases still require coordinator execution on the repaired head.
+3xx waits, and a redirect with an unfinished response body. These localhost cases
+subsequently passed in the final stable-head run recorded above.
 
 The coordinator also ran an intermediate redirect working tree: the focused command
 above exited **0** (37 tests in 27.868 s; 28.034 s command time), and `make check`
@@ -144,9 +182,9 @@ No expected-failure decorators, skips or weakened assertions were used to make t
 suite pass. Deterministic callback/permit tests use response fixtures and mocks;
 they supplement, rather than replace, the maintained real HTTP integration cases.
 The known socket-denied full suites were not repeatedly rerun during repair.
-**Passing-on-repaired-head localhost/full-gate evidence is still pending coordinator
-execution.** The intermediate pass above remains recorded. CI and independent review are
-also pending; this record does not assert completion or merge readiness.
+The final stable-head localhost/full-gate passes are recorded above, together with
+the earlier intermediate results. CI confirmation and independent review remain
+coordinator stages; this record does not assert merge readiness.
 
 ## Coverage and compatibility inspection
 
@@ -165,9 +203,9 @@ same/cross-authority redirects and metric attribution, connector-wait rechecks,
 prompt header observation before body completion, local output failure, timeout,
 cancellation and shutdown/permit recovery, cross-authority 3xx delays with independent
 destination progress, reciprocal redirects and destination concurrency limits.
-These tests remain to be executed on the repaired head in the coordinator environment.
-Existing consolidation coverage must also pass again for base/gradient retries,
-tar modes, overview contents and overwrite consent.
+All 39 focused tests and the existing consolidation coverage passed on the repaired
+source in the coordinator environment, including base/gradient retries, tar modes,
+overview contents and overwrite consent.
 
 Fixtures bind only ephemeral `127.0.0.1` origins and use temporary outputs. Timing
 uses independent monotonic server events, 400-ms stage delays, a half-tail-gap
@@ -185,10 +223,10 @@ or distributed gradient execution was tested.
 
 ## Remaining evidence and scientific limits
 
-The coordinator must run the focused suite, full unittest suite, `make check`,
-`git diff --check` and CI against the committed implementation, then return evidence
-to this same executor for the completion record. Failures require repair and fresh
-validation; an untested implementation is not complete. The overall authorized work
+The coordinator owns final-head CI confirmation and the configured independent
+review; any supported failure requires repair and fresh validation in this same
+executor session. Local checks establish only the exercised software invariants,
+not universal network behavior or scientific efficacy. The overall authorized work
 ends **20:31 UTC September 28, 2026**.
 
 The previous 64-image, one-worker toggle run remains functional smoke evidence only.
