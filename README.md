@@ -123,6 +123,9 @@ PAARC is disabled. Overview reports label corrected timing/accounting with
 `http_measurement.version = "2-body-first-byte"` and report input URLs without a
 final outcome as `summary.unattempted_or_cancelled_urls`. Legacy TTFB measurements
 are not directly comparable to this signal.
+Interval `n_unknown_failures` separately counts unexpected acquisition exceptions;
+their cause and any server overload are not inferred. Overview metadata describes
+this category alongside the other corrected accounting semantics.
 
 ### download_batch_gradient.py
 

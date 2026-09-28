@@ -726,6 +726,7 @@ class HostMetrics:
         self._n_http_failures = 0
         self._n_local_failures = 0
         self._n_transport_failures = 0
+        self._n_unknown_failures = 0
         self._bytes_downloaded = 0
         self._interval_start = _monotonic()
         
@@ -759,6 +760,7 @@ class HostMetrics:
         *,
         acquisition_success: Optional[bool] = None,
         is_local_error: bool = False,
+        is_unknown_error: bool = False,
     ) -> None:
         """Record one completed acquisition attempt, separately from overload.
 
@@ -772,7 +774,7 @@ class HostMetrics:
                 self._retry_after = max(self._retry_after or 0.0, retry_after_sec)
             
             # Classify as success or error
-            is_error = not is_local_error and (
+            is_error = not is_local_error and not is_unknown_error and (
                 is_conn_error or
                 status_code == 429 or
                 status_code == 408 or
@@ -782,7 +784,7 @@ class HostMetrics:
             if is_error:
                 self._n_errors += 1
             success = (status_code == 200 and not is_conn_error and not is_local_error
-                       and acquisition_success is not False)
+                       and not is_unknown_error and acquisition_success is not False)
             if success:
                 self._n_success += 1
                 self._bytes_downloaded += bytes_downloaded
@@ -794,6 +796,8 @@ class HostMetrics:
                 # Record file size
                 if bytes_downloaded > 0:
                     self._file_sizes.append(bytes_downloaded)
+            elif is_unknown_error:
+                self._n_unknown_failures += 1
             elif is_local_error or (status_code == 200 and not is_conn_error):
                 self._n_local_failures += 1
             elif is_conn_error or status_code is None:
@@ -832,6 +836,7 @@ class HostMetrics:
             n_http_failures = self._n_http_failures
             n_local_failures = self._n_local_failures
             n_transport_failures = self._n_transport_failures
+            n_unknown_failures = self._n_unknown_failures
             bytes_downloaded = self._bytes_downloaded
             retry_after = self._retry_after
             
@@ -842,6 +847,7 @@ class HostMetrics:
             self._n_http_failures = 0
             self._n_local_failures = 0
             self._n_transport_failures = 0
+            self._n_unknown_failures = 0
             self._bytes_downloaded = 0
             self._interval_start = now
             self._retry_after = None
@@ -859,7 +865,7 @@ class HostMetrics:
                     new_avg = sum(file_sizes) / len(file_sizes)
                     self._avg_file_size = 0.1 * new_avg + 0.9 * self._avg_file_size
         
-        n_failed = n_http_failures + n_local_failures + n_transport_failures
+        n_failed = n_http_failures + n_local_failures + n_transport_failures + n_unknown_failures
         total = n_success + n_failed
         n_samples = len(ttfb_samples)
         
@@ -920,6 +926,7 @@ class HostMetrics:
             "n_http_failures": n_http_failures,
             "n_local_failures": n_local_failures,
             "n_transport_failures": n_transport_failures,
+            "n_unknown_failures": n_unknown_failures,
             "n_samples": n_samples,
             "has_overload": n_errors > 0,
             "p10": self._ema_p10,
@@ -1917,11 +1924,12 @@ async def download_one(
         
         # Record metrics
         failure_kind = trace_dict.get("failure_kind")
+        is_unknown_error = failure_kind == "unknown"
         is_conn_error = failure_kind == "transport" or (
             failure_kind is None and _is_connection_error(err)
         )
         is_local_error = failure_kind in ("local", "admission") or (
-            err is not None and not is_conn_error and status in (None, 200)
+            err is not None and not is_conn_error and not is_unknown_error and status in (None, 200)
         )
         if manager is not None:
             # Each redirected hop acquires its destination's permit. Final
@@ -1940,6 +1948,7 @@ async def download_one(
                 retry_after_sec=retry_after_sec,
                 acquisition_success=(err is None),
                 is_local_error=is_local_error,
+                is_unknown_error=is_unknown_error,
             )
         
         # Track written paths for collision detection
@@ -2113,6 +2122,7 @@ def generate_overview_report(
             "latency_eligibility": "HTTP 200, nonempty complete body, saved output",
             "success": "HTTP 200 and saved output; bytes count useful saved payload only",
             "n_errors": "overload subset, not all unsuccessful acquisitions",
+            "n_unknown_failures": "unexpected acquisition exceptions; cause and overload not inferred",
             "retry_after_scope": "session-local hostname/effective-port authority, all modes and redirects",
             "redirect_control": "destination adaptive permit; 3xx follow-up delay without destination-wide embargo",
             "attempt_timeout": "admission, connection, redirects and body; excludes initial adaptive permit/smoothing",

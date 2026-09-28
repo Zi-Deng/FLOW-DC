@@ -15,7 +15,7 @@ from datetime import UTC, datetime, timedelta
 from email.utils import format_datetime
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import Mock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import aiohttp
 import polars as pl
@@ -37,6 +37,84 @@ from single_download import (  # noqa: E402
 
 
 class ClassificationTests(unittest.IsolatedAsyncioTestCase):
+    async def test_unexpected_body_errors_are_unclassified_without_invented_overload(self):
+        # Fault injection checks honest attribution, not whether these raw errors
+        # escape the installed aiohttp transport's normal ClientError wrapping.
+        for module in (base, gradient):
+            for error in (OSError("injected raw read error"), ValueError("injected decoder/programming error"),
+                          aiohttp.ClientOSError("wrapped transport error"), aiohttp.ClientPayloadError("truncated")):
+                with self.subTest(module=module.__name__, error=type(error).__name__):
+                    unknown = not isinstance(error, aiohttp.ClientError)
+                    manager = module.HostControllerManager(module.PAARCConfig())
+                    response = SimpleNamespace(status=200, content=SimpleNamespace(read=AsyncMock(side_effect=error)))
+                    response_context = AsyncMock()
+                    response_context.__aenter__.return_value = response
+                    async with aiohttp.ClientSession() as session:
+                        with patch.object(session, "get", return_value=response_context):
+                            out = await base.download_one(
+                                row={"url": "http://a.test/body", "__key__": "key"},
+                                cfg=base.Config(input_path="unused", output_folder="unused"),
+                                session=session, total_bytes=[], manager=manager,
+                                sequential_namer=base.SequentialNamer(), global_written_paths={},
+                            )
+                    self.assertFalse(out.success)
+                    ctrl = await manager.get_controller("http://a.test/body")
+                    snap = await ctrl.metrics.finish_interval()
+                    self.assertEqual(snap["n_local_failures"], 0)
+                    self.assertEqual(snap["n_transport_failures"], int(not unknown))
+                    self.assertEqual(snap["n_unknown_failures"], int(unknown))
+                    self.assertEqual(snap["n_failed"], 1)
+                    self.assertEqual(snap["total"], 1)
+                    self.assertEqual(snap["n_success"], 0)
+                    self.assertEqual(snap["n_samples"], 0)
+                    self.assertEqual(snap["bytes"], 0)
+                    self.assertEqual(snap["has_overload"], not unknown)
+                    self.assertEqual(ctrl.semaphore.inflight, 0)
+                    self.assertEqual((await ctrl.metrics.finish_interval())["n_unknown_failures"], 0)
+
+    async def test_admission_failures_do_not_erase_prior_overload_cooldown(self):
+        for module in (base, gradient):
+            with self.subTest(module=module.__name__):
+                manager = module.HostControllerManager(module.PAARCConfig())
+                ctrl = await manager.get_controller("http://a.test")
+                await ctrl.metrics.record(429, None, retry_after_sec=60, acquisition_success=False)
+                overload = await ctrl.metrics.finish_interval()
+                self.assertTrue(overload["has_overload"])
+                await ctrl._step_init(overload, 100)
+                self.assertEqual(ctrl.state, base.PAARCState.BACKOFF)
+                self.assertGreaterEqual(ctrl._cooldown_until, 160)
+                limit = ctrl.semaphore.limit
+                await ctrl.metrics.record(408, None, acquisition_success=False, is_local_error=True)
+                waiting = await ctrl.metrics.finish_interval()
+                self.assertFalse(waiting["has_overload"])
+                self.assertEqual(waiting["n_local_failures"], 1)
+                await ctrl._step_backoff(waiting, 101)
+                self.assertEqual(ctrl.state, base.PAARCState.BACKOFF)
+                self.assertEqual(ctrl.semaphore.limit, limit)
+                self.assertGreaterEqual(ctrl._cooldown_until, 160)
+
+    def test_benchmark_adapter_reads_generated_overview_with_additive_metadata(self):
+        from benchmark.core.flowdc_adapter import FlowDCAdapter, FlowDCConfig
+        from benchmark.core.metrics import ResourceMetrics
+
+        outcomes = {
+            "ok": base.DownloadOutcome("ok", "http://a.test/ok", True, "saved", None, 200, None, 1000),
+            "fail": base.DownloadOutcome("fail", "http://a.test/fail", False, None, None, 404, "HTTP 404"),
+        }
+        cfg = base.Config(input_path="unused", output_folder="unused")
+        report = base.generate_overview_report(cfg=cfg, df_total=3, outcomes=outcomes, elapsed_sec=2)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "overview.json"
+            path.write_text(json.dumps(report))
+            config = FlowDCConfig("unused", tmp, "url", None, 2, 5, True)
+            result = FlowDCAdapter(ROOT)._parse_overview(path, config, 1, ResourceMetrics())
+        self.assertEqual(result.input_urls, 3)
+        self.assertEqual(result.successful_downloads, 1)
+        self.assertEqual(result.failed_downloads, 1)
+        self.assertEqual(result.throughput_imgs_per_sec, 0.5)
+        self.assertEqual(result.error_counts, {"404_HTTP 404": 1})
+        self.assertEqual(result.extra_metrics["paarc_version"], report["paarc_version"])
+
     async def test_normalized_dispatch_feedback_uses_held_controller(self):
         # These URLs need no DNS or privileged/default-port listener. Exercise
         # real manager ownership and the actual dispatch hook with YARL URLs.
@@ -275,7 +353,8 @@ class GateTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(ctx.measurement["retry_after"], 2)
 
     def test_retry_after_parser(self):
-        for value, expected in (("2", 2), ("0", 0), ("1.5", 1.5), ("1e2", 100), ("+2", 2)):
+        for value, expected in (("2", 2), ("0", 0), ("1.5", 1.5), ("1e2", 100), ("+2", 2),
+                                ("1_0", 10), (" 2 ", 2)):
             with self.subTest(value=value):
                 self.assertEqual(parse_retry_after(value, 1000), expected)
         for value in (None, "", "-1", "nan", "inf", "-inf", "1e999", "bad", "Wed, 99 Foo 2000"):
@@ -1047,7 +1126,7 @@ class LocalHTTPTests(unittest.IsolatedAsyncioTestCase):
                             await asyncio.gather(task, return_exceptions=True)
                     self.assertEqual(asyncio.all_tasks() - before, set())
 
-    async def check_retry_after(self, header):
+    async def check_retry_after(self, header, *, exhaust_budget=False):
         for script in ("download_batch.py", "download_batch_gradient.py"):
             for enabled in (False, True):
                 with self.subTest(script=script, enable_paarc=enabled, header=header):
@@ -1068,8 +1147,8 @@ class LocalHTTPTests(unittest.IsolatedAsyncioTestCase):
                                 "C_init": 1,
                                 "C_min": 1,
                                 "C_max": 1,
-                                "timeout": 5,
-                                "max_retry_attempts": 2,
+                                "timeout": 1 if exhaust_budget else 5,
+                                "max_retry_attempts": 3 if exhaust_budget else 2,
                                 "retry_backoff_sec": 0,
                                 "create_tar": False,
                                 "create_overview": True,
@@ -1092,8 +1171,16 @@ class LocalHTTPTests(unittest.IsolatedAsyncioTestCase):
                             await proc.communicate()
                     self.assertEqual(proc.returncode, 0, (stdout + stderr).decode())
                     report = json.loads(Path(f"{output}_overview.json").read_text())
-                    self.assertEqual(report["summary"]["successful_downloads"], 1)
                     requests = [when for kind, when in self.events[name] if kind == "request"]
+                    if exhaust_budget:
+                        self.assertEqual(report["summary"]["successful_downloads"], 0)
+                        self.assertEqual(report["summary"]["failed_downloads"], 1)
+                        self.assertEqual(report["error_breakdown"][0]["status_code"], 408)
+                        self.assertEqual(len(requests), 1, "embargo must not be bypassed by timeout/retry")
+                        self.assertIn("[Attempt 3]", stdout.decode())
+                        self.assertNotIn("[Attempt 4]", stdout.decode())
+                        continue
+                    self.assertEqual(report["summary"]["successful_downloads"], 1)
                     self.assertEqual(len(requests), 2, "max_retry_attempts counts all attempts")
                     self.assertGreaterEqual(
                         requests[1],
@@ -1106,6 +1193,9 @@ class LocalHTTPTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_http_date_retry_after_delays_retry_in_all_modes(self):
         await self.check_retry_after("date")
+
+    async def test_long_retry_after_can_exhaust_bounded_attempt_budget(self):
+        await self.check_retry_after("30", exhaust_budget=True)
 
 
 if __name__ == "__main__":

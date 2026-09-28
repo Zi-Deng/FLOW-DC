@@ -65,11 +65,16 @@ Every completed acquisition attempt belongs to exactly one interval outcome:
 - `n_http_failures`: unsuccessful HTTP status, including 404 and overload statuses.
 - `n_transport_failures`: transport/read failure or network timeout.
 - `n_local_failures`: local output/validation failure or timeout awaiting admission.
+- `n_unknown_failures`: unexpected acquisition exception with unclassified cause.
 
-`n_failed` is the sum of the three failure categories; `total = n_success + n_failed`.
+`n_failed` is the sum of the four failure categories; `total = n_success + n_failed`.
 The legacy `n_errors` field is the **overload subset** (429, 408, 5xx and transport
 failure), not another disjoint outcome. Local errors and admission timeouts do not
-signal server overload. `has_overload` follows that subset. A latency sample also
+signal server overload. Unexpected acquisition exceptions do not establish either
+local output failure or server congestion, so they occupy the additive unknown
+category and produce no overload or latency sample. Known aiohttp `ClientError`
+transport failures retain their transport/overload classification. `has_overload`
+follows that subset. A latency sample also
 requires a positive finite first-byte interval and nonempty saved payload; neither
 404 nor other failed statuses nor local failures contribute one. Metrics count
 completed attempts, so retried URLs can contribute several outcomes; cancellation
@@ -86,14 +91,17 @@ One `ClientSession` owns one gate; the maintained asynchronous run keeps that se
 through all retry rounds. The key is `(normalized hostname, effective port)`, using
 aiohttp's YARL IDNA/IP representation. Paths and userinfo do not affect the key.
 HTTP defaults to 80 and HTTPS to 443; schemes using the same explicit port share
-the authority deadline. This scope applies with PAARC on or off. It is not shared
-across processes, sessions, workers or VMs.
+the authority deadline. This is deliberately authority-based rather than RFC-origin
+isolation (an origin also includes scheme): traffic on one scheme can therefore
+delay the other on that same explicit port. This scope applies with PAARC on or off.
+It is not shared across processes, sessions, workers or VMs.
 
 The response's actual authority owns its embargo, including redirect responses.
 Headers are observed before body reading. Nonnegative finite numeric values and
 HTTP dates establish deadlines. Finite fractional/exponent/leading-plus numeric
 forms retain the previous float parser's compatibility extension beyond RFC integer
-delay-seconds. Past dates mean zero additional delay; malformed, negative and
+delay-seconds, including Python float's underscore separators and surrounding
+whitespace. Past dates mean zero additional delay; malformed, negative and
 nonfinite values are ignored. A date is converted once from wall-clock time into a
 monotonic deadline; subsequent wall-clock changes cannot move it. Unrepresentable
 deadline sums are rejected.
@@ -117,6 +125,11 @@ independent deadlines and can progress subject to ordinary worker/connection lim
 A callback recheck can occupy a connector slot while waiting; the positive attempt
 timeout and cancellation still bound it.
 
+Expired entries are removed lazily when that authority next waits. An authority
+observed only on its last attempt can retain an inactive entry until its session
+is collected. Storage is proportional to distinct embargoed authorities in the run;
+there is no constant-size cache or long-lived-session eviction guarantee.
+
 `build_trace_config()` installs these hooks in maintained sessions. For a caller
 using the standalone helper with a plain session, the helper appends one frozen
 configuration to the session's public `trace_configs` list before starting its first
@@ -135,12 +148,22 @@ negative values retain the previous unbounded timeout setting; cancellation stil
 works. An embargo longer than a positive timeout can
 therefore produce a retryable timeout without dispatching a request. It counts
 toward the existing total `max_retry_attempts`; header waits never bypass the bound.
+For example, Retry-After 60 with timeout 5 and three total attempts can finish as a
+failed URL after the initial 429 and two admission timeouts, with no second network
+request. Eventual acquisition after an arbitrarily long embargo is not guaranteed.
+The initial 429/503 remains overload feedback and its Retry-After participates in
+the controller's cooldown. A later local wait is not a fresh server observation and
+does not synthesize another overload event or erase that cooldown. Admission remains
+closed until the gate deadline regardless of the controller's current concurrency.
 
 Cancellation propagates through gate waits, connector waits and reads. The batch
 scheduler cancels and awaits all its workers on cancellation or shutdown, closing
 its progress bar and releasing adaptive permits. A 100-ms shutdown monitor also
 cancels workers waiting on a very long embargo. This does not make synchronous
 filesystem writes interruptible or redesign global retry-backoff sleep.
+For the maintained CLI callers, a set shutdown flag takes precedence and returns
+partial outcomes, including when external cancellation races with that flag.
+External batch cancellation while the flag is clear propagates `CancelledError`.
 
 The four- and six-element helper tuples, CLI/config keys, retry-attempt counting,
 output paths, overwrite consent and archive behavior are preserved. The implementation

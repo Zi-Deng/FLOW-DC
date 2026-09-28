@@ -400,7 +400,9 @@ async def download_via_http_get(
         return None, None, f"Connection Error: {str(e)}", None
     except Exception as e:
         measurement["ttfb"] = None
-        measurement["failure_kind"] = "local"
+        # An unexpected acquisition exception does not establish either output
+        # failure or remote overload. Preserve that uncertainty for accounting.
+        measurement["failure_kind"] = "unknown"
         return None, None, f"Error: {str(e)}", None
     except asyncio.CancelledError:
         measurement.update(ttfb=None, failure_kind="cancelled")
