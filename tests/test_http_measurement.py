@@ -37,6 +37,46 @@ from single_download import (  # noqa: E402
 
 
 class ClassificationTests(unittest.IsolatedAsyncioTestCase):
+    async def test_normalized_dispatch_feedback_uses_held_controller(self):
+        # These URLs need no DNS or privileged/default-port listener. Exercise
+        # real manager ownership and the actual dispatch hook with YARL URLs.
+        with tempfile.TemporaryDirectory() as tmp:
+            saved = Path(tmp) / "payload.jpg"
+            saved.write_bytes(b"payload")
+            for module in (base, gradient):
+                for url in ("http://example.invalid:80/path", "https://example.invalid:443/path",
+                            "http://bücher.invalid/path"):
+                    for status in (200, 503):
+                        with self.subTest(module=module.__name__, url=url, status=status):
+                            manager = module.HostControllerManager(module.PAARCConfig())
+                            held = await manager.get_controller(url)
+
+                            async def observed_download(status=status, **kwargs):
+                                trace = base.build_trace_config()
+                                ctx = SimpleNamespace(measurement=base.TRACE_CTX.get())
+                                await trace._dispatch(kwargs["session"], ctx, SimpleNamespace(url=URL(kwargs["url"])))
+                                ctx.measurement["ttfb"] = 0.1
+                                if status == 200:
+                                    return "key", str(saved), None, None, 200, None
+                                return "key", None, None, "HTTP 503", 503, None
+
+                            async with aiohttp.ClientSession() as session:
+                                with patch.object(base, "download_single", side_effect=observed_download):
+                                    await base.download_one(
+                                        row={"url": url, "__key__": "key"},
+                                        cfg=base.Config(input_path="unused", output_folder=tmp),
+                                        session=session, total_bytes=[], manager=manager,
+                                        sequential_namer=base.SequentialNamer(), global_written_paths={},
+                                    )
+                            snap = await held.metrics.finish_interval()
+                            self.assertEqual(snap["total"], 1)
+                            self.assertEqual(snap["n_success"], int(status == 200))
+                            self.assertEqual(snap["n_samples"], int(status == 200))
+                            self.assertEqual(snap["bytes"], 7 if status == 200 else 0)
+                            self.assertEqual(snap["has_overload"], status == 503)
+                            self.assertEqual(held.semaphore.inflight, 0)
+                            self.assertEqual(await manager.all_controllers(), [held])
+
     async def test_cancelling_redirect_admission_preserves_permit_ownership(self):
         for module in (base, gradient):
             for during_smoothing in (False, True):

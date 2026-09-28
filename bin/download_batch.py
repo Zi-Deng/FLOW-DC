@@ -1925,9 +1925,13 @@ async def download_one(
         )
         if manager is not None:
             # Each redirected hop acquires its destination's permit. Final
-            # response latency/feedback belongs to that same authority; a
-            # timeout awaiting a permit still records its failed attempt.
-            feedback_ctrl = await manager.get_controller(trace_dict.get("feedback_url", url))
+            # response feedback belongs to the controller actually holding it.
+            # A normalized trace URL (default port / IDNA) may otherwise select
+            # another legacy host key even without a redirect. Only fall back to
+            # the target lookup when admission failed before acquiring a permit.
+            feedback_ctrl = ctrl if ctrl is not None else await manager.get_controller(
+                trace_dict.get("feedback_url", url)
+            )
             await feedback_ctrl.metrics.record(
                 status_code=status,
                 ttfb=trace_dict.get("ttfb"),

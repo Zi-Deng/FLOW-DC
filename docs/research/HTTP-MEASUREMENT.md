@@ -44,6 +44,13 @@ redirects never hold two authorities' permits at once. Redirect hops themselves
 are not saved acquisitions and do not add useful-success counts or latency samples.
 No controller equation or tuning parameter changes.
 
+Feedback credits the controller owning the current permit, not a fresh lookup from
+the trace URL: aiohttp normalization can remove default ports or encode IDNA names.
+If redirect admission fails between releasing and acquiring permits, the target
+controller receives that failed-admission outcome. Existing manager host keys are
+preserved; differently spelled input aliases can still select distinct adaptive
+controllers. The normalized Retry-After authority gate is independent of those keys.
+
 ## Outcomes and denominators
 
 `HostMetrics.record` receives explicit saved-output success from the batch path.

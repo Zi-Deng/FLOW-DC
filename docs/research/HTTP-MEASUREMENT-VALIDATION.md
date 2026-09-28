@@ -79,6 +79,30 @@ destination permit or smoothing, reciprocal redirects, capacity limits, bounded
 3xx waits, and a redirect with an unfinished response body. These added localhost
 cases still require coordinator execution on the repaired head.
 
+The coordinator also ran an intermediate redirect working tree: the focused command
+above exited **0** (37 tests in 27.868 s; 28.034 s command time), and `make check`
+exited **0** (358 product and 141 workflow tests, 126.678 s total command time).
+Its before/after manifest
+shows that the test file changed during these checks, while production hashes were
+stable. The validation wrapper therefore exited **1** and explicitly refused to
+certify that moving tree. These are diagnostic passes, not stable-head evidence.
+
+At committed production source `afebd453ff01d799add7ef6aa3e315b25714d39f`, one
+further maintained regression was added and run before its repair:
+
+```bash
+PYTHONPATH=tests "$FLOWDC_TEST_PY" -B -m unittest test_http_measurement.ClassificationTests.test_normalized_dispatch_feedback_uses_held_controller -v
+```
+
+Exit **1**: one test, **12 failing subcases**, covering HTTP `:80`, HTTPS `:443`
+and Unicode/IDNA hosts, each with success and overload feedback in base/gradient.
+The actual dispatch hook normalizes its URL, causing the old feedback lookup to
+select a different controller from the one holding the permit. This fixture uses
+real manager/trace objects with a simulated download; it requires neither DNS nor
+a default-port listener. Crediting the held controller directly fixes the mismatch,
+with the existing target-lookup fallback retained for failures before acquisition.
+The regression now passes; the manager's broader host-key policy is unchanged.
+
 ## Executor environment and results
 
 The executor uses existing dependencies read-only; no installation or permission
@@ -109,7 +133,7 @@ fixture. They are environment failures, not product assertion failures.
 
 | Implementation-stage command | Exit / result |
 | --- | --- |
-| `PYTHONPATH=tests "$FLOWDC_TEST_PY" -B -m unittest test_http_measurement.GateTests test_http_measurement.ClassificationTests -v` | 0; 14 tests pass after redirect repair, including both new failing-before-repair regressions and the formerly failing 404 cases. No skips. |
+| `PYTHONPATH=tests "$FLOWDC_TEST_PY" -B -m unittest test_http_measurement.GateTests test_http_measurement.ClassificationTests -v` | 0; 15 tests pass after attribution repair, including all new failing-before-repair regressions and the formerly failing 404 cases. No skips. |
 | `"$FLOWDC_TEST_PY" -B -m unittest discover -s tests -p test_flowdc_experiment_source.py -v` | 0; 8 source-packaging tests pass. |
 | `"$FLOWDC_TEST_PY" -m py_compile bin/single_download.py bin/download_batch.py bin/download_batch_gradient.py tests/test_http_measurement.py` | 0. |
 | `"$FLOWDC_TEST_PY" -B scripts/check_repository.py` | 0; repository configuration/skills/links validate. |
@@ -126,12 +150,13 @@ also pending; this record does not assert completion or merge readiness.
 
 ## Coverage and compatibility inspection
 
-The expanded focused suite has 38 test methods. Its fourteen tests without sockets cover
+The expanded focused suite has 39 test methods. Its fifteen tests without sockets cover
 classification and disjoint denominators, sample eligibility, overview labeling,
 parser forms/invalid values, authority normalization, concurrent extension and
 cancellation with a deterministic clock, wall-clock jumps, session isolation and
 Webdataset metadata-write byte accounting, 3xx follow-up delays, single observation
-of a terminal 3xx header, and redirect permit ownership/cancellation.
+of a terminal 3xx header, redirect permit ownership/cancellation, and normalized URL
+feedback attribution to the controller holding the permit.
 
 The twenty-four localhost tests exercise header/first-byte/tail timing, empty/failed and
 truncated bodies, both header forms in real base/gradient/fixed CLI retry paths,
