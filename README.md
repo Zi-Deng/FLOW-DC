@@ -114,8 +114,15 @@ python bin/download_batch.py --config config.json
 - Bounded concurrency with adaptive semaphores
 - Per-host rate limiting via PAARC
 - Automatic retry for transient failures (429, 5xx, timeouts)
-- TTFB-based latency monitoring
+- Application-observed first-body-byte latency monitoring
 - Supports imagefolder and webdataset output formats
+
+The asynchronous base and gradient paths share [HTTP measurement and Retry-After
+semantics](docs/research/HTTP-MEASUREMENT.md), including authority admission when
+PAARC is disabled. Overview reports label corrected timing/accounting with
+`http_measurement.version = "2-body-first-byte"` and report input URLs without a
+final outcome as `summary.unattempted_or_cancelled_urls`. Legacy TTFB measurements
+are not directly comparable to this signal.
 
 ### download_batch_gradient.py
 

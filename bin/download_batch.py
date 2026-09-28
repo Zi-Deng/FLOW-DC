@@ -40,7 +40,6 @@ import signal
 import tarfile
 import time
 from collections import Counter, deque
-from contextvars import ContextVar
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from pathlib import Path
@@ -51,7 +50,10 @@ import aiohttp
 import polars as pl
 from tqdm.asyncio import tqdm
 
-from single_download import download_single, load_input_file, extract_extension
+from single_download import (
+    download_single, load_input_file, extract_extension, HTTPTraceConfig,
+    HTTP_TRACE_CTX, HTTP_MEASUREMENT_VERSION,
+)
 
 
 # =============================================================================
@@ -73,7 +75,7 @@ def _setup_signal_handlers():
     signal.signal(signal.SIGTERM, _signal_handler)
 
 # Trace context for aiohttp TTFB measurement
-TRACE_CTX: ContextVar[dict | None] = ContextVar("TRACE_CTX", default=None)
+TRACE_CTX = HTTP_TRACE_CTX
 
 
 # =============================================================================
@@ -564,39 +566,8 @@ def resolve_worker_count(cfg: Config, df: pl.DataFrame) -> int:
 
 
 def build_trace_config() -> aiohttp.TraceConfig:
-    """
-    Build aiohttp trace config to measure TTFB.
-    
-    TTFB is approximated as time from request start to first response chunk.
-    """
-    trace = aiohttp.TraceConfig()
-    
-    async def _get_ctx():
-        return TRACE_CTX.get()
-    
-    async def on_request_start(session, ctx, params):
-        d = await _get_ctx()
-        if d is not None:
-            d["t0"] = _monotonic()
-            d["ttfb"] = None
-            d["exc"] = None
-    
-    async def on_response_chunk_received(session, ctx, params):
-        d = await _get_ctx()
-        if d is not None:
-            if d.get("ttfb") is None and d.get("t0") is not None:
-                d["ttfb"] = _monotonic() - d["t0"]
-    
-    async def on_request_exception(session, ctx, params):
-        d = await _get_ctx()
-        if d is not None:
-            d["exc"] = str(params.exception)
-    
-    trace.on_request_start.append(on_request_start)
-    trace.on_response_chunk_received.append(on_response_chunk_received)
-    trace.on_request_exception.append(on_request_exception)
-    
-    return trace
+    """Shared per-hop admission/headers tracing; body timing lives in the reader."""
+    return HTTPTraceConfig()
 
 
 # =============================================================================
@@ -752,6 +723,9 @@ class HostMetrics:
         self._file_sizes: list[int] = []
         self._n_success = 0
         self._n_errors = 0
+        self._n_http_failures = 0
+        self._n_local_failures = 0
+        self._n_transport_failures = 0
         self._bytes_downloaded = 0
         self._interval_start = _monotonic()
         
@@ -781,16 +755,24 @@ class HostMetrics:
         ttfb: Optional[float],
         bytes_downloaded: int = 0,
         is_conn_error: bool = False,
-        retry_after_sec: Optional[float] = None
+        retry_after_sec: Optional[float] = None,
+        *,
+        acquisition_success: Optional[bool] = None,
+        is_local_error: bool = False,
     ) -> None:
-        """Record metrics from a completed request."""
+        """Record one completed acquisition attempt, separately from overload.
+
+        Legacy n_errors counts overload feedback; all unsuccessful attempts are
+        also counted by a disjoint outcome category. Callers that omit explicit
+        saved-output success retain HTTP-200 inference for compatibility.
+        """
         async with self._lock:
             # Track Retry-After if provided
-            if retry_after_sec is not None:
-                self._retry_after = retry_after_sec
+            if retry_after_sec is not None and math.isfinite(retry_after_sec) and retry_after_sec >= 0:
+                self._retry_after = max(self._retry_after or 0.0, retry_after_sec)
             
             # Classify as success or error
-            is_error = (
+            is_error = not is_local_error and (
                 is_conn_error or
                 status_code == 429 or
                 status_code == 408 or
@@ -799,17 +781,25 @@ class HostMetrics:
             
             if is_error:
                 self._n_errors += 1
-            else:
+            success = (status_code == 200 and not is_conn_error and not is_local_error
+                       and acquisition_success is not False)
+            if success:
                 self._n_success += 1
                 self._bytes_downloaded += bytes_downloaded
                 
                 # Record TTFB for successful requests
-                if ttfb is not None and ttfb > 0:
+                if ttfb is not None and math.isfinite(ttfb) and ttfb > 0 and bytes_downloaded > 0:
                     self._ttfb_samples.append(ttfb)
                 
                 # Record file size
                 if bytes_downloaded > 0:
                     self._file_sizes.append(bytes_downloaded)
+            elif is_local_error or (status_code == 200 and not is_conn_error):
+                self._n_local_failures += 1
+            elif is_conn_error or status_code is None:
+                self._n_transport_failures += 1
+            else:
+                self._n_http_failures += 1
     
     def _update_ema(self, current: Optional[float], new_value: Optional[float]) -> Optional[float]:
         """Update EMA with new value."""
@@ -839,6 +829,9 @@ class HostMetrics:
             file_sizes = self._file_sizes.copy()
             n_success = self._n_success
             n_errors = self._n_errors
+            n_http_failures = self._n_http_failures
+            n_local_failures = self._n_local_failures
+            n_transport_failures = self._n_transport_failures
             bytes_downloaded = self._bytes_downloaded
             retry_after = self._retry_after
             
@@ -846,6 +839,9 @@ class HostMetrics:
             self._file_sizes.clear()
             self._n_success = 0
             self._n_errors = 0
+            self._n_http_failures = 0
+            self._n_local_failures = 0
+            self._n_transport_failures = 0
             self._bytes_downloaded = 0
             self._interval_start = now
             self._retry_after = None
@@ -863,7 +859,8 @@ class HostMetrics:
                     new_avg = sum(file_sizes) / len(file_sizes)
                     self._avg_file_size = 0.1 * new_avg + 0.9 * self._avg_file_size
         
-        total = n_success + n_errors
+        n_failed = n_http_failures + n_local_failures + n_transport_failures
+        total = n_success + n_failed
         n_samples = len(ttfb_samples)
         
         # Calculate raw percentiles (require minimum samples)
@@ -919,6 +916,10 @@ class HostMetrics:
             "total": total,
             "n_success": n_success,
             "n_errors": n_errors,
+            "n_failed": n_failed,
+            "n_http_failures": n_http_failures,
+            "n_local_failures": n_local_failures,
+            "n_transport_failures": n_transport_failures,
             "n_samples": n_samples,
             "has_overload": n_errors > 0,
             "p10": self._ema_p10,
@@ -1899,14 +1900,25 @@ async def download_one(
                 bytes_dl = 0
         
         # Record metrics
-        is_conn_error = _is_connection_error(err)
+        failure_kind = trace_dict.get("failure_kind")
+        is_conn_error = failure_kind == "transport" or (
+            failure_kind is None and _is_connection_error(err)
+        )
+        is_local_error = failure_kind in ("local", "admission") or (
+            err is not None and not is_conn_error and status in (None, 200)
+        )
         if ctrl is not None:
-            await ctrl.metrics.record(
+            # Redirect chains hold the original attempt's adaptive permit, but
+            # final response latency/feedback belongs to the actual authority.
+            feedback_ctrl = await manager.get_controller(trace_dict.get("feedback_url", url))
+            await feedback_ctrl.metrics.record(
                 status_code=status,
                 ttfb=trace_dict.get("ttfb"),
                 bytes_downloaded=bytes_dl,
                 is_conn_error=is_conn_error,
                 retry_after_sec=retry_after_sec,
+                acquisition_success=(err is None),
+                is_local_error=is_local_error,
             )
         
         # Track written paths for collision detection
@@ -1986,8 +1998,24 @@ async def download_batch_bounded(
         for _ in range(max(1, effective_workers))
     ]
     
-    await asyncio.gather(*workers)
-    pbar.close()
+    async def cancel_on_shutdown():
+        while not shutdown_flag:
+            await asyncio.sleep(0.1)
+        for task in workers:
+            task.cancel()
+
+    shutdown_task = asyncio.create_task(cancel_on_shutdown())
+    try:
+        await asyncio.gather(*workers)
+    except asyncio.CancelledError:
+        if not shutdown_flag:
+            raise
+    finally:
+        shutdown_task.cancel()
+        for task in workers:
+            task.cancel()
+        await asyncio.gather(shutdown_task, *workers, return_exceptions=True)
+        pbar.close()
     
     return outcomes
 
@@ -2057,6 +2085,16 @@ def generate_overview_report(
 
     return {
         "paarc_version": "2.0.0",
+        "http_measurement": {
+            "version": HTTP_MEASUREMENT_VERSION,
+            "clock": "time.monotonic",
+            "controller_latency": "final-hop dispatch to first nonempty application body read",
+            "latency_eligibility": "HTTP 200, nonempty complete body, saved output",
+            "success": "HTTP 200 and saved output; bytes count useful saved payload only",
+            "n_errors": "overload subset, not all unsuccessful acquisitions",
+            "retry_after_scope": "session-local hostname/effective-port authority, all modes and redirects",
+            "attempt_timeout": "admission, connection, redirects and body; excludes adaptive permit/smoothing",
+        },
         "script_inputs": {
             "input": cfg.input_path,
             "input_format": cfg.input_format,
@@ -2093,6 +2131,7 @@ def generate_overview_report(
             "total_urls": df_total,
             "successful_downloads": len(successes),
             "failed_downloads": len(failures),
+            "unattempted_or_cancelled_urls": max(0, df_total - len(outcomes)),
             "success_rate_percent": round((len(successes) / df_total) * 100.0, 2) if df_total else 0.0,
             "downloaded_mb": round(mb, 3),
             "elapsed_sec": round(elapsed_sec, 3),

@@ -1,110 +1,133 @@
 # HTTP measurement validation — issue #20
 
-## Initial regression checkpoint (September 28, 2026)
+This record covers [issue #20](https://github.com/Zi-Deng/FLOW-DC/issues/20), its
+[approved plan](https://github.com/Zi-Deng/FLOW-DC/issues/20#issuecomment-5876154148)
+and draft [PR #21](https://github.com/Zi-Deng/FLOW-DC/pull/21). The
+[measurement specification](HTTP-MEASUREMENT.md) defines the new semantics; the
+[research contract](MANUSCRIPT-READINESS.md) retains the open scientific gates.
 
-Production source is still the base commit
-`ca52044fa2d4447ce6dd288b5a7b571b9db75c6d`. This checkpoint adds the
-[research contract](MANUSCRIPT-READINESS.md), README link and
-[`tests/test_http_measurement.py`](../../tests/test_http_measurement.py).
-No HTTP repair or changed measurement semantics are claimed yet. The approved
-[plan](https://github.com/Zi-Deng/FLOW-DC/issues/20#issuecomment-5876154148)
-requires reproduction before repair and an early draft checkpoint.
+## Failing-base evidence
 
-### Environment and commands
+Checkpoint `8977a71659bde7c2da6d1099c62f23f987296956` added tests/documentation
+without changing production base `ca52044fa2d4447ce6dd288b5a7b571b9db75c6d`.
+Before repair, the coordinator ran this exact command from the issue worktree in
+its existing localhost-capable environment:
 
-The executor used an existing environment read-only; nothing was installed.
-Python is 3.12.3, aiohttp 3.13.3, polars 1.37.1, psutil 7.2.1, tqdm 4.67.1,
-PyYAML 6.0.3 and Ruff 0.16.7. The default system Python lacks aiohttp, and
-`python` is absent from its PATH. Commands below use these explicit paths
-(the table abbreviates the paths as shell variables):
+```bash
+/mnt/storage/github/FLOW-DC/.venv-agentic/bin/python -B -m unittest discover -s tests -p test_http_measurement.py -v
+```
+
+Exit **1**: **9 tests, 12 failing subcases, zero errors, zero skips**, in 2.531 s.
+Python was 3.12.12 (conda-forge), aiohttp 3.13.3 and polars 1.37.1. The committed test
+SHA-256 was `d4d86fcfde0322e970ac0b78f80f3f6a75cdb4a591ead20f379c90ddabb39df9`.
+The executor verified that hash and all three production-source hashes against the
+coordinator's recorded manifest before modifying production code, and read the
+failure summary from its private log. These are coordinator-executed observations,
+not tests run inside the executor sandbox.
+
+| Regression | Observed failure on unchanged production source |
+| --- | --- |
+| 404 useful-success classification | Base and gradient each report `n_success == 1` instead of 0. Total remains 1, with zero bytes/samples and no overload. |
+| Delayed body tail | The first-byte observation occurs after the delayed whole body, violating the independent server-event bound. |
+| Empty body | A first-byte sample is fabricated for an empty response. |
+| Numeric Retry-After | Retried requests arrive before the advertised two-second deadline in both CLIs with PAARC enabled and disabled (four subcases). |
+| HTTP-date Retry-After | Retried requests arrive before the rounded UTC deadline in the same four modes. |
+
+The installed aiohttp 3.13.3 `ClientResponse.read` was also inspected: it awaits the
+complete stream before emitting its response-chunk callback. This explains the old
+whole-body measurement but is not a substitute for the observed localhost failures.
+The old helper only float-parsed Retry-After and the batch retry loop slept only its
+configured retry backoff.
+
+## Executor environment and results
+
+The executor uses existing dependencies read-only; no installation or permission
+change occurred. Its Python is 3.12.3, with aiohttp 3.13.3, polars 1.37.1, psutil
+7.2.1, tqdm 4.67.1, PyYAML 6.0.3 and Ruff 0.16.7. Command tables use these aliases
+for the explicit interpreter/tool paths actually selected:
 
 ```bash
 FLOWDC_TEST_PY=/mnt/storage/github/FLOW-DC-control-js2-worktrees/issue-12-reusable-experiment-runner/.venv-agentic/bin/python
 FLOWDC_TEST_RUFF=/mnt/storage/github/FLOW-DC-control-js2-worktrees/issue-12-reusable-experiment-runner/.venv-agentic/bin/ruff
 ```
 
-| Command from the issue #20 worktree | Exit / observed result |
+At the initial checkpoint, `python3 -B -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print("localhost bind available:", s.getsockname()); s.close()'`
+exited 1 at socket creation with `PermissionError: [Errno 1] Operation not permitted`.
+The coordinator subsequently supplied the real baseline above. This executor's
+socket capability has not changed.
+
+| Initial-checkpoint command | Exit / result |
 | --- | --- |
-| `python3 -B -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print("localhost bind available:", s.getsockname()); s.close()'` | 1; socket creation denied with `PermissionError: [Errno 1] Operation not permitted`. |
-| `"$FLOWDC_TEST_PY" -B -m unittest discover -s tests -p test_http_measurement.py -v` | 1; 9 tests, 2 failing subtests (404 classification in base and gradient), 7 socket-setup errors. Overload checks pass for 408/429/503 in both variants. No skips. |
-| `"$FLOWDC_TEST_PY" -B -m unittest discover -s tests -v` | 1; 322 tests, 2 failing subtests and 9 socket-related errors, no skips. The consolidation class fails setup, so its retry/tar/overwrite checks did not execute. |
-| `make check PYTHON="$FLOWDC_TEST_PY" RUFF="$FLOWDC_TEST_RUFF"` | 2; `test-flowdc` repeats the 322-test result above and exits 1; Make stops before `check-agentic`. |
-| `make check-agentic PYTHON="$FLOWDC_TEST_PY" RUFF="$FLOWDC_TEST_RUFF"` | 0; run separately because the full gate stopped early. Scoped lint, format checks, 141 workflow tests and repository configuration/link checks pass. |
-| `"$FLOWDC_TEST_PY" -m py_compile tests/test_http_measurement.py` | 0. |
-| `"$FLOWDC_TEST_RUFF" check tests/test_http_measurement.py` | 0 after correcting import layout and using `datetime.UTC`; the initial lint run exited 1. |
-| `git diff --check` | 0 at checkpoint preparation. |
+| `"$FLOWDC_TEST_PY" -B -m unittest discover -s tests -p test_http_measurement.py -v` | 1; 9 tests, 2 failing classification subtests, 7 socket setup errors, no skips. |
+| `"$FLOWDC_TEST_PY" -B -m unittest discover -s tests -v` | 1; 322 tests, 2 failing subtests and 9 socket errors, no skips. The consolidation class fails setup, so retry/tar/overwrite checks do not execute. |
+| `make check PYTHON="$FLOWDC_TEST_PY" RUFF="$FLOWDC_TEST_RUFF"` | 2; Make stops at `test-flowdc` (exit 1), before the workflow gate. |
+| `make check-agentic PYTHON="$FLOWDC_TEST_PY" RUFF="$FLOWDC_TEST_RUFF"` | 0; scoped lint/format, 141 workflow tests and repository configuration/link checks pass. |
 
-The nine full-suite errors are seven new HTTP fixture setup failures, the existing
-consolidation class's setup failure and the existing experiment guest's real
-downloader fixture. All fail at socket creation/binding. Other locally executable
-checks pass; the required full gate does not. CI has not run for this checkpoint.
+The nine socket errors are seven new HTTP fixture setup failures, the existing
+consolidation class setup and the existing experiment guest's real downloader
+fixture. They are environment failures, not product assertion failures.
 
-### What failed on the unchanged base
+| Implementation-stage command | Exit / result |
+| --- | --- |
+| `PYTHONPATH=tests "$FLOWDC_TEST_PY" -B -m unittest test_http_measurement.ClassificationTests test_http_measurement.GateTests -v` | 0; 10 tests pass, including the formerly failing 404 regression in both variants. No skips. |
+| `"$FLOWDC_TEST_PY" -B -m unittest discover -s tests -p test_flowdc_experiment_source.py -v` | 0; 8 source-packaging tests pass. |
+| `"$FLOWDC_TEST_PY" -m py_compile bin/single_download.py bin/download_batch.py bin/download_batch_gradient.py tests/test_http_measurement.py` | 0. |
+| `"$FLOWDC_TEST_PY" -B scripts/check_repository.py` | 0; repository configuration/skills/links validate. |
+| `"$FLOWDC_TEST_RUFF" check tests/test_http_measurement.py` | 0 after import formatting corrections. |
+| `git diff --check` | 0. |
 
-`ClassificationTests.test_404_is_neither_useful_success_nor_overload` exercises the
-real base and inherited gradient metrics without network mocks. Each records one
-404 with zero bytes and no latency sample. Both preserve `total == 1`, no overload,
-zero bytes and zero samples, but report `n_success == 1`; the required assertion
-`n_success == 0` fails. This is actual failing-on-base evidence for classification.
+No expected-failure decorators, skips, weakened assertions or substituted network
+mocks were used to make the regression suite pass. The known socket-denied full
+suites were not repeatedly rerun during repair. **Passing-on-head localhost/full-gate
+evidence is still pending coordinator execution.** CI and independent review are
+also pending; this record does not assert completion or merge readiness.
 
-The localhost fixtures could not bind in this executor. Their setup errors are
-**environment failures**, not reproduced timing or Retry-After defects. The tests
-remain enabled and assert required behavior; they have not been marked expected
-failures or skipped to make the suite pass. No passing-on-head evidence exists yet.
+## Coverage and compatibility inspection
 
-The installed aiohttp 3.13.3 `ClientResponse.read` was inspected with `inspect.getsource`:
-it awaits the complete `self.content.read()` before sending the response-chunk
-trace callback. The unchanged FLOW-DC helper calls `response.read()`, and the trace
-sets `ttfb` at that callback. This supports the suspected mechanism but does not
-replace localhost timing calibration. The helper currently converts Retry-After
-using only `float`, while the batch retry loop sleeps only its configured backoff.
+The expanded focused suite has 30 test methods. Its ten tests without sockets cover
+classification and disjoint denominators, sample eligibility, overview labeling,
+parser forms/invalid values, authority normalization, concurrent extension and
+cancellation with a deterministic clock, wall-clock jumps, session isolation and
+Webdataset metadata-write byte accounting.
 
-### Fixture design and limits
+The twenty localhost tests exercise header/first-byte/tail timing, empty/failed and
+truncated bodies, both header forms in real base/gradient/fixed CLI retry paths,
+concurrent deadline extension and later shorter responses, unrelated authorities,
+same/cross-authority redirects and metric attribution, connector-wait rechecks,
+prompt header observation before body completion, local output failure, timeout,
+cancellation and shutdown/permit recovery. These tests remain to be executed on
+head in the coordinator environment. Existing consolidation coverage must also pass
+for base/gradient retries, tar modes, overview contents and overwrite consent.
 
-- An aiohttp origin binds only `127.0.0.1` on an ephemeral port. Its independent
-  monotonic events record request receipt, header preparation and body writes.
-  Temporary manifests, configs and downloaded output are removed by test cleanup.
-- Header, first-body and tail fixtures delay the corresponding stage by 400 ms.
-  The tail assertion compares the client's first-byte observation with half the
-  observed server tail gap. Header/first-body checks use a 350-ms lower bound.
-  These are application scheduling observations; overloaded test hosts can still
-  invalidate timing tolerances. They are not packet-level measurements.
-- Empty and failed responses must not fabricate first-byte samples. New timestamp
-  fields, redirect semantics and local-output eligibility still need implementation
-  and additional assertions after the initial reproduction run.
-- Retry fixtures execute both real downloader CLIs with PAARC on and off,
-  `max_retry_attempts=2`, one worker and zero configured retry backoff. They assert
-  exactly two server requests, one useful final success and no retry more than
-  100 ms before the advertised deadline. Numeric headers specify two seconds;
-  HTTP dates use the actual rounded UTC deadline. Each subprocess has a 15-second
-  test bound and is killed/reaped if it fails to finish.
-- Concurrent extensions/waiters, invalid/nonfinite headers, authority isolation,
-  redirects, timeout/cancellation, permit recovery and shutdown tests remain to be
-  added. Initial fixtures alone do not satisfy AC5.
+Fixtures bind only ephemeral `127.0.0.1` origins and use temporary outputs. Timing
+uses independent monotonic server events, 400-ms stage delays, a half-tail-gap
+comparison and documented 50–100-ms deadline tolerances. CLI retries have a
+15-second test bound and subprocess cleanup. These scheduling-level observations
+can still be disrupted by a heavily loaded host; they are not packet measurements.
 
-### Required continuation
+Inspection confirmed TaskVine stages `single_download.py` and `download_batch.py`,
+and the experiment source manifest already includes both. No staged module was
+added. UI, TaskVine and example configuration keys/defaults remain compatible;
+the benchmark adapter reads existing overview fields and tolerates additive metadata.
+The gradient policy inherits the shared changes without equation/default edits.
+No multithread/cloud-upload implementation was changed. No TaskVine cluster runtime
+or distributed gradient execution was tested.
 
-The coordinator needs to run the exact focused suite against this checkpoint in
-its existing localhost-capable environment, retaining the unchanged production
-source, and record the actual assertion failures. The executor must not expand
-its permissions or substitute mocks for that required evidence. Resume the same
-executor session after the draft PR and evidence are recorded.
+## Remaining evidence and scientific limits
 
-Then repair shared timing/classification and authority admission, add the remaining
-coverage, inspect packaging, label report semantics and run focused tests, the full
-unittest suite, `make check` and `git diff --check` again. CI and independent review
-belong to the coordinator. Downloader retry/tar/overwrite regression evidence is
-still required. Overall authorized work stops by **20:31 UTC September 28, 2026**.
+The coordinator must run the focused suite, full unittest suite, `make check`,
+`git diff --check` and CI against the committed implementation, then return evidence
+to this same executor for the completion record. Failures require repair and fresh
+validation; an untested implementation is not complete. The overall authorized work
+ends **20:31 UTC September 28, 2026**.
 
-No cluster, external dataset, cloud operation, runtime/dependency installation,
-performance campaign, manuscript edit or scientific speedup result is included.
+The previous 64-image, one-worker toggle run remains functional smoke evidence only.
+No publication, speedup, gradient-efficacy, output-integrity or distributed-scaling
+claim follows from these software checks. No cloud activation, external dataset,
+runtime installation, grant, performance campaign or manuscript edit occurred.
 
-### Technical references
-
-The [aiohttp streaming API](https://docs.aiohttp.org/en/stable/streams.html) describes
-partial body reads and the [trace reference](https://docs.aiohttp.org/en/stable/tracing_reference.html)
-describes lifecycle callbacks. Those moving documentation pages currently identify
-3.14.3; installed 3.13.3 source and controlled tests determine local behavior.
-[RFC 9110 §10.2.3](https://www.rfc-editor.org/rfc/rfc9110.html#name-retry-after)
-defines the numeric delay and HTTP-date forms of Retry-After. These references
-inform the repair design; they do not attest that the current source implements it.
+Technical references: [aiohttp streams](https://docs.aiohttp.org/en/stable/streams.html),
+[aiohttp tracing](https://docs.aiohttp.org/en/stable/tracing_reference.html) and
+[RFC 9110 §10.2.3](https://www.rfc-editor.org/rfc/rfc9110.html#name-retry-after).
+The moving aiohttp documentation identified version 3.14.3 when consulted; installed
+3.13.3 source and controlled tests determine local behavior.

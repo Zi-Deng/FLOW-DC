@@ -21,7 +21,7 @@ close a publication gate.
 | --- | --- | --- | --- |
 | Gradient feedback improves the goodput/latency tradeoff under changing origin conditions. | Gradient PAARC versus base PAARC, matched fixed concurrency and a precisely specified ratio-based controller. Tune comparators with equal budgets. | Useful saved bytes and acquisitions per second; application body-first-byte distributions; makespan; failures, timeouts, overload and server pressure; independent repeated runs with uncertainty. | Timing/classification calibration, ratio baseline specification, gradient equations and tuning protocol remain open. |
 | The gradient mechanism causes any observed improvement. | Matched ablations of gradient shaping, smoothing, confidence/sample gating, RTprop refresh and overload recovery. Keep shared HTTP correctness and mandatory Retry-After admission enabled in every comparison. | Effect of each intervention on useful goodput, latency, concurrency trajectories, response to load changes and recovery; repeat across independently controlled conditions. | Mechanism definitions, parameter matching and ablation implementations remain open. No new equations or tuning are authorized by issue #20. |
-| Benefits persist under distributed scaling and host imbalance. | Balanced and skewed host/partition allocations at **1, 2 and 4 workers**, comparing gradient, base, fixed and ratio methods at matched per-worker and aggregate resource budgets. | Strong-scaling speedup and efficiency for fixed work; per-host/per-worker useful goodput, skew, contention, origin load, coordination overhead and outcome coverage. | The current operational route does not establish this worker matrix. Distributed gradient integration and 1/2/4-worker support remain open and outside this increment. |
+| Benefits persist under distributed scaling and host imbalance. | Minimum planned matrix: gradient on balanced and skewed host/partition allocations at **1, 2 and 4 workers**, plus a matched base comparison at four workers. The complete base/fixed/ratio mechanism matrix belongs to the controlled study above; further distributed arms are optional extensions. Match per-worker and aggregate resource budgets. | Strong-scaling speedup and efficiency for fixed work; per-host/per-worker useful goodput, skew, contention, origin load, coordination overhead and outcome coverage. | The current operational route does not establish this worker matrix. Distributed gradient integration and 1/2/4-worker support remain open and outside this increment. |
 | Recovery preserves useful output and accountable costs. | Controlled overload, interruption, retry and recovery cases across methods, with equivalent fault schedules and output validation. | Payload identity and completeness, duplicate/lost output counts, retry attempts, failed/censored runs, wall time, resource/cost ledger reconciliation and verified cleanup. | Output-collision/integrity repair, end-to-end accounting validation and distributed recovery evidence remain open. |
 
 ## Experimental units and reporting
@@ -47,8 +47,8 @@ close a publication gate.
 
 ## Measurement prerequisite
 
-Base and gradient must consume the same calibrated application-observed body-first-
-byte signal. Document monotonic request dispatch, final-response headers, first
+Base and gradient must consume the same calibrated application-observed body-first-byte
+signal. Document monotonic request dispatch, final-response headers, first
 nonempty body read and completion separately, including redirect attribution and
 admission/connector waits. This signal is not packet RTT or a direct measurement of
 network queueing. Empty/failed acquisitions must not fabricate successful latency
