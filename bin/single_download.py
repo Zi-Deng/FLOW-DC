@@ -15,11 +15,196 @@ This module is used by download_batch.py and provides:
 import os
 import json
 import asyncio
+import math
+import time
+import weakref
 import aiohttp
 import polars as pl
+from contextvars import ContextVar
+from datetime import timezone
+from email.utils import parsedate_to_datetime
 from urllib.parse import urlparse, unquote
 from http import HTTPStatus
 from typing import Optional, Tuple, List
+from yarl import URL
+
+
+# Shared with both asynchronous batch variants; no additional staged module.
+HTTP_TRACE_CTX: ContextVar[dict | None] = ContextVar("HTTP_TRACE_CTX", default=None)
+HTTP_MEASUREMENT_VERSION = "2-body-first-byte"
+
+
+def http_authority(url) -> tuple[str, int]:
+    """Normalized hostname and effective port; schemes share an explicit port.
+
+    Default HTTP/HTTPS ports (80/443) remain distinct. Userinfo and paths are not
+    part of the key. YARL supplies the same IDNA/IP normalization as aiohttp.
+    """
+    parsed = URL(url)
+    if parsed.scheme not in ("http", "https") or parsed.raw_host is None:
+        raise ValueError("HTTP(S) authority required")
+    return parsed.raw_host.lower(), parsed.port
+
+
+def parse_retry_after(value: Optional[str], wall_time: Optional[float] = None) -> Optional[float]:
+    """Seconds until admission, accepting finite nonnegative floats for compatibility.
+
+    RFC delay-seconds are integers; fractional/exponent forms retain the former
+    float parser's behavior. HTTP dates are converted against wall time only here.
+    """
+    if value is None:
+        return None
+    try:
+        delay = float(value)
+    except (ValueError, TypeError, OverflowError):
+        try:
+            date = parsedate_to_datetime(value)
+            if date.tzinfo is None:
+                date = date.replace(tzinfo=timezone.utc)
+            delay = max(0.0, date.timestamp() - (time.time() if wall_time is None else wall_time))
+        except (ValueError, TypeError, OverflowError, OSError):
+            return None
+    return delay if math.isfinite(delay) and delay >= 0 else None
+
+
+class RetryAfterGate:
+    """One event-loop/session's authority embargoes, independent of PAARC.
+
+    Updates contain no await, so concurrent responses cannot lose an extension.
+    Sleeps hold no lock and always recheck the current deadline. In-flight requests
+    are not recalled. This is neither a cross-process nor a cross-VM gate.
+    """
+
+    def __init__(self, *, clock=time.monotonic, wall_clock=time.time, sleep=asyncio.sleep):
+        self._clock = clock
+        self._wall_clock = wall_clock
+        self._sleep = sleep
+        self._deadlines: dict[tuple[str, int], float] = {}
+
+    def observe(self, url, value: Optional[str]) -> Optional[float]:
+        delay = parse_retry_after(value, self._wall_clock())
+        if delay is None:
+            return None
+        deadline = self._clock() + delay
+        if not math.isfinite(deadline):
+            return None
+        authority = http_authority(url)
+        self._deadlines[authority] = max(self._deadlines.get(authority, 0.0), deadline)
+        return delay
+
+    async def wait(self, url) -> None:
+        authority = http_authority(url)
+        while True:
+            remaining = self._deadlines.get(authority, 0.0) - self._clock()
+            if remaining <= 0:
+                self._deadlines.pop(authority, None)
+                return
+            await self._sleep(remaining)
+
+
+_SESSION_GATES = weakref.WeakKeyDictionary()
+
+
+def session_http_gate(session: aiohttp.ClientSession) -> RetryAfterGate:
+    """Get the single shared gate and install dispatch hooks once per session.
+
+    ClientSession exposes its trace_configs list. A helper caller's session may
+    omit our config; append a frozen config before its first request is created.
+    Existing configs and already-dispatched requests remain intact.
+    """
+    gate = _SESSION_GATES.get(session)
+    if gate is None:
+        gate = RetryAfterGate()
+        _SESSION_GATES[session] = gate
+    if not any(isinstance(trace, HTTPTraceConfig) for trace in session.trace_configs):
+        trace = HTTPTraceConfig()
+        trace.freeze()
+        session.trace_configs.append(trace)
+    return gate
+
+
+class HTTPTraceConfig(aiohttp.TraceConfig):
+    """Observe headers/redirects and recheck admission at the send boundary."""
+
+    def __init__(self):
+        super().__init__()
+        self.on_request_start.append(self._start)
+        self.on_request_headers_sent.append(self._dispatch)
+        self.on_request_redirect.append(self._redirect)
+        self.on_request_end.append(self._end)
+
+    async def _start(self, session, ctx, params):
+        ctx.measurement = HTTP_TRACE_CTX.get()
+
+    async def _admit(self, session, ctx, url):
+        if ctx.measurement is not None:
+            ctx.measurement.update(phase="admission", feedback_url=str(url))
+        await session_http_gate(session).wait(url)
+        if ctx.measurement is not None:
+            ctx.measurement["phase"] = "request"
+
+    async def _dispatch(self, session, ctx, params):
+        # aiohttp calls this before writing request headers, after connector/DNS
+        # waits, and again for each redirect hop. A new embargo must win here.
+        await self._admit(session, ctx, params.url)
+        if ctx.measurement is not None:
+            now = time.monotonic()
+            ctx.measurement["t0"] = now
+            ctx.measurement["final_url"] = str(params.url)
+            ctx.measurement.setdefault("hops", []).append({
+                "url": str(params.url), "dispatch_at": now,
+            })
+
+    def _headers(self, session, ctx, response, *, final):
+        # A 3xx without Location reaches both redirect and end callbacks. Observe
+        # its header once; rereading a delay-seconds value would extend it twice.
+        if getattr(ctx, "observed_response", None) is response:
+            now, retry_after = ctx.observed_headers
+        else:
+            now = time.monotonic()
+            retry_after = session_http_gate(session).observe(response.url, response.headers.get("Retry-After"))
+            ctx.observed_response = response
+            ctx.observed_headers = now, retry_after
+        if ctx.measurement is not None:
+            d = ctx.measurement
+            if d.get("hops"):
+                d["hops"][-1].update(headers_at=now, status=response.status, retry_after=retry_after)
+            if final:
+                d.update(final_headers_at=now, final_url=str(response.url), retry_after=retry_after)
+        return retry_after
+
+    async def _redirect(self, session, ctx, params):
+        response = params.response
+        retry_after = self._headers(session, ctx, response, final=False)
+        location = response.headers.get("Location") or response.headers.get("URI")
+        if location is None:
+            return  # aiohttp returns this 3xx as a final response.
+
+        # aiohttp normally releases the redirect response after this callback.
+        # Release it before our waits so timeout/cancellation cannot strand its
+        # connection. Redirect bodies are not acquisition bodies.
+        response.release()
+        if retry_after is not None:
+            # RFC 9110 10.2.3 also delays this chain's follow-up, even to another
+            # authority. Do not install the source's embargo on the destination.
+            await self._admit(session, ctx, response.url)
+
+        if ctx.measurement is not None and ctx.measurement.get("redirect_admit") is not None:
+            # Resolve only for admission; aiohttp still owns redirect validation,
+            # limits and auth/cookie handling. Match its public requote setting.
+            try:
+                destination = URL(location, encoded=not session.requote_redirect_url)
+                if not destination.scheme:
+                    destination = response.url.join(destination)
+                http_authority(destination)
+            except ValueError:
+                return  # aiohttp will report the invalid redirect.
+            ctx.measurement.update(phase="admission", feedback_url=str(destination))
+            await ctx.measurement["redirect_admit"](str(destination))
+            await self._admit(session, ctx, destination)
+
+    async def _end(self, session, ctx, params):
+        self._headers(session, ctx, params.response, final=True)
 
 
 def sanitize_class_name(class_name) -> str:
@@ -137,8 +322,6 @@ def save_webdataset(content: bytes, file_path: str, key: str, image_url: str,
         with open(file_path, 'wb') as f:
             f.write(content)
         file_size = os.path.getsize(file_path)
-        total_bytes.append(file_size)
-
         # Create JSON metadata file
         json_path = file_path.rsplit('.', 1)[0] + ".json"
         metadata = {
@@ -152,6 +335,7 @@ def save_webdataset(content: bytes, file_path: str, key: str, image_url: str,
         with open(json_path, 'w') as f:
             json.dump(metadata, f)
 
+        total_bytes.append(file_size)
         return True, None
     except Exception as e:
         return False, str(e)
@@ -162,43 +346,69 @@ async def download_via_http_get(
     url: str,
     timeout: int
 ) -> Tuple[Optional[bytes], Optional[int], Optional[str], Optional[float]]:
-    """
-    Download content via standard HTTP GET request.
+    """Return (body, status, error, retry_after), preserving the helper interface.
 
-    Args:
-        session: aiohttp ClientSession
-        url: URL to download
-        timeout: Request timeout in seconds
-
-    Returns:
-        Tuple of (content: bytes, status_code: int, error: str, retry_after: float)
+    A positive total timeout includes admission, connection, all redirect hops and
+    body reads. Zero/negative retains aiohttp's unbounded setting. Timing uses
+    time.monotonic; t0/ttfb refer only to the final dispatched hop, excluding prior
+    redirects and admission/connector waits. See docs/research/HTTP-MEASUREMENT.md.
     """
-    try:
+    measurement = HTTP_TRACE_CTX.get()
+    if measurement is None:
+        measurement = {}
+    measurement.update(
+        attempt_started_at=time.monotonic(), t0=None, final_headers_at=None,
+        first_body_byte_at=None, body_completed_at=None, ttfb=None, hops=[],
+        failure_kind=None, retry_after=None, feedback_url=url,
+    )
+    token = HTTP_TRACE_CTX.set(measurement)
+
+    async def fetch():
+        measurement["phase"] = "admission"
+        await session_http_gate(session).wait(url)
+        measurement["phase"] = "request"
         async with session.get(url, timeout=aiohttp.ClientTimeout(total=timeout)) as response:
-            # Extract Retry-After header if present
-            retry_after = None
-            if 'Retry-After' in response.headers:
-                try:
-                    retry_after = float(response.headers['Retry-After'])
-                except ValueError:
-                    pass
-
+            retry_after = measurement["retry_after"]
             if response.status == 200:
-                content = await response.read()
+                measurement["phase"] = "body"
+                first = await response.content.read(1)
+                if first:
+                    measurement["first_body_byte_at"] = time.monotonic()
+                content = first + await response.content.read()
+                measurement["body_completed_at"] = time.monotonic()
+                if first and measurement["t0"] is not None:
+                    measurement["ttfb"] = measurement["first_body_byte_at"] - measurement["t0"]
                 return content, response.status, None, retry_after
-            else:
-                try:
-                    status_name = HTTPStatus(response.status).phrase
-                except ValueError:
-                    status_name = "Unknown"
-                return None, response.status, f"HTTP {response.status}: {status_name}", retry_after
+            measurement["failure_kind"] = "http"
+            try:
+                status_name = HTTPStatus(response.status).phrase
+            except ValueError:
+                status_name = "Unknown"
+            return None, response.status, f"HTTP {response.status}: {status_name}", retry_after
 
+    try:
+        # wait_for also bounds admission before aiohttp's own timer is entered,
+        # and preserves the existing product's Python 3.10 compatibility.
+        return await asyncio.wait_for(fetch(), timeout if timeout > 0 else None)
     except asyncio.TimeoutError:
+        measurement["ttfb"] = None
+        measurement["failure_kind"] = "admission" if measurement.get("phase") == "admission" else "transport"
         return None, 408, "Request Timeout", None
     except aiohttp.ClientError as e:
+        measurement["ttfb"] = None
+        measurement["failure_kind"] = "transport"
         return None, None, f"Connection Error: {str(e)}", None
     except Exception as e:
+        measurement["ttfb"] = None
+        # An unexpected acquisition exception does not establish either output
+        # failure or remote overload. Preserve that uncertainty for accounting.
+        measurement["failure_kind"] = "unknown"
         return None, None, f"Error: {str(e)}", None
+    except asyncio.CancelledError:
+        measurement.update(ttfb=None, failure_kind="cancelled")
+        raise
+    finally:
+        HTTP_TRACE_CTX.reset(token)
 
 
 def load_input_file(file_path: str, file_format: Optional[str] = None) -> pl.DataFrame:
@@ -343,6 +553,9 @@ async def download_single(
     if success:
         return key, file_path, class_name, None, status_code, retry_after
     else:
+        measurement = HTTP_TRACE_CTX.get()
+        if measurement is not None:
+            measurement.update(failure_kind="local", ttfb=None)
         return key, file_path, class_name, save_error, status_code, retry_after
 
 

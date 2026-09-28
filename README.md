@@ -16,6 +16,10 @@ Future development uses the repository's eight [agentic workflow skills](docs/ag
 
 Developer validation uses a separate Python 3.12+ environment and `make check`; it runs the focused FLOW-DC and workflow suites without a dataset or cluster campaign. Private task context belongs in Git-ignored `memory/`, and workflow state lives in Git-ignored `.agentic-local/`.
 
+The [manuscript research contract](docs/research/MANUSCRIPT-READINESS.md) identifies
+gradient PAARC as the proposed primary method, the required comparisons and the
+open evidence gates. Functional smoke tests do not establish publication claims.
+
 ## Local Jetstream2 operations
 
 The [local operations guide](docs/jetstream2/README.md) documents `python3 bin/flowdc_ops.py` for private workspace initialization, local readiness inspection, scoped read-only OpenStack inventory, and offline three-VM pilot validation. It uses Python 3.12+ without new project dependencies. Enrollment remains manual. The [bounded pilot lifecycle](docs/jetstream2/LIFECYCLE.md) adds private cumulative accounting and an independent user-systemd shutdown supervisor for three existing VMs. An explicit idle `pilot upgrade-supervisor` command preserves registration and accounting through guarded, recoverable release changes. A separately authorized `pilot extend-allowance --grant PATH` can add 1–1,800 seconds equally to the three accounts, with a durable retry-safe receipt and the unchanged 7,200-second lifetime ceiling; it never activates resources. The additive [experiment runner](docs/jetstream2/EXPERIMENTS.md) prepares committed source, configurations and Parquet inputs offline, then explicitly deploys, executes, collects and verifies a bounded three-VM run through that installed pilot. Live activation requires a separate authorized operational checkpoint; local/fake checks do not establish live-cloud or scientific results.
@@ -110,8 +114,18 @@ python bin/download_batch.py --config config.json
 - Bounded concurrency with adaptive semaphores
 - Per-host rate limiting via PAARC
 - Automatic retry for transient failures (429, 5xx, timeouts)
-- TTFB-based latency monitoring
+- Application-observed first-body-byte latency monitoring
 - Supports imagefolder and webdataset output formats
+
+The asynchronous base and gradient paths share [HTTP measurement and Retry-After
+semantics](docs/research/HTTP-MEASUREMENT.md), including authority admission when
+PAARC is disabled. Overview reports label corrected timing/accounting with
+`http_measurement.version = "2-body-first-byte"` and report input URLs without a
+final outcome as `summary.unattempted_or_cancelled_urls`. Legacy TTFB measurements
+are not directly comparable to this signal.
+Interval `n_unknown_failures` separately counts unexpected acquisition exceptions;
+their cause and any server overload are not inferred. Overview metadata describes
+this category alongside the other corrected accounting semantics.
 
 ### download_batch_gradient.py
 
