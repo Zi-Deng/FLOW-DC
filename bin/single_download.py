@@ -156,17 +156,52 @@ class HTTPTraceConfig(aiohttp.TraceConfig):
             })
 
     def _headers(self, session, ctx, response, *, final):
-        now = time.monotonic()
-        retry_after = session_http_gate(session).observe(response.url, response.headers.get("Retry-After"))
+        # A 3xx without Location reaches both redirect and end callbacks. Observe
+        # its header once; rereading a delay-seconds value would extend it twice.
+        if getattr(ctx, "observed_response", None) is response:
+            now, retry_after = ctx.observed_headers
+        else:
+            now = time.monotonic()
+            retry_after = session_http_gate(session).observe(response.url, response.headers.get("Retry-After"))
+            ctx.observed_response = response
+            ctx.observed_headers = now, retry_after
         if ctx.measurement is not None:
             d = ctx.measurement
             if d.get("hops"):
                 d["hops"][-1].update(headers_at=now, status=response.status, retry_after=retry_after)
             if final:
                 d.update(final_headers_at=now, final_url=str(response.url), retry_after=retry_after)
+        return retry_after
 
     async def _redirect(self, session, ctx, params):
-        self._headers(session, ctx, params.response, final=False)
+        response = params.response
+        retry_after = self._headers(session, ctx, response, final=False)
+        location = response.headers.get("Location") or response.headers.get("URI")
+        if location is None:
+            return  # aiohttp returns this 3xx as a final response.
+
+        # aiohttp normally releases the redirect response after this callback.
+        # Release it before our waits so timeout/cancellation cannot strand its
+        # connection. Redirect bodies are not acquisition bodies.
+        response.release()
+        if retry_after is not None:
+            # RFC 9110 10.2.3 also delays this chain's follow-up, even to another
+            # authority. Do not install the source's embargo on the destination.
+            await self._admit(session, ctx, response.url)
+
+        if ctx.measurement is not None and ctx.measurement.get("redirect_admit") is not None:
+            # Resolve only for admission; aiohttp still owns redirect validation,
+            # limits and auth/cookie handling. Match its public requote setting.
+            try:
+                destination = URL(location, encoded=not session.requote_redirect_url)
+                if not destination.scheme:
+                    destination = response.url.join(destination)
+                http_authority(destination)
+            except ValueError:
+                return  # aiohttp will report the invalid redirect.
+            ctx.measurement.update(phase="admission", feedback_url=str(destination))
+            await ctx.measurement["redirect_admit"](str(destination))
+            await self._admit(session, ctx, destination)
 
     async def _end(self, session, ctx, params):
         self._headers(session, ctx, params.response, final=True)

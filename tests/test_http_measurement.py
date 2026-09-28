@@ -14,11 +14,13 @@ import unittest
 from datetime import UTC, datetime, timedelta
 from email.utils import format_datetime
 from pathlib import Path
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
 import aiohttp
 import polars as pl
 from aiohttp import web
+from yarl import URL
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "bin"))
@@ -35,6 +37,91 @@ from single_download import (  # noqa: E402
 
 
 class ClassificationTests(unittest.IsolatedAsyncioTestCase):
+    async def test_cancelling_redirect_admission_preserves_permit_ownership(self):
+        for module in (base, gradient):
+            for during_smoothing in (False, True):
+                with self.subTest(module=module.__name__, during_smoothing=during_smoothing):
+                    manager = module.HostControllerManager(module.PAARCConfig(C_init=1, C_min=1))
+                    origin = await manager.get_controller("http://a.test/start")
+                    destination = await manager.get_controller("http://b.test/final")
+                    entered = asyncio.Event()
+                    if during_smoothing:
+                        async def smooth(entered=entered):
+                            entered.set()
+                            await asyncio.Event().wait()
+                        destination.smoother = SimpleNamespace(acquire=smooth)
+                    else:
+                        await destination.semaphore.acquire()
+                        acquire = destination.semaphore.acquire
+
+                        async def observed_acquire(acquire=acquire, entered=entered):
+                            entered.set()
+                            await acquire()
+                        self.enterContext(patch.object(destination.semaphore, "acquire", side_effect=observed_acquire))
+
+                    async def redirected_download(**kwargs):
+                        ctx = SimpleNamespace(measurement=base.TRACE_CTX.get())
+                        response = SimpleNamespace(
+                            url=URL("http://a.test/start"), status=302,
+                            headers={"Location": "http://b.test/final"}, release=Mock(),
+                        )
+                        await base.build_trace_config()._redirect(kwargs["session"], ctx, SimpleNamespace(response=response))
+                        self.fail("redirect admission should still be waiting")
+
+                    async with aiohttp.ClientSession() as session:
+                        with patch.object(base, "download_single", side_effect=redirected_download):
+                            task = asyncio.create_task(base.download_one(
+                                row={"url": "http://a.test/start", "__key__": "key"},
+                                cfg=base.Config(input_path="unused", output_folder="unused"),
+                                session=session, total_bytes=[], manager=manager,
+                                sequential_namer=base.SequentialNamer(), global_written_paths={},
+                            ))
+                            try:
+                                await asyncio.wait_for(entered.wait(), 1)
+                                self.assertEqual(origin.semaphore.inflight, 0)
+                                task.cancel()
+                                with self.assertRaises(asyncio.CancelledError):
+                                    await task
+                                self.assertEqual(destination.semaphore.inflight, 0 if during_smoothing else 1)
+                            finally:
+                                task.cancel()
+                                await asyncio.gather(task, return_exceptions=True)
+                                if not during_smoothing:
+                                    await destination.semaphore.release()
+
+    async def test_redirected_acquisition_uses_destination_adaptive_permit(self):
+        for module in (base, gradient):
+            with self.subTest(module=module.__name__):
+                manager = module.HostControllerManager(module.PAARCConfig())
+                origin = await manager.get_controller("http://a.test/start")
+                destination = await manager.get_controller("http://b.test/final")
+
+                async def redirected_download(origin=origin, destination=destination, **kwargs):
+                    trace = base.build_trace_config()
+                    ctx = SimpleNamespace(measurement=base.TRACE_CTX.get())
+                    response = SimpleNamespace(
+                        url=URL("http://a.test/start"), status=302,
+                        headers={"Location": "http://b.test/final"}, release=Mock(),
+                    )
+                    await trace._redirect(kwargs["session"], ctx, SimpleNamespace(response=response))
+                    await trace._dispatch(kwargs["session"], ctx, SimpleNamespace(url=URL("http://b.test/final")))
+                    self.assertEqual(destination.semaphore.inflight, 1)
+                    self.assertEqual(origin.semaphore.inflight, 0)
+                    return "key", None, None, "HTTP 404", 404, None
+
+                async with aiohttp.ClientSession() as session:
+                    with patch.object(base, "download_single", side_effect=redirected_download):
+                        await base.download_one(
+                            row={"url": "http://a.test/start", "__key__": "key"},
+                            cfg=base.Config(input_path="unused", output_folder="unused"),
+                            session=session, total_bytes=[], manager=manager,
+                            sequential_namer=base.SequentialNamer(), global_written_paths={},
+                        )
+                self.assertEqual(origin.semaphore.inflight, 0)
+                self.assertEqual(destination.semaphore.inflight, 0)
+                self.assertEqual((await origin.metrics.finish_interval())["total"], 0)
+                self.assertEqual((await destination.metrics.finish_interval())["n_http_failures"], 1)
+
     def test_overview_labels_semantics_and_unfinished_denominator(self):
         cfg = base.Config(input_path="unused", output_folder="unused")
         outcomes = {
@@ -107,6 +194,46 @@ class ClassificationTests(unittest.IsolatedAsyncioTestCase):
 
 
 class GateTests(unittest.IsolatedAsyncioTestCase):
+    async def test_redirect_retry_after_delays_follow_without_embargoing_destination(self):
+        # Exercise the actual redirect hook with a deterministic clock. No socket
+        # or scheduler tolerance can hide an immediate cross-authority follow.
+        for location in ("http://a.test/next", "http://b.test/next"):
+            for header in ("2", format_datetime(datetime.fromtimestamp(1002, UTC), usegmt=True)):
+                with self.subTest(location=location, header=header):
+                    now = [10.0]
+                    waits = []
+
+                    async def sleep(delay, waits=waits, now=now):
+                        waits.append(delay)
+                        now[0] += delay
+
+                    gate = RetryAfterGate(clock=lambda now=now: now[0], wall_clock=lambda: 1000, sleep=sleep)
+                    response = SimpleNamespace(
+                        url=URL("http://a.test/start"), status=302,
+                        headers={"Location": location, "Retry-After": header}, release=Mock(),
+                    )
+                    ctx = SimpleNamespace(measurement={"hops": []})
+                    with patch("single_download.session_http_gate", return_value=gate):
+                        await base.build_trace_config()._redirect(None, ctx, SimpleNamespace(response=response))
+                    response.release.assert_called_once()
+                    self.assertEqual(waits, [2])
+                    self.assertEqual(now[0], 12)
+                    await gate.wait("http://b.test/direct")
+                    self.assertEqual(waits, [2], "A's redirect delay must not embargo unrelated B traffic")
+
+    async def test_redirect_without_location_observes_header_only_once(self):
+        now = [10.0]
+        gate = RetryAfterGate(clock=lambda: now[0], wall_clock=lambda: 1000)
+        response = SimpleNamespace(url=URL("http://a.test"), status=302, headers={"Retry-After": "2"})
+        ctx = SimpleNamespace(measurement={})
+        trace = base.build_trace_config()
+        with patch("single_download.session_http_gate", return_value=gate):
+            await trace._redirect(None, ctx, SimpleNamespace(response=response))
+            now[0] = 11.0
+            await trace._end(None, ctx, SimpleNamespace(response=response))
+        self.assertEqual(gate._deadlines[http_authority(response.url)], 12.0)
+        self.assertEqual(ctx.measurement["retry_after"], 2)
+
     def test_retry_after_parser(self):
         for value, expected in (("2", 2), ("0", 0), ("1.5", 1.5), ("1e2", 100), ("+2", 2)):
             with self.subTest(value=value):
@@ -381,25 +508,105 @@ class LocalHTTPTests(unittest.IsolatedAsyncioTestCase):
                     task.cancel()
                 await asyncio.gather(*tasks, return_exceptions=True)
 
-    async def test_redirect_retry_after_applies_to_responding_authority(self):
+    async def test_redirect_retry_after_delays_chain_but_not_unrelated_destination_requests(self):
         other = await self.add_origin()
+        for form in ("numeric", "date"):
+            with self.subTest(form=form):
+                observed = asyncio.Event()
+                deadline = []
 
-        async def redirect(request):
-            return web.Response(status=302, headers={"Location": f"{other}/destination", "Retry-After": "5"})
+                async def redirect(request, form=form, deadline=deadline):
+                    header, delay = "2", 2
+                    if form == "date":
+                        date = (datetime.now(UTC) + timedelta(seconds=3)).replace(microsecond=0)
+                        header, delay = format_datetime(date, usegmt=True), date.timestamp() - time.time()
+                    deadline.append(time.monotonic() + delay)
+                    return web.Response(status=302, headers={
+                        "Location": f"{other}/destination-{form}", "Retry-After": header,
+                    })
 
-        self.handlers["redirect"] = redirect
-        async with aiohttp.ClientSession() as session:
-            result = await asyncio.wait_for(download_via_http_get(session, f"{self.url}/redirect", 2), 3)
-            self.assertEqual(result[:3], (b"ab", 200, None))
-            self.assertIsNone(result[3], "redirect header must not be attributed to final authority")
-            waiting = asyncio.create_task(download_via_http_get(session, f"{self.url}/blocked", 10))
-            try:
-                await asyncio.sleep(0.05)
-                self.assertFalse(waiting.done())
-                self.assertNotIn("blocked", self.events)
-            finally:
-                waiting.cancel()
-                await asyncio.gather(waiting, return_exceptions=True)
+                async def on_redirect(*_args, observed=observed):
+                    observed.set()
+
+                self.handlers["redirect"] = redirect
+                trace = base.build_trace_config()
+                trace.on_request_redirect.insert(0, on_redirect)
+                async with aiohttp.ClientSession(trace_configs=[trace]) as session:
+                    following = asyncio.create_task(download_via_http_get(session, f"{self.url}/redirect", 5))
+                    waiting = None
+                    try:
+                        await asyncio.wait_for(observed.wait(), 2)
+                        waiting = asyncio.create_task(download_via_http_get(session, f"{self.url}/blocked", 5))
+                        direct = await download_via_http_get(session, f"{other}/direct-{form}", 2)
+                        self.assertEqual(direct[1], 200)
+                        self.assertLess(self.events[f"direct-{form}"][0][1], deadline[0])
+                        self.assertFalse(following.done())
+                        self.assertFalse(waiting.done())
+                        self.assertNotIn("blocked", self.events)
+                        waiting.cancel()
+                        await asyncio.gather(waiting, return_exceptions=True)
+                        result = await asyncio.wait_for(following, 6)
+                        self.assertEqual(result[:3], (b"ab", 200, None))
+                        self.assertIsNone(result[3], "source header must not be attributed to destination")
+                        self.assertGreaterEqual(self.events[f"destination-{form}"][0][1], deadline[0] - 0.05)
+                    finally:
+                        tasks = [task for task in (following, waiting) if task is not None]
+                        for task in tasks:
+                            task.cancel()
+                        await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def test_redirect_delay_timeout_and_cancellation_release_resources(self):
+        other = await self.add_origin()
+        for module in (None, base, gradient):
+            for cancel in (False, True):
+                with self.subTest(module=getattr(module, "__name__", "fixed"), cancel=cancel):
+                    seen = asyncio.Event()
+
+                    async def redirect(request):
+                        # Leave a response body open: the callback must release
+                        # its connection before waiting on the header's delay.
+                        response = web.StreamResponse(status=302, headers={
+                            "Location": f"{other}/never-followed", "Retry-After": "30",
+                            "Content-Length": "100",
+                        })
+                        await response.prepare(request)
+                        return response
+
+                    async def on_redirect(*_args, seen=seen):
+                        seen.set()
+
+                    self.handlers["long-redirect"] = redirect
+                    manager = module.HostControllerManager(module.PAARCConfig()) if module else None
+                    trace = base.build_trace_config()
+                    trace.on_request_redirect.insert(0, on_redirect)
+                    async with aiohttp.ClientSession(
+                        connector=aiohttp.TCPConnector(limit=1), trace_configs=[trace]
+                    ) as session:
+                        task = asyncio.create_task(self.download(
+                            session, f"{self.url}/long-redirect", manager, timeout=5 if cancel else 0.2
+                        ))
+                        try:
+                            await asyncio.wait_for(seen.wait(), 2)
+                            if cancel:
+                                task.cancel()
+                                with self.assertRaises(asyncio.CancelledError):
+                                    await task
+                            else:
+                                out = await asyncio.wait_for(task, 2)
+                                self.assertEqual(out.status_code, 408)
+                                self.assertFalse(out.success)
+                            self.assertNotIn("never-followed", self.events)
+                            # Same connector has capacity after the aborted hop.
+                            self.assertEqual((await download_via_http_get(session, f"{other}/available", 2))[1], 200)
+                            if manager:
+                                ctrl = await manager.get_controller(self.url)
+                                self.assertEqual(ctrl.semaphore.inflight, 0)
+                                snap = await ctrl.metrics.finish_interval()
+                                self.assertFalse(snap["has_overload"])
+                                self.assertEqual(snap["n_samples"], 0)
+                        finally:
+                            task.cancel()
+                            await asyncio.gather(task, return_exceptions=True)
 
     async def test_same_authority_redirect_hop_waits(self):
         deadline = []
@@ -441,6 +648,131 @@ class LocalHTTPTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(final["n_success"], 1)
                 self.assertEqual(final["n_samples"], 1)
                 self.assertEqual(origin_ctrl.semaphore.inflight, 0)
+                self.assertEqual(final_ctrl.semaphore.inflight, 0)
+
+    async def test_redirects_obey_destination_adaptive_limit(self):
+        other = await self.add_origin()
+        for module in (base, gradient):
+            with self.subTest(module=module.__name__):
+                manager = module.HostControllerManager(module.PAARCConfig(C_init=1, C_min=1))
+                redirects, destinations = [], []
+                both_redirects, arrived, release = asyncio.Event(), asyncio.Event(), asyncio.Event()
+
+                async def redirect(request, redirects=redirects, both_redirects=both_redirects):
+                    redirects.append(request.match_info["name"])
+                    if len(redirects) == 2:
+                        both_redirects.set()
+                    return web.Response(status=302, headers={"Location": f"{other}/limited"})
+
+                async def destination(request, destinations=destinations, arrived=arrived, release=release):
+                    destinations.append(time.monotonic())
+                    arrived.set()
+                    await release.wait()
+                    return web.Response(body=b"payload")
+
+                self.handlers.update(redirect0=redirect, redirect1=redirect, limited=destination)
+                async with aiohttp.ClientSession() as session:
+                    tasks = [asyncio.create_task(self.download(
+                        session, f"{self.url}/redirect{i}", manager, output=self.root / f"limit-{i}"
+                    ))
+                             for i in range(2)]
+                    try:
+                        await asyncio.wait_for(asyncio.gather(both_redirects.wait(), arrived.wait()), 2)
+                        origin_ctrl = await manager.get_controller(self.url)
+                        final_ctrl = await manager.get_controller(other)
+                        await asyncio.sleep(0.05)
+                        self.assertEqual(len(destinations), 1, "second hop must wait for destination's permit")
+                        self.assertEqual(origin_ctrl.semaphore.inflight, 0)
+                        self.assertEqual(final_ctrl.semaphore.inflight, 1)
+                        release.set()
+                        outcomes = await asyncio.wait_for(asyncio.gather(*tasks), 3)
+                        self.assertTrue(all(out.success for out in outcomes))
+                        self.assertEqual(len(destinations), 2)
+                        self.assertEqual(final_ctrl.semaphore.inflight, 0)
+                        self.assertEqual((await final_ctrl.metrics.finish_interval())["n_success"], 2)
+                    finally:
+                        release.set()
+                        for task in tasks:
+                            task.cancel()
+                        await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def test_reciprocal_redirects_release_before_acquiring_destination(self):
+        other = await self.add_origin()
+        for module in (base, gradient):
+            with self.subTest(module=module.__name__):
+                manager = module.HostControllerManager(module.PAARCConfig(C_init=1, C_min=1))
+                started = []
+                both = asyncio.Event()
+
+                async def redirect(request, started=started, both=both):
+                    started.append(request.match_info["name"])
+                    if len(started) == 2:
+                        both.set()
+                    await both.wait()
+                    target = other if request.match_info["name"] == "from-a" else self.url
+                    return web.Response(status=302, headers={"Location": f"{target}/reciprocal-final"})
+
+                self.handlers.update({"from-a": redirect, "from-b": redirect})
+                async with aiohttp.ClientSession() as session:
+                    tasks = [asyncio.create_task(self.download(
+                        session, url, manager, output=self.root / f"reciprocal-{i}"
+                    )) for i, url in enumerate((f"{self.url}/from-a", f"{other}/from-b"))]
+                    try:
+                        outcomes = await asyncio.wait_for(asyncio.gather(*tasks), 3)
+                        self.assertTrue(all(out.success for out in outcomes))
+                        for authority in (self.url, other):
+                            ctrl = await manager.get_controller(authority)
+                            self.assertEqual(ctrl.semaphore.inflight, 0)
+                            self.assertEqual((await ctrl.metrics.finish_interval())["n_success"], 1)
+                    finally:
+                        both.set()
+                        for task in tasks:
+                            task.cancel()
+                        await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def test_destination_permit_wait_timeout_and_cancellation(self):
+        other = await self.add_origin()
+        for module in (base, gradient):
+            for cancel in (False, True):
+                with self.subTest(module=module.__name__, cancel=cancel):
+                    manager = module.HostControllerManager(module.PAARCConfig(C_init=1, C_min=1))
+                    final_ctrl = await manager.get_controller(other)
+                    await final_ctrl.semaphore.acquire()
+                    waiting = asyncio.Event()
+                    acquire = final_ctrl.semaphore.acquire
+
+                    async def observed_acquire(waiting=waiting, acquire=acquire):
+                        waiting.set()
+                        await acquire()
+
+                    async def redirect(request):
+                        return web.Response(status=302, headers={"Location": f"{other}/permit-blocked"})
+
+                    self.handlers["permit-redirect"] = redirect
+                    async with aiohttp.ClientSession() as session:
+                        with patch.object(final_ctrl.semaphore, "acquire", side_effect=observed_acquire):
+                            task = asyncio.create_task(self.download(
+                                session, f"{self.url}/permit-redirect", manager, timeout=5 if cancel else 0.2
+                            ))
+                            try:
+                                await asyncio.wait_for(waiting.wait(), 2)
+                                if cancel:
+                                    task.cancel()
+                                    with self.assertRaises(asyncio.CancelledError):
+                                        await task
+                                else:
+                                    out = await asyncio.wait_for(task, 2)
+                                    self.assertEqual(out.status_code, 408)
+                                    snap = await final_ctrl.metrics.finish_interval()
+                                    self.assertEqual(snap["n_local_failures"], 1)
+                                    self.assertFalse(snap["has_overload"])
+                                self.assertNotIn("permit-blocked", self.events)
+                                self.assertEqual((await manager.get_controller(self.url)).semaphore.inflight, 0)
+                                self.assertEqual(final_ctrl.semaphore.inflight, 1, "another request's permit must remain owned")
+                            finally:
+                                task.cancel()
+                                await asyncio.gather(task, return_exceptions=True)
+                                await final_ctrl.semaphore.release()
 
     async def test_connector_wait_rechecks_embargo_observed_at_headers(self):
         requested, headers_allowed, tail_allowed = asyncio.Event(), asyncio.Event(), asyncio.Event()

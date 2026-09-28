@@ -15,7 +15,7 @@ with the batch controller; it does not add fields to either public helper tuple.
 
 | Context field | Observation |
 | --- | --- |
-| `attempt_started_at` | Entry to the HTTP helper, before shared admission. Adaptive permit acquisition and smoothing precede this point. |
+| `attempt_started_at` | Entry to the HTTP helper, before shared admission. Initial adaptive permit acquisition and smoothing precede this point; redirected hops acquire their permits within the attempt. |
 | `hops[].dispatch_at` | aiohttp's request-headers-send callback, after connector/DNS and admission waits, immediately before handing headers to its writer. Socket buffering and scheduling can still intervene. |
 | `hops[].headers_at` | Parsed response headers observed by the redirect or request-end callback. Each hop includes URL, status and parsed Retry-After. |
 | `t0` | Dispatch timestamp of the last dispatched hop; retained legacy field name. |
@@ -35,10 +35,14 @@ latency sample.
 Redirects retain aiohttp's existing limits, URL resolution and credential/cookie
 behavior. The latency signal is for the **final hop**, not elapsed time across the
 chain. Both controllers receive final-response success/overload/latency feedback
-under that authority. The original attempt's adaptive permit continues to span the
-chain, as before; redirects do not acquire an additional destination adaptive permit.
-Shared Retry-After admission nevertheless checks every destination. This change
-does not claim a new redirect-aware adaptive concurrency algorithm.
+under that authority. On a cross-authority redirect the batch path releases the
+original adaptive permit before acquiring the destination's permit and applying
+its smoother. Same-controller redirects retain the permit and apply smoothing
+again. This happens before the next connector acquisition, so the destination's
+existing adaptive limit governs the request that supplies its feedback. Reciprocal
+redirects never hold two authorities' permits at once. Redirect hops themselves
+are not saved acquisitions and do not add useful-success counts or latency samples.
+No controller equation or tuning parameter changes.
 
 ## Outcomes and denominators
 
@@ -87,6 +91,16 @@ nonfinite values are ignored. A date is converted once from wall-clock time into
 monotonic deadline; subsequent wall-clock changes cannot move it. Unrepresentable
 deadline sums are rejected.
 
+A valid Retry-After on a followed 3xx also delays that chain before issuing the
+redirected request, even across authorities, as specified by
+[RFC 9110 §10.2.3](https://www.rfc-editor.org/rfc/rfc9110.html#name-retry-after).
+The chain waits for the responding authority's outstanding deadline; concurrent
+extensions therefore apply. This does not install an embargo on the destination,
+so unrelated direct requests there can proceed. The redirect response is released
+before waiting, including an unfinished body, so timeout/cancellation cannot strand
+its connection. A 3xx without a redirect target is a terminal failed acquisition;
+its header is observed once even though aiohttp calls both redirect and end hooks.
+
 Updates take the maximum outstanding deadline without awaiting; one event loop
 cannot lose a concurrent extension. Waiters sleep without a global lock and recheck
 after waking. Admission is checked before the helper starts the request and again
@@ -106,9 +120,12 @@ when that library is upgraded.
 ## Timeout, cancellation and compatibility
 
 A positive configured request timeout bounds admission, connection, all redirects
-and body reading as one attempt. Adaptive permit/smoothing waits precede this HTTP
-timeout, as before. Zero or negative values retain the previous unbounded timeout
-setting; cancellation still works. An embargo longer than a positive timeout can
+and body reading as one attempt. Initial adaptive permit/smoothing waits precede
+this HTTP timeout, as before; subsequent redirect permit/smoothing waits and 3xx
+follow-up delays are inside that same attempt budget. A timeout while waiting for
+redirect admission is a local admission failure, not overload feedback. Zero or
+negative values retain the previous unbounded timeout setting; cancellation still
+works. An embargo longer than a positive timeout can
 therefore produce a retryable timeout without dispatching a request. It counts
 toward the existing total `max_retry_attempts`; header waits never bypass the bound.
 

@@ -1871,6 +1871,22 @@ async def download_one(
     
     # Set up tracing context
     trace_dict: dict[str, Any] = {}
+    if manager is not None:
+        async def redirect_admit(destination: str) -> None:
+            nonlocal ctrl
+            next_ctrl = await manager.get_controller(destination)
+            if next_ctrl is not ctrl:
+                # Release before acquiring: reciprocal A->B / B->A redirects
+                # must not hold both authorities' permits and deadlock.
+                if ctrl is not None:
+                    await ctrl.semaphore.release()
+                    ctrl = None
+                await next_ctrl.semaphore.acquire()
+                ctrl = next_ctrl
+            if ctrl.smoother is not None:
+                await ctrl.smoother.acquire()
+
+        trace_dict["redirect_admit"] = redirect_admit
     trace_token = TRACE_CTX.set(trace_dict)
     
     try:
@@ -1907,9 +1923,10 @@ async def download_one(
         is_local_error = failure_kind in ("local", "admission") or (
             err is not None and not is_conn_error and status in (None, 200)
         )
-        if ctrl is not None:
-            # Redirect chains hold the original attempt's adaptive permit, but
-            # final response latency/feedback belongs to the actual authority.
+        if manager is not None:
+            # Each redirected hop acquires its destination's permit. Final
+            # response latency/feedback belongs to that same authority; a
+            # timeout awaiting a permit still records its failed attempt.
             feedback_ctrl = await manager.get_controller(trace_dict.get("feedback_url", url))
             await feedback_ctrl.metrics.record(
                 status_code=status,
@@ -2093,7 +2110,8 @@ def generate_overview_report(
             "success": "HTTP 200 and saved output; bytes count useful saved payload only",
             "n_errors": "overload subset, not all unsuccessful acquisitions",
             "retry_after_scope": "session-local hostname/effective-port authority, all modes and redirects",
-            "attempt_timeout": "admission, connection, redirects and body; excludes adaptive permit/smoothing",
+            "redirect_control": "destination adaptive permit; 3xx follow-up delay without destination-wide embargo",
+            "attempt_timeout": "admission, connection, redirects and body; excludes initial adaptive permit/smoothing",
         },
         "script_inputs": {
             "input": cfg.input_path,
