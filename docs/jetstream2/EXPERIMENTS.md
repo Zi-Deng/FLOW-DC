@@ -202,6 +202,11 @@ The controller's fixed 600-second reserve and 180-second action lead protect its
 independent shutdown/accounting boundary. `stop_seconds` is a separate client
 cleanup/evidence-wait limit (1–1800 seconds); changing it never changes that reserve.
 A short client limit may return incomplete while supervision continues.
+A future **new** run may explicitly set `bounds.stop_seconds` to 600 in its spec.
+That changes only this client's bounded cleanup/evidence wait; it changes neither
+the 900-second work target, 1,800-second controller window, 600-second reserve,
+180-second lead nor cumulative account limits. It is not a completion guarantee
+and does not repair a stalled provider or an unsupported offload runtime.
 SIGINT/SIGTERM retain evidence and enter cleanup; SIGKILL, power loss, disconnection
 or provider outage can prevent local follow-through. The unchanged independent
 pilot supervisor remains authoritative for cloud obligations.
@@ -265,6 +270,16 @@ are offloaded. Missing remote files can only be recovered while guests remain
 reachable; collection does not reactivate them or rerun downloads.
 
 For `cleanup_incomplete`, retain all records and run the same `stop` command.
+For example, a passed workload and verified guest stops can coexist with an exit-3
+result after a 300-second wait. The persistent supervisor continues cleanup. Once
+fresh VM offload and network restoration are verified, a cleanup-only `stop` can
+return 0 and release experiment ownership without replaying the workload or granting
+time. Retain the original exit-3 output and collected snapshots alongside the later
+exit-0 recovery evidence. Recovery does not rewrite the earlier result. Inspect the
+pilot's bounded `cleanup_diagnostics` for phase/action/role and budget context; its
+categories do not prove the cause of historical generic failures. See
+[offload compatibility and recovery](LIFECYCLE.md#exact-manual-checkpoint-and-emergency-procedure)
+and the [software evidence](CLEANUP-RELIABILITY-EVIDENCE.md).
 Guest service locks, launch acknowledgements and cancellation markers prevent a
 late launch from bypassing a preceding stop. An interrupted, unacknowledged guest
 launch remains uncertain rather than treating a momentarily absent unit as proof.

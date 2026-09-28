@@ -521,6 +521,23 @@ class PilotCliTests(unittest.TestCase):
         self.assertEqual(raised.exception.code, "provider_request_failed")
         self.assertNotIn("secret-marker", str(raised.exception))
 
+    def test_provider_failure_retains_action_and_budget_without_secret_text(self):
+        provider = Provider(self.fixture.profile)
+        self.fixture.fixture["failure"] = {"key": "port show", "action": "fail"}
+        self.fixture.write_fixture()
+        with provider.step(), self.assertRaises(ops.OpsError) as raised:
+            provider.call("port", bootstrap.SERVERS[0])
+        diagnostic = getattr(raised.exception, "diagnostic", {})
+        self.assertEqual(diagnostic.get("action"), "port")
+        self.assertEqual(diagnostic["category"], "unknown")
+        self.assertIs(diagnostic["dispatch_possible"], True)
+        self.assertGreaterEqual(diagnostic["elapsed_seconds"], 0)
+        self.assertLessEqual(diagnostic["elapsed_seconds"], 20)
+        self.assertGreaterEqual(diagnostic["remaining_seconds"], 0)
+        self.assertLessEqual(diagnostic["remaining_seconds"], 20)
+        self.assertNotIn("secret-marker", json.dumps(diagnostic))
+        self.assertNotIn(bootstrap.SERVERS[0], json.dumps(diagnostic))
+
 
 if __name__ == "__main__":
     unittest.main()

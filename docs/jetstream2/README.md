@@ -93,8 +93,31 @@ environment, following the [client setup guide](https://docs.jetstream-cloud.org
 Record the absolute `bin/openstack` path and retain its version/dependency evidence
 privately. No top-level project dependency is added by this CLI.
 
+### Explicit-offload runtime prerequisite
+
+The pilot's fixed SDK offload uses only `bin/python` in the venv containing the
+configured absolute `bin/openstack`. The client must have that exact interpreter
+shebang. Python must be 3.12+, with `include-system-site-packages = false` and the
+existing OpenStack SDK/keystoneauth/requests available. `pyvenv.cfg`, the venv path,
+site-packages path, interpreter symlink chain, resolved executable and base `home`
+path must pass the trusted-owner/no-group-or-other-write checks. The lexical venv
+interpreter path is retained so symlink resolution does not lose venv semantics.
+The child uses isolated Python, explicit application-credential authentication,
+HTTPS verification, public interface and compute version 2.1, without implicit
+clouds.yaml/vendor configuration, inherited Python/proxy settings or mutation retries.
+
+Run `python3 bin/flowdc_ops.py pilot runtime-check --profile PRIVATE_PROFILE` to
+check this prerequisite offline without loading the OpenRC or touching accounting.
+`offload_runtime_unsupported` fails closed. A group-writable base interpreter or
+ancestor, unsupported SDK or unrelated interpreter is refused; there is no PATH,
+shebang-inferred interpreter or system-Python fallback. This software change does
+not repair permissions, install packages or replace the administration environment.
+Any runtime repair and reviewed-controller deployment require their later operational
+checkpoint. A passing check does not establish cloud permission or live success.
+
 OpenRC is **trusted operator-provided Bash code**, not a JSON data file. Only
-inventory sources it. The wrapper clears inherited `OS_*`, disables tracing,
+inventory and the authorized pilot adapter source it. The wrapper clears inherited
+`OS_*`, disables tracing,
 suppresses OpenRC prints, and uses a minimal child environment. It requires
 `v3applicationcredential`, credential ID/secret, auth URL, and region in that file.
 Only those exports plus identity API version and interface are accepted; cloud,

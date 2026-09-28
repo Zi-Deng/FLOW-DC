@@ -334,6 +334,56 @@ class ExperimentTests(unittest.TestCase):
         self.assertEqual(self.invoke("stop", selected)[0], 0)
         self.assertIsNone(self.store.owner())
 
+    def test_300_second_client_wait_preserves_workload_and_cleanup_only_recovery(self):
+        self.value["bounds"]["stop_seconds"] = 300
+        self.path.write_text(json.dumps(self.value))
+        selected, manifest, _ = self.prepare()
+        calls = self.infrastructure(manifest, "cleanup")
+        elapsed = [0.0]
+        stop_started = []
+        cleanup = cli.cleanup
+
+        def advance(seconds):
+            elapsed[0] += seconds
+
+        def begin_cleanup(*args, **kwargs):
+            stop_started.append(elapsed[0])
+            return cleanup(*args, **kwargs)
+
+        with (
+            patch.object(cli.time, "monotonic", lambda: elapsed[0]),
+            patch.object(cli.time, "sleep", advance),
+            patch.object(cli, "cleanup", side_effect=begin_cleanup),
+        ):
+            code, original = self.invoke("run", selected)
+        self.assertEqual(code, 3)
+        self.assertEqual(elapsed[0] - stop_started[0], 300)
+        self.assertEqual(original["data"]["phase"], "cleanup_incomplete")
+        self.assertEqual(original["data"]["workload"], "passed")
+        self.assertEqual(original["data"]["guest_cleanup"], "verified")
+        self.assertEqual(self.store.owner(), selected)
+        before = self.store.json(selected, "state.json")
+        self.assertTrue(all(service["stopped"] for service in before["services"]))
+        artifacts = {
+            entry["file"]: self.store.read(selected, entry["file"]) for entry in before["collected"].values()
+        }
+        self.assertEqual(calls.count("start"), 1)
+        # The controller is independent of the expired client wait. A later
+        # cleanup-only client observes its completed cleanup without activation.
+        recovery_calls = self.infrastructure(manifest)
+        result, recovered = self.invoke("stop", selected)
+        self.assertEqual(result, 0)
+        self.assertEqual(recovered["data"]["cleanup"], "verified")
+        self.assertEqual(recovery_calls, ["stop", "status"])
+        self.assertIsNone(self.store.owner())
+        after = self.store.json(selected, "state.json")
+        for key in ("collected", "services", "errors", "workload"):
+            self.assertEqual(after[key], before[key])
+        for name, contents in artifacts.items():
+            self.assertEqual(self.store.read(selected, name), contents)
+        self.assertEqual(original["data"]["phase"], "cleanup_incomplete")
+        self.assertEqual(self.invoke("run", selected)[1]["error"], "run_cannot_be_replayed")
+
     def test_insufficient_allowance_never_starts(self):
         selected, manifest, _ = self.prepare()
         calls = self.infrastructure(manifest, "allowance")

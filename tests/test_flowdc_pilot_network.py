@@ -14,7 +14,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "bin"))
 
 import flowdc_ops as ops
-from flowdc_pilot_journal import register
+from flowdc_pilot_journal import Journal, register
 from flowdc_pilot_provider import Provider, validate_access
 from test_flowdc_pilot_lifecycle import NETWORK, PORT_IDS, PROJECT, ROLES, SUBNET, VM_IDS, access, spec
 
@@ -205,7 +205,7 @@ class LatencyBackend(NetworkBackend):
     def charge(self, action):
         with self.condition:
             self.reads.append(action)
-            end = self.now + (8.22 if action == "ports" else 1.3)
+            end = min(self.now + self.duration(action), self.deadline)
             if threading.get_ident() == self.actor:
                 self.now = end
                 ready = None
@@ -219,6 +219,9 @@ class LatencyBackend(NetworkBackend):
         if self.now >= self.deadline:
             raise ops.OpsError("probe_timeout", "synthetic deadline", "synthetic", 1)
 
+    def duration(self, action):
+        return 8.22 if action == "ports" else 1.3
+
     def context(self, record):
         self.charge("context")
         self.charge("project")
@@ -227,6 +230,52 @@ class LatencyBackend(NetworkBackend):
         if not mutation:
             self.charge(action)
         return super().call(action, *args, mutation=mutation, on_dispatch=on_dispatch)
+
+
+class RollbackLatencyBackend(LatencyBackend):
+    """Issue #17's synthetic timings, including the shared mutation budget.
+
+    Submission/join order is the production read_batch loop via LogicalExecutor.
+    A timed-out mutation has no effect by default; apply_on_timeout separately
+    models an applied request whose response does not arrive before the deadline.
+    """
+
+    DURATIONS = {
+        "context": 0.4,
+        "project": 1.1,
+        "groups": 1.75,
+        "group": 1.7,
+        "floating": 2.2,
+        "floating_show": 1.7,
+        "port": 2.4,
+        "group_ports": 2.0,
+        "attach": 1.9,
+        "group_delete": 1.9,
+    }
+
+    def __init__(self):
+        super().__init__()
+        self.dispatches = []
+        self.apply_on_timeout = False
+        self.durations = dict(self.DURATIONS)
+
+    def duration(self, action):
+        return self.durations[action]
+
+    def call(self, action, *args, mutation=False, on_dispatch=None):
+        started = self.now
+        if mutation:
+            if threading.get_ident() != self.actor or self.pending:
+                raise AssertionError("mutation outside actor or before read batch joined")
+            if started < self.deadline:
+                self.dispatches.append((action, args))
+        try:
+            self.charge(action)
+        except ops.OpsError:
+            if mutation and self.apply_on_timeout and started < self.deadline:
+                NetworkBackend.call(self, action, *args, mutation=True, on_dispatch=on_dispatch)
+            raise
+        return NetworkBackend.call(self, action, *args, mutation=mutation, on_dispatch=on_dispatch)
 
 
 class ReadBatchTests(unittest.TestCase):
@@ -329,6 +378,90 @@ class ReadBatchTests(unittest.TestCase):
             self.assertTrue(child.stderr.closed)
 
 
+class FloatingReadTests(unittest.TestCase):
+    def setUp(self):
+        self.provider = NetworkBackend()
+        self.record = {"spec": {"context": {"project_id": PROJECT}}}
+
+    def populate(self, count):
+        self.provider.fips.clear()
+        for index in range(count):
+            resource = f"bbbbbbbb-bbbb-4bbb-8bbb-{index:012d}"
+            self.provider.fips[resource] = {"id": resource, "project_id": PROJECT}
+
+    def test_zero_one_multiple_and_maximum_floating_collections(self):
+        for count in (0, 1, 3, 4, 5, 128):
+            with self.subTest(count=count), self.provider.step():
+                self.populate(count)
+                expected = copy.deepcopy(list(self.provider.fips.values()))
+                self.assertEqual(self.provider.floating(self.record), expected)
+                self.assertEqual(list(self.provider.fips.values()), expected)
+        self.assertFalse(any(mutation for _, _, mutation in self.provider.calls))
+
+    def test_floating_details_use_four_workers_and_validate_on_actor(self):
+        self.populate(8)
+        barrier = threading.Barrier(4, timeout=2)
+        lock = threading.Lock()
+        active = maximum = 0
+        actor = threading.get_ident()
+        readers, validators = set(), []
+        original_call = self.provider.call
+        original_uuid = ops.uuid_value
+
+        def call(action, *args, **kwargs):
+            nonlocal active, maximum
+            if action == "floating_show":
+                with lock:
+                    readers.add(threading.get_ident())
+                    active += 1
+                    maximum = max(maximum, active)
+                barrier.wait()
+                with lock:
+                    active -= 1
+            return original_call(action, *args, **kwargs)
+
+        def validate(value):
+            if value == PROJECT:
+                validators.append(threading.get_ident())
+            return original_uuid(value)
+
+        with (
+            self.provider.step(),
+            patch.object(self.provider, "call", side_effect=call),
+            patch.object(ops, "uuid_value", side_effect=validate),
+        ):
+            self.assertEqual(self.provider.floating(self.record), list(self.provider.fips.values()))
+        self.assertEqual((maximum, active), (4, 0))
+        self.assertNotIn(actor, readers)
+        self.assertEqual(validators, [actor] * 8)
+
+    def test_invalid_collection_refused_before_detail_submission(self):
+        self.populate(129)
+        rows = [{"ID": key} for key in self.provider.fips]
+        for invalid in (rows, rows[:1] * 2, {}, [None], [{"ID": "invalid"}], [{}]):
+            with self.subTest(rows=invalid), self.provider.step():
+                with patch.object(self.provider, "call", return_value=invalid) as call:
+                    with self.assertRaises(ops.OpsError):
+                        self.provider.floating(self.record)
+                self.assertEqual(call.call_count, 1)
+
+    def test_wrong_and_missing_detail_identities_fail_closed(self):
+        self.populate(3)
+        resource = next(iter(self.provider.fips))
+        for invalid in (
+            {"id": PORT_IDS[0], "project_id": PROJECT},
+            {"id": resource, "project_id": PORT_IDS[0]},
+            {"id": resource},
+            {"project_id": PROJECT},
+            {},
+        ):
+            with self.subTest(detail=invalid), self.provider.step():
+                self.provider.fips[resource] = invalid
+                with self.assertRaises(ops.OpsError):
+                    self.provider.floating(self.record)
+        self.assertFalse(any(mutation for _, _, mutation in self.provider.calls))
+
+
 class NetworkTests(unittest.TestCase):
     def setUp(self):
         mask = os.umask(0o077)
@@ -360,6 +493,129 @@ class NetworkTests(unittest.TestCase):
             if self.journal.read()["network"]["rolled_back"]:
                 return
         self.fail("rollback never finished")
+
+    def slow_rollback_fixture(self):
+        self.setup_network()
+        backend = RollbackLatencyBackend()
+        backend.groups = copy.deepcopy(self.provider.groups)
+        backend.ports = copy.deepcopy(self.provider.ports)
+        for index in range(3):
+            resource = f"bbbbbbbb-bbbb-4bbb-8bbb-{index:012d}"
+            backend.fips[resource] = {
+                "id": resource,
+                "project_id": PROJECT,
+                "description": "unrelated-floating-entry",
+                "port_id": PROJECT,
+                "fixed_ip_address": f"10.1.0.{index + 1}",
+                "floating_network_id": backend.external,
+            }
+        self.journal.change(lambda record: record.update(desired="stop"))
+        return backend
+
+    def timed_rollback_step(self, backend):
+        start = backend.now
+        before = len(backend.dispatches)
+        error = None
+        with (
+            patch("flowdc_pilot_provider.time.monotonic", side_effect=lambda: backend.now),
+            patch(
+                "flowdc_pilot_provider.ThreadPoolExecutor",
+                side_effect=lambda **kw: LogicalExecutor(backend, **kw),
+            ),
+        ):
+            try:
+                backend.network_step(self.journal, rollback=True)
+            except ops.OpsError as exc:
+                error = exc.code
+        self.assertAlmostEqual(backend.deadline - start, 20)
+        self.assertLessEqual(backend.now, backend.deadline)
+        self.assertLessEqual(len(backend.dispatches) - before, 1)
+        self.assertEqual(backend.pending, [])
+        return round(backend.now - start, 2), error
+
+    def test_slow_rollback_completes_with_three_unrelated_floating_ips(self):
+        backend = self.slow_rollback_fixture()
+        original_fips = copy.deepcopy(backend.fips)
+        original_group = copy.deepcopy(backend.groups[backend.original])
+        trace = []
+        for _ in range(10):
+            trace.append(self.timed_rollback_step(backend))
+            if self.journal.read()["network"]["rolled_back"]:
+                break
+        self.assertTrue(self.journal.read()["network"]["rolled_back"], trace)
+        self.assertEqual(trace, [(13.15, None), (15.15, None)] * 3 + [(9.55, None)])
+        self.assertEqual(backend.fips, original_fips)
+        self.assertEqual(backend.groups, {backend.original: original_group})
+        self.assertTrue(
+            all(port["security_group_ids"] == [backend.original] for port in backend.ports.values())
+        )
+        self.assertEqual([action for action, _ in backend.dispatches], ["attach", "group_delete"] * 3)
+
+    def test_slow_rollback_fails_when_new_read_batches_are_serialized(self):
+        backend = self.slow_rollback_fixture()
+        original_batch = backend.read_batch
+
+        def serial_new_reads(requests):
+            if requests and requests[0][0] in ("port", "floating_show"):
+                return [backend.call(*request) for request in requests]
+            return original_batch(requests)
+
+        with patch.object(backend, "read_batch", side_effect=serial_new_reads):
+            trace = [self.timed_rollback_step(backend) for _ in range(10)]
+        self.assertEqual(trace, [(20.0, "probe_timeout")] * 10)
+        self.assertFalse(self.journal.read()["network"]["rolled_back"])
+        self.assertEqual(len(backend.groups), 4)
+        self.assertFalse(any(mutation for _, _, mutation in backend.calls))
+
+    def test_rollback_read_timeout_never_dispatches_mutation(self):
+        backend = self.slow_rollback_fixture()
+        for action in ("floating_show", "port"):
+            with self.subTest(action=action):
+                backend.durations = dict(backend.DURATIONS, **{action: 25})
+                self.assertEqual(self.timed_rollback_step(backend), (20.0, "probe_timeout"))
+                self.assertEqual(backend.dispatches, [])
+                self.assertFalse(self.journal.read()["network"]["rolled_back"])
+
+    def test_rollback_mutation_timeout_requires_fresh_proof_after_restart(self):
+        backend = self.slow_rollback_fixture()
+        original_fips = copy.deepcopy(backend.fips)
+        for action in ("attach", "group_delete"):
+            # The no-effect case must remain pending. A later request may apply
+            # but lose its response; neither return path is rollback proof.
+            for applied in (False, True):
+                with self.subTest(action=action, applied=applied):
+                    backend.durations = dict(backend.DURATIONS, **{action: 25})
+                    backend.apply_on_timeout = applied
+                    before = copy.deepcopy((backend.groups, backend.ports))
+                    count = len(backend.dispatches)
+                    self.assertEqual(self.timed_rollback_step(backend), (20.0, "probe_timeout"))
+                    self.assertEqual(len(backend.dispatches), count + 1)
+                    self.assertEqual(backend.dispatches[-1][0], action)
+                    self.assertEqual(before == (backend.groups, backend.ports), not applied)
+                    self.assertFalse(self.journal.read()["network"]["rolled_back"])
+        restarted = RollbackLatencyBackend()
+        restarted.groups = copy.deepcopy(backend.groups)
+        restarted.ports = copy.deepcopy(backend.ports)
+        restarted.fips = copy.deepcopy(backend.fips)
+        self.journal = Journal(self.journal.root)
+        for _ in range(10):
+            self.assertIsNone(self.timed_rollback_step(restarted)[1])
+            if self.journal.read()["network"]["rolled_back"]:
+                break
+        self.assertTrue(self.journal.read()["network"]["rolled_back"])
+        self.assertEqual(restarted.fips, original_fips)
+        self.assertEqual([action for action, _ in restarted.dispatches], ["attach", "group_delete"] * 2)
+
+    def test_rollback_validates_all_batched_port_identities_before_mutation(self):
+        self.setup_network()
+        # The first role would be restorable, but another selected VM has drifted.
+        self.provider.ports[PORT_IDS[-1]]["device_id"] = PROJECT
+        self.provider.calls.clear()
+        with self.assertRaises(ops.OpsError) as caught:
+            self.rollback()
+        self.assertEqual(caught.exception.code, "selected_port_identity_mismatch")
+        self.assertEqual(sum(action == "port" for action, _, _ in self.provider.calls), 3)
+        self.assertFalse(any(mutation for _, _, mutation in self.provider.calls))
 
     def test_slow_port_read_prepares_rule_within_shared_deadline(self):
         self.setup_network()
@@ -550,7 +806,11 @@ class NetworkTests(unittest.TestCase):
                     return result + [{"ID": extra}] if order == "match_first" else [{"ID": extra}] + result
                 return original(action, *args, **kwargs)
 
-            with self.subTest(order=order), patch.object(self.provider, "call", side_effect=call):
+            with (
+                self.subTest(order=order),
+                self.provider.step(),
+                patch.object(self.provider, "call", side_effect=call),
+            ):
                 if order == "none":
                     with self.assertRaises(ops.OpsError) as caught:
                         self.provider.route_step(self.journal, self.journal.read(), inspect_only=True)
@@ -730,6 +990,31 @@ class NetworkTests(unittest.TestCase):
         with self.assertRaises(ops.OpsError):
             self.provider.network_step(self.journal, rollback=False)
         self.assertEqual(sum(action == "group_create" for action, _, _ in self.provider.calls), 1)
+
+    def test_rollback_waits_for_late_creation_then_reconciles_after_restart(self):
+        self.provider.fail_action = "group_create"
+        with self.assertRaises(ops.OpsError):
+            self.setup_network()
+        self.provider.fail_action = None
+        with self.assertRaises(ops.OpsError) as caught:
+            self.rollback()
+        self.assertEqual(caught.exception.code, "unresolved_network_creation")
+        self.assertFalse(self.journal.read()["network"]["rolled_back"])
+        # Simulate the previously dispatched create becoming visible later.
+        marker = "flowdc-" + self.journal.read()["network"]["generation"] + "-manager"
+        resource = self.provider.new_id()
+        self.provider.groups[resource] = {
+            "id": resource,
+            "name": marker,
+            "description": marker,
+            "project_id": PROJECT,
+            "rules": [],
+        }
+        self.journal = Journal(self.journal.root)
+        self.rollback()
+        self.assertEqual(sum(action == "group_create" for action, _, _ in self.provider.calls), 1)
+        self.assertNotIn(resource, self.provider.groups)
+        self.assertTrue(self.journal.read()["network"]["rolled_back"])
 
     def test_external_attachment_change_blocks_rollback(self):
         self.setup_network()

@@ -15,6 +15,36 @@ POLL_SECONDS = 2
 ACTION_LEAD_SECONDS = 180
 HEARTBEAT_SECONDS = 30
 OBSERVATION_SECONDS = 120
+DIAGNOSTIC_LIMIT = 32
+
+
+def cleanup_diagnostics(record):
+    for event in record["events"]:
+        if event["kind"] == "cleanup_diagnostics":
+            return event["data"]["entries"]
+    return []
+
+
+def save_diagnostic(record, detail, now):
+    detail = ops.safe_diagnostic(detail)
+    event = next((e for e in record["events"] if e["kind"] == "cleanup_diagnostics"), None)
+    if event is None:
+        event = {"kind": "cleanup_diagnostics", "data": {"entries": []}}
+        record["events"].append(event)
+    entries = event["data"]["entries"]
+    identity = ("phase", "action", "role", "category", "dispatch_possible")
+    previous = next((e for e in entries if all(e[key] == detail[key] for key in identity)), None)
+    if previous is not None:
+        entries.remove(previous)
+    entry = dict(
+        detail,
+        count=min(2147483647, previous["count"] + 1) if previous else 1,
+        first_utc=previous["first_utc"] if previous else now,
+        last_utc=now,
+    )
+    entries.append(entry)
+    # This ring is diagnostic only. Never truncate the containing history list.
+    del entries[:-DIAGNOSTIC_LIMIT]
 
 
 def sample_clock():
@@ -103,6 +133,7 @@ class Supervisor:
 
     def __init__(self, journal, provider, *, clock=sample_clock):
         self.journal, self.provider, self.clock = journal, provider, clock
+        self.operation = {}
 
     def recover(self):
         def update(record):
@@ -139,17 +170,27 @@ class Supervisor:
         if self.account()["desired"] != "run":
             raise failure("stop_or_deadline_requested")
 
-    def checkpoint(self, code):
+    def checkpoint(self, code, diagnostic=None):
         def update(record):
             record["desired"] = "stop"
             record["checkpoint"] = code
-            self.journal.event(record, "checkpoint", {"code": code})
+            if diagnostic is None:
+                self.journal.event(record, "checkpoint", {"code": code})
 
         self.journal.change(update)
+        if diagnostic is not None:
+            # Persist stop independently, first. Diagnostic persistence failure
+            # cannot abort accounting, release ownership or undo the stop.
+            try:
+                now = self.clock().utc
+                self.journal.change(lambda record: save_diagnostic(record, diagnostic, now))
+            except (ops.OpsError, OSError, ValueError, TypeError, AccountingError):
+                pass
 
     def tick(self):
         """At most one mutating provider step per tick; stop wins at each boundary."""
         record = self.account()
+        self.operation = {"phase": "unknown", "action": "unknown"}
         if record["desired"] == "idle":
             return
         try:
@@ -215,7 +256,13 @@ class Supervisor:
         except (ops.OpsError, OSError, AccountingError) as exc:
             if isinstance(exc, ops.OpsError) and exc.code == "pilot_state_busy":
                 raise
-            self.checkpoint(exc.code if isinstance(exc, ops.OpsError) else "pilot_operation_failed")
+            detail = getattr(exc, "diagnostic", None)
+            if detail is None:
+                detail = self.operation
+            self.checkpoint(
+                exc.code if isinstance(exc, ops.OpsError) else "pilot_operation_failed",
+                ops.safe_diagnostic(detail),
+            )
 
     def save_observation(self, vm_id, state, *, settle):
         def update(record):
@@ -277,6 +324,7 @@ class Supervisor:
                 current["vms"][vm_id]["cleanup_attempt"] = {"order": order, "clock": asdict(now)}
 
             self.journal.change(intent)
+            self.operation = {"phase": "cleanup", "action": "server", "role": record["vms"][vm_id]["role"]}
             state = self.provider.observe(record, vm_id)
             self.save_observation(vm_id, state, settle=True)
             if state == "SHELVED_OFFLOADED":
@@ -287,10 +335,12 @@ class Supervisor:
                     cleanup_intent={"action": action, "clock": asdict(self.clock())}
                 )
             )
+            self.operation = {"phase": "cleanup", "action": action, "role": record["vms"][vm_id]["role"]}
             self.provider.lifecycle(record, vm_id, action)
             # Acknowledgement is not completion; observe on the next tick.
             return
         if not record["network"]["rolled_back"]:
+            self.operation = {"phase": "network_rollback", "action": "unknown"}
             self.provider.network_step(self.journal, rollback=True)
             return
 

@@ -4,6 +4,7 @@ import copy
 import fcntl
 import hashlib
 import json
+import math
 import os
 import re
 import sqlite3
@@ -278,6 +279,7 @@ def validate_record(record):
             ClockSample(**record["heartbeat"])
         if record["desired"] not in ("idle", "run", "stop") or not isinstance(record["events"], list):
             raise ValueError
+        diagnostic_events = 0
         for event in record["events"]:
             ops.fields(event, ("kind", "data"), ("count",))
             if not isinstance(event["kind"], str) or not re.fullmatch(
@@ -288,6 +290,29 @@ def validate_record(record):
                 raise ValueError
             if "count" in event:
                 ops.integer(event["count"], 1)
+            if event["kind"] == "cleanup_diagnostics":
+                diagnostic_events += 1
+                ops.fields(event["data"], ("entries",))
+                entries = event["data"]["entries"]
+                if diagnostic_events > 1 or not isinstance(entries, list) or len(entries) > 32:
+                    raise ValueError
+                for entry in entries:
+                    ops.fields(entry, (*ops.safe_diagnostic({}), "count", "first_utc", "last_utc"))
+                    detail = {
+                        key: value
+                        for key, value in entry.items()
+                        if key not in ("count", "first_utc", "last_utc")
+                    }
+                    if detail != ops.safe_diagnostic(detail):
+                        raise ValueError
+                    ops.integer(entry["count"], 1, 2147483647)
+                    for key in ("first_utc", "last_utc"):
+                        if (
+                            type(entry[key]) not in (int, float)
+                            or not math.isfinite(entry[key])
+                            or entry[key] < 0
+                        ):
+                            raise ValueError
         if record["desired"] == "run" and record["window"] is None:
             raise ValueError
         if record["window"] is not None:
@@ -357,7 +382,7 @@ def validate_record(record):
                     raise ValueError
         validate_grant_receipts(record)
         return record
-    except (KeyError, TypeError, ValueError, AttributeError, AccountingError, ops.OpsError):
+    except (KeyError, TypeError, ValueError, OverflowError, AttributeError, AccountingError, ops.OpsError):
         raise failure("invalid_journal_history") from None
 
 

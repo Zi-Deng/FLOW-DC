@@ -20,6 +20,12 @@ Developer validation uses a separate Python 3.12+ environment and `make check`; 
 
 The [local operations guide](docs/jetstream2/README.md) documents `python3 bin/flowdc_ops.py` for private workspace initialization, local readiness inspection, scoped read-only OpenStack inventory, and offline three-VM pilot validation. It uses Python 3.12+ without new project dependencies. Enrollment remains manual. The [bounded pilot lifecycle](docs/jetstream2/LIFECYCLE.md) adds private cumulative accounting and an independent user-systemd shutdown supervisor for three existing VMs. An explicit idle `pilot upgrade-supervisor` command preserves registration and accounting through guarded, recoverable release changes. A separately authorized `pilot extend-allowance --grant PATH` can add 1–1,800 seconds equally to the three accounts, with a durable retry-safe receipt and the unchanged 7,200-second lifetime ceiling; it never activates resources. The additive [experiment runner](docs/jetstream2/EXPERIMENTS.md) prepares committed source, configurations and Parquet inputs offline, then explicitly deploys, executes, collects and verifies a bounded three-VM run through that installed pilot. Live activation requires a separate authorized operational checkpoint; local/fake checks do not establish live-cloud or scientific results.
 
+The pilot adds an offline `pilot runtime-check --profile PATH` prerequisite for
+its fixed SDK offload route, plus bounded sanitized `cleanup_diagnostics` in status.
+See the [cleanup reliability evidence](docs/jetstream2/CLEANUP-RELIABILITY-EVIDENCE.md)
+and [runtime requirements](docs/jetstream2/README.md#explicit-offload-runtime-prerequisite)
+before a separately authorized deployment or activation.
+
 ## Installation
 
 ### Prerequisites
