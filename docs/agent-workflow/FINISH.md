@@ -166,3 +166,13 @@ The low-level `cleanup-task` helper retains its original refusal to delete ignor
 files. The human finishing script archives them first and calls that guarded cleanup
 only after the task worktree meets its preconditions. The human owns any decision to
 abandon an unmerged PR; abandonment is not successful finishing.
+
+## Coverage qualification
+
+The designated report must pass the shared required-material validator against its
+immutable packet, original response and sanitized actual-tool diagnostics. Legacy
+records, arbitrary head comments, missing diagnostics, malformed coverage and partial
+inspection fail readiness. The low-level alternative also requires `--review-directory`
+and the exact published coverage-qualified COMMENT. This gate verifies accounting,
+not understanding or human approval. Acceptance, findings and executable validation
+remain separate obligations. See [migration and recovery](COVERAGE.md).

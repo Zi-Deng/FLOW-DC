@@ -284,3 +284,20 @@ model accounts, repository permissions, check names or domain policy. Preserve e
 project instructions and use [SETUP.md](SETUP.md#bootstrap-and-existing-projects) to reconcile file
 conflicts. FLOW-DC-specific provenance and deltas are recorded in
 [RESEARCH.md](RESEARCH.md) and [TRACEABILITY.md](TRACEABILITY.md).
+
+## Coverage-aware phase handoff
+
+The phase skills share the [coverage runbook](COVERAGE.md). Capture/plan should expose
+individual acceptance criteria and identify relevant tests, boundaries and evidence
+gaps. Preparation keeps the contract discoverable. Implementation/repair supply exact
+commands, omissions and finding dispositions without claiming the reviewer ran tests.
+
+`task-review --prior-review DIRECTORY` accepts a validated same-PR ancestor packet,
+retains old uncovered material and adds repair/finding links. Scope planning remains
+one bounded request. Actual successful canary and source-range evidence are required;
+configuration or nonempty prose is insufficient. Partial publication returns incomplete
+and never designates readiness. Finish also rejects legacy, missing or changed evidence.
+Keep the exact model response separate from its publication envelope, retain sanitized
+failure diagnostics and do not republish raw provider session files. Known numerical
+usage is recorded without inferred currency conversions. Full migration and exact
+historical comparison commands are in the runbook.

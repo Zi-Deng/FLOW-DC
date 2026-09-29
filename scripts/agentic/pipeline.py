@@ -269,9 +269,7 @@ def report_record(repo, state, round_record):
         or independent.digest(report) != meta.get("review_sha256")
     ):
         raise WorkflowError("Pipeline review is incomplete or its report changed")
-    body = report.read_text(encoding="utf-8")
-    marker = f"<!-- agentic-review:{meta['head_sha']}:{meta['review_sha256']} -->"
-    return meta, body + "\n" + marker
+    return meta, independent.publication_body(directory)
 
 
 def published_report(repo, state, round_record):
@@ -310,6 +308,7 @@ def validate_designated(repo, state):
     ]
     if len(matching) != 1:
         raise WorkflowError("Designated review has no unique completed pipeline round")
+    independent.qualification(designated["directory"], require=True)
     published = published_report(repo, state, matching[0])
     if not published or positive(published["id"]) != designated["review_id"]:
         raise WorkflowError("Designated GitHub review is missing or changed")
@@ -326,6 +325,7 @@ def review_task(
     continue_reason=None,
     approved_continuation=False,
     retry_confirmed_absent=False,
+    prior_review=None,
 ):
     number = positive(number)
     store = TaskStore(repo)
@@ -360,6 +360,7 @@ def review_task(
                 number,
                 state["approval"]["plan_comment"],
                 expected_head=binding["head_sha"],
+                prior_review=prior_review,
             )
             record = {
                 **binding,
@@ -386,15 +387,17 @@ def review_task(
                 record["status"] = "incomplete"
                 store.save(state)
                 raise
-            record["status"] = "reviewed"
+            record["coverage_qualified"] = independent.qualification(record["directory"])["qualified"]
+            record["status"] = "reviewed" if record["coverage_qualified"] else "reviewed-incomplete"
             store.save(state)
         elif execute and record.get("run_attempted"):
             # Recover a completed report after interruption, but never rerun an
             # uncertain model invocation in this directory.
             independent.recover_review(repo, record["directory"])
             report_record(repo, state, record)
-            if record["status"] not in {"publishing", "published"}:
-                record["status"] = "reviewed"
+            if record["status"] not in {"publishing", "published", "published-incomplete"}:
+                record["coverage_qualified"] = independent.qualification(record["directory"])["qualified"]
+                record["status"] = "reviewed" if record["coverage_qualified"] else "reviewed-incomplete"
                 store.save(state)
         if publish:
             report_record(repo, state, record)
@@ -414,19 +417,25 @@ def review_task(
             if not observed:
                 raise WorkflowError("Published pipeline review is not yet observable")
             independent.current_pr(repo, state["pr"], binding["head_sha"], binding["base_sha"])
-            record["status"] = "published"
-            state["designated_review"] = {
-                **binding,
-                "directory": record["directory"],
-                "review_id": positive(observed["id"]),
-                "url": observed["html_url"],
-            }
+            qualified = independent.qualification(record["directory"])["qualified"]
+            record["coverage_qualified"] = qualified
+            record["status"] = "published" if qualified else "published-incomplete"
+            state.pop("designated_review", None)
+            if qualified:
+                state["designated_review"] = {
+                    **binding,
+                    "directory": record["directory"],
+                    "review_id": positive(observed["id"]),
+                    "url": observed["html_url"],
+                }
             state.pop("finish", None)
             store.save(state)
         return {
             "pr": state["pr"],
             "directory": record["directory"],
             "status": record["status"],
+            "incomplete": record.get("coverage_qualified") is False,
+            "coverage_qualified": record.get("coverage_qualified"),
             "model": "claude-opus-5",
             "attempted_rounds": sum(bool(item.get("run_attempted")) for item in rounds),
             "designated_review": state.get("designated_review"),
@@ -454,6 +463,7 @@ def add_commands(sub):
     for flag in ("execute", "publish", "fresh", "approved-continuation", "retry-confirmed-absent"):
         review_parser.add_argument("--" + flag, action="store_true")
     review_parser.add_argument("--continue-reason")
+    review_parser.add_argument("--prior-review")
 
 
 def dispatch(repo, args):
@@ -475,5 +485,6 @@ def dispatch(repo, args):
             args.continue_reason,
             args.approved_continuation,
             args.retry_confirmed_absent,
+            args.prior_review,
         )
     raise WorkflowError("Unknown pipeline operation")

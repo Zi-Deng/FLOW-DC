@@ -674,3 +674,9 @@ Generate synthetic offline examples with `python -B benchmark/topology_plan.py e
 [production checkpoint packet](docs/PRODUCTION-CHECKPOINT.md) for exact later
 installation/migration, trust enrollment and bounded live-run requirements. These
 tools do not imply scientific protocol approval.
+
+Independent review now has a machine-validated [coverage contract](docs/agent-workflow/COVERAGE.md):
+actual read/search evidence, a same-request capability probe and bounded component
+scopes. Partial reports are useful but cannot establish readiness. Legacy reviews
+remain historical evidence. Hosted checks separately record their tested checkout;
+static inspection does not execute tests or establish scientific validity.

@@ -21,7 +21,7 @@ The required local gate is:
 make test-flowdc
 ```
 
-The eight current tests use a local HTTP server and temporary directories. They cover both the base and gradient implementations where consolidation required parity, output formats, retries, overwrite behavior, benchmark-owned output, configuration defaults, controller scheduling/snapshots and import behavior. They do not establish throughput on the public internet or a remote cluster.
+This target runs unittest discovery under `tests/`, including local HTTP fixtures and temporary output directories. It covers maintained downloader/configuration behavior and benchmark/distributed-control regressions; inspect the individual tests for their precise limits. Stubs and local fixtures do not establish throughput on the public internet, cluster behavior or scientific validity.
 
 ## Benchmark and research claims
 
@@ -38,6 +38,8 @@ An old benchmark remains evidence for the code/configuration that produced it. D
 ## Workflow changes
 
 Git operations must preserve unrelated edits, recovery stashes, unmerged commits and ignored artifacts. A task must retain its original executor UUID across repair; an incomplete or failed run cannot be reported as completed. Reviews must be tied to current head/base, use separate model context and disclose omitted files or unexecuted checks. Missing authentication, model access or GitHub checks is a blocker with a recovery action, not a successful validation.
+
+Coverage readiness also requires actual same-request view/grep/glob capability and returned-line evidence for every required material item. A model assertion or nonempty legacy report is insufficient. Keep partial findings visible and separate static inspection from the hosted check association and actual tested checkout. See [the coverage contract](COVERAGE.md).
 
 Private memory and machine state must not enter Git, model review packets or public artifacts. Review snapshots export Git blobs with numeric filenames, never follow symlinks/submodules, and refuse known private-path diffs. This is a path guard, not a general content-secret detector. Inspect the committed diff and do not transmit private dataset URLs, credentials or restricted data merely because a path is allowed.
 

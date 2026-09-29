@@ -41,3 +41,10 @@ Include compatibility, permissions, restricted data, dependency changes and reco
 - Implementer tool/model:
 - Independent reviewer tool/requested model:
 - Human decisions:
+
+- Coverage status, packet/report/diagnostic references, and unread/unsupported material:
+- Hosted check association SHA and actually tested checkout SHA (or unknown):
+- Prior finding/disposition and repair-delta references:
+
+Observed reads do not prove understanding. Green software checks are not scientific
+validation. A static reviewer does not run tests; private records remain owner-writable.

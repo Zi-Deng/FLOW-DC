@@ -18,6 +18,12 @@ import tasks
 
 
 class FinishTests(PipelineFixture):
+    def test_finish_refuses_missing_coverage_diagnostics(self):
+        state = tasks.TaskStore(self.repo).read("issue-12")
+        (Path(state["designated_review"]["directory"]) / "diagnostics.json").unlink()
+        with self.assertRaises(workflow.WorkflowError):
+            finish.prepare_finish(self.repo, 12, self.assessment_file)
+
     def setUp(self):
         super().setUp()
         git(self.task_path, "push", "origin", "HEAD:issue-12-correct-value")

@@ -34,13 +34,13 @@ body:
     id: acceptance
     attributes:
       label: Acceptance criteria
-      description: Binary or measurable outcomes with a criterion-to-evidence mapping.
+      description: Separate numbered outcomes with a criterion-to-evidence mapping; identify required source, tests and cross-boundary concerns.
     validations: {required: true}
   - type: textarea
     id: validation
     attributes:
       label: Validation plan
-      description: Exact commands, fixtures, tolerances and V0–V4 evidence level.
+      description: Exact commands, fixtures, tolerances and V0–V4 evidence level. Separate static inspection from executable checks and scientific evidence; expose omissions.
     validations: {required: true}
   - type: textarea
     id: domain

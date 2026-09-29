@@ -1,196 +1,138 @@
 # Independent Copilot review
 
-The reviewer runs in a new Copilot CLI process and receives committed artifacts,
-not the implementation conversation. The custom profile and CLI availability/allow
-lists request the literal tool names `view`, `grep` and `glob`; the profile does not
-rely on the `read` and `search` aliases. The wrapper performs Git/GitHub operations
-outside that model process.
-
-Matching configuration and mocked invocation tests do not prove that the provider
-exposed or successfully executed these tools. The current wrapper checks CLI flags
-and a nonempty report, but does not yet verify actual tool events or required-material
-coverage. Issue #29 tracks those gates. Until they are implemented, a saved report
-must not be described as coverage-qualified. This configuration correction does not
-establish the cause of PR #27's missing search tools or retrospectively certify its
-reviews.
+The reviewer receives committed artifacts in a new Copilot CLI process, without the
+implementation conversation or private memory. It performs static inspection through
+literal `view`, `grep`, `glob`. The wrapper performs Git/GitHub operations outside the
+model process. Read [the coverage contract and migration runbook](COVERAGE.md) for the
+packet, adapter, evidence schema, recovery and all readiness gates.
 
 ## Managed skill procedure
 
-Use `$agentic-review PR #456` to coordinate the existing snapshot/run/publication
-steps with a recorded task and approved plan. Use `$agentic-repair PR #456` afterwards
-to retrieve both submitted reviews and inline comments and resume the exact Astra
-implementation UUID. The standalone review skill completes review; the complete
-workflow skill coordinates subsequent repair and re-review. See [SKILLS.md](SKILLS.md).
+Use `$agentic-review PR #456` from the clean trusted control checkout. The coordinator
+prepares the approved issue/plan and fixed head/base snapshot, invokes the configured
+`claude-opus-5` once and publishes a COMMENT review. Use `$agentic-repair` to resume
+the original Astra executor UUID for repairs. See [SKILLS.md](SKILLS.md).
 
-One attempted round per task is the default. A supported critical P0/P1 finding permits
-a further round to verify its repair; the coordinator records the public finding and
-concrete reason through the continuation flags. Other extra rounds need an explicit
-user request. P2/P3 findings, uncertain questions and incomplete coverage do not by
-themselves permit another round. Every additional invocation needs its own recorded
-basis; see [the continuation procedure](SKILLS.md). A failed or incomplete run does not
-establish readiness. Keep the original report intact and publish dispositions separately.
+One attempted round is the default, including failed or incomplete attempts. A supported
+critical P0/P1 finding permits a further round to verify its repair; record the public
+finding and concrete reason. Other extra rounds require explicit user continuation.
+P2/P3 findings, uncertain questions and incomplete coverage do not automatically permit
+another request. Never silently switch models, broaden permissions or retry inference.
 
 ## Local procedure
 
-From the clean main checkout on the default branch:
-
 ```bash
 python3 scripts/agentic/review.py prepare 456 --issue 123 --plan-comment 987654321
-```
-
-The command prints a private directory under `.agentic-local/reviews/`. Use that exact
-path in the next commands:
-
-```bash
 python3 scripts/agentic/review.py run /absolute/path/printed/by/prepare
-# Read review.md and confirm its evidence before publication.
 python3 scripts/agentic/review.py publish /absolute/path/printed/by/prepare
+python3 scripts/agentic/review.py qualify /absolute/path/printed/by/prepare
 ```
 
-`prepare` checks the plan's issue association and the current PR head/base. It fetches
-the PR and base refs, computes the merge base, collects the complete textual diff,
-issue and PR comments, inline findings, reviews, status contexts and check runs.
-Pagination covers all timeline/review/check pages. Source files are read as Git blobs.
-No PR checkout, Git filter, project hook or project command is executed.
+Preparation paginates the public contract, discussions, reviews, check runs and status
+contexts. It reads Git blobs without checkout, filters or project execution. Small
+contract artifacts and deterministic component scopes lead to required code, tests,
+findings/repairs and cross-boundary material; complete source and diff remain available.
+A repair packet may add `--prior-review DIRECTORY`. Its validated ancestor report
+provides delta-first navigation while preserving current original scope and prior
+uncovered obligations. It cannot inherit qualification for the new head.
 
-The snapshot contains an index mapping original paths to numbered `.txt` files, so
-repository agent settings, hooks and skills cannot become active configuration.
-Git symlinks and submodules are listed as omissions and never followed. Known private
-and data directories are excluded; a diff touching such paths is refused before it is
-transmitted. This path policy is a baseline, not a content-based secret detector.
-Inspect your own source and augment exclusions for a project's restricted paths.
+`run` performs its actual-tool capability probe inside the same request and records
+sanitized events. It returns exit 2 when a report is saved but coverage is incomplete.
+Publication retains useful findings with an explicit incomplete label. Only verified
+complete material can be designated by the managed pipeline or pass low-level/finish
+readiness. Findings still require human disposition. Model reports never impersonate
+human approval or resolve threads automatically.
 
-FLOW-DC additionally excludes `files/input/`, `files/output/`,
-`files/biotrove_train_stats.json`, `benchmark/manifests/`, `benchmark/results/`,
-`playground/` and `archives/`. These exclusions apply to both source snapshots and
-changed paths, including deletions and renames. Maintained `files/config/` examples
-and benchmark source remain reviewable; being a JSON file does not make a config
-private. Inspect public text and configs for sensitive content before publication.
+## Isolation and budgets
 
-The review diff has **no byte cap by default**: `max_diff_bytes` is `null`, and
-omitting that key also means unlimited. To opt into a cap, set a positive integer
-number of UTF-8 bytes, for example `"max_diff_bytes": 500000`. Boolean, string, zero
-and negative values are invalid. An empty diff is still rejected. A diff exceeding
-an enabled cap fails before packet creation; it is never silently truncated.
+Snapshots map original paths to numbered inert `.txt` blobs. PR agent profiles, hooks,
+skills and configuration remain data. Active policy/profile come from the trusted
+clean default-branch checkout. The process has a temporary home, fresh Copilot/XDG
+state, disabled hooks/MCP, no inherited provider override, no prompt memory/resume,
+no permission to execute, edit or delegate and no broad `*` permission. Authentication
+is supplied separately in the token environment. Workspace hashes detect changes.
+These controls restrict model tools/config discovery; they are not an OS sandbox
+against a compromised CLI executable.
 
-Other limits remain: 250000 bytes per source file, 12000000 bytes of source snapshot,
-900 seconds and 400 Copilot AI credits. Source-file omissions are indexed; exceeding
-the total source budget fails. These are operational choices, not claims about model
-capacity or complete coverage. Credit controls can overshoot by an in-flight request.
-A large diff can still exhaust context, time or credits, and an incomplete review
-consumes the task's attempted round. Report coverage honestly.
+Private/data exclusions include `memory`, `.agentic-local`, credentials, `files/input`,
+`files/output`, `files/biotrove_train_stats.json`, `benchmark/manifests`,
+`benchmark/results`, `playground` and `archives`. A diff touching them is refused,
+including deletions/renames. Symlinks/submodules are never followed. Maintained example
+configs and benchmark code remain inspectable. Path exclusions are not a content-based
+secret detector: inspect public source and comments for sensitive material.
 
-The managed executor has a separate `managed_max_prompt_bytes` limit, defaulting to
-300000. It must be a positive integer and does not inherit the review diff setting.
-Changing one limit never silently changes the other.
+`max_diff_bytes` is unlimited when null/omitted; an explicit positive integer opts into
+a hard pre-packet cap. There is no silent diff truncation. Per-source-file limit is
+250000 bytes and the combined head/base/carried-source budget is 12000000 bytes.
+Scopes are navigation within one request, not additional paid rounds. Existing limits
+remain 900 seconds and 400 Copilot AI credits; in-flight provider requests can overshoot
+credits. Large reviews may still exhaust time/context/credits and remain incomplete.
+The separate managed executor prompt limit remains 300000 bytes.
 
-`run` copies the packet to a fresh workspace outside the repository, then uses fresh Copilot state, disabled hooks, no built-in MCP server, no inherited
-provider override and no permission to execute, edit or delegate. Prompt-mode memory
-and resume are not enabled. Repository policy and domain rubric come from the trusted
-main checkout and are explicitly supplied as text. The requested model is recorded;
-the template does not claim it independently attests to the provider's internal model
-identity. Inspect `usage.json` and provider session metadata when that matters.
-The tool controls follow the [Copilot CLI reference](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-command-reference)
-and [custom agent configuration](https://docs.github.com/en/copilot/reference/custom-agents-configuration).
+The pinned CLI is 1.0.83. Requested configuration, help and synthetic fixtures do not
+prove live tool availability. Successful actual canary calls and supported events are
+necessary. An unknown layout yields a durable incomplete result and actionable reasons;
+it never triggers a broader permission workaround or automatic paid retry.
 
-The child process receives a temporary home and explicit temporary XDG directories
-as well as fresh `COPILOT_HOME`, so personal home-directory skills and configuration
-are not discovered through the usual paths. Authentication is supplied separately
-through the token environment variable. These settings limit configuration discovery;
-they are not an OS sandbox against a compromised CLI executable.
+## Exact storage, publication and recovery
 
-`publish` rechecks head and base, verifies snapshot and report hashes, and creates a
-COMMENT review with an explicit `commit_id`. Repeated publication of the same report
-returns its existing review URL. Any new head/base requires a new snapshot. Findings
-do not automatically become approval, a green required check, or resolved threads.
+`review.md` contains exact model-response bytes. `review-result.json` journals them with
+sanitized diagnostics before final storage. Retry storage with the same directory only
+when that journal is valid; recovery and completed-result reuse invoke no model. A
+started attempt without a valid journal needs investigation, not a blind rerun.
+Reports exceeding the 60000-byte publication limit remain intact; the prompt requests
+less than 50000 bytes but that guidance is not a guarantee.
 
-The review directory is private working state, not a cryptographic attestation against
-its own owner. Its hashes catch accidental edits. A user able to rewrite the manifest
-can rewrite the record, so GitHub permissions and human assessment remain necessary.
-The private state root and new ancestor/run directories use owner-only access
-(`0700`); task and review entrypoints also restrict an existing state root. Atomic
-records and executor prompts use `0600`. Provider-created files may retain the
-process umask, but their owner-only parent directories prevent access by other users.
+GitHub publication uses exact UTF-8 JSON transport, an attributed coverage label,
+explicit head SHA and an idempotence marker. Reconciliation compares the whole body,
+head and state. Missing/changed diagnostics, altered reports or stale head/base fail.
+Legacy records stay readable but cannot acquire new qualification. Use
+`review.py verify-publication DIRECTORY` for a read-only exact-byte comparison with
+GitHub, including historical control characters; it performs no model request.
 
-## Recover a saved review without another model request
-
-After a successful model response and packet/head/base checks, the helper atomically
-saves `review-result.json` outside the packet. This private journal binds the exact
-UTF-8 report, its digest and the observed CLI version to the input metadata. It then
-atomically writes `review.md` and the final metadata. The CLI version is checked
-before the paid request, so a later version-probe failure cannot strand its output.
-
-If either final-file write fails after the journal is saved, retry `run` using the
-same directory. The helper verifies the journal, packet and current head/base and
-finishes storage without invoking Copilot. The managed `task-review --execute --publish`
-path performs the same recovery and retains one attempted round. A completed,
-unaltered journaled report can also be reused without another request. Changed
-completed reports, changed journals and stale snapshots are rejected.
-
-This recovery applies only when a valid journal was durably saved. A failure before
-that point remains incomplete; do not delete records or assume a repeated command
-is free to rerun the model. An older incomplete packet without a journal has no new
-recovery guarantee. Storage failure, budget exhaustion and snapshot staleness can
-still prevent completion and must be reported honestly.
-
-All review text and subprocess text I/O use explicit UTF-8, including when Python's
-UTF-8 mode and locale coercion are disabled. The prompt asks for a report below
-50000 UTF-8 bytes; publication retains the existing 60000-byte hard limit. Oversized
-reports are preserved for inspection and refused without silent truncation or an
-automatic model retry. A provider can exceed a requested output length, so the prompt
-limit is guidance rather than a guarantee.
-
-## Why the snapshot differs from the PDF's detached checkout
-
-A detached worktree reduces branch mistakes but is not a read-only security boundary:
-an agent with shell access can still edit files, push a SHA or inspect shared credentials.
-This implementation strengthens the review boundary by exporting committed text and
-limiting tools. It also prevents a PR from installing its own reviewer hooks.
-
-For independent execution tests, a human can create a detached worktree in a suitable
-environment and run inspected commands without giving the model execution permission:
-
-```bash
-git fetch origin refs/pull/456/head
-git worktree add --detach ../PROJECT-worktrees/review-pr-456 FULL_REVIEWED_HEAD_SHA
-```
-
-Confirm the fetched SHA matches the record. Test environments write caches and may
-execute arbitrary project code; use disposable infrastructure for unfamiliar code.
-Attach command and commit evidence to the PR. The static reviewer must never describe
-those tests as having executed them itself.
+Raw provider homes, reasoning, unrestricted logs, tokens and environment dumps are not
+archived. Bounded sanitized diagnostics and known usage counters survive failures.
+Local state directories use owner-only access and atomic records use mode 0600. The
+owner can rewrite private records and hashes; they are not independent attestations.
 
 ## Report contract
 
+Return JSON matching `report-schema.json`: version 1, findings, coverage and limitations.
+Every required ID must have a reviewed/unread/unsupported row, inspected packet line
+locations and an explicit reason when incomplete. The wrapper correlates locations
+with actual successful tool results. A checkmark, percentage, file listing or diff
+header cannot replace source/test inspection. Observed reads do not prove understanding.
+
 | Severity | Meaning |
 | --- | --- |
-| P0 | Catastrophic, concrete merge blocker |
+| P0 | Concrete catastrophic merge blocker |
 | P1 | Likely major correctness or security failure in supported use |
 | P2 | Reachable edge-case defect or substantive evidence gap |
 | P3 | Minor optional improvement; suppress tooling-covered style remarks |
 
-Every finding needs **location, claim, trigger, impact, evidence and minimal fix
-direction**. Use original repository paths and line numbers from the mapped source,
-not the numbered snapshot filenames. Demonstrate the reachable code path or provide
-a reproducible test proposal. Do not invent executed commands.
+Every finding needs an ID, severity, original path/line, claim, trigger, impact,
+evidence and minimal fix direction. Empty findings are allowed when no material defect
+is supported. State uncertainty and unsupported acceptance evidence honestly. Never
+invent executed commands. Apply [the domain rubric](domain-review.md) to scientific
+changes: green software checks are not scientific validation.
 
-End with:
+## Static versus executable validation
 
-1. Acceptance criteria verified or still unsupported.
-2. Validation independently executed, if any; the static CLI reviewer executes none.
-3. Limitations, omitted source, inaccessible artifacts and residual risks.
+`validation.json` contains separately attributed, point-in-time CI observations and
+available hosted execution receipts. Each receipt distinguishes PR head association
+from the actual tested checkout/merge SHA. Unknown, missing, skipped, failed, stale or
+expired observations stay visible. Required CI still must pass independently. The
+reviewer executes no tests and receives no model shell access.
 
-Explicitly state when no material finding is supported. Treat uncertain concerns as
-questions, not proven defects. Check negative inputs, missing data, ties, NaNs,
-interruption, compatibility, concurrency and numerical boundaries where relevant.
-For scientific changes apply [the domain rubric](domain-review.md).
+CI runs PR code only on disposable hosted runners without model/cloud secrets.
+Never execute unfamiliar PR code on a credential-bearing workstation as a substitute.
+For this implementation the coordinator separately runs the local suite in its existing
+allowed environment because the executor sandbox denies local test-server sockets.
 
 ## Manual Actions procedure
 
-Complete the protected-environment setup in [SETUP.md](SETUP.md#6-hosted-review-is-opt-in).
-Then use **Actions → manual Copilot review → Run workflow**, on the default branch.
-Select the PR, issue, plan comment ID and exact head. Choose publication only when
-you intend to post the generated report; otherwise download and inspect the artifact.
+Complete [the protected environment setup](SETUP.md#6-hosted-review-is-opt-in), then
+run the default-branch workflow with PR, issue, designated plan and exact head:
 
 ```bash
 gh workflow run copilot-review.yml --ref main \
@@ -198,63 +140,23 @@ gh workflow run copilot-review.yml --ref main \
   -f head_sha=FULL_CURRENT_PR_HEAD_SHA -F publish=false
 ```
 
-Generation and publication are separate jobs. The model job has only read permissions;
-the publication job has PR write permission and does not run a model. Neither checks
-out or executes PR code. Same-repository PRs only are supported. Forks and non-default
-base branches need a separate reviewed isolation procedure, not a bypass flag.
-
-The workflow is deliberately opt-in and manual. It has no issue-comment trigger,
-automatic repair loop, model token on ordinary PR checks, or self-hosted runner.
-Changing the workflow or its credentials is T4 work.
+The model job is read-only; publication runs separately with PR write permission and
+no model. Neither executes PR code. Sanitized artifacts upload on failed runs too.
+When publication is requested, an intact partial report can be published after an
+incomplete run, but the qualification step keeps the workflow nonpassing. Same-repo
+PRs targeting the default branch are supported. No comment-triggered repair loop or
+self-hosted runner is enabled.
 
 ## Model selection and repair
 
-The configuration requests exactly `claude-opus-5`. Other Opus versions and Claude
-families are separate choices and are not automatic substitutes. Choose another explicit
-Claude ID only after checking account availability and deciding the cost is
-justified. Do not use `auto`, a built-in agent that silently
-selects another family, or the implementation conversation as a review session.
-Native GitHub Copilot code review is a separate service and does not let you pin this
-Claude choice; see [GitHub's code review description](https://docs.github.com/en/copilot/concepts/agents/code-review).
+Request exactly `claude-opus-5`, not `auto` or another Claude version/family. A model
+change needs deliberate policy/availability/budget review. Historical Sonnet/Fable
+adoption records retain their original meaning; neither those runs nor mocked tests
+prove Opus access or current capability. New packets freeze the trusted model/budget.
 
-Local preparation reads configuration from the caller's clean main checkout;
-Actions reads it from the trusted default branch. A model-change PR takes effect
-for the standard review procedure after the maintainer merges it and the local
-main checkout is updated. The normal procedure reviews the introducing PR under the existing trusted configuration.
-An explicit maintainer instruction to use the new model/budget for that PR permits
-a narrowly scoped override in the trusted invocation. Record the authorization and
-exact values in fresh packet metadata; do not activate unreviewed PR instructions or
-rewrite existing packets. This is how the Opus/400-credit transition was authorized. Changing an interactive Copilot model preference
-does not override this wrapper's explicit `--model` argument.
-
-Prepare a fresh packet after a model change. Each packet records its requested
-model and budgets at preparation; changing `.agentic/config.json` afterwards does
-not retarget that packet. Check `metadata.json`, `review.md`, and CLI-reported
-`usage.json` for the actual run. Configuration and mocked tests do not prove live
-account access. Historical Sonnet pilot results in the [upstream verification record](https://github.com/Zi-Deng/agentic-github-template/blob/b4a1df739a15b20b26635602e6b6a21fb08e0ac5/docs/agent-workflow/VERIFICATION.md) remain
-evidence for those earlier runs, not evidence of Opus inference. Historical Fable
-reports are likewise retained under their original model and budgets.
-
-Managed repair remains an Astra task on the original branch **and original session
-UUID**. A missing UUID must be recovered rather than replaced or selected with
-`--last`. The legacy interactive launcher remains a manual alternative that starts
-a separate session. Post a finding-by-finding
-response with commits and evidence. One attempted round remains the default; additional
-review follows the critical-finding or explicit-continuation policy above. A larger
-per-review credit allowance does not authorize more rounds or establish completeness.
-
-### Claude Opus 5 access
-
-Checked on 2026-09-14. GitHub lists Claude Opus 5 as generally available and supports
-it in Copilot CLI for eligible plans. Business and Enterprise administrators may need
-to enable its model policy. Check the actual authenticated account rather than infer
-availability from a template setting. See [GitHub's Opus 5 announcement](https://github.blog/changelog/2026-07-24-claude-opus-5-is-now-available-in-github-copilot/)
-and [current supported models](https://docs.github.com/en/copilot/reference/ai-models/supported-models).
-
-The 400-credit setting is a provider-enforced soft allowance for this single-prompt
-review invocation, not a price quote or guarantee of complete inspection. Actual usage
-may overshoot at a request boundary. Preserve `usage.json` and report any incomplete
-coverage. See [GitHub's credit-limit reference](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-command-reference#command-line-options).
-
-Private-path exclusions and static tool restrictions remain in force. The snapshot's
-ordinary source and public comments are sent to Copilot for the authorized review.
+This PR changes review machinery. Unmerged PR code/instructions do not become trusted
+review policy automatically. The maintainer's existing request permits a documented
+narrow literal-tool/capability diagnostic invocation if necessary, not arbitrary PR
+hooks/configuration or extra requests. Record live versus synthetic evidence honestly.
+Repair stays on the original branch and Astra UUID. New commits invalidate readiness;
+continuation authorization and the existing review allowance still apply.

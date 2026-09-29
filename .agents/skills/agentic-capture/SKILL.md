@@ -14,3 +14,7 @@ Draft the observable problem, expected behavior, scope, exclusions, measurable a
 Resolve missing information that changes acceptance or scope. A request to create/publish an issue authorizes that publication; a draft-only request ends with the body for inspection. Use the documented publication helper with a stable operation key and a body file. Retain the key/returned ID; reconcile an uncertain response before retrying. Do not interpolate issue text into shell commands.
 
 Return the issue URL/number, the acceptance contract and remaining uncertainty. Stop after capture unless the user requested the complete workflow. Suggest the plan phase as the next action.
+
+Write separately discoverable acceptance criteria with source/test evidence and cross-boundary concerns. Distinguish static reviewer inspection, hosted executable validation and scientific evidence; identify unavailable material.
+
+Read [the coverage contract and migration runbook](../../../docs/agent-workflow/COVERAGE.md).

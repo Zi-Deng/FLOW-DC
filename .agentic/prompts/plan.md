@@ -6,3 +6,5 @@ criterion to files, invariants, tests and evidence. Identify compatibility, data
 numerical, concurrency, security and compute risks. State the smallest coherent PR
 scope and non-goals. Surface decisions not already authorized by the user. The approved
 plan belongs in an issue comment that the independent reviewer can retrieve later.
+
+Map each acceptance item to required source/test material and cross-boundary concerns. Plan bounded review scopes without multiplying paid requests. Identify omitted material and separate static inspection from exact-revision hosted validation.

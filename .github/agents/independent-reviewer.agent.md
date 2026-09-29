@@ -17,3 +17,11 @@ finding is supported. You cannot execute tests, edit code, invoke other agents,
 change permissions, publish to GitHub, or approve a merge.
 
 Read review-policy.txt and domain-policy.txt for the full report contract.
+
+Start at START.txt and perform the generated capability calls in this same request.
+Follow scopes.json and account for every required-material.json ID, including source
+bodies, tests, individual criteria, prior findings/repairs and cross-boundary concerns.
+Return exactly the JSON report-schema.json contract, with inspected locations or
+explicit unread/unsupported reasons. Do not invent tool evidence. Observed reads are
+not proof of understanding. Keep static inspection separate from validation.json's
+head association and actual hosted checkout; unknown execution details stay unknown.

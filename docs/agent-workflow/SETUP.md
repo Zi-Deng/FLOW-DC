@@ -101,7 +101,7 @@ The two required contexts must first appear and pass on a real PR:
 gh pr checks PR_NUMBER --repo Zi-Deng/FLOW-DC --json name,state,workflow
 ```
 
-Regular CI uses Ubuntu 24.04, Python 3.12, read-only permissions, pinned action commits, no persisted checkout credentials and bounded job timeouts. `flowdc-tests` runs the eight current application regressions. `agentic-quality` runs the workflow tests, scoped Ruff and structural checks. Both jobs also verify a clean checkout after validation.
+Regular CI uses Ubuntu 24.04, Python 3.12, read-only permissions, pinned action commits, no persisted checkout credentials and bounded job timeouts. `flowdc-tests` runs `python -B -m unittest discover -s tests -v` through `make test-flowdc`. `agentic-quality` runs the workflow tests, scoped Ruff and structural checks. Both jobs also verify a clean checkout after validation.
 
 After the baseline PR is merged and both contexts exist, generate and inspect the main ruleset from the control checkout:
 
@@ -146,3 +146,20 @@ different repository, supply equivalent validation targets, dependencies, lint
 configuration and CI jobs for that project. The installer prints this next step.
 FLOW-DC already contains these manually integrated files; its application dependencies
 and project-specific assertions are not generic template requirements.
+
+## Coverage schema upgrade
+
+Install the complete payload together: `scripts/agentic/review*.py`,
+`github_transport.py`, `ci_evidence.py`, `.agentic/schemas/review-report.json`, the
+literal-tool profile, prompts, eight skills, hosted workflow and coverage documentation.
+The installer discovers these files recursively and refuses overwriting different
+existing files. Preview in a disposable staging directory, inspect conflicts and
+apply the approved upgrade deliberately; do not replace a production installation
+just to test it. FLOW-DC's project-specific `flowdc-tests` job remains project-owned.
+
+Pin Copilot CLI 1.0.83. Its help must expose JSONL output and explicit session IDs;
+help is not live capability proof. New schema-2 packets require observed tool evidence.
+Old packets remain inspectable with their original semantics but cannot satisfy the
+new readiness gate. Do not regenerate historical provenance hashes or adopt unmerged
+PR policy into the trusted control checkout. See [the migration runbook](COVERAGE.md)
+and [dated verification notes](COVERAGE-VERIFICATION.md).

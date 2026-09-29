@@ -201,7 +201,8 @@ the reviewed SHA from the **review record**, not a new query assumed to be revie
 ```bash
 gh pr ready 456
 python3 scripts/agentic/workflow.py merge-preflight 456 \
-  --reviewed-sha FULL_SHA_RECORDED_IN_THE_REVIEW
+  --reviewed-sha FULL_SHA_RECORDED_IN_THE_REVIEW \
+  --review-directory /absolute/saved-review-directory
 ```
 
 Preflight checks current PR state, target branch, exact head, recorded review and
@@ -236,3 +237,18 @@ high-risk implementation, one small task and one review as an initial personal W
 limit. End at a durable boundary: posted plan, committed changes, draft PR, review or
 evidence manifest. Write private continuity notes in `memory/`; move reusable facts
 into public documentation only after checking them.
+
+## Review coverage and recovery
+
+Use the [coverage runbook](COVERAGE.md) for new reviews. The immutable packet exposes
+individual acceptance items, source hunks/context, relevant tests and prior findings.
+One request covers deterministic scopes plus a cross-boundary pass; scopes do not
+increase the request or credit budget. `task-review --prior-review DIRECTORY` validates
+repair ancestry and retains uncovered material. A changed head/base needs fresh evidence.
+
+A report with missing capability, malformed telemetry or unread required material is
+incomplete, even when its findings are useful. Publication labels that limitation;
+managed designation, hosted qualification, preflight and finish refuse readiness.
+Inspect durable sanitized diagnostics before any authorized continuation. Recover a
+valid saved journal without another paid call. Never relabel legacy records as covered.
+The operator can rewrite private records; this is accounting, not owner-proof attestation.

@@ -16,3 +16,7 @@ Use finish preparation to validate the designated pipeline review, current head/
 Return the PR URL, reviewed head/base, review and evidence links, archive destination/inventory, and the exact `scripts/finish-task.sh` invocation for the human. Explain any queued/merged-but-not-cleaned state and the precise retry action. Never execute that script or `gh pr merge` yourself, including in an attempt to validate it against a real PR.
 
 The human-run script must verify remote merge state before archival/cleanup, preserve ignored files in its journaled archive, then reapply worktree/tip guards and delete only matching task branches. Tracked edits, unexpected non-ignored files, unsupported objects, changed tips and failed archival remain blockers. Archives have no automatic expiry. Validate destructive behavior only in disposable local Git fixtures with mocked GitHub.
+
+Require machine-validated coverage and exact published output bound to the current packet/head/base. Reject legacy, partial, malformed or missing diagnostics, including manually supplied review IDs. Coverage accounting does not prove understanding or human approval; required checks and acceptance remain separate.
+
+Read [the coverage contract and migration runbook](../../../docs/agent-workflow/COVERAGE.md).

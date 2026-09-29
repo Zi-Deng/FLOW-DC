@@ -1,0 +1,128 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "findings",
+    "coverage",
+    "limitations"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "severity",
+          "path",
+          "line",
+          "claim",
+          "trigger",
+          "impact",
+          "evidence",
+          "fix"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "severity": {
+            "enum": [
+              "P0",
+              "P1",
+              "P2",
+              "P3"
+            ]
+          },
+          "path": {
+            "type": "string"
+          },
+          "line": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "claim": {
+            "type": "string"
+          },
+          "trigger": {
+            "type": "string"
+          },
+          "impact": {
+            "type": "string"
+          },
+          "evidence": {
+            "type": "string"
+          },
+          "fix": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "coverage": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "state",
+          "locations",
+          "reason"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "state": {
+            "enum": [
+              "reviewed",
+              "unread",
+              "unsupported"
+            ]
+          },
+          "locations": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "artifact",
+                "start_line",
+                "end_line"
+              ],
+              "properties": {
+                "artifact": {
+                  "type": "string"
+                },
+                "start_line": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "end_line": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            }
+          },
+          "reason": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "limitations": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  }
+}

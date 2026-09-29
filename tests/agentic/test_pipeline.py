@@ -1,9 +1,9 @@
 """PR and independent-review integration using Git fixtures and model doubles."""
 
-import hashlib
 from pathlib import Path
 from unittest.mock import patch
 
+from review_fixtures import store as store_review
 from test_workflow import GitFixture, git, workflow
 
 # The shared fixture establishes the scripts import path.
@@ -71,17 +71,33 @@ class PipelineFixture(GitFixture):
 
     def model_double(self, repo, directory):
         self.model_runs += 1
-        directory = Path(directory)
-        report = directory / "review.md"
-        report.write_text(f"No material findings supported. Mock round {self.model_runs}.\n")
-        meta = review.verify_packet(directory)
-        meta["review_sha256"] = review.digest(report)
-        meta["copilot_version"] = "test double"
-        workflow.write_json(directory / "metadata.json", meta)
-        return report
+        return store_review(repo, directory)
 
 
 class PipelineTests(PipelineFixture):
+    def test_partial_report_is_published_without_readiness_designation(self):
+        with patch.object(
+            review,
+            "review",
+            side_effect=lambda repo, directory: store_review(
+                repo, directory, "Incomplete source inspection.\n"
+            ),
+        ):
+            result = pipeline.review_task(self.repo, 12, execute=True, publish=True)
+        self.assertEqual(result["status"], "published-incomplete")
+        self.assertIsNone(result["designated_review"])
+        self.assertEqual(result["attempted_rounds"], 1)
+        self.assertIn("INCOMPLETE", self.reviews[0]["body"])
+        with self.assertRaises(workflow.WorkflowError):
+            pipeline.validate_designated(self.repo, tasks.TaskStore(self.repo).read("issue-12"))
+
+    def test_missing_diagnostics_refuse_even_a_manually_changed_designation(self):
+        with patch.object(review, "review", side_effect=self.model_double):
+            result = pipeline.review_task(self.repo, 12, execute=True, publish=True)
+        (Path(result["directory"]) / "diagnostics.json").unlink()
+        with self.assertRaises(workflow.WorkflowError):
+            pipeline.validate_designated(self.repo, tasks.TaskStore(self.repo).read("issue-12"))
+
     def test_existing_pr_receives_push_and_updated_evidence(self):
         result = pipeline.publish_pr(self.repo, 12, "Current title", self.body_file)
         self.assertEqual(result["pr"], 31)
@@ -201,20 +217,10 @@ class PipelineTests(PipelineFixture):
     def test_saved_result_recovers_and_publishes_without_another_attempt(self):
         def interrupted_result(repo, directory):
             self.model_runs += 1
-            directory = Path(directory)
-            meta = review.verify_packet(directory)
-            body = "No material findings supported. Saved model result.\n"
-            tasks.atomic_json(
-                directory / "review-result.json",
-                {
-                    "schema_version": 1,
-                    "input_digest": tasks.digest(meta),
-                    "body": body,
-                    "review_sha256": hashlib.sha256(body.encode("utf-8")).hexdigest(),
-                    "copilot_version": "test double",
-                },
-            )
-            raise OSError("Interrupted after saving model result")
+            with patch.object(
+                review, "atomic_text", side_effect=OSError("Interrupted after saving model result")
+            ):
+                store_review(repo, directory)
 
         with patch.object(review, "review", side_effect=interrupted_result):
             with self.assertRaisesRegex(OSError, "Interrupted"):
