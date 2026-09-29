@@ -120,12 +120,17 @@ python bin/download_batch.py --config config.json
 The asynchronous base and gradient paths share [HTTP measurement and Retry-After
 semantics](docs/research/HTTP-MEASUREMENT.md), including authority admission when
 PAARC is disabled. Overview reports label corrected timing/accounting with
-`http_measurement.version = "2-body-first-byte"` and report input URLs without a
+`http_measurement.version = "3-output-independent-latency"` and report input URLs without a
 final outcome as `summary.unattempted_or_cancelled_urls`. Legacy TTFB measurements
 are not directly comparable to this signal.
 Interval `n_unknown_failures` separately counts unexpected acquisition exceptions;
 their cause and any server overload are not inferred. Overview metadata describes
 this category alongside the other corrected accounting semantics.
+Version 3 retains a valid completed-body latency sample when a later local save or
+size lookup fails. That row fails with zero useful-byte credit and no added overload
+feedback. Version 2 excluded these samples; the dispatch/first-byte clock definition
+is unchanged. This is an accounting correction, not a transactional-output or
+recovery guarantee.
 
 ### download_batch_gradient.py
 
@@ -160,6 +165,11 @@ python bin/SplitParquet.py \
 # Using a configuration file
 python bin/SplitParquet.py --config partition_config.json
 ```
+
+Partition host-column migration: `--add_host_column` now emits the derived value as
+`__flowdc_partition_host__`, preserving any original `host` column as row metadata.
+Consumers of the former derived `host` field must read the reserved name instead.
+Empty inputs emit one empty partition and print its path with the zero-row count.
 
 **Partitioning Methods:**
 
@@ -356,10 +366,101 @@ Hard overload signals still take precedence and enter the inherited `BACKOFF` pa
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `naming_mode` | string | `sequential` | Filename strategy: `sequential` or `url_based` |
-| `create_tar` | bool | true | Create tar.gz archive of output |
-| `create_overview` | bool | true | Write an internal `overview.json` before archiving and an external overview containing the archive path |
+| `naming_mode` | string | `sequential` | Filename strategy: `sequential`, `url_based`, or immutable `row_id`; conflicting legacy destinations fail affected rows |
+| `create_tar` | bool | true | Create an archive from verified committed rows |
+| `compress_tar` | bool | true | Gzip the archive; false produces an uncompressed `.tar` |
+| `create_overview` | bool | true | Write internal/external overview reports referencing the final completion record |
 | `force_overwrite` | bool | false | Allow deletion of an existing output folder; CLI equivalent: `--force` / `-f` |
+| `research_profile` | bool | false | Select row-ID naming, WebDataset metadata, uncompressed archive and overview; CLI: `--research_profile` |
+| `resume` | bool | false | Reconcile, then continue eligible unresolved rows within their original attempt budgets; CLI: `--resume` |
+| `reconcile` | bool | false | Inspect/recover owned output offline, with no HTTP calls; CLI: `--reconcile` |
+
+### Output integrity and recovery
+
+Both maintained downloaders preserve every original input row, including invalid URLs
+and duplicate URL/content requests. Identity combines the original manifest SHA-256
+and source position; `SplitParquet.py` preserves parent identities. Each row receives
+one disposition: verified, failed, skipped (invalid URL), or demonstrably unattempted.
+Interrupted attempts remain failed with uncertain attempt information until recovered.
+
+For research runs, use [the example configuration](files/config/research-output-integrity.json)
+or the preset flag:
+
+```bash
+python bin/download_batch.py --input input.parquet --output output --research_profile
+python bin/download_batch.py --output output --reconcile
+python bin/download_batch.py --input input.parquet --output output --research_profile --resume
+```
+
+The gradient entrypoint accepts the same operations. Resume requires the same input
+bytes, effective configuration and runtime source hashes; use the original configuration
+with `--resume`. Offline reconciliation also requires the original base or gradient
+entrypoint; a variant mismatch fails before changing reports. Recovery and overwrite
+are mutually exclusive. Existing outputs still
+require interactive consent or `--force` for replacement, after input and ownership
+validation. Conflicting unowned files and symlinks are preserved and cause failures.
+The entire output path, including its ancestors (home, scratch and mount aliases),
+must contain no symlinks. Use the real directory path instead of a symlink alias;
+the filesystem error names the rejected component. Missing ancestors created by the
+integrity layer use `0700` subject to umask; existing ancestor modes are unchanged.
+
+Recorded destination rejections and local/unknown attempt failures are terminal for
+that run, even after a conflicting file is removed or storage is repaired. `--resume`
+does not clear them or consume more attempts for them. Keep the old directory and its
+verified partial outputs as evidence. To reacquire those rows, use the same input and
+configuration with a new, absent output directory (without `--resume` or `--force`).
+This is a separate run that requests the input rows again, not an in-place repair or
+adoption of old artifacts. Do not edit `.flowdc/` to reset dispositions or budgets.
+
+Schema-2 acquisition and `SplitParquet.py` currently require the whole manifest and
+its Python row metadata, ownership journal and outcome index to fit in process memory,
+alongside Polars frames and a downloaded payload. They are not streaming manifest
+processors. There is no validated 40M-row capacity claim for this integrity increment;
+row count alone cannot bound memory when metadata sizes vary. Use only manifests that
+fit the available memory with headroom; partitioning itself has the same whole-input
+requirement. Existing large-scale results describe earlier implementations.
+
+Retain the output directory, including `.flowdc/`: it holds ownership, attempt intent,
+verified staging and completion records. These records support process-interruption
+recovery. They do not promise host-power-loss durability or atomic publication of two
+files. Research completion requires a closed verified uncompressed archive and outcome
+index. ImageFolder and `--no_tar` select a separately labeled local-files boundary.
+
+Schema-2 reports expose integer `verified_payload_bytes`, `unique_content_bytes`,
+`artifact_file_bytes` and measured `observed_response_body_bytes`. Body counts are
+decoded application bytes, not network wire bytes. Repeated rows receive separate
+payload credit; identical content counts once in unique-content bytes. Compatibility
+MB fields remain decimal displays. Resumed/offline elapsed time and throughput are
+null because the implementation does not reconstruct elapsed time across interruptions.
+Gradient resume also sets `gradient_summary` to null with
+`gradient_summary_scope="unavailable_across_resume"`; controller counters are not
+persisted across invocations. Offline reconciliation retains the previous summary and
+its scope. The benchmark adapter rejects schema-2 reports with unavailable elapsed
+time rather than treating them as measured zero-duration benchmark runs.
+For measured schema-2 benchmark records, the legacy `throughput_mbps` field means
+MiB/s: exact verified payload bytes / 1,048,576 / elapsed seconds. Its extra metrics
+record that unit and divisor, matching historical benchmark and img2dataset units;
+decimal display MB is not used to compute it. Historical result files are unchanged.
+
+Integrity-created class, staging and ancestor directories use `0700`; payloads,
+sidecars and exports use `0600` (subject to umask). The maintained entrypoint's
+output root itself retains ordinary umask-derived mode. Archive members use `0600`.
+The owner-only artifacts change the former umask-derived shared access;
+group readers or workers running as a different user need a separately arranged export
+and access policy. The downloader does not broaden existing permissions.
+
+The authoritative run result is `.flowdc/final.json`, written last. Final overview
+reports carry its expected SHA-256 and leave `run_complete` and
+`useful_final_payload_bytes` null until that record is checked. The overview inside
+the archive describes the earlier local-files stage. `successful_downloads` counts
+verified local rows, so it alone does not establish archive/run completion. See the
+[protocol and compatibility specification](docs/research/OUTPUT-INTEGRITY.md) and
+[validation record](docs/research/OUTPUT-INTEGRITY-VALIDATION.md).
+
+The `create_tar()` helper rejects already finalized managed directories without
+changing their evidence. Use `--reconcile` to rebuild and verify the archive, reports
+and final record together. Attempt-journal storage failures abort before HTTP rather
+than retrying without a recorded attempt; repair storage before explicit resume.
 
 ## Input File Format
 
@@ -383,7 +484,8 @@ FLOW-DC accepts input files in multiple formats. The file must contain a column 
 
 ### ImageFolder
 
-Organizes images into class-specific subdirectories, compatible with PyTorch's `ImageFolder` dataset class:
+Organizes images into class-specific subdirectories, with per-row JSON sidecars and
+an outcome index. Consumers should select payloads by extension or the outcome index:
 
 ```
 output/
@@ -393,6 +495,9 @@ output/
 └── Species_B/
     └── 00000002.jpg
 ```
+
+The run root also contains `.flowdc/` recovery state. Class-directory discovery must
+exclude it; loaders that treat every subdirectory as a class need that filter.
 
 ### WebDataset
 
@@ -407,13 +512,24 @@ output/
 └── ...
 ```
 
-Each JSON file contains metadata about the corresponding image:
+Each maintained-run JSON sidecar includes the original row metadata, immutable identity,
+payload path, byte length and SHA-256. The legacy helper's small metadata tuple/API remains
+available; standalone helper calls do not create a recoverable run. A schema-2 sidecar
+has this shape (hashes abbreviated):
 
 ```json
 {
-    "key": "00000001",
+    "schema_version": 2,
+    "key": "row-sha256",
+    "row_id": "row-sha256",
     "url": "https://example.com/img1.jpg",
-    "class_name": "Species_A"
+    "source_manifest": "manifest-sha256",
+    "source_position": 0,
+    "source_rows": 3,
+    "row": {"url": "https://example.com/img1.jpg", "species": "Species_A"},
+    "payload": "00000001.jpg",
+    "payload_bytes": 1000000,
+    "payload_sha256": "content-sha256"
 }
 ```
 

@@ -270,9 +270,12 @@ class DownloaderFixtureTests(unittest.TestCase):
                         observed = [
                             digest(value)
                             for key, value in archive.items()
-                            if value is not None and not key.endswith("/overview.json")
+                            if value is not None and key.endswith(".png")
                         ]
                         self.assertEqual(Counter(observed), Counter(part["expected_sha256"]))
+                        index = json.loads(next(value for key, value in archive.items() if key.endswith("/outcome-index.json")))
+                        self.assertEqual(index["counts"], {"verified": 32, "failed": 0, "skipped": 0, "unattempted": 0})
+                        self.assertEqual(len({row["row_id"] for row in index["rows"]}), 32)
                 rows = [json.loads(line) for line in (root / "origin.jsonl").read_text().splitlines()]
                 self.assertEqual(len(rows), 130)
                 self.assertEqual(sum(row["status"] == 503 for row in rows), 2)

@@ -14,6 +14,7 @@ SOURCE_PATHS = (
     "bin/TaskvineFLOWDC.py",
     "bin/download_batch.py",
     "bin/single_download.py",
+    "bin/flowdc_integrity.py",
 )
 MAX_SOURCE_BYTES = 4 * 1024 * 1024
 GIT_TIMEOUT_SECONDS = 10
@@ -83,6 +84,11 @@ def read_source(repository, revision):
     total = 0
     for path in SOURCE_PATHS:
         tree = _git(repository, "ls-tree", "-z", commit, "--", path)
+        if path == "bin/flowdc_integrity.py" and not tree:
+            # Historical schema-1 source commits predate this dependency.
+            if any(b"flowdc_integrity" in content for content in files.values()):
+                raise SourceError("source_entrypoint_invalid")
+            continue
         try:
             metadata, name = tree.removesuffix(b"\0").split(b"\t")
             mode, kind, object_id = metadata.decode("ascii").split(" ")

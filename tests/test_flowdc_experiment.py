@@ -528,12 +528,23 @@ sys.exit(cli.main())
         self.assertEqual(state["cleanup"], "uncertain")
 
     def test_partition_reads_use_remaining_aggregate_staging_budget(self):
+        import polars as pl
+
         self.value.pop("fixture")
         partitions = []
         for index in range(3):
             path = self.root / f"large-{index}.parquet"
-            path.write_bytes(b"x" * (100000 if index == 0 else 600000))
+            # Exercise both URL validation and the committed source's identity
+            # path with real Parquet. Uncompressed padding controls fixture size.
+            pl.DataFrame(
+                {
+                    "url": ["https://example.invalid/image.png"],
+                    "padding": [b"x" * (100000 if index == 0 else 600000)],
+                }
+            ).write_parquet(path, compression="uncompressed", statistics=False)
             partitions.append({"path": str(path), "rows": 1})
+        first_size = Path(partitions[0]["path"]).stat().st_size
+        self.assertGreater(first_size, 100000)
         self.value["partitions"] = partitions
         self.path.write_bytes(data.encode(self.value))
         real_read, attempts = cli.read_file, []
@@ -546,13 +557,14 @@ sys.exit(cli.main())
         with (
             patch.object(cli, "LIMIT", 2 * 1048576),
             patch.object(cli, "read_file", observed_read),
-            patch.object(cli, "parquet_rows", return_value=1),
+            patch.object(cli, "parquet_rows", wraps=cli.parquet_rows) as validate,
         ):
             with self.assertRaisesRegex(data.ExperimentError, "staging_size_limit"):
                 cli.prepare(self.path)
         self.assertEqual(len(attempts), 2)
         self.assertLess(attempts[0], 524288)
-        self.assertEqual(attempts[0] - attempts[1], 100000)
+        self.assertEqual(attempts[0] - attempts[1], first_size)
+        self.assertEqual(validate.call_count, 1)
 
     def test_partition_validation_cached_per_distinct_url_column(self):
         import polars as pl

@@ -2,8 +2,8 @@
 
 Both `download_batch.py` and `download_batch_gradient.py` use the same helper,
 tracing and outcome classification. Overview reports label these semantics as
-`http_measurement.version = "2-body-first-byte"`. Earlier TTFB observations included
-whole-body reads and are not directly comparable. The method's equations and
+`http_measurement.version = "3-output-independent-latency"`. Before version 2, TTFB
+observations included whole-body reads and are not directly comparable. The method's equations and
 configuration defaults have not changed; corrected inputs can change its decisions.
 
 ## Timing boundary
@@ -22,12 +22,13 @@ with the batch controller; it does not add fields to either public helper tuple.
 | `final_headers_at` | Headers of the final response, after aiohttp's automatic redirects. |
 | `first_body_byte_at` | Completion of the first nonempty `response.content.read(1)` on HTTP 200. This observes decoded application-body availability. |
 | `body_completed_at` | Completion of the remaining successful body read. |
-| `ttfb` | `first_body_byte_at - t0`, eligible only after a complete HTTP-200 body. A local save failure clears eligibility too. |
+| `ttfb` | `first_body_byte_at - t0`, retained after a complete HTTP-200 body even if local output subsequently fails. |
+| `latency_eligible` | True only for a complete nonempty HTTP-200 body with a positive finite first-byte interval. Independent of saved-output success. |
 
 Headers and first-body-byte delays remain visible separately; delaying only the
 tail changes completion time without moving the first-byte observation. Empty bodies
 have no first-byte event or sample. Partial bodies may retain an observed first-byte
-timestamp, but failed/timed-out/cancelled acquisitions provide no successful sample.
+timestamp, but incomplete/timed-out/cancelled body reads provide no eligible sample.
 Error response bodies are not read for latency samples. A zero-byte HTTP-200 output
 that saves successfully counts as an acquisition, with zero useful bytes and no
 latency sample.
@@ -54,10 +55,13 @@ controllers. The normalized Retry-After authority gate is independent of those k
 ## Outcomes and denominators
 
 `HostMetrics.record` receives explicit saved-output success from the batch path.
-Only completed HTTP-200 acquisitions with saved output increase `n_success` or
-useful saved `bytes`. Webdataset bytes are credited after both payload and metadata
+Only completed HTTP-200 acquisitions with saved output and a successful final size
+lookup increase `n_success` or useful saved `bytes`. Webdataset bytes are credited after both payload and metadata
 are saved. A failed save can leave partial output; collision/transactional output
 repair remains a separate gate.
+Missing output and failed size lookups are local failures, never successful zero-byte
+outputs. The shared batch byte tally is credited only after that final lookup.
+These checks do not yet establish digest verification or recoverable publication.
 
 Every completed acquisition attempt belongs to exactly one interval outcome:
 
@@ -75,15 +79,28 @@ local output failure or server congestion, so they occupy the additive unknown
 category and produce no overload or latency sample. Known aiohttp `ClientError`
 transport failures retain their transport/overload classification. `has_overload`
 follows that subset. A latency sample also
-requires a positive finite first-byte interval and nonempty saved payload; neither
-404 nor other failed statuses nor local failures contribute one. Metrics count
+requires a positive finite first-byte interval and a complete nonempty response body.
+Local output failures preserve that sample while receiving zero useful-byte credit;
+404 and other failed statuses do not contribute one. `n_samples` is therefore a
+separate observation count, not a subset of `n_success`. Metrics count
 completed attempts, so retried URLs can contribute several outcomes; cancellation
 does not create a completed-attempt observation.
 
-Overview `successful_downloads`/`failed_downloads` retain final-per-URL semantics.
-The additive `unattempted_or_cancelled_urls` counts input URLs without a final outcome,
-making the input denominator interpretable on shutdown. If a prior failed attempt
-exists when its retry is cancelled, that URL retains its last failed outcome.
+Version 2 (`2-body-first-byte`) used the same clock definition but excluded local
+output failures from latency samples and could report a failed final size lookup
+as a zero-byte success. Version 3 corrects those eligibility/outcome rules. Historical
+reports retain their original version and interpretation. Direct `HostMetrics.record`
+callers that omit `latency_eligible` retain the legacy saved-nonempty-output rule;
+the maintained HTTP helper provides explicit eligibility for base and gradient.
+
+Schema-2 overview `successful_downloads`/`failed_downloads` count final original-row
+dispositions, with duplicate URLs retained as distinct rows. Invalid URLs are skipped;
+`unattempted_or_cancelled_urls` is a compatibility alias for demonstrably unattempted
+rows. An interrupted intent is a failed unresolved row with uncertain attempt evidence.
+Integer verified payload bytes and observed decoded response-body bytes are separate.
+Local verification can later revoke payload credit without erasing an observed HTTP
+sample. See [output integrity](OUTPUT-INTEGRITY.md) for final completion boundaries;
+historical schema-1 reports retain their original interpretation.
 
 ## Shared Retry-After policy
 
@@ -172,6 +189,7 @@ experiment source packaging need no new file. YARL is already part of aiohttp's
 installed dependency set. The multithread comparison implementation, cloud-upload
 path and gradient distributed integration are outside this change.
 
-See the [validation record](HTTP-MEASUREMENT-VALIDATION.md) for observed checks and
-limitations and the [research contract](MANUSCRIPT-READINESS.md) for still-open
+See the [issue #20 validation record](HTTP-MEASUREMENT-VALIDATION.md),
+the [issue #22 output-accounting checkpoint](OUTPUT-INTEGRITY-VALIDATION.md) for
+observed checks and limitations, and the [research contract](MANUSCRIPT-READINESS.md) for still-open
 scientific evidence gates. These semantics establish no throughput or speedup claim.

@@ -6,7 +6,26 @@ and draft [PR #21](https://github.com/Zi-Deng/FLOW-DC/pull/21). The
 [measurement specification](HTTP-MEASUREMENT.md) defines the new semantics; the
 [research contract](MANUSCRIPT-READINESS.md) retains the open scientific gates.
 
-## Review-one repair status
+## Later coordinator completion (historical issue #20)
+
+The sections below preserve the executor handoff chronology. Their pending coordinator
+checks were subsequently completed; they are not current outstanding issue-20 work.
+As recorded in [issue #22](https://github.com/Zi-Deng/FLOW-DC/issues/22), the later
+[public coordinator evidence](https://github.com/Zi-Deng/FLOW-DC/pull/21#issuecomment-5877733753)
+establishes **43 focused tests**, **505 distinct full-gate tests** (364 product plus
+141 workflow), and **both CI jobs passing** after the review-one repair. The final
+PR-21 head is `5fbe2cb027a55f8a8906173b9b765b73578e7d5a`, following reviewed head
+`2c490c3925516f3b54bb93e81d7377e534354208`; merged main is
+`32b5ace5b47d2c660557fe89b6fc37c8f02ca5c6`. The earlier initial implementation was
+`8efd15dafa75258b89ab1b4bd94bf3a83ce51f5f`.
+
+This addendum attributes later completion to the existing public record supplied with
+the approved issue-22 contract. It does not move those tests earlier in time, claim a
+new execution on an old commit, or certify issue-22 changes. The issue-22 executor
+could not independently refetch that comment because network access was unavailable.
+New validation is tracked separately in [OUTPUT-INTEGRITY-VALIDATION.md](OUTPUT-INTEGRITY-VALIDATION.md).
+
+## Review-one repair status at executor handoff
 
 The [independent review](https://github.com/Zi-Deng/FLOW-DC/pull/21#pullrequestreview-5343819047)
 assessed head `2c490c3925516f3b54bb93e81d7377e534354208`. Its supplied timeline

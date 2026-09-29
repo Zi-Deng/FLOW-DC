@@ -57,6 +57,17 @@ class SourceTests(unittest.TestCase):
                 {"bytes": len(content), "sha256": hashlib.sha256(content).hexdigest()},
             )
 
+    def test_new_dependency_is_required_only_for_source_that_imports_it(self):
+        (self.repo / "bin/flowdc_integrity.py").unlink()
+        historical = self.commit_all()
+        manifest, files = source.read_source(self.repo, historical)
+        self.assertEqual(manifest["schema_version"], 1)
+        self.assertEqual(set(files), set(source.SOURCE_PATHS) - {"bin/flowdc_integrity.py"})
+        (self.repo / "bin/download_batch.py").write_text("import flowdc_integrity\n")
+        broken = self.commit_all()
+        with self.assertRaisesRegex(source.SourceError, "source_entrypoint_invalid"):
+            source.read_source(self.repo, broken)
+
     def test_rejects_moving_names_options_and_revision_expressions(self):
         for revision in ("HEAD", "main", "--help", self.commit + "^", "abc", None):
             with (

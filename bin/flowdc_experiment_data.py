@@ -244,7 +244,7 @@ def parquet_rows(raw, column):
         require(1 <= frame.height <= MAX_PARTITION_ROWS, "partition_row_limit")
         require(frame[column].dtype == pl.String and frame[column].null_count() == 0, "invalid_partition")
         require(all(re.match(r"https?://[^\s]+$", url) for url in frame[column]), "invalid_partition")
-        require(frame[column].n_unique() == frame.height, "duplicate_partition_urls")
+        # Duplicate URLs are distinct requested acquisitions, never deduplicated.
         return frame.height
     except Exception as exc:
         if isinstance(exc, ExperimentError):

@@ -7,6 +7,7 @@ Socket restrictions are errors, not skips or evidence of a product regression.
 
 import asyncio
 import json
+import os
 import sys
 import tempfile
 import time
@@ -247,7 +248,8 @@ class ClassificationTests(unittest.IsolatedAsyncioTestCase):
             "fail": base.DownloadOutcome("fail", "http://a.test", False, None, None, 404, "missing"),
         }
         report = base.generate_overview_report(cfg=cfg, df_total=3, outcomes=outcomes, elapsed_sec=1)
-        self.assertEqual(report["http_measurement"]["version"], "2-body-first-byte")
+        self.assertEqual(report["http_measurement"]["version"], "3-output-independent-latency")
+        self.assertIn("independent of local output success", report["http_measurement"]["latency_eligibility"])
         self.assertEqual(report["summary"]["successful_downloads"], 1)
         self.assertEqual(report["summary"]["failed_downloads"], 1)
         self.assertEqual(report["summary"]["unattempted_or_cancelled_urls"], 1)
@@ -518,8 +520,11 @@ class LocalHTTPTests(unittest.IsolatedAsyncioTestCase):
             base.TRACE_CTX.reset(token)
 
     async def download(self, session, url, manager, *, timeout=5, output=None):
+        # Timing/policy cases acquire separate outputs. Collision rejection has
+        # independent coverage and must not obscure these HTTP observations.
+        self.download_count = getattr(self, "download_count", 0) + 1
         cfg = base.Config(
-            input_path="unused", output_folder=str(output or self.root / "output"), timeout_sec=timeout
+            input_path="unused", output_folder=str(output or self.root / f"output-{self.download_count}"), timeout_sec=timeout
         )
         return await base.download_one(
             row={"url": url, "__key__": url.rsplit("/", 1)[-1]},
@@ -561,6 +566,7 @@ class LocalHTTPTests(unittest.IsolatedAsyncioTestCase):
         result, trace, _ = await self.fetch("empty")
         self.assertEqual(result[:3], (b"", 200, None))
         self.assertIsNone(trace.get("ttfb"))
+        self.assertFalse(trace["latency_eligible"])
 
     async def test_failed_status_has_no_first_byte_sample(self):
         result, trace, _ = await self.fetch("missing")
@@ -792,7 +798,7 @@ class LocalHTTPTests(unittest.IsolatedAsyncioTestCase):
                 self.handlers.update(redirect0=redirect, redirect1=redirect, limited=destination)
                 async with aiohttp.ClientSession() as session:
                     tasks = [asyncio.create_task(self.download(
-                        session, f"{self.url}/redirect{i}", manager, output=self.root / f"limit-{i}"
+                        session, f"{self.url}/redirect{i}", manager, output=self.root / f"limit-{module.__name__}-{i}"
                     ))
                              for i in range(2)]
                     try:
@@ -834,7 +840,7 @@ class LocalHTTPTests(unittest.IsolatedAsyncioTestCase):
                 self.handlers.update({"from-a": redirect, "from-b": redirect})
                 async with aiohttp.ClientSession() as session:
                     tasks = [asyncio.create_task(self.download(
-                        session, url, manager, output=self.root / f"reciprocal-{i}"
+                        session, url, manager, output=self.root / f"reciprocal-{module.__name__}-{i}"
                     )) for i, url in enumerate((f"{self.url}/from-a", f"{other}/from-b"))]
                     try:
                         outcomes = await asyncio.wait_for(asyncio.gather(*tasks), 3)
@@ -1022,10 +1028,55 @@ class LocalHTTPTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(snap["n_local_failures"], 1)
                 self.assertEqual(snap["n_success"], 0)
                 self.assertEqual(snap["bytes"], 0)
-                self.assertEqual(snap["n_samples"], 0)
+                self.assertEqual(snap["n_samples"], 1)
                 self.assertFalse(snap["has_overload"])
                 self.assertEqual(ctrl.semaphore.inflight, 0)
         self.assertEqual(blocked.read_text(), "preserve this file")
+
+    async def test_completed_body_survives_stat_and_metadata_failures(self):
+        for module in (base, gradient):
+            for failure in ("save-stat", "final-stat", "metadata"):
+                with self.subTest(module=module.__name__, failure=failure):
+                    output = self.root / f"{module.__name__}-{failure}"
+                    output.mkdir()
+                    cfg = base.Config(
+                        input_path="unused", output_folder=str(output), output_format="webdataset",
+                        naming_mode="url_based", file_name_pattern="payload",
+                    )
+                    manager = module.HostControllerManager(module.PAARCConfig())
+                    getsize, lookups, sizes = os.path.getsize, [], []
+
+                    def verify_size(path, failure=failure, lookups=lookups, getsize=getsize, output=output):
+                        self.assertEqual(Path(path).read_bytes(), b"ab")
+                        lookups.append(path)
+                        if failure == "metadata" and len(lookups) == 1:
+                            (output / "payload.json").mkdir()
+                        if failure == "save-stat" or (failure == "final-stat" and len(lookups) == 2):
+                            raise OSError("injected output stat failure")
+                        return getsize(path)
+
+                    async with aiohttp.ClientSession() as session:
+                        with patch("os.path.getsize", side_effect=verify_size):
+                            out = await base.download_one(
+                                row={"url": f"{self.url}/output", "__key__": "row"},
+                                cfg=cfg, session=session, total_bytes=sizes, manager=manager,
+                                sequential_namer=base.SequentialNamer(), global_written_paths={},
+                            )
+                    self.assertFalse(out.success)
+                    self.assertEqual(out.status_code, 200)
+                    self.assertEqual(out.bytes_downloaded, 0)
+                    self.assertEqual(sizes, [])
+                    self.assertEqual(Path(out.file_path).read_bytes(), b"ab")
+                    ctrl = await manager.get_controller(self.url)
+                    snap = await ctrl.metrics.finish_interval()
+                    self.assertEqual(snap["total"], 1)
+                    self.assertEqual(snap["n_failed"], 1)
+                    self.assertEqual(snap["n_local_failures"], 1)
+                    self.assertEqual(snap["n_success"], 0)
+                    self.assertEqual(snap["bytes"], 0)
+                    self.assertEqual(snap["n_samples"], 1)
+                    self.assertFalse(snap["has_overload"])
+                    self.assertEqual(ctrl.semaphore.inflight, 0)
 
     async def test_admission_timeout_is_bounded_and_releases_permit(self):
         for module in (base, gradient):
@@ -1078,6 +1129,7 @@ class LocalHTTPTests(unittest.IsolatedAsyncioTestCase):
                     self.assertIsNone(result[0])
                     self.assertIsNotNone(result[2])
                     self.assertIsNone(trace["ttfb"])
+                    self.assertFalse(trace["latency_eligible"])
                     self.assertIsNone(trace["body_completed_at"])
                     self.assertEqual(trace["failure_kind"], "transport")
         finally:

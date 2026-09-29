@@ -11,12 +11,12 @@ Supports multiple grouping strategies:
 The host-based grouping is recommended for distributed downloads as it ensures
 workers can maximize throughput by dealing with fewer unique hosts per partition.
 
-Uses Polars for high-performance processing of large datasets (40M+ rows).
+Uses Polars for grouping; integrity provenance currently materializes all source rows.
+The source and its metadata must fit in memory; 40M-row capacity is not validated.
 """
 
 import argparse
 import polars as pl
-import numpy as np
 import os
 import sys
 import json
@@ -24,6 +24,8 @@ from math import ceil
 from dataclasses import dataclass, field
 from enum import Enum
 from urllib.parse import urlparse
+from pathlib import Path
+from flowdc_integrity import stamp_frame, digest, PARTITION_HOST
 
 
 class GroupingMethod(Enum):
@@ -228,7 +230,7 @@ def greedy_grouping(num_partitions: int, df: pl.DataFrame, count_col: str, name_
 
     # Convert to rows for iteration (this is the slow part, but unavoidable for greedy)
     for row in sorted_df.iter_rows(named=True):
-        min_idx = int(np.argmin(partition_sums))
+        min_idx = min(range(num_partitions), key=partition_sums.__getitem__)
         partitions[min_idx].append(row)
         partition_sums[min_idx] += row[count_col]
 
@@ -299,7 +301,8 @@ def host_grouping(df: pl.DataFrame, url_col: str, num_partitions: int) -> pl.Dat
     df_result = df_with_host.join(
         host_groups.select(["_host", "group"]),
         on="_host",
-        how="left"
+        how="left",
+        nulls_equal=True,
     )
 
     return df_result
@@ -416,6 +419,17 @@ def main():
         print(f"Error: Grouping column '{inputs.grouping_col}' not found.")
         sys.exit(1)
 
+    # Stamp original input identity before ordering/partitioning. Keep original
+    # row metadata even when legacy grouping mutates its temporary label column.
+    df = stamp_frame(df, digest(Path(inputs.parquet).read_bytes()))
+    original_df = df.clone()
+    if inputs.groups < 1:
+        raise ValueError("groups must be positive")
+    if df.height == 0:
+        os.makedirs(inputs.output_folder, exist_ok=True)
+        saved = save_partition(df, 1, inputs.output_folder, inputs.output_format)
+        print(f"Empty input: 0 rows; saved 1 empty partition: {saved}")
+        return
     # Apply grouping method
     print(f"\nApplying {inputs.method} partitioning...")
 
@@ -440,7 +454,8 @@ def main():
         df_grouped = df.join(
             groups_df.select([inputs.grouping_col, "group"]),
             on=inputs.grouping_col,
-            how="left"
+            how="left",
+            nulls_equal=True,
         )
 
     else:
@@ -463,21 +478,10 @@ def main():
     for group in unique_groups:
         subset = df_grouped.filter(pl.col("group") == group)
 
-        # Remove internal columns from output
-        cols_to_drop = ['group']
-        if not inputs.add_host_column:
-            cols_to_drop.append('_host')
-
-        # Rename _host to 'host' for cleaner output
+        output_df = original_df.filter(pl.col("__key__").is_in(subset["__key__"].implode()))
         if inputs.add_host_column and '_host' in subset.columns:
-            subset = subset.rename({'_host': 'host'})
-
-        # Drop columns that exist
-        cols_to_actually_drop = [c for c in cols_to_drop if c in subset.columns]
-        if cols_to_actually_drop:
-            output_df = subset.drop(cols_to_actually_drop)
-        else:
-            output_df = subset
+            hosts = subset.select("__key__", pl.col("_host").alias(PARTITION_HOST))
+            output_df = output_df.join(hosts, on="__key__", how="left")
 
         filepath = save_partition(output_df, int(group), inputs.output_folder, inputs.output_format)
         saved_files.append(filepath)
