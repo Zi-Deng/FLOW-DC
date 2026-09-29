@@ -9,6 +9,7 @@ import tempfile
 import unittest
 from dataclasses import asdict
 from pathlib import Path
+from unittest.mock import patch
 from uuid import uuid4
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "bin"))
@@ -17,7 +18,7 @@ from flowdc_pilot_journal import allowance_binding_sha256, register
 from flowdc_pilot_supervisor import Supervisor
 from flowdc_pilot_supervisor import request as supervise_request
 from flowdc_pilot_topology import apply, preview, sha, source_digest, transition
-from flowdc_topology import from_legacy, role_names, roles
+from flowdc_topology import from_legacy, role_names, roles, selected_roles, selection
 from test_flowdc_pilot_lifecycle import FakeClock, FakeProvider, access, spec, synthetic_service
 
 
@@ -175,6 +176,137 @@ class TopologyTests(unittest.TestCase):
         self.assertEqual(after["events"][:-1], before["events"])
         self.assertEqual({key: after["vms"][key] for key in before["vms"]}, before["vms"])
 
+    def test_four_one_two_selection_preserves_all_enrolled_accounts(self):
+        apply(self.journal, self.request(4))
+        registered = copy.deepcopy(self.journal.read()["spec"])
+        workers = registered["topology"]["workers"]
+        provider = FakeProvider()
+        provider.states = dict.fromkeys(self.journal.read()["vms"], "SHELVED_OFFLOADED")
+        supervisor = Supervisor(self.journal, provider, clock=self.clock)
+        with self.journal.supervisor_lock():
+            supervisor.recover()
+            for chosen in (workers, workers[2:3], [workers[1], workers[3]]):
+                before = self.journal.read()
+                actions_start = len(provider.actions)
+                ids = {registered["topology"]["manager"], registered["topology"]["origin"], *chosen}
+                supervise_request(self.journal, "start", clock=self.clock, window=1200, worker_ids=chosen)
+                again = self.journal.read()
+                supervise_request(
+                    self.journal, "start", clock=self.clock, window=1200, worker_ids=list(reversed(chosen))
+                )
+                self.assertEqual(self.journal.read(), again)
+                with self.assertRaises(ops.OpsError):
+                    supervise_request(
+                        self.journal, "start", clock=self.clock, window=1200, worker_ids=[workers[0]]
+                    )
+                for _ in range(100):
+                    supervisor.tick()
+                    self.clock.advance()
+                    current = self.journal.read()
+                    if all(
+                        current["vms"][key]["observed"]
+                        and current["vms"][key]["observed"]["state"] == "ACTIVE"
+                        for key in ids
+                    ):
+                        break
+                self.assertEqual(
+                    {vm_id for action, vm_id in provider.actions[actions_start:] if action == "unshelve"}, ids
+                )
+                self.assertTrue(all(provider.states[key] == "ACTIVE" for key in ids))
+                from flowdc_experiment_transport import ready, remaining
+                from flowdc_pilot_cli import status
+
+                with patch("flowdc_pilot_cli.sample_clock", self.clock):
+                    value, code = status(self.journal)
+                self.assertEqual(code, 0)
+                self.assertEqual(set(value["data"]["selected_ids"]), ids)
+                self.assertTrue(ready(value["data"]))
+                self.assertGreater(remaining(value["data"]), 0)
+                for key in set(before["vms"]) - ids:
+                    self.assertEqual(current["vms"][key]["account"], before["vms"][key]["account"])
+                    self.assertEqual(provider.states[key], "SHELVED_OFFLOADED")
+                self.clock.advance(30)
+                supervise_request(self.journal, "stop", clock=self.clock)
+                for _ in range(140):
+                    supervisor.tick()
+                    self.clock.advance()
+                    if self.journal.read()["desired"] == "idle":
+                        break
+                after = self.journal.read()
+                self.assertEqual(after["desired"], "idle")
+                self.assertEqual(after["spec"], registered)
+                self.assertEqual(set(after["vms"]), set(before["vms"]))
+                self.assertEqual(after["events"][: len(before["events"])], before["events"])
+                for key in before["vms"]:
+                    self.assertEqual(
+                        after["vms"][key]["account"]["limit"], before["vms"][key]["account"]["limit"]
+                    )
+                    self.assertFalse(after["vms"][key]["account"]["obligation"])
+                    self.assertEqual(after["vms"][key]["observed"]["state"], "SHELVED_OFFLOADED")
+                    if key in ids:
+                        self.assertGreater(
+                            after["vms"][key]["account"]["consumed"],
+                            before["vms"][key]["account"]["consumed"],
+                        )
+                    else:
+                        self.assertEqual(after["vms"][key]["account"], before["vms"][key]["account"])
+
+    def test_exhausted_unselected_account_is_preserved_but_uncertainty_blocks(self):
+        apply(self.journal, self.request(4))
+        workers = self.journal.read()["spec"]["topology"]["workers"]
+        self.journal.change(
+            lambda r: r["vms"][workers[0]]["account"].update(
+                consumed=r["vms"][workers[0]]["account"]["limit"]
+            )
+        )
+        provider = FakeProvider()
+        provider.states = dict.fromkeys(self.journal.read()["vms"], "SHELVED_OFFLOADED")
+        supervisor = Supervisor(self.journal, provider, clock=self.clock)
+        with self.journal.supervisor_lock():
+            supervisor.recover()
+            before = self.journal.read()
+            supervise_request(self.journal, "start", window=1200, clock=self.clock, worker_ids=[workers[2]])
+            for _ in range(20):
+                supervisor.tick()
+                self.clock.advance()
+            self.assertEqual(
+                self.journal.read()["vms"][workers[0]]["account"], before["vms"][workers[0]]["account"]
+            )
+            self.assertNotIn(("unshelve", workers[0]), provider.actions)
+            supervise_request(self.journal, "stop", clock=self.clock)
+            for _ in range(100):
+                supervisor.tick()
+                self.clock.advance()
+                if self.journal.read()["desired"] == "idle":
+                    break
+            self.journal.change(lambda r: r["vms"][workers[0]]["account"].update(uncertain=True))
+            before = self.journal.read()
+            with self.assertRaises(ops.OpsError):
+                supervise_request(
+                    self.journal, "start", window=1200, clock=self.clock, worker_ids=[workers[2]]
+                )
+            self.assertEqual(self.journal.read(), before)
+
+    def test_invalid_or_unenrolled_selection_cannot_change_any_account(self):
+        apply(self.journal, self.request(4))
+        supervisor = Supervisor(self.journal, FakeProvider(), clock=self.clock)
+        with self.journal.supervisor_lock():
+            supervisor.recover()
+            before = self.journal.read()
+            workers = before["spec"]["topology"]["workers"]
+            for chosen in (
+                [],
+                workers[:3],
+                [workers[0], workers[0]],
+                [str(uuid4())],
+                [before["spec"]["topology"]["manager"]],
+                "worker",
+                [None],
+            ):
+                with self.subTest(chosen=chosen), self.assertRaises(ops.OpsError):
+                    supervise_request(self.journal, "start", clock=self.clock, worker_ids=chosen)
+                self.assertEqual(self.journal.read(), before)
+
     def test_partial_unshelve_cleanup_covers_every_uuid(self):
         apply(self.journal, self.request(4))
         provider = FakeProvider()
@@ -236,6 +368,72 @@ class TopologyTests(unittest.TestCase):
             all(port["security_group_ids"] == [provider.original] for port in provider.ports.values())
         )
         self.assertEqual(set(provider.groups), {provider.original})
+
+    def test_subset_network_never_attaches_unselected_ports_and_refuses_activation(self):
+        from flowdc_pilot_journal import fresh_network
+        from flowdc_pilot_provider import Provider
+        from test_flowdc_pilot_network import NetworkBackend
+
+        apply(self.journal, self.request(4))
+        record = self.journal.read()
+        provider = NetworkBackend()
+        original = copy.deepcopy(next(iter(provider.ports.values())))
+        for vm in record["spec"]["vms"]:
+            interface = record["access"]["interfaces"][vm["role"]]
+            provider.ports[interface["port_id"]] = dict(
+                copy.deepcopy(original),
+                id=interface["port_id"],
+                device_id=vm["id"],
+                fixed_ips=[{"ip_address": interface["fixed_ip"], "subnet_id": interface["subnet_id"]}],
+            )
+        workers = record["spec"]["topology"]["workers"]
+        for chosen in (workers[2:3], [workers[1], workers[3]]):
+            self.journal.change(
+                lambda r, chosen=chosen: r.update(
+                    selection=selection(r["spec"], chosen),
+                    desired="run",
+                    window={"seconds": 1200, "inspection": True},
+                    network=fresh_network(),
+                )
+            )
+            record = self.journal.read()
+            expected = set(selected_roles(record))
+            for _ in range(150):
+                provider.network_step(self.journal, rollback=False)
+                if self.journal.read()["network"]["ready"]:
+                    break
+            record = self.journal.read()
+            self.assertTrue(record["network"]["ready"])
+            self.assertEqual(set(record["network"]["original"]), expected)
+            for role, interface in record["access"]["interfaces"].items():
+                if role not in expected:
+                    self.assertEqual(
+                        provider.ports[interface["port_id"]]["security_group_ids"], [provider.original]
+                    )
+                else:
+                    group = provider.groups[record["network"]["seen_groups"][role]]
+                    provider.verify_ingress(record, role, group)
+                    actual = {
+                        rule["remote_ip_prefix"] for rule in group["rules"] if rule["direction"] == "ingress"
+                    }
+                    wanted = {
+                        record["access"]["interfaces"][peer]["fixed_ip"] + "/32" for peer in expected - {role}
+                    }
+                    if role == "manager":
+                        wanted.add(record["access"]["operator_cidr"])
+                    self.assertEqual(actual, wanted)
+            with self.assertRaises(ops.OpsError) as caught:
+                Provider({}).lifecycle(record, workers[0], "unshelve")
+            self.assertEqual(caught.exception.code, "vm_not_selected")
+            self.journal.change(lambda r: r.update(desired="stop"))
+            for _ in range(100):
+                provider.network_step(self.journal, rollback=True)
+                if self.journal.read()["network"]["rolled_back"]:
+                    break
+            self.assertTrue(self.journal.read()["network"]["rolled_back"])
+            self.assertTrue(
+                all(port["security_group_ids"] == [provider.original] for port in provider.ports.values())
+            )
 
     def test_old_sqlite_interpreter_refuses_new_schema_and_supervisor_lock_blocks_apply(self):
         request = self.request(2)

@@ -21,7 +21,7 @@ from flowdc_pilot import (
     Allowance,
     ClockSample,
 )
-from flowdc_topology import JOURNAL_SCHEMA, UPGRADE_FENCE, record_roles
+from flowdc_topology import JOURNAL_SCHEMA, UPGRADE_FENCE, record_roles, selected_ids
 
 JOURNAL_VERSION = 1
 DB_NAME = "pilot.sqlite3"
@@ -217,7 +217,7 @@ def validate_record(record):
                 "network",
                 "vms",
             ),
-            optional=("fake_actions",),
+            optional=("fake_actions", "selection"),
         )
         if record["schema_version"] not in (JOURNAL_VERSION, JOURNAL_SCHEMA):
             raise ValueError
@@ -227,6 +227,7 @@ def validate_record(record):
         ops.uuid_value(record["registration_id"])
         ops.absolute_path(record["profile_path"])
         spec = ops.validate_spec_value(record["spec"])
+        selected_ids(record)  # Validate the optional selection without shrinking the account registry.
         selected_roles = record_roles(record)
         if (record["schema_version"] == JOURNAL_VERSION) != (spec["schema_version"] == 1):
             raise ValueError
@@ -244,8 +245,14 @@ def validate_record(record):
                 or record["vms"][selected["id"]]["role"] != selected["role"]
             ):
                 raise ValueError
-        for vm in record["vms"].values():
+        for vm_id, vm in record["vms"].items():
             account = allowance(vm["account"])
+            if (
+                record["desired"] == "run"
+                and vm_id not in selected_ids(record)
+                and (account.obligation or account.uncertain or vm["phase"] != "offloaded")
+            ):
+                raise ValueError
             if (vm["phase"] in ("requested", "unshelve_intent") and not account.obligation) or (
                 vm["phase"] == "offloaded" and account.obligation
             ):

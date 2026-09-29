@@ -25,7 +25,32 @@ from flowdc_ops import read_document
 from flowdc_pilot import ClockSample
 from flowdc_pilot_journal import Journal, register
 from flowdc_pilot_supervisor import Supervisor, heartbeat_fresh, request
-from test_flowdc_pilot_lifecycle import VM_IDS, FakeProvider, access, spec, synthetic_service
+from flowdc_topology import from_legacy, selected_ids, selection
+from test_flowdc_pilot_lifecycle import FakeProvider, access, spec, synthetic_service
+
+
+def topology_fixture():
+    """Fixed synthetic IDs only; never accept arbitrary live-shaped topology inputs."""
+    selected, network = from_legacy(spec()), access()
+    network["schema_version"] = 2
+    for i in range(2, 5):
+        vm_id = f"22222222-2222-4222-8222-{i + 2:012d}"
+        role = f"worker-{i}"
+        selected["vms"].append({"id": vm_id, "role": role, "active_seconds": 7200, "rate": None})
+        selected["topology"]["workers"].append(vm_id)
+        network["interfaces"][role] = dict(
+            network["interfaces"]["worker"],
+            port_id=f"33333333-3333-4333-8333-{i + 2:012d}",
+            fixed_ip=f"10.0.0.{20 + i}",
+        )
+    return selected, network
+
+
+def fake_provider(journal):
+    validate_fake(journal)
+    provider = FakeProvider()
+    provider.states = dict.fromkeys(journal.read()["vms"], "SHELVED_OFFLOADED")
+    return provider
 
 
 def accelerated_clock():
@@ -83,7 +108,7 @@ def serve_service(root):
     real_sleep = time.sleep
     with (
         patch.object(cli, "UNIT", service["unit"]),
-        patch.object(cli, "Provider", side_effect=lambda profile: FakeProvider()),
+        patch.object(cli, "Provider", side_effect=lambda profile: fake_provider(journal)),
         patch.object(cli.ops, "load_profile", return_value={"fake_only": True}),
         patch.object(cli, "Supervisor", ObservedSupervisor),
         patch.object(
@@ -98,9 +123,24 @@ def serve_service(root):
 
 def validate_fake(journal):
     record = journal.read()
+    fixture_spec, fixture_access = (
+        topology_fixture() if record["spec"]["schema_version"] == 2 else (spec(), access())
+    )
+    expected_roles = {vm["id"]: vm["role"] for vm in fixture_spec["vms"]}
+    allowed_roles = [expected_roles]
+    if record["spec"]["schema_version"] == 1:
+        # The original CLI fixture uses the same three synthetic UUIDs with
+        # origin/worker swapped; retain that explicit, non-live fixture too.
+        allowed_roles.append(
+            {
+                key: {"origin": "worker", "worker": "origin"}.get(role, role)
+                for key, role in expected_roles.items()
+            }
+        )
     if (
         not valid_service_fixture(journal, record["service"])
-        or set(record["vms"]) != set(VM_IDS)
+        or {key: vm["role"] for key, vm in record["vms"].items()} not in allowed_roles
+        or record["access"] != fixture_access
         or record["spec"]["context"] != spec()["context"]
         or read_document(record["profile_path"]) != {"fake_only": True}
     ):
@@ -112,7 +152,7 @@ def serve(root):
     validate_fake(journal)
     with journal.supervisor_lock():
         # Only FakeProvider is instantiated; no live-profile/provider selection.
-        provider = FakeProvider()
+        provider = fake_provider(journal)
         supervisor = Supervisor(journal, provider, clock=accelerated_clock)
         supervisor.recover()
         while True:
@@ -131,17 +171,29 @@ def main():
     if len(sys.argv) == 3 and sys.argv[1] == "--request":
         journal = Journal(sys.argv[2])
         validate_fake(journal)
-        request(journal, "start", window=1000, clock=accelerated_clock)
+        chosen = journal.read().get("selection", {}).get("worker_ids")
+        request(journal, "start", window=1000, clock=accelerated_clock, worker_ids=chosen)
         return 0
-    terminate_active = sys.argv[1:] == ["--sigterm"]
-    if len(sys.argv) != 1 and not terminate_active:
+    options = sys.argv[1:]
+    if len(set(options)) != len(options) or not set(options).issubset({"--sigterm", "--topology-subset"}):
         return 2
+    terminate_active = "--sigterm" in options
+    subset = "--topology-subset" in options
     root = Path(tempfile.mkdtemp(prefix="flowdc-pilot-systemd-fake-"))
     config = root / "config"
     config.mkdir(mode=0o700)
     profile = config / "profile.json"
     profile.write_text('{"fake_only":true}')
-    journal = register(profile, root / "state", spec(), access())
+    registered, network = topology_fixture() if subset else (spec(), access())
+    journal = register(profile, root / "state", registered, network)
+    if subset:
+        chosen = [registered["topology"]["workers"][2]]
+        journal.change(lambda r: r.update(selection=selection(r["spec"], chosen)))
+        # Exhaustion of an unselected account must not block or fund this run.
+        unused = registered["topology"]["workers"][0]
+        journal.change(lambda r: r["vms"][unused]["account"].update(consumed=7200))
+    ids = set(selected_ids(journal.read()))
+    unselected = {key: vm["account"] for key, vm in journal.read()["vms"].items() if key not in ids}
     unit = "flowdc-pilot-smoke-" + uuid4().hex + ".service"
     service = service_fixture(journal, unit)
     from flowdc_pilot_cli import MODULES
@@ -209,11 +261,11 @@ def main():
             if (
                 terminate_active
                 and not signal_sent
-                and sum(action == "unshelve" for action, _ in actions) == 3
+                and sum(action == "unshelve" for action, _ in actions) == len(ids)
             ):
                 if (
                     record["desired"] != "run"
-                    or not all(vm["account"]["obligation"] for vm in record["vms"].values())
+                    or not all(record["vms"][key]["account"]["obligation"] for key in ids)
                     or any(action in ("shelve", "offload") for action, _ in actions)
                 ):
                     raise RuntimeError("signal_missed_active_obligations")
@@ -226,8 +278,12 @@ def main():
                     raise RuntimeError("signal_failed")
                 signal_sent = True
             if record["desired"] == "idle" and any(action == "unshelve" for action, _ in actions):
-                if sum(action == "unshelve" for action, _ in actions) != 3:
+                if {key for action, key in actions if action == "unshelve"} != ids or sum(
+                    action == "unshelve" for action, _ in actions
+                ) != len(ids):
                     raise RuntimeError("activation_incomplete")
+                if any(record["vms"][key]["account"] != account for key, account in unselected.items()):
+                    raise RuntimeError("unselected_account_changed")
                 if not all(
                     not vm["account"]["obligation"] and vm["observed"]["state"] == "SHELVED_OFFLOADED"
                     for vm in record["vms"].values()
@@ -255,7 +311,9 @@ def main():
                         continue
                 result.update(
                     status="completed",
-                    confirmed_offloaded=3,
+                    confirmed_offloaded=len(record["vms"]),
+                    selected_ids=sorted(ids),
+                    unselected_accounts_unchanged=True,
                     deadline_cleanup_after_foreground_exit=not terminate_active,
                     sigterm_cleanup_with_obligations=signal_sent,
                     production_supervise_and_verify_service=True,

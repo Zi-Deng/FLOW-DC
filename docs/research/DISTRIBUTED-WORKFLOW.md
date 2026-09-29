@@ -51,7 +51,8 @@ not an external dataset. The manager deadline is 170 seconds; cleanup has a sepa
 bounded reserve. Failure cases require their specific receipts, not just any failed
 run. Linux pidfds pin signal targets; only tracked worker descendants are reaped.
 Unattributed adopted children prevent a worker-quiescence claim. Normal native
-shutdown gets a bounded grace period before escalation. Owner-only process quiescence proof closes a client and releases only permits
+shutdown gets a bounded grace period before escalation. Owner-only process
+quiescence proof closes a client and releases only permits
 that were never dispatched. A cancelled, timed-out or truncated dispatched response
 retains its origin capacity even after client exit: disconnect does not prove the
 origin finished its work. Redirect and HTTP error bodies are drained to EOF within
@@ -65,11 +66,19 @@ Production clients and heartbeat expiry cannot submit an origin drain proof.
 Experiment specification schema 2 adds `distributed` with `manifest`, `catalog`,
 `origin_plan`, `environment_archive`, `environment_sha256`, and `control_tls`.
 It requires the controlled fixture mode and explicit methods in case configs.
+Top-level `worker_ids` optionally selects 1/2/4 enrolled worker UUIDs; omission
+selects all enrolled workers. Preparation retains the selection separately from
+all immutable accounts, including when the chosen worker is `worker-3` alone.
 The first three paths refer to local preparation inputs; environment/certificate
 paths refer to existing guest files. Preparation reads committed source and rejects
 older source without this profile. Every independent case gets a new concurrent
 origin/service log, manager session and returned evidence. The collected verifier
 binds original truth, worker source hashes, method and environment to preparation.
+It independently requires every eligible row to verify and every returned task to
+have a successful zero exit and returned receipt; an empty forged “complete” claim
+cannot pass. Controlled guest origin plans specify schema/name/schedule/queue_bound/
+assignments/objects. Queue rejection defaults to status 503 and Retry-After 0.1s;
+explicit rejection status must be 429/503 and the delay must be finite, 0..5s.
 
 `control_tls` requires `host`, `port`, `endpoint`, `certfile`, `keyfile`, `ca_file`,
 `ca_sha256`. Host/endpoint map to the registered manager's private IPv4; the server

@@ -106,12 +106,21 @@ def specification(value):
     fields(
         value,
         ("schema_version", "state_root", "registration_id", "source", "ssh", "guest", "cases"),
-        ("partitions", "fixture", "bounds", "distributed"),
+        ("partitions", "fixture", "bounds", "distributed", "worker_ids"),
     )
     require(type(value["schema_version"]) is int and value["schema_version"] in (1, 2))
     require(
         (value["schema_version"] == 2) == ("distributed" in value), "explicit_distributed_schema_required"
     )
+    if "worker_ids" in value:
+        ids = value["worker_ids"]
+        require(
+            value["schema_version"] == 2 and isinstance(ids, list) and len(ids) in (1, 2, 4),
+            "invalid_worker_selection",
+        )
+        for vm_id in ids:
+            ops.uuid_value(vm_id)
+        require(len(set(ids)) == len(ids), "invalid_worker_selection")
     if "distributed" in value:
         from flowdc_experiment_research import validate
 

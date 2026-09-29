@@ -73,3 +73,58 @@ def record_roles(record):
 
 def is_worker(role):
     return role in worker_roles(4)
+
+
+def selection(spec, worker_ids=None):
+    """Canonical per-run selection; enrolled identities and account limits do not change."""
+    enrolled = roles(spec)
+    workers = {vm["id"] for vm in spec["vms"] if is_worker(vm["role"])}
+    if worker_ids is None:
+        worker_ids = sorted(workers)
+    if (
+        not isinstance(worker_ids, list)
+        or len(worker_ids) not in (1, 2, 4)
+        or any(not isinstance(vm_id, str) for vm_id in worker_ids)
+        or len(set(worker_ids)) != len(worker_ids)
+        or not set(worker_ids).issubset(workers)
+    ):
+        raise ValueError("invalid_worker_selection")
+    if spec["schema_version"] == 1 and set(worker_ids) != workers:
+        raise ValueError("legacy_selection_requires_registered_worker")
+    # Order follows the immutable registered roles, never user list order.
+    by_role = {vm["role"]: vm["id"] for vm in spec["vms"]}
+    return {"schema_version": 1, "worker_ids": [by_role[r] for r in enrolled if by_role[r] in worker_ids]}
+
+
+def selected_roles(record):
+    value = record.get("selection")
+    if value is None:
+        return record_roles(record)
+    if (
+        record["spec"]["schema_version"] != TOPOLOGY_SCHEMA
+        or not isinstance(value, dict)
+        or set(value) != {"schema_version", "worker_ids"}
+        or type(value["schema_version"]) is not int
+        or value["schema_version"] != 1
+        or value != selection(record["spec"], value["worker_ids"])
+    ):
+        raise ValueError("invalid_run_selection")
+    chosen = set(value["worker_ids"])
+    return tuple(
+        r
+        for r in record_roles(record)
+        if not is_worker(r) or any(vm["role"] == r and vm["id"] in chosen for vm in record["spec"]["vms"])
+    )
+
+
+def selected_ids(record):
+    chosen = selected_roles(record)
+    return tuple(vm["id"] for vm in record["spec"]["vms"] if vm["role"] in chosen)
+
+
+def action_lead_seconds(count):
+    # Two bounded 20-second provider calls/VM plus polling and preceding-call slack.
+    # Preserve the historical three-VM floor; the 600-second cleanup reserve remains.
+    if type(count) is not int or count not in (3, 4, 6):
+        raise ValueError("invalid_selected_vm_count")
+    return max(180, 40 * count + 60)

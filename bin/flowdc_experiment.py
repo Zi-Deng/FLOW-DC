@@ -34,7 +34,7 @@ from flowdc_experiment_source import SourceError, read_source
 from flowdc_experiment_transport import Controller, Transport, binding, clean, ready, remaining, ssh_preflight
 from flowdc_pilot_journal import Journal
 from flowdc_staging import WORKER_FILES
-from flowdc_topology import is_worker, record_roles
+from flowdc_topology import action_lead_seconds, is_worker, selected_roles, selection
 
 
 def prepare(path):
@@ -42,6 +42,15 @@ def prepare(path):
     spec = specification(parse(raw_spec))
     record = Journal(spec["state_root"]).read()
     require(record["registration_id"] == spec["registration_id"], "registration_changed")
+    if record["spec"]["schema_version"] == 2:
+        record["selection"] = selection(record["spec"], spec.get("worker_ids"))
+    else:
+        require("worker_ids" not in spec, "versioned_registry_required")
+    require(
+        spec["bounds"]["stop_after_seconds"]
+        <= spec["bounds"]["window_seconds"] - 600 - action_lead_seconds(len(selected_roles(record))),
+        "selected_topology_stop_bound",
+    )
     source, files = read_source(spec["source"]["repository"], spec["source"]["revision"])
     integrity_source = b"import flowdc_integrity" in files["bin/download_batch.py"]
     cases = []
@@ -63,7 +72,7 @@ def prepare(path):
             "cases": [c["name"] for c in cases],
             **({"distributed": spec["distributed"]} if "distributed" in spec else {}),
             "addresses": {
-                role: record["access"]["interfaces"][role]["fixed_ip"] for role in record_roles(record)
+                role: record["access"]["interfaces"][role]["fixed_ip"] for role in selected_roles(record)
             },
         }
     )
@@ -310,7 +319,7 @@ def collect_outputs(store, selected, manifest, state, transport, deadline):
         except Exception as exc:
             failures.append(error_code(exc))
     for case in manifest["cases"]:
-        for role in record_roles(manifest["binding"]):
+        for role in selected_roles(manifest["binding"]):
             if not is_worker(role):
                 continue
             key = case["name"] + "-" + role
@@ -341,7 +350,7 @@ def collect_outputs(store, selected, manifest, state, transport, deadline):
                 cases=manifest["cases"],
                 worker=[
                     manifest["binding"]["access"]["interfaces"][role]["fixed_ip"]
-                    for role in record_roles(manifest["binding"])
+                    for role in selected_roles(manifest["binding"])
                     if is_worker(role)
                 ],
             )
@@ -468,7 +477,7 @@ def run(store, selected, manifest, state):
         state["addresses"] = addresses
         save(store, selected, state, "deploying")
         transport = Transport(store, selected, manifest, addresses)
-        for role in record_roles(manifest["binding"]):
+        for role in selected_roles(manifest["binding"]):
             environment = transport.call(
                 role,
                 "probe",
@@ -491,7 +500,7 @@ def run(store, selected, manifest, state):
                     require("7.17.2" in packages.get("vine_worker", "").split(), "research_runtime_mismatch")
             store.write(selected, f"environment-{role}.json", encode(environment))
         raw = store.read(selected, "bundle.tar")
-        for role in record_roles(manifest["binding"]):
+        for role in selected_roles(manifest["binding"]):
             transport.call(
                 role,
                 "deploy",
@@ -530,7 +539,7 @@ def run(store, selected, manifest, state):
             if "research_truth" in manifest:
                 launch("origin", case["name"], end - time.monotonic() + bounds["collect_seconds"])
             launch("manager", case["name"], end - time.monotonic())
-            for role in record_roles(manifest["binding"]):
+            for role in selected_roles(manifest["binding"]):
                 if is_worker(role):
                     launch(role, case["name"], end - time.monotonic())
             while True:
@@ -551,7 +560,7 @@ def run(store, selected, manifest, state):
                 require(time.monotonic() < end, "case_deadline_expired")
                 time.sleep(min(1, max(0, end - time.monotonic())))
             require(time.monotonic() < work_end, "work_deadline_expired")
-            for role in record_roles(manifest["binding"]):
+            for role in selected_roles(manifest["binding"]):
                 if is_worker(role):
                     transport.call(role, "stop", case["name"], seconds=min(10, work_end - time.monotonic()))
                     next(s for s in state["services"] if s["role"] == role and s["case"] == case["name"])[
@@ -663,7 +672,7 @@ def operate_locked(args, store, selected):
     required = [case["name"] for case in manifest["cases"]] + [
         case["name"] + "-" + role
         for case in manifest["cases"]
-        for role in record_roles(manifest["binding"])
+        for role in selected_roles(manifest["binding"])
         if is_worker(role)
     ]
     if "research_truth" in manifest:

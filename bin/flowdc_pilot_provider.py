@@ -15,7 +15,7 @@ from uuid import UUID
 
 import flowdc_ops as ops
 from flowdc_pilot_journal import failure
-from flowdc_topology import record_roles, validate_roles
+from flowdc_topology import record_roles, selected_ids, selected_roles, validate_roles
 
 # No arbitrary command is accepted. Arguments come from validated identities and
 # fixed rules below. OpenRC remains trusted code; no credential output is retained.
@@ -490,6 +490,8 @@ class Provider:
             network = record["network"]
             if action in ("unshelve", "shelve", "offload") and args[0] not in record["vms"]:
                 raise failure("vm_not_allowlisted")
+            if action == "unshelve" and args[0] not in selected_ids(record):
+                raise failure("vm_not_selected")
             if action in ("rule", "group_delete") and args[0] not in network["seen_groups"].values():
                 raise failure("network_resource_not_owned")
             if action == "attach":
@@ -507,7 +509,7 @@ class Provider:
                 ):
                     raise failure("selected_attachment_not_authorized")
             marker = "flowdc-" + network["generation"] + "-"
-            if action == "group_create" and args[0] not in [marker + role for role in record_roles(record)]:
+            if action == "group_create" and args[0] not in [marker + role for role in selected_roles(record)]:
                 raise failure("network_resource_not_owned")
             if action == "floating_create":
                 interface = record["access"]["interfaces"]["manager"]
@@ -762,7 +764,7 @@ class Provider:
             raise failure("owned_group_identity_changed")
         expected = {("tcp", record["access"]["operator_cidr"], 22, 22)} if role == "manager" else set()
         for peer, interface in record["access"]["interfaces"].items():
-            if peer != role:
+            if peer != role and peer in selected_roles(record):
                 expected.update(
                     (protocol, interface["fixed_ip"] + "/32", None, None)
                     for protocol in ("tcp", "udp", "icmp")
@@ -792,6 +794,8 @@ class Provider:
     def lifecycle(self, record, vm_id, action):
         if action not in ("unshelve", "shelve", "offload"):
             raise failure("unsupported_lifecycle_action")
+        if action == "unshelve" and vm_id not in selected_ids(record):
+            raise failure("vm_not_selected")
         self.activating = action == "unshelve"
         role = record["vms"].get(vm_id, {}).get("role", "unknown")
         with self.step("activation" if action == "unshelve" else "cleanup", role):
@@ -951,7 +955,7 @@ class Provider:
                 self.route_step(journal, record, inspect_only=True)
                 return
             # One role/action per iteration, always inspected before mutation.
-            for role in record_roles(record):
+            for role in selected_roles(record):
                 if role in record["network"].get("configured", []):
                     continue
                 port = self.topology(record, role)
@@ -972,7 +976,7 @@ class Provider:
                     raise failure("provider_schema")
                 desired = [("tcp", record["access"]["operator_cidr"], "22")] if role == "manager" else []
                 for peer, interface in record["access"]["interfaces"].items():
-                    if peer != role:
+                    if peer != role and peer in selected_roles(record):
                         desired += [
                             (protocol, interface["fixed_ip"] + "/32", "any")
                             for protocol in ("tcp", "udp", "icmp")

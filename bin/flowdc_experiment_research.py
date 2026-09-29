@@ -47,6 +47,19 @@ def validate(value):
 
 def origin_plan(raw):
     plan = json.loads(raw)
+    fields(
+        plan,
+        ("schema", "name", "schedule", "queue_bound", "assignments", "objects"),
+        ("queue_rejection_status", "queue_retry_after"),
+    )
+    plan.setdefault("queue_rejection_status", 503)
+    plan.setdefault("queue_retry_after", "0.1")
+    require(type(plan["queue_rejection_status"]) is int and plan["queue_rejection_status"] in (429, 503))
+    require(
+        isinstance(plan["queue_retry_after"], str)
+        and re.fullmatch(r"[0-9]+(?:\.[0-9]+)?", plan["queue_retry_after"])
+        and float(plan["queue_retry_after"]) <= 5
+    )
     require(plan["schema"] == "flowdc-guest-origin-v1")
     require(1 <= len(plan["objects"]) <= 256 and 1 <= len(plan["assignments"]) <= 256)
     from benchmark.core.controlled_origin import ServiceModel
@@ -168,7 +181,8 @@ def verify_return(files, case, expected_truth, expected_source, expected_environ
     control = parse(files[prefix + "control.json"])
     require(
         claimed["schema"] == "flowdc-distributed-result-v1"
-        and claimed["method"] == case["config"]["control_method"],
+        and claimed["method"] == case["config"]["control_method"]
+        and control["state"]["binding"].get("method") == claimed["method"],
         "distributed_method_mismatch",
     )
     with TemporaryDirectory() as directory:
@@ -214,7 +228,15 @@ def verify_return(files, case, expected_truth, expected_source, expected_environ
         )
         require(
             claimed["run_complete"] is True
-            and all(item["native"]["successful"] for item in claimed["returns"]),
+            and all(row["disposition"] in ("verified", "skipped") for row in result["rows"])
+            and all(
+                item["accepted"]
+                and item["native"].get("successful") is True
+                and type(item["native"].get("exit_code")) is int
+                and item["native"]["exit_code"] == 0
+                and item.get("receipt", {}).get("status") == "returned"
+                for item in result["returns"]
+            ),
             "distributed_run_incomplete",
         )
     return {

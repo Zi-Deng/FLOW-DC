@@ -661,5 +661,7 @@ The explicit `shared-origin-v1` TaskVine engineering profile, pinned runtime, re
 artifact contract and current limitations are documented in
 [Distributed workflow](docs/research/DISTRIBUTED-WORKFLOW.md). Offline versioned
 3/4/6-VM preparation and accounting migration are documented in
-[Bounded topology](docs/BOUNDED-TOPOLOGY.md). Production migration and live runs remain
+[Bounded topology](docs/BOUNDED-TOPOLOGY.md). A versioned registry can select 1/2/4
+workers per run using explicit enrolled UUIDs while preserving every account.
+Production migration and live runs remain
 separate human checkpoints; these tools do not imply scientific protocol approval.

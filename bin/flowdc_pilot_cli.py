@@ -105,6 +105,11 @@ def arguments(commands):
         if action == "start":
             parser.add_argument("--window-seconds", type=int, default=1800)
             parser.add_argument(
+                "--worker-id",
+                action="append",
+                help="Enrolled worker UUID; repeat for exactly 1/2/4 workers (default all enrolled)",
+            )
+            parser.add_argument(
                 "--full-window",
                 action="store_true",
                 help="Allow over 1800 seconds, within cumulative balance.",
@@ -618,9 +623,12 @@ def prepare(args):
 
 
 def status(journal, operation="pilot status"):
+    from flowdc_topology import selected_ids
+
     record = journal.read()
     now = sample_clock()
     ready = heartbeat_fresh(record, now) and journal.supervisor_locked()
+    ids = selected_ids(record)
     vms = []
     for vm_id, vm in record["vms"].items():
         account = allowance(vm["account"]).account(now)
@@ -632,6 +640,7 @@ def status(journal, operation="pilot status"):
             {
                 "id": vm_id,
                 "role": vm["role"],
+                "selected": vm_id in ids,
                 "account": asdict(account),
                 "phase": vm["phase"],
                 "provider_state": observed["state"] if observation_fresh else "UNKNOWN",
@@ -643,8 +652,11 @@ def status(journal, operation="pilot status"):
         bool(record["checkpoint"])
         or not ready
         or record["desired"] == "stop"
-        or any(not vm["observation_fresh"] for vm in vms)
-        or (record["desired"] == "run" and any(vm["provider_state"] != "ACTIVE" for vm in vms))
+        or any(not vm["observation_fresh"] for vm in vms if record["desired"] != "run" or vm["selected"])
+        or (
+            record["desired"] == "run"
+            and any(vm["provider_state"] != "ACTIVE" for vm in vms if vm["selected"])
+        )
     )
     return ops.outcome(
         operation,
@@ -660,6 +672,7 @@ def status(journal, operation="pilot status"):
             "checkpoint": record["checkpoint"],
             "cleanup_diagnostics": cleanup_diagnostics(record),
             "vms": vms,
+            "selected_ids": list(ids),
             "network_ready": record["network"]["ready"],
             "network_rolled_back": record["network"]["rolled_back"],
             "request_acceptance_is_completion": False,
@@ -803,6 +816,7 @@ def run(args):
                 args.pilot_command,
                 window=getattr(args, "window_seconds", 1800),
                 inspection=not getattr(args, "full_window", False),
+                worker_ids=getattr(args, "worker_id", None),
             )
             value, code = status(journal, "pilot " + args.pilot_command)
             value["data"]["request_accepted"] = True

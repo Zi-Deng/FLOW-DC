@@ -80,9 +80,38 @@ activation each remain outside this PR's execution. Mock-provider tests exercise
 selected VMs, partial unshelve/lost replies, network restoration, migration crash replay
 and old-code refusal. Green fixtures are not a production rollout approval.
 
-Current limitation: enrollment and per-run selection are still coupled. Migration
-can append workers while preserving all old accounts, but a single six-VM journal
-does not yet select a smaller 1/2-worker subset for a subsequent run. Separate
-selection must retain every enrolled account/history and avoid unshelving unselected
-VMs; the 4→1→2-worker sequence on one journal remains an acceptance gap. Do not
-create replacement journals to bypass this limitation or reset accounting.
+## Per-run worker selection
+
+Enrollment retains every UUID account. A schema-3 journal stores an optional
+`selection` with schema_version=1 and `worker_ids` in registered-role order. Start
+accepts exactly 1/2/4 distinct enrolled worker UUIDs, including non-prefix subsets.
+Omitting a selection means all enrolled workers. For the later authorized run:
+
+```bash
+python -B bin/flowdc_ops.py pilot start --state-root /absolute/fixture/state --window-seconds 1200 --worker-id <enrolled-worker-3-uuid>
+```
+
+Repeat `--worker-id` for two or four workers. Schema-2 experiment specifications
+accept the same UUID list as top-level `worker_ids`. Offline preparation binds this
+selection into the retained manifest and guest addresses; start/status refuse a
+changed selection during the run. The existing schema-1 interpretation is unchanged.
+
+Only selected accounts receive activation intent and setup charges. Network setup,
+SSH, native containment verification, staging and collection use selected roles.
+An exhausted but offloaded unselected account neither funds nor blocks another
+selection. Any enrolled account's uncertain/active obligation still blocks a new
+start, and recovery/cleanup inspect the complete registry. Status retains all VM
+accounts and reports `selected_ids`; it never hides off-selection obligations.
+No account is removed or reset when switching 4→1→2 workers.
+
+The stop scheduling lead is `max(180, 40*N+60)` seconds for N selected VMs, before
+the unchanged 600-second cleanup reserve. The experiment stop bound uses the same
+lead and existing window cap; it refuses insufficient bounds. This is conservative
+scheduling slack, not a guarantee against provider outages.
+
+`tests/test_pilot_topology.py` covers repeated 4→1→2 selection, exact unshelve sets,
+unchanged unselected consumption, active/uncertain rejection and subset network
+restoration. `tests/pilot_systemd_smoke.py --topology-subset` (also with `--sigterm`)
+is an explicit fake-only real user-systemd gate: six fixed synthetic enrolled IDs,
+one selected worker-3, exhausted unselected account, and all-account cleanup proof.
+It never loads a live profile or operates the production service.
