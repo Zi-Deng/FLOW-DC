@@ -87,6 +87,49 @@ class CoverageTests(GitFixture):
                 self.assertTrue(result["qualified"])
                 self.assertEqual(diagnostics["events"][0]["spans"], [])
 
+    def test_glob_no_discovery_is_diagnostic_not_execution_failure(self):
+        probe = coverage.read_json(self.packet / "capability.json")["artifact"]
+        for content, reason, paths in [
+            ("", "glob_no_discovery", []),
+            (" \n", "glob_no_discovery", []),
+            ("No matches found", "glob_unrecognized_or_outside_packet", []),
+            (json.dumps([probe]), "glob_unrecognized_or_outside_packet", []),
+            ("/outside/private-example.txt", "glob_unrecognized_or_outside_packet", []),
+            (probe, None, [probe]),
+            (f"{probe}\n{probe}\n/outside/private-example.txt", None, [probe]),
+        ]:
+            with self.subTest(content=content):
+                original = events(self.packet)
+                original[6]["data"]["result"]["content"] = content
+                result, diagnostics = self.evaluate(original)
+                record = next(row for row in diagnostics["events"] if row["tool"] == "glob")
+                self.assertTrue(record["success"])
+                self.assertEqual(record["reason"], reason)
+                self.assertEqual(record["paths"], paths)
+                self.assertEqual(record["spans"], [])
+                self.assertEqual(diagnostics["capability"]["glob"], bool(paths))
+                self.assertEqual(result["qualified"], bool(paths))
+                self.assertNotIn("private-example", json.dumps(diagnostics))
+                # An unsuccessful discovery must not poison a later valid probe.
+                recovery = events(self.packet)[5:7]
+                for event in recovery:
+                    event["data"]["toolCallId"] = "recovery-glob"
+                original[7:7] = recovery
+                self.assertTrue(self.evaluate(original)[0]["qualified"])
+
+    def test_glob_discovery_cannot_replace_source_inspection(self):
+        required = coverage.read_json(self.packet / "required-material.json")["required"]
+        item = next(row for row in required if row["kind"] == "changed-source")
+        original = events(self.packet, omit=[item["id"]])
+        probe = coverage.read_json(self.packet / "capability.json")["artifact"]
+        original[6]["data"]["result"]["content"] = f"{probe}\n{item['artifact']}"
+        result, diagnostics = self.evaluate(original)
+        self.assertTrue(diagnostics["capability"]["glob"])
+        self.assertFalse(result["qualified"])
+        record = next(row for row in diagnostics["events"] if row["tool"] == "glob")
+        self.assertEqual(record["paths"], sorted([probe, item["artifact"]]))
+        self.assertEqual(record["spans"], [])
+
     def test_jsonl_unicode_line_separators_are_part_of_exact_model_content(self):
         original = events(self.packet)
         document = json.loads(original[-2]["data"]["content"])

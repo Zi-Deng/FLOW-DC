@@ -101,6 +101,13 @@ earn no range credit; later complete reads can satisfy the material. Missing or
 unrecognized canary results cannot qualify. An unsupported provider rendering requires
 a reviewed adapter change, not a wildcard permission or invented evidence.
 
+A successful glob with blank output records `glob_no_discovery`; nonblank output
+without recognized packet paths records `glob_unrecognized_or_outside_packet`.
+These bounded diagnostics preserve tool success and do not retain unknown paths or
+provider text. Unsupported rendering and outside-packet output cannot always be
+distinguished, so neither is credited. Recognized paths are deduplicated and earn
+discovery credit only; the capability fixture still requires its actual path.
+
 Root `subagent.selected` is supported only for `independent-reviewer` with exactly
 `view`, `grep`, `glob`; null/all-tools, other agents and top-level `agentId` are refused.
 The SDK uses top-level `agentId` for a delegated instance, absent on root events.

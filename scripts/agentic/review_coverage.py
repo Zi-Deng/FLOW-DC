@@ -237,7 +237,13 @@ def tool_observation(name, arguments, content, workspace, files):
                     observed.setdefault(path, set()).add(number)
     elif name == "glob":
         paths = [packet_path(line, workspace, files) for line in content.splitlines()]
-        return [], sorted({path for path in paths if path}), None
+        discovered = sorted({path for path in paths if path})
+        # This describes discovery evidence, not whether the tool executed
+        # successfully. Do not retain unrecognized provider text or paths.
+        reason = None
+        if not discovered:
+            reason = "glob_unrecognized_or_outside_packet" if content.strip() else "glob_no_discovery"
+        return [], discovered, reason
     spans = []
     for path, numbers in sorted(observed.items()):
         for start, end in ranges(numbers):
