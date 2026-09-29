@@ -76,8 +76,37 @@ class LedgerTests(unittest.TestCase):
             self.scope[worker],
             self.client[worker],
             permit["permit_id"],
-            observation or {"reason": "transport_closed"},
+            {"response_complete": True, **(observation or {"reason": "response_eof"})},
         )
+
+    def test_cancelled_dispatched_work_and_native_exit_retain_origin_capacity(self):
+        first, second = self.acquire(0), self.acquire(1)
+        self.dispatch(first, 0)
+        self.dispatch(second, 1)
+        self.complete(first, observation={"reason": "cancelled", "response_complete": False})
+        self.assertEqual(self.acquire(1), {"state": "wait"})
+        proof = {
+            "kind": "native_task_exit",
+            "client_id": self.client[0],
+            "run_id": self.binding["run_id"],
+            "source_sha256": self.binding["source_sha256"],
+            "evidence_sha256": "d" * 64,
+        }
+        self.ledger.prove_quiescent(self.client[0], proof)
+        self.assertEqual(self.acquire(1), {"state": "wait"})
+        self.assertEqual(len(self.ledger.outstanding(self.ledger.current())), 2)
+
+    def test_late_overload_headers_do_not_release_cancelled_origin_work(self):
+        first, second = self.acquire(0), self.acquire(1)
+        self.dispatch(first, 0)
+        self.dispatch(second, 1)
+        self.complete(first, observation={"reason": "cancelled", "response_complete": False})
+        result = self.ledger.headers(self.scope[0], self.client[0], first["permit_id"], 503, 4)
+        self.assertFalse(result["duplicate"])
+        self.assertEqual(self.ledger.snapshot()["origins"][origin(self.url)]["embargo_until"], 14)
+        self.now = 20
+        self.assertEqual(self.acquire(1), {"state": "wait"})
+        self.assertEqual(len(self.ledger.outstanding(self.ledger.current())), 2)
 
     def test_workers_share_cap_and_reduced_limit_drains_without_revocation(self):
         first, second = self.acquire(0), self.acquire(1)
@@ -246,7 +275,10 @@ class LedgerTests(unittest.TestCase):
                         ledger.dispatch(scope, client, permit["permit_id"], 1)
                         ledger.headers(scope, client, permit["permit_id"], 200, None)
                         ledger.complete(
-                            scope, client, permit["permit_id"], {"status": 200, "retry_after": None}
+                            scope,
+                            client,
+                            permit["permit_id"],
+                            {"status": 200, "retry_after": None, "response_complete": True},
                         )
                 volumes.append(volume)
                 self.assertEqual(len(ledger.snapshot()["permits"]), count)
@@ -369,10 +401,15 @@ class AcquisitionBridgeTests(unittest.IsolatedAsyncioTestCase):
                 await trace._dispatch(None, ctx, SimpleNamespace(url=url))
             for i, ctx in enumerate(contexts):
                 response = SimpleNamespace(
-                    url=urls[i], headers={"Location": str(urls[1 - i])}, status=302, release=Mock()
+                    url=urls[i],
+                    headers={"Location": str(urls[1 - i])},
+                    status=302,
+                    release=Mock(),
+                    content=SimpleNamespace(read=AsyncMock(side_effect=[b"redirect body", b""])),
                 )
                 await trace._redirect(None, ctx, SimpleNamespace(response=response))
                 response.release.assert_called_once()
+                self.assertEqual(response.content.read.await_count, 2)
             self.assertFalse(self.authority.ledger.outstanding(self.authority.ledger.snapshot()))
             for i, ctx in enumerate(contexts):
                 await trace._dispatch(None, ctx, SimpleNamespace(url=urls[1 - i]))
@@ -395,14 +432,19 @@ class AcquisitionBridgeTests(unittest.IsolatedAsyncioTestCase):
             await attempt.dispatch("http://one.test/a")
             trace = HTTPTraceConfig()
 
-            async def release(attempt=attempt):
-                await attempt.finish_hop({}, "redirect")
+            measure = {"shared_headers": attempt.headers}
 
-            ctx = SimpleNamespace(
-                measurement={"shared_headers": attempt.headers, "shared_redirect_release": release}
-            )
+            async def release(attempt=attempt, measure=measure):
+                await attempt.finish_hop(measure, "redirect")
+
+            measure["shared_redirect_release"] = release
+            ctx = SimpleNamespace(measurement=measure)
             response = SimpleNamespace(
-                url=URL("http://one.test/a"), headers={"Location": destination}, status=302, release=Mock()
+                url=URL("http://one.test/a"),
+                headers={"Location": destination},
+                status=302,
+                release=Mock(),
+                content=SimpleNamespace(read=AsyncMock(return_value=b"")),
             )
             gate = SimpleNamespace(wait=AsyncMock(), observe=Mock(return_value=None))
             with patch("single_download.session_http_gate", return_value=gate):
@@ -410,6 +452,32 @@ class AcquisitionBridgeTests(unittest.IsolatedAsyncioTestCase):
             self.assertIsNone(attempt.permit)
             self.assertFalse(client.pending)
             await attempt.close({})
+
+    async def test_interrupted_redirect_body_retains_capacity_and_never_dispatches_target(self):
+        client = self.clients[0]
+        attempt = RemoteAttempt(client, client.row)
+        await attempt.dispatch("http://one.test/a")
+        trace = HTTPTraceConfig()
+        measure = {"shared_headers": attempt.headers, "shared_redirect_release": AsyncMock()}
+        response = SimpleNamespace(
+            url=URL("http://one.test/a"),
+            headers={"Location": "http://two.test/b"},
+            status=302,
+            release=Mock(),
+            content=SimpleNamespace(read=AsyncMock(side_effect=TimeoutError("body incomplete"))),
+        )
+        gate = SimpleNamespace(wait=AsyncMock(), observe=Mock(return_value=None))
+        with patch("single_download.session_http_gate", return_value=gate):
+            with self.assertRaises(TimeoutError):
+                await trace._redirect(
+                    None, SimpleNamespace(measurement=measure), SimpleNamespace(response=response)
+                )
+        measure["shared_redirect_release"].assert_not_awaited()
+        response.release.assert_not_called()
+        await attempt.close(measure)
+        state = self.authority.ledger.snapshot()
+        self.assertEqual(len(state["permits"]), 1)
+        self.assertEqual(self.authority.ledger.outstanding(state)[0]["state"], "uncertain")
 
     async def test_lost_acquire_acknowledgement_never_recycles_the_issued_permit(self):
         path = self.root / "private.json"
@@ -555,7 +623,10 @@ class AcquisitionBridgeTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(ValueError, "aggregate admission"):
             audit_admission([*events, acquire])
         await attempt.finish_hop({}, "cancelled")
-        self.assertEqual(audit_admission(self.authority.ledger.events())["outstanding_permits"], 0)
+        self.assertEqual(audit_admission(self.authority.ledger.events())["outstanding_permits"], 1)
+        self.assertEqual(
+            self.authority.ledger.outstanding(self.authority.ledger.current())[0]["state"], "uncertain"
+        )
         await attempt.close({})
 
 

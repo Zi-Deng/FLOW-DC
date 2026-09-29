@@ -51,8 +51,14 @@ not an external dataset. The manager deadline is 170 seconds; cleanup has a sepa
 bounded reserve. Failure cases require their specific receipts, not just any failed
 run. Linux pidfds pin signal targets; only tracked worker descendants are reaped.
 Unattributed adopted children prevent a worker-quiescence claim. Normal native
-shutdown gets a bounded grace period before escalation. Owner-only quiescence proof
-can release uncertain permits after actual process exit; heartbeat expiry cannot.
+shutdown gets a bounded grace period before escalation. Owner-only process quiescence proof closes a client and releases only permits
+that were never dispatched. A cancelled, timed-out or truncated dispatched response
+retains its origin capacity even after client exit: disconnect does not prove the
+origin finished its work. Redirect and HTTP error bodies are drained to EOF within
+the existing request timeout before their permits are released. The controlled
+worker-loss fixture additionally records independent origin drain evidence after
+process-tree exit; only this owner-side evidence can settle its uncertain requests.
+Production clients and heartbeat expiry cannot submit an origin drain proof.
 
 ## Prepared guest bridge
 

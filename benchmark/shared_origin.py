@@ -86,11 +86,25 @@ def audit_admission(events):
                         entry["embargo"] = max(entry["embargo"], now + delay)
                     work["headers"] = True
                 if action == "complete":
-                    work["complete"] = True
-                    entry["active"].discard(permit)
+                    work["complete"] = (
+                        not work["dispatched"]
+                        or observation.get("response_complete") is True
+                        or work["quiescent"]
+                    )
+                    if work["complete"]:
+                        entry["active"].discard(permit)
         elif action == "prove_quiescent":
             for permit, work in permits.items():
-                if work["client_id"] == event["client_id"] and not work["complete"]:
+                if (
+                    work["client_id"] == event["client_id"]
+                    and not work["complete"]
+                    and not work["dispatched"]
+                ):
+                    work.update(complete=True, quiescent=True)
+                    origins[work["origin"]]["active"].discard(permit)
+        elif action == "origin_drained":
+            for permit, work in permits.items():
+                if work["client_id"] == event["client_id"]:
                     work.update(complete=True, quiescent=True)
                     origins[work["origin"]]["active"].discard(permit)
         elif action in ("restart_fence", "recover_closed_epoch"):

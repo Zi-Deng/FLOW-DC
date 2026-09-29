@@ -151,6 +151,7 @@ class HTTPTraceConfig(aiohttp.TraceConfig):
         await self._admit(session, ctx, params.url)
         if ctx.measurement is not None and ctx.measurement.get("shared_dispatch") is not None:
             ctx.measurement["phase"] = "admission"
+            ctx.measurement["remote_response_complete"] = False
             await ctx.measurement["shared_dispatch"](str(params.url))
             ctx.measurement["phase"] = "request"
         if ctx.measurement is not None and ctx.measurement.get("dispatch_check") is not None:
@@ -193,6 +194,12 @@ class HTTPTraceConfig(aiohttp.TraceConfig):
         # aiohttp normally releases the redirect response after this callback.
         # Release it before our waits so timeout/cancellation cannot strand its
         # connection. Redirect bodies are not acquisition bodies.
+        if ctx.measurement is not None and ctx.measurement.get("shared_redirect_release") is not None:
+            # EOF, not closing the connection, establishes response completion.
+            # The existing request timeout bounds this drain; memory stays bounded.
+            while await response.content.read(65536):
+                pass
+            ctx.measurement["remote_response_complete"] = True
         response.release()
         if ctx.measurement is not None and ctx.measurement.get("shared_redirect_release") is not None:
             # Every redirect hop releases its prior permit, including same-origin
@@ -399,6 +406,10 @@ async def download_via_http_get(
                     measurement["latency_eligible"] = math.isfinite(measurement["ttfb"]) and measurement["ttfb"] > 0
                 return content, response.status, None, retry_after
             measurement["failure_kind"] = "http"
+            if measurement.get("shared_dispatch") is not None:
+                while await response.content.read(65536):
+                    pass
+                measurement["remote_response_complete"] = True
             try:
                 status_name = HTTPStatus(response.status).phrase
             except ValueError:

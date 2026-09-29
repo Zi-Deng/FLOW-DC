@@ -237,6 +237,13 @@ class VineTests(unittest.TestCase):
             self.assertEqual(ledger.snapshot(), before)
         self.assertFalse(ledger.prove_quiescent(client, proof)["duplicate"])
         self.assertTrue(ledger.prove_quiescent(client, proof)["duplicate"])
+        self.assertEqual(ledger.snapshot()["permits"][permit]["state"], "uncertain")
+        self.assertEqual(len(ledger.outstanding(ledger.current())), 1)
+        ledger.fence("stopped")
+        with self.assertRaises(ValueError):
+            ledger.recover_closed_epoch()
+        self.assertFalse(ledger.prove_origin_drained(client, "e" * 64)["duplicate"])
+        self.assertTrue(ledger.prove_origin_drained(client, "e" * 64)["duplicate"])
         self.assertEqual(ledger.snapshot()["permits"][permit]["state"], "quiescent")
         self.assertIsNone(ledger.snapshot()["permits"][permit]["completion"])
         self.assertEqual(ledger.outstanding(ledger.current()), [])

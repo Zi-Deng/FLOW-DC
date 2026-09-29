@@ -467,7 +467,7 @@ class Ledger:
             require(permit["headers"] == value, "conflicting header replay")
             return {"duplicate": True}
         require(
-            permit["dispatch_at"] is not None and permit["state"] in ("dispatched", "quiescent"),
+            permit["dispatch_at"] is not None and permit["state"] in ("dispatched", "uncertain", "quiescent"),
             "headers require dispatched work",
         )
         with self.change("headers", permit_id=permit_id, observation=value) as state:
@@ -503,7 +503,15 @@ class Ledger:
                         entry["embargo_until"] = max(entry["embargo_until"], self.clock() + delay)
                         entry["embargo_delay_max"] = max(entry["embargo_delay_max"], delay)
             state["permits"][permit_id].update(
-                state="complete", completion=observation, completed_at=self.clock()
+                state=(
+                    "complete"
+                    if permit["dispatch_at"] is None
+                    or observation.get("response_complete") is True
+                    or permit["state"] == "quiescent"
+                    else "uncertain"
+                ),
+                completion=observation,
+                completed_at=self.clock(),
             )
         # An owner-proven stopped attempt may deliver a late observation. Retain
         # it, but never feed a different epoch's controller or release twice.
@@ -539,8 +547,39 @@ class Ledger:
             return {"duplicate": True}
         with self.change("prove_quiescent", client_id=client_id, proof=proof) as state:
             for permit in self.outstanding(state, client_id=client_id):
-                state["permits"][permit["permit_id"]].update(state="quiescent", quiescence_proof=proof)
+                # Client exit proves no future sends, not completion at the origin.
+                state["permits"][permit["permit_id"]].update(
+                    state="quiescent" if permit["dispatch_at"] is None else "uncertain",
+                    quiescence_proof=proof,
+                )
             state["clients"][client_id].update(status="closed", quiescence_proof=proof)
+        return {"duplicate": False}
+
+    def prove_origin_drained(self, client_id, evidence_sha256):
+        """Owner-only controlled-origin evidence AFTER the client tree stopped.
+
+        No production client/timeout/heartbeat can invoke this RPC. The caller
+        must independently observe closure of all requests at that origin.
+        """
+        state = self.current()
+        require(
+            client_id in state["clients"] and state["clients"][client_id].get("quiescence_proof"),
+            "origin drain requires prior client quiescence",
+        )
+        require(
+            isinstance(evidence_sha256, str) and HEX.fullmatch(evidence_sha256),
+            "invalid origin drain evidence",
+        )
+        previous = state["clients"][client_id].get("origin_drain_sha256")
+        if previous is not None:
+            require(previous == evidence_sha256, "conflicting origin drain proof")
+            return {"duplicate": True}
+        with self.change("origin_drained", client_id=client_id, evidence_sha256=evidence_sha256) as state:
+            for permit in self.outstanding(state, client_id=client_id):
+                state["permits"][permit["permit_id"]].update(
+                    state="quiescent", origin_drain_sha256=evidence_sha256
+                )
+            state["clients"][client_id]["origin_drain_sha256"] = evidence_sha256
         return {"duplicate": False}
 
     def close_client(self, scope, client_id):

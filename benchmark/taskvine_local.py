@@ -295,6 +295,11 @@ async def fixture(args):
                 until = time.monotonic() + 3
                 while time.monotonic() < until and origin.requests > origin.responses:
                     await asyncio.sleep(0.05)
+                require(
+                    origin.requests == origin.responses, "controlled origin did not drain after worker exit"
+                )
+                drain = {"process_proof": proof, "origin": origin.snapshot()}
+                write_new(directory / "worker-loss-origin-drain.json", drain)
                 for client in targets:
                     authority.ledger.prove_quiescent(
                         client,
@@ -306,6 +311,7 @@ async def fixture(args):
                             "evidence_sha256": digest(encode(proof)),
                         },
                     )
+                    authority.ledger.prove_origin_drained(client, digest(encode(drain)))
                 injection.append({"kind": "worker-loss", "clients": list(targets), "proof": proof})
                 owned.start(manager.port, password_holder[0], features[0], replacement=True)
 

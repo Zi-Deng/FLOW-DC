@@ -125,6 +125,7 @@ def observation(value):
         "body_bytes",
         "latency_eligible",
         "body_complete",
+        "response_complete",
         "is_conn_error",
         "is_local_error",
         "is_unknown_error",
@@ -146,6 +147,7 @@ def observation(value):
             for key in (
                 "latency_eligible",
                 "body_complete",
+                "response_complete",
                 "is_conn_error",
                 "is_local_error",
                 "is_unknown_error",
@@ -513,6 +515,8 @@ class RemoteAttempt:
             "body_bytes": trace.get("observed_response_body_bytes", 0) if reason == "final" else 0,
             "latency_eligible": bool(trace.get("latency_eligible")) if reason == "final" else False,
             "body_complete": trace.get("body_completed_at") is not None if reason == "final" else False,
+            "response_complete": bool(trace.get("remote_response_complete"))
+            or (reason == "final" and trace.get("body_completed_at") is not None),
             "is_conn_error": kind == "transport",
             "is_local_error": kind in ("local", "admission"),
             "is_unknown_error": kind == "unknown",
