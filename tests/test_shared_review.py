@@ -19,6 +19,30 @@ from flowdc_shared import Authority, RemoteAttempt, SharedClient, SharedControlE
 from flowdc_topology import validate_roles  # noqa: E402
 from single_download import HTTP_TRACE_CTX, download_via_http_get  # noqa: E402
 
+from benchmark.shared_faults import close_resources  # noqa: E402
+
+
+class FixtureCleanupTests(unittest.IsolatedAsyncioTestCase):
+    async def test_client_close_refusal_cannot_skip_other_resources_or_ledger(self):
+        authority = SimpleNamespace(stop=AsyncMock(), ledger=SimpleNamespace(close=Mock()))
+        client = AsyncMock(side_effect=SharedControlError("uncertain work prevents client closure"))
+        origin = AsyncMock()
+        with self.assertRaises(ExceptionGroup) as raised:
+            await close_resources(authority, client, origin)
+        self.assertIsInstance(raised.exception.exceptions[0], SharedControlError)
+        client.assert_awaited_once()
+        origin.assert_awaited_once()
+        authority.stop.assert_awaited_once()
+        authority.ledger.close.assert_called_once()
+
+    async def test_failed_authority_stop_still_closes_ledger(self):
+        authority = SimpleNamespace(
+            stop=AsyncMock(side_effect=RuntimeError("stop failed")), ledger=SimpleNamespace(close=Mock())
+        )
+        with self.assertRaisesRegex(RuntimeError, "stop failed"):
+            await close_resources(authority)
+        authority.ledger.close.assert_called_once()
+
 
 class ConfigurationTests(unittest.TestCase):
     def test_shared_unbounded_timeout_is_rejected_before_input_or_output(self):

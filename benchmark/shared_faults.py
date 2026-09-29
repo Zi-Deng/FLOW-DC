@@ -49,6 +49,20 @@ def observation(status=200, delay=None):
     )
 
 
+async def close_resources(authority, *closers):
+    """Attempt every resource closure even when a client cannot acknowledge closure."""
+    try:
+        outcomes = await asyncio.gather(*(close() for close in closers), return_exceptions=True)
+        failures = [value for value in outcomes if isinstance(value, BaseException)]
+        if failures:
+            raise BaseExceptionGroup("fixture resource cleanup failed", failures)
+    finally:
+        try:
+            await authority.stop()
+        finally:
+            authority.ledger.close()
+
+
 class DroppedReplyAuthority(Authority):
     drop_operation = None
     drops = 0
@@ -125,10 +139,7 @@ async def lost_ack(output, results, operation):
             )
         )
     finally:
-        if client is not None:
-            await client.close()
-        await authority.stop()
-        authority.ledger.close()
+        await close_resources(authority, *([client.close] if client is not None else []))
 
 
 async def protocol(output, results):
@@ -228,10 +239,7 @@ async def protocol(output, results):
             )
         )
     finally:
-        await session.close()
-        await origin_runner.cleanup()
-        await authority.stop()
-        authority.ledger.close()
+        await close_resources(authority, session.close, origin_runner.cleanup)
 
 
 async def backpressure(output, results):
@@ -316,12 +324,7 @@ async def backpressure(output, results):
         for request in requests:
             request.cancel()
         await asyncio.gather(*requests, return_exceptions=True)
-        if raw_session is not None:
-            await raw_session.close()
-        if client is not None:
-            await client.close()
-        await authority.stop()
-        authority.ledger.close()
+        await close_resources(authority, *[item.close for item in (raw_session, client) if item is not None])
 
 
 async def admission_deadline(output, results):
@@ -371,6 +374,17 @@ async def admission_deadline(output, results):
             await attempt.close(measurement)
         remaining = authority.ledger.outstanding(authority.ledger.current())
         assert len(remaining) == 1 and remaining[0]["state"] == "uncertain"
+        assert client.failure is None and authority.failure is None
+        try:
+            await client.close()
+            raise AssertionError("client closed despite its unresolved dispatched permit")
+        except SharedControlError:
+            pass
+        assert client.session is None and authority.failure is None
+        after_close = authority.ledger.current()
+        assert after_close["clients"][client.client_id]["status"] == "open"
+        remaining = authority.ledger.outstanding(after_close)
+        assert len(remaining) == 1 and remaining[0]["state"] == "uncertain"
         (path / "trace.json").write_text(json.dumps(trace, indent=2))
         (path / "ledger.json").write_text(json.dumps(authority.ledger.export(), indent=2))
         results.append(
@@ -380,15 +394,14 @@ async def admission_deadline(output, results):
                 origin_arrivals=0,
                 status=408,
                 retained_uncertain_permits=1,
+                client_close_refused=True,
             )
         )
     finally:
-        if client is not None:
-            await client.close()
-        await authority.stop()
-        authority.ledger.close()
+        closers = [client.close] if client is not None else []
         if origin_runner is not None:
-            await origin_runner.cleanup()
+            closers.append(origin_runner.cleanup)
+        await close_resources(authority, *closers)
 
 
 async def main(output):
