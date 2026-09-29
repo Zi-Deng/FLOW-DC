@@ -255,6 +255,60 @@ class LedgerTests(unittest.TestCase):
         self.assertLess(volumes[1], volumes[0] * 2.5, volumes)
 
 
+class NativeFixtureTests(unittest.IsolatedAsyncioTestCase):
+    def test_arrival_accounting_detects_offered_work_hidden_by_service_queue(self):
+        from benchmark.core.controlled_origin import ServiceModel, audit_events
+
+        events = []
+
+        def emit(value):
+            events.append({"sequence": len(events) + 1, "origin_monotonic_ns": len(events), **value})
+
+        model = ServiceModel([[0, 2]], 8, emit)
+        for request in range(3):
+            model.arrive(0, request, f"/{request}")
+        for request in range(3):
+            model.finish(1, request)
+            emit({"phase": "response", "request_id": request})
+        result = audit_events(events, {"instrumented": True, "requests": 3, "responses": 3})
+        self.assertEqual(result.get("peak_open_requests"), 3)
+
+    async def test_pidfd_injection_does_not_require_cpython_pidfd_bindings(self):
+        import signal
+
+        import psutil
+
+        from benchmark.shared_origin import inject_failure
+
+        process = subprocess.Popen(
+            [sys.executable, "-B", "-c", "import time; time.sleep(10)"], start_new_session=True
+        )
+        try:
+            with tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                owner = root / "client-0/run/process-owner.json"
+                owner.parent.mkdir(parents=True)
+                owner.write_text(
+                    json.dumps({"pid": process.pid, "create_time": psutil.Process(process.pid).create_time()})
+                )
+                with (
+                    patch.object(os, "pidfd_open", None, create=True),
+                    patch.object(signal, "pidfd_send_signal", None, create=True),
+                ):
+                    await inject_failure(
+                        root,
+                        "worker-loss",
+                        None,
+                        [SimpleNamespace(done=lambda: False)],
+                        [{"phase": "arrival"}] * 4,
+                    )
+            self.assertEqual(process.wait(timeout=3), -signal.SIGKILL)
+        finally:
+            if process.poll() is None:
+                process.terminate()  # This Popen owns the still-unreaped child.
+                process.wait(timeout=3)
+
+
 class AcquisitionBridgeTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.temp = tempfile.TemporaryDirectory()

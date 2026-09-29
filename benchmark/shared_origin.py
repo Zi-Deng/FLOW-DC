@@ -4,6 +4,7 @@
 import argparse
 import asyncio
 import copy
+import ctypes
 import dataclasses
 import json
 import os
@@ -98,6 +99,42 @@ def native_config(config):
     return {rename.get(key, key): value for key, value in values.items()}
 
 
+def _pidfd_call(name, signature, *args):
+    """Some conda CPython builds omit pidfd wrappers; use the same libc primitive.
+
+    Missing libc/kernel support fails explicitly, never downgrades to PID signals.
+    """
+    libc = ctypes.CDLL(None, use_errno=True)
+    function = getattr(libc, name, None)
+    require(function is not None, "worker-loss fixture requires Linux libc pidfd support")
+    function.argtypes, function.restype = signature, ctypes.c_int
+    result = function(*args)
+    if result < 0:
+        error = ctypes.get_errno()
+        raise OSError(error, os.strerror(error))
+    return result
+
+
+def open_pidfd(pid):
+    function = getattr(os, "pidfd_open", None)
+    return function(pid) if function else _pidfd_call("pidfd_open", [ctypes.c_int, ctypes.c_uint], pid, 0)
+
+
+def signal_pidfd(fd, signum):
+    function = getattr(signal, "pidfd_send_signal", None)
+    if function:
+        function(fd, signum)
+    else:
+        _pidfd_call(
+            "pidfd_send_signal",
+            [ctypes.c_int, ctypes.c_int, ctypes.c_void_p, ctypes.c_uint],
+            fd,
+            signum,
+            None,
+            0,
+        )
+
+
 async def inject_failure(directory, case, authority, futures, events):
     if case in ("primary", "reciprocal-redirect", "retry-after"):
         return
@@ -113,13 +150,13 @@ async def inject_failure(directory, case, authority, futures, events):
                 # Open a kernel process handle before checking retained identity;
                 # PID reuse afterward cannot redirect this fixture's signal.
                 try:
-                    fd = os.pidfd_open(owner["pid"])
+                    fd = open_pidfd(owner["pid"])
                 except ProcessLookupError:
                     break
                 try:
                     process = psutil.Process(owner["pid"])
                     require(process.create_time() == owner["create_time"], "owned child identity changed")
-                    signal.pidfd_send_signal(fd, signal.SIGKILL)
+                    signal_pidfd(fd, signal.SIGKILL)
                 finally:
                     os.close(fd)
                 return
@@ -267,6 +304,10 @@ async def run(directory, workers, method, case):
             "distributed logical row reconciliation failed",
         )
         require(peak_service <= 2, "origin-observed service exceeds the aggregate two-request cap")
+        require(
+            all(audit["peak_open_requests"] <= 2 for audit in origin_audit),
+            "origin arrival-to-response work exceeds aggregate cap, including queued requests",
+        )
         for i in range(workers):
             owner = parse((directory / f"client-{i}/run/process-owner.json").read_bytes())
             require(not _group_running(owner["pgid"]), "owned process group remains active/uncertain")
@@ -293,6 +334,7 @@ async def run(directory, workers, method, case):
             "verified_rows": sum(row["disposition"] == "verified" for row in rows),
             "useful_payload_bytes": sum(row["useful_bytes"] for row in rows),
             "origin_peak_service": peak_service,
+            "origin_peak_open_requests": max(audit["peak_open_requests"] for audit in origin_audit),
             "elapsed_ns": time.monotonic_ns() - started,
             "native": results,
             "origin_audit": origin_audit,

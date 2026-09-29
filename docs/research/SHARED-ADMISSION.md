@@ -129,6 +129,11 @@ manager evidence, origin events/audits and exact verification results. Loss case
 must retain uncertain permits and failed/missing rows rather than fabricate success.
 An independent single-epoch event replay checks issued limits, embargoes and
 duplicate dispatches; it explicitly refuses to reinterpret clocks across restarts.
+The origin also audits arrival-to-response outstanding requests, including queued
+work, against the shared cap; its own service-slot limit cannot hide excess arrivals.
+Worker-loss injection requires Linux pidfds. Where CPython omits its wrappers, an
+explicit libc binding invokes the same kernel handle operations. Missing support
+fails the fixture; it never falls back to signaling an unreserved numeric PID.
 
 The managed executor cannot bind localhost sockets. Its ledger/HTTP-hook tests are
 V1 evidence only. Real executions through this entrypoint remain a required

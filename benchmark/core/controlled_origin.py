@@ -323,6 +323,7 @@ def audit_events(events, snapshot):
         return {"status": "not_collected", "reason": "instrumentation-off calibration"}
     arrivals, admitted, active, finished, responses = set(), set(), set(), set(), set()
     queue, slots, previous_time = deque(), None, -1
+    peak_open_requests = 0
     for sequence, event in enumerate(events, 1):
         require(
             event["sequence"] == sequence and event["origin_monotonic_ns"] >= previous_time,
@@ -339,6 +340,7 @@ def audit_events(events, snapshot):
         elif phase == "arrival":
             require(request not in arrivals, "duplicate arrival")
             arrivals.add(request)
+            peak_open_requests = max(peak_open_requests, len(arrivals - responses))
         elif phase == "admission":
             require(request in arrivals and request not in admitted, "admission without unique arrival")
             admitted.add(request)
@@ -373,4 +375,10 @@ def audit_events(events, snapshot):
         not active and not queue and arrivals == admitted == responses, "unaccounted origin request/service"
     )
     require(len(arrivals) == snapshot["requests"] == snapshot["responses"], "origin counter mismatch")
-    return {"status": "verified", "requests": len(arrivals), "completed_services": len(finished)}
+    return {
+        "status": "verified",
+        "requests": len(arrivals),
+        "completed_services": len(finished),
+        "peak_open_requests": peak_open_requests,
+        "unclosed_requests": len(arrivals - responses),
+    }
