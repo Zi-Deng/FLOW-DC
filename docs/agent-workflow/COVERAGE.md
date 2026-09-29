@@ -79,12 +79,20 @@ processes disqualify the run. Supporting upstream research and fixtures are desc
 in [the dated verification notes](COVERAGE-VERIFICATION.md). Synthetic tests are not a
 live 1.0.83 capability demonstration.
 
-Recognized unnumbered view results must equal the exact whole artifact, or the exact
-requested contiguous slice with no other identical slice in that artifact. CRLF,
-whitespace and Unicode are not normalized. A request, partial prefix or UI-only result
-cannot establish a read. The generated 1.0.83 fixture proves the whole-file form;
-range support is covered by synthetic regressions, pending separate live verification.
-Also recognized are numbered `N. text`, `N: text` and `N<TAB>text` lines;
+Recognized unnumbered view results must match the whole artifact or an unambiguous
+contiguous slice anchored to the requested range. Matching allows omission of exactly
+one final LF or complete CRLF separator, preserving all internal bytes and every
+character of the final source line. Empty output and omission of a final blank line's
+separator cannot establish that line. Partial prefixes, internal newline conversion
+and arbitrary whitespace/Unicode normalization receive no credit. Actual retained
+result hashes establish the omitted-final-LF form; CRLF elision has synthetic evidence.
+The original provider arguments were not retained, so that comparison proves returned
+content, not an independently observed request range.
+
+Raw source matching takes precedence over numbered rendering. Raw content matching
+multiple slices, a different range, or only a source prefix cannot be reinterpreted
+as numbered output to credit another source line. Otherwise numbered `N. text`,
+`N: text` and `N<TAB>text` lines remain supported;
 grep uses `packet/path:N:text`; glob uses newline-separated packet paths. Returned
 lines must exactly match the named immutable packet lines and the requested range.
 Grep credits only displayed matching lines. Glob proves discovery, never source

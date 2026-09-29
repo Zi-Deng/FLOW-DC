@@ -150,7 +150,8 @@ and project-specific assertions are not generic template requirements.
 ## Coverage schema upgrade
 
 Install the complete payload together: `scripts/agentic/review*.py`,
-`github_transport.py`, `ci_evidence.py`, `.agentic/schemas/review-report.json`, the
+`github_transport.py`, `ci_evidence.py`, `copilot_policy.py`,
+`.agentic/schemas/review-report.json`, the
 literal-tool profile, prompts, eight skills, hosted workflow and coverage documentation.
 The installer discovers these files recursively and refuses overwriting different
 existing files. Preview in a disposable staging directory, inspect conflicts and
@@ -158,7 +159,8 @@ apply the approved upgrade deliberately; do not replace a production installatio
 just to test it. FLOW-DC's project-specific `flowdc-tests` job remains project-owned.
 
 Pin Copilot CLI 1.0.83. Its help must expose JSONL output and explicit session IDs;
-help is not live capability proof. New schema-2 packets require observed tool evidence.
+help is not live capability proof. New packets and result journals use schema 3;
+compact reports and coverage evidence use schema 2. They require observed tool evidence.
 Old packets remain inspectable with their original semantics but cannot satisfy the
 new readiness gate. Do not regenerate historical provenance hashes or adopt unmerged
 PR policy into the trusted control checkout. See [the migration runbook](COVERAGE.md)

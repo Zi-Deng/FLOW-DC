@@ -151,6 +151,25 @@ def line_digest(lines, start, end):
     return checksum(json.dumps(lines[start - 1 : end], ensure_ascii=False))
 
 
+def view_text_matches(expected, returned):
+    """Exact source bytes, optionally without one complete final LF/CRLF separator.
+
+    Empty output cannot prove an empty line. Omitting a final blank line's separator
+    would also be indistinguishable from omitting that line, so refuse that case.
+    Internal separators, whitespace, Unicode and report bytes are never normalized.
+    """
+    if not returned:
+        return False
+    if expected == returned:
+        return True
+    separator = "\r\n" if expected.endswith("\r\n") else "\n"
+    return (
+        expected.endswith(separator)
+        and expected.splitlines(keepends=True)[-1] != separator
+        and returned == expected[: -len(separator)]
+    )
+
+
 def tool_observation(name, arguments, content, workspace, files):
     """Credit exact model-facing content against immutable packet text.
 
@@ -176,23 +195,32 @@ def tool_observation(name, arguments, content, workspace, files):
             end = len(lines)
         if not valid_range(start, end, len(lines)):
             return [], [], "unsupported_range"
-        # The pinned CLI's generated canary returned the exact unnumbered file.
-        # A range is credited only when its entire returned text equals the exact
-        # requested slice, and that slice is not ambiguous elsewhere in this file.
-        # Never infer a location from the request, a prefix, or UI detailedContent.
-        if content == text:
+        # Prefer actual source text over a possible numbered rendering. Numeric-
+        # looking raw lines (or prefixes of them) must not credit a different line.
+        if view_text_matches(text, content):
             observed[path] = set(range(1, len(lines) + 1))
-        elif content == "".join(chunks[start - 1 : end]):
-            width = end - start + 1
-            matches = sum(content == "".join(chunks[i : i + width]) for i in range(len(chunks) - width + 1))
-            if matches == 1:
+        else:
+            width = len(content.splitlines())
+            candidates, raw_prefix = [], False
+            if width:
+                for offset in range(len(chunks) - width + 1):
+                    candidate = "".join(chunks[offset : offset + width])
+                    if view_text_matches(candidate, content):
+                        candidates.append([offset + 1, offset + width])
+                    raw_prefix |= candidate.startswith(content)
+            if candidates:
+                if candidates != [[start, end]]:
+                    return [], [], "ambiguous_or_out_of_range_view"
                 observed[path] = set(range(start, end + 1))
-        for line in content.splitlines():
-            match = re.fullmatch(r"\s*([1-9][0-9]*)(?:\. |: |\t)(.*)", line)
-            if match:
-                number = int(match[1])
-                if start <= number <= end and match[2] == lines[number - 1]:
-                    observed.setdefault(path, set()).add(number)
+            elif raw_prefix:
+                return [], [], "partial_raw_view"
+            else:
+                for line in content.splitlines():
+                    match = re.fullmatch(r"\s*([1-9][0-9]*)(?:\. |: |\t)(.*)", line)
+                    if match:
+                        number = int(match[1])
+                        if start <= number <= end and match[2] == lines[number - 1]:
+                            observed.setdefault(path, set()).add(number)
     elif name == "grep":
         # Search results are evidence of returned matching lines, never the entire
         # file or the requested search range. The model must view missing context.

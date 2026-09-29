@@ -102,3 +102,28 @@ qualified and malformed reports. A changed head still requires fresh exact-head 
 and independent review. The supported P1 authorizes one repair-verification round under
 the existing policy; only the coordinator may perform that phase, within the unchanged
 400-credit / 900-second cap. No new model invocation was made by this repair executor.
+
+## Additional F1 boundary evidence — 2026-09-29
+
+After `5bcc2fd`, the coordinator compared the original packet's `source/000248.txt`
+lines 361–695 with retained result digests. The complete slice without its final LF
+matches event `event-000083` exactly: SHA-256
+`06b7d0cc89112373b910aaf69e40486a1d13918e5fbe1e9d5c84551aad1d0990`.
+The same slice with its terminal LF does not match. This establishes actual returned
+content from the first invocation; provider request arguments were not retained.
+It used no new model call and did not retain raw session or ordinary source results.
+
+Reduced hand-authored `test_review_view_boundaries.py` fixtures reproduced the failure
+on `5bcc2fd`, together with numeric-looking raw text being mistaken for another
+numbered source line. Matching now permits only a complete final LF/CRLF separator to
+be omitted, with no internal normalization or missing characters. CRLF support is
+synthetic evidence only. Empty output and a missing final blank line cannot earn
+coverage. Ambiguous, out-of-range and partial raw content cannot fall through to
+numbered interpretation; raw matches are never supplemented by another rendering.
+Existing truncation, model-facing-content and outside-packet checks remain enforced.
+Historical report bytes, assessments and journals are unchanged.
+
+The coordinator's full gate passed at exact `5bcc2fd`: 570 application and 198 workflow
+tests, lint/format/structural checks and clean-tree check. Those results apply to that
+parent, not to the subsequent boundary correction. New-head validation and the
+separate P1 verification review remain coordinator phases.
