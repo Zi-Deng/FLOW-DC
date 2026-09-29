@@ -90,9 +90,16 @@ and [executor verification](https://github.com/Zi-Deng/FLOW-DC/pull/24#issuecomm
 establish 401 product plus 141 workflow tests and both CI passes on **3b0b4a1**.
 Those passes are historical evidence, not validation of this changed head.
 
-The reviewer did not receive the approved plan and some linked historical evidence;
-the links above supply the governing contract and dated completion records. Its
-coverage omissions do not prove defects or authorize another review. `Makefile`
+The reviewer reported that the approved plan was unavailable for its inspection.
+The [coordinator subsequently verified](https://github.com/Zi-Deng/FLOW-DC/pull/24#issuecomment-5882534410)
+that the full issue, designated approved plan comment **5881275556**, all four
+then-current PR comments and both exact-head check-run records were present in the
+hash-checked `packet/context.json`. Availability does not establish what the reviewer
+inspected; the original report and its stated independent-inspection limitations
+remain intact. Full CI/private logs and the historical PR-21 comment were not
+independently read by that reviewer. The links above supply the governing contract
+and dated public completion records. Coverage omissions do not prove defects or
+authorize another review. `Makefile`
 explicitly defines `check: test-flowdc check-agentic`; `test-flowdc` invokes
 `python -B -m unittest discover -s tests -v`. Thus `make check` includes the named
 product gate and is counted once. No claims are made about excluded archived data,
