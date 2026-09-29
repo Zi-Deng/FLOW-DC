@@ -118,3 +118,11 @@ FLOW-DC uses the pinned agentic GitHub workflow template. Read
 - Cleanup requires a merged PR, a matching local tip, a registered clean worktree,
   and no ignored files that would be lost. The human finishing script archives ignored
   artifacts with verification before invoking guarded cleanup. Never use blanket cleanup commands.
+
+New independent reviews require validated actual `view`, `grep`, `glob` capability
+and required-material evidence. Nonempty output, human comments and legacy reports
+cannot establish coverage readiness. Partial findings remain publishable as incomplete.
+Read `docs/agent-workflow/COVERAGE.md` for migration, bounded repair scopes and recovery.
+Keep exact report bytes and sanitized diagnostics; never publish provider sessions.
+CI head association and actual tested checkout are separate facts. Observed reads do
+not prove understanding; private records can be rewritten by their owner.

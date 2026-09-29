@@ -97,20 +97,20 @@ class Repo:
         return self.info["defaultBranchRef"]["name"]
 
     def api(self, suffix, *, data=None, paginate=False, method=None, page_key=None):
-        args = ["gh", "api", f"repos/{self.name}/{suffix}"]
-        if paginate:
-            args += ["--paginate", "--slurp"]
-        if data is not None:
-            args += ["--method", method or "POST", "--input", "-"]
-        elif method:
-            args += ["--method", method]
-        out = run(args, cwd=self.root, input=json.dumps(data) if data is not None else None).stdout
-        result = json.loads(out) if out.strip() else None
-        return (
-            [item for page in result for item in (page[page_key] if page_key else page)]
-            if paginate
-            else result
+        from github_transport import api
+
+        return api(
+            self.name,
+            suffix,
+            data=data,
+            paginate=paginate,
+            method=method,
+            page_key=page_key,
+            token_source=self.github_token,
         )
+
+    def github_token(self):
+        return run(["gh", "auth", "token", "--hostname", "github.com"], cwd=self.root).stdout.strip()
 
     def fetch(self, *refs):
         # Per-command helper supports private Actions snapshots without persisting a token.
@@ -386,7 +386,7 @@ def ruleset(repo, checks):
     }
 
 
-def merge_preflight(repo, number, reviewed_sha):
+def merge_preflight(repo, number, reviewed_sha, review_directory=None):
     repo.assert_main()
     reviewed_sha = sha(reviewed_sha)
     pr = repo.pr(number)
@@ -396,12 +396,11 @@ def merge_preflight(repo, number, reviewed_sha):
         raise WorkflowError("PR base or head changed; review the current artifact")
     if pr.get("mergeable") is not True:
         raise WorkflowError("Mergeability is unknown or conflicting; wait or repair")
-    review_list = repo.api(f"pulls/{number}/reviews", paginate=True)
-    if not any(
-        r.get("commit_id") == reviewed_sha and r.get("state") in {"COMMENTED", "APPROVED"}
-        for r in review_list
-    ):
-        raise WorkflowError("No published review exists for this exact head")
+    if not review_directory:
+        raise WorkflowError("No published review coverage record supplied; use --review-directory")
+    import review
+
+    review.verified_published(repo, review_directory, number, reviewed_sha, pr["base"]["sha"])
     # --required must fail closed if no required checks are configured.
     checks = json.loads(
         run(
@@ -423,8 +422,9 @@ def merge_preflight(repo, number, reviewed_sha):
         raise WorkflowError("Required check configuration is missing or does not match the observed names")
     if any(c["bucket"] != "pass" for c in checks):
         raise WorkflowError("Every required check must pass; skipped/neutral/pending is insufficient")
-    if repo.pr(number)["head"]["sha"] != reviewed_sha:
-        raise WorkflowError("Head changed during preflight")
+    observed = repo.pr(number)
+    if observed["head"]["sha"] != reviewed_sha or observed["base"]["sha"] != pr["base"]["sha"]:
+        raise WorkflowError("Head or base changed during preflight")
     return {
         "reviewed_sha": reviewed_sha,
         "human_checks": "Read every finding, resolve conversations, confirm domain evidence and approve the merge yourself.",
@@ -501,6 +501,7 @@ def main():
     merge = sub.add_parser("merge-preflight")
     merge.add_argument("pr")
     merge.add_argument("--reviewed-sha", required=True)
+    merge.add_argument("--review-directory", required=True)
     agent = sub.add_parser("launch")
     agent.add_argument("role", choices=["draft", "plan", "implement", "repair"])
     agent.add_argument("task")
@@ -546,7 +547,7 @@ def main():
         elif args.command == "ruleset":
             result = ruleset(repo, args.check)
         elif args.command == "merge-preflight":
-            result = merge_preflight(repo, positive(args.pr), args.reviewed_sha)
+            result = merge_preflight(repo, positive(args.pr), args.reviewed_sha, args.review_directory)
         elif args.command == "launch":
             result = launch(repo, args.role, args.task, args.execute, args.managed)
             if isinstance(result, int):

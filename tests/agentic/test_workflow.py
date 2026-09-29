@@ -67,6 +67,7 @@ class GitFixture(unittest.TestCase):
         self.issue = {
             "state": "open",
             "title": "Correct value",
+            "body": "## Acceptance criteria\n1. Correct the value while preserving supported behavior.\n",
             "url": "https://api.github.com/repos/example/project/issues/12",
         }
         self.repo.api = self.api
@@ -260,7 +261,13 @@ class WorktreeTests(GitFixture):
 
     def test_merge_preflight_rejects_no_checks_or_skipped_checks(self):
         self.commit_task()
-        self.reviews = [{"commit_id": self.head, "state": "COMMENTED"}]
+        from review_fixtures import store
+
+        directory = review.prepare(self.repo, 31, 12, 1234)
+        store(self.repo, directory)
+        self.reviews = [
+            {"commit_id": self.head, "state": "COMMENTED", "body": review.publication_body(directory)}
+        ]
         original = workflow.run
         for checks in [[], [{"name": "quality", "bucket": "skipping", "state": "SKIPPED"}]]:
 
@@ -270,11 +277,17 @@ class WorktreeTests(GitFixture):
                 return original(args, **kwargs)
 
             with patch.object(workflow, "run", side_effect=fake), self.assertRaises(workflow.WorkflowError):
-                workflow.merge_preflight(self.repo, 31, self.head)
+                workflow.merge_preflight(self.repo, 31, self.head, directory)
 
     def test_merge_preflight_emits_pinned_command_only(self):
         self.commit_task()
-        self.reviews = [{"commit_id": self.head, "state": "COMMENTED"}]
+        from review_fixtures import store
+
+        directory = review.prepare(self.repo, 31, 12, 1234)
+        store(self.repo, directory)
+        self.reviews = [
+            {"commit_id": self.head, "state": "COMMENTED", "body": review.publication_body(directory)}
+        ]
         original = workflow.run
 
         def fake(args, **kwargs):
@@ -285,7 +298,7 @@ class WorktreeTests(GitFixture):
             return original(args, **kwargs)
 
         with patch.object(workflow, "run", side_effect=fake):
-            result = workflow.merge_preflight(self.repo, 31, self.head)
+            result = workflow.merge_preflight(self.repo, 31, self.head, directory)
         self.assertIn("--match-head-commit " + self.head, result["command"])
         self.assertFalse(self.pr_data["merged"])
 
@@ -382,20 +395,23 @@ class ReviewTests(GitFixture):
             review.review(self.repo, directory)
 
     def test_publish_is_comment_bound_to_sha_and_idempotent(self):
+        from review_fixtures import store
+
         directory = self.packet()
-        (directory / "review.md").write_text("No material findings supported.\n")
-        meta = review.verify_packet(directory)
-        meta["review_sha256"] = review.digest(directory / "review.md")
-        workflow.write_json(directory / "metadata.json", meta)
+        store(self.repo, directory)
         review.publish(self.repo, directory)
         body = self.posts[0][1]
         self.assertEqual(body["event"], "COMMENT")
         self.assertEqual(body["commit_id"], self.head)
-        self.reviews.append({"body": body["body"], "html_url": "existing"})
+        self.reviews.append(
+            {"body": body["body"], "html_url": "existing", "commit_id": self.head, "state": "COMMENTED"}
+        )
         self.assertEqual(review.publish(self.repo, directory), {"existing_review": "existing"})
         self.assertEqual(len(self.posts), 1)
 
     def test_copilot_run_has_fresh_state_and_read_only_tool_allowlist(self):
+        from review_fixtures import HELP, provider_response
+
         packet_config = workflow.configuration(self.root)
         with patch.object(review, "configuration", return_value=packet_config):
             directory = self.packet()
@@ -410,19 +426,23 @@ class ReviewTests(GitFixture):
                 return subprocess.CompletedProcess(
                     args,
                     0,
-                    "--available-tools --no-custom-instructions --disable-builtin-mcps --no-remote-export --no-ask-user --usage-output-file --max-ai-credits",
+                    HELP,
                     "",
                 )
             if args[1] == "--version":
-                return subprocess.CompletedProcess(args, 0, "Copilot test double\n", "")
+                return subprocess.CompletedProcess(args, 0, "Copilot CLI 1.0.83\n", "")
             observed.append((args, kwargs))
             self.assertFalse(Path(kwargs["cwd"]).is_relative_to(self.root))
+            profile = (Path(kwargs["cwd"]) / ".github/agents/independent-reviewer.agent.md").read_text(
+                encoding="utf-8"
+            )
+            self.assertIn("tools: [view, grep, glob]", profile.splitlines())
             self.assertNotIn("GH_TOKEN", kwargs["env"])
             self.assertNotIn("COPILOT_PROVIDER_BASE_URL", kwargs["env"])
             settings = json.loads((Path(kwargs["env"]["COPILOT_HOME"]) / "settings.json").read_text())
             self.assertTrue(settings["disableAllHooks"])
             return subprocess.CompletedProcess(
-                args, 0, "No material findings supported by this review.\n", ""
+                args, 0, provider_response(args, kwargs, directory / "packet"), ""
             )
 
         with (
@@ -444,6 +464,7 @@ class ReviewTests(GitFixture):
         self.assertTrue(report.exists())
         argv = observed[0][0]
         self.assertIn("--available-tools=view,grep,glob", argv)
+        self.assertIn("--allow-tool=view,grep,glob", argv)
         self.assertNotIn("--allow-all", argv)
         self.assertNotIn("--continue", argv)
         self.assertEqual(argv[argv.index("--model") + 1], requested_model)
@@ -451,7 +472,8 @@ class ReviewTests(GitFixture):
             argv[argv.index("--max-ai-credits") + 1],
             str(packet_config["review_max_ai_credits"]),
         )
-        self.assertIn(f"Requested model: `{requested_model}`", report.read_text())
+        self.assertIn(f"Requested model: `{requested_model}`", review.publication_body(directory))
+        self.assertTrue(review.qualification(directory)["qualified"])
 
 
 class InstallerTests(unittest.TestCase):
@@ -507,6 +529,8 @@ class InstallerTests(unittest.TestCase):
             self.assertTrue((target / "scripts/finish-task.sh").exists())
             self.assertEqual(len(list((target / ".agents/skills").glob("*/SKILL.md"))), 8)
             self.assertFalse((target / ".agentic-local").exists())
+            profile = (target / ".github/agents/independent-reviewer.agent.md").read_text(encoding="utf-8")
+            self.assertIn("tools: [view, grep, glob]", profile.splitlines())
 
     def test_installer_rejects_non_directory_ancestor_before_writes(self):
         with tempfile.TemporaryDirectory() as tmp:

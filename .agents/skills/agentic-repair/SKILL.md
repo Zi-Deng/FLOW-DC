@@ -22,3 +22,7 @@ If the launch prompt identifies this session as the managed executor, repair dir
 Run affected and required checks, inspect the complete resulting diff, and prepare commits and public response text. Report blockers and return the managed result to the coordinator. Do not publish directly or merge.
 
 A new head or base requires a fresh independent review. Keep the configured review-round bound; unresolved material issues after the bound require a justified continuation or revised plan. Return the public response, new head, checks and next review action.
+
+Prepare a finding/disposition map and repair delta linked to a validated prior packet. Preserve prior uncovered source/tests and outstanding findings; a legacy nonempty report is not coverage. Changes require renewed current-head evidence within the existing request allowance.
+
+Read [the coverage contract and migration runbook](../../../docs/agent-workflow/COVERAGE.md).

@@ -7,12 +7,8 @@ import sys
 from pathlib import Path
 from unittest.mock import patch
 
+from review_fixtures import HELP, provider_response
 from test_workflow import SOURCE, GitFixture, git, review, workflow
-
-HELP = (
-    "--available-tools --no-custom-instructions --disable-builtin-mcps "
-    "--no-remote-export --no-ask-user --usage-output-file --max-ai-credits"
-)
 
 
 class ReviewRecoveryTests(GitFixture):
@@ -42,7 +38,7 @@ class ReviewRecoveryTests(GitFixture):
             if args[1] == "--version":
                 if self.version_fails:
                     raise workflow.WorkflowError("Version probe failed")
-                return subprocess.CompletedProcess(args, 0, "Copilot test double\n", "")
+                return subprocess.CompletedProcess(args, 0, "Copilot CLI 1.0.83\n", "")
             self.model_calls += 1
             self.reviewer_environment = kwargs["env"].copy()
             for key in (
@@ -54,7 +50,9 @@ class ReviewRecoveryTests(GitFixture):
                 "XDG_STATE_HOME",
             ):
                 self.assertTrue(Path(kwargs["env"][key]).is_dir())
-            return subprocess.CompletedProcess(args, 0, self.model_report, "")
+            return subprocess.CompletedProcess(
+                args, 0, provider_response(args, kwargs, directory / "packet", self.model_report), ""
+            )
 
         with (
             patch.dict(os.environ, {"COPILOT_GITHUB_TOKEN": "fake-test-token"}),
@@ -108,6 +106,25 @@ class ReviewRecoveryTests(GitFixture):
         self.assertEqual(self.posts[-1][1]["commit_id"], self.head)
         self.assertIn("café", self.posts[-1][1]["body"])
 
+    def test_diagnostic_sidecar_failure_keeps_exact_capture_and_never_retries_provider(self):
+        directory = self.packet()
+        original = review.atomic_json
+
+        def fail_sidecar(path, value):
+            if Path(path).name == "diagnostics.json":
+                raise OSError("Injected diagnostic write failure")
+            return original(path, value)
+
+        with patch.object(review, "atomic_json", side_effect=fail_sidecar):
+            with self.assertRaises(OSError):
+                self.invoke(directory)
+        capture = json.loads((directory / "review-capture.json").read_bytes())
+        self.assertEqual(capture["body"], self.model_report)
+        with patch.object(review, "run", side_effect=AssertionError("No provider retry")):
+            report = review.review(self.repo, directory)
+        self.assertEqual(report.read_bytes(), self.model_report.encode())
+        self.assertEqual(self.model_calls, 1)
+
     def test_report_write_failure_recovers_from_durable_journal(self):
         directory = self.packet()
         with patch.object(review, "atomic_text", side_effect=OSError("Injected report write failure")):
@@ -152,6 +169,37 @@ class ReviewRecoveryTests(GitFixture):
             review.recover_review(self.repo, directory)
         self.assertFalse((directory / "review.md").exists())
         self.assertEqual(self.model_calls, 1)
+
+    def test_timeout_retains_sanitized_diagnostics_and_never_retries(self):
+        directory = self.packet()
+        original = review.run
+        calls = []
+
+        def timeout(args, **kwargs):
+            if args[0] != "copilot":
+                return original(args, **kwargs)
+            if args[1] == "--help":
+                return subprocess.CompletedProcess(args, 0, HELP, "")
+            if args[1] == "--version":
+                return subprocess.CompletedProcess(args, 0, "1.0.83", "")
+            calls.append(args)
+            raise subprocess.TimeoutExpired(
+                args, 900, output=b'{"type":"session.start","data":{}}\n', stderr=b"private-token-example"
+            )
+
+        with (
+            patch.dict(os.environ, {"COPILOT_GITHUB_TOKEN": "fake-test-token"}),
+            patch.object(review, "run", side_effect=timeout),
+        ):
+            with self.assertRaisesRegex(workflow.WorkflowError, "no recoverable"):
+                review.review(self.repo, directory)
+            with self.assertRaisesRegex(workflow.WorkflowError, "Prior review attempt"):
+                review.review(self.repo, directory)
+        diagnostics = (directory / "diagnostics.json").read_text()
+        self.assertIn("provider_timeout", diagnostics)
+        self.assertNotIn("private-token-example", diagnostics)
+        self.assertEqual(len(calls), 1)
+        self.assertFalse((directory / "review-result.json").exists())
 
     def test_oversized_report_is_preserved_without_publication_or_retry(self):
         directory = self.packet()

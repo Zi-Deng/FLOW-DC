@@ -47,3 +47,8 @@ Use a real issue number. The eight repository skills are installed under `.agent
 - Private context: ignored `memory/`; machine continuity and artifacts: ignored `.agentic-local/` in the control checkout.
 
 Configuration is in [`.agentic/config.json`](../../.agentic/config.json). Neither CI nor model review establishes scientific validity. Apply the repository's [agent notes](../../AGENTS.md) and domain rubric to the actual change.
+
+- [Coverage contract and migration](COVERAGE.md): packet navigation, actual tool
+  evidence, incomplete status, repair ancestry, exact transport and legacy records.
+- [Coverage verification notes](COVERAGE-VERIFICATION.md): upstream research,
+  synthetic fixtures and the limits of live verification.

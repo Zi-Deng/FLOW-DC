@@ -20,3 +20,7 @@ If the launch prompt identifies this session as the managed executor, perform th
 Follow the managed-role contract for results and handoff. GitHub publication belongs to the coordinator. Preserve unrelated edits, tests and acceptance criteria; expose unresolved questions and unavailable evidence. Do not merge.
 
 Return the PR URL, executor/task identity, current head and validation evidence. The next phase is fresh independent review, not the executor reviewing its own implementation.
+
+Supply criterion/test mappings, explicit omissions and exact check commands/statuses. Keep static inspection separate from hosted head association and actual tested checkout. Partial or legacy reports cannot establish readiness.
+
+Read [the coverage contract and migration runbook](../../../docs/agent-workflow/COVERAGE.md).

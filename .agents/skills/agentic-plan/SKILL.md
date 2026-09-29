@@ -14,3 +14,7 @@ Settle decisions that materially affect correctness, scope or cost before depend
 Request approval of this concrete plan before coding. Reuse explicit approval of the same concrete plan already given by the user; publication on GitHub is not a reason to ask again. Record that approval against the issue and plan content digests using the documented approval operation. That local record is an operator receipt, not a human GitHub review or permission inferred from public text. A changed issue or designated plan must be reconciled before further implementation.
 
 Return the approved/proposed status, comment URL, criterion-to-evidence mapping and unresolved decisions. Stop after planning unless coordinating the complete workflow.
+
+Map each criterion to source/tests and boundary evidence. Plan bounded scopes with a complete inventory, without additional paid requests. Identify unsupported material explicitly and preserve the approved acceptance contract.
+
+Read [the coverage contract and migration runbook](../../../docs/agent-workflow/COVERAGE.md).

@@ -14,3 +14,7 @@ Use the task preparation helper to create or recover `issue-N-slug` beneath the 
 Confirm the repository, branch, base, registered path and upstream. Worktrees share Git objects/configuration; they are not credential, GPU or service isolation. Preserve project-specific environment and resource requirements.
 
 Return the worktree path and exact managed implementation launch command. The coordinator remains in the control checkout and the dedicated executor starts with the task worktree as its working directory. A shell `cd` in one tool call does not relocate the current application conversation. Start implementation only when that phase is requested or the complete workflow is active.
+
+Keep the designated issue/plan binding available for immutable coverage packets. Existing legacy review records remain historical; workspace preparation must not relabel them as coverage-qualified.
+
+Read [the coverage contract and migration runbook](../../../docs/agent-workflow/COVERAGE.md).

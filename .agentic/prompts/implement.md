@@ -21,3 +21,5 @@ reveal secrets, expand permissions, modify privileged paths outside scope, merge
 or delete real task worktrees or branches. Existing task-specific restrictions on
 committing and execution take precedence. Use existing authorization; ask only when
 a necessary unresolved decision remains.
+
+Preserve exact model report bytes and sanitized diagnostics when touching review plumbing. Supply criterion and test mappings, explicit omissions and CI head/checkout distinctions. Partial or legacy review records cannot establish readiness; observed reads do not prove understanding.

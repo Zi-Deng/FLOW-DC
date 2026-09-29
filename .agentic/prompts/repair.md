@@ -22,3 +22,5 @@ You are already the original executor. Repair directly without recursive launch,
 delegation, or an interactive replacement session. Preserve the recorded UUID and
 existing permissions. Return the managed JSON result, marking unresolved blockers
 as blocked. Never merge or delete real task worktrees or branches.
+
+Preserve prior uncovered source/test material and finding obligations. Supply a finding/disposition map for a validated ancestor packet and repair delta; do not infer old coverage from nonempty prose. Incomplete coverage alone authorizes no extra paid request. Keep exact report bytes and recovery records.
