@@ -5,12 +5,14 @@
   "required": [
     "schema_version",
     "findings",
-    "coverage",
-    "limitations"
+    "limitations",
+    "inventory_sha256",
+    "reviewed",
+    "incomplete"
   ],
   "properties": {
     "schema_version": {
-      "const": 1
+      "const": 2
     },
     "findings": {
       "type": "array",
@@ -65,63 +67,55 @@
         }
       }
     },
-    "coverage": {
+    "limitations": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "inventory_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "reviewed": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^[a-f0-9]{24}$"
+      }
+    },
+    "incomplete": {
       "type": "array",
       "items": {
         "type": "object",
         "additionalProperties": false,
         "required": [
-          "id",
+          "ids",
           "state",
-          "locations",
           "reason"
         ],
         "properties": {
-          "id": {
-            "type": "string"
+          "ids": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{24}$"
+            }
           },
           "state": {
             "enum": [
-              "reviewed",
               "unread",
               "unsupported"
             ]
           },
-          "locations": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "additionalProperties": false,
-              "required": [
-                "artifact",
-                "start_line",
-                "end_line"
-              ],
-              "properties": {
-                "artifact": {
-                  "type": "string"
-                },
-                "start_line": {
-                  "type": "integer",
-                  "minimum": 1
-                },
-                "end_line": {
-                  "type": "integer",
-                  "minimum": 1
-                }
-              }
-            }
-          },
           "reason": {
-            "type": "string"
+            "type": "string",
+            "minLength": 1
           }
         }
-      }
-    },
-    "limitations": {
-      "type": "array",
-      "items": {
-        "type": "string"
       }
     }
   }

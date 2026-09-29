@@ -76,8 +76,9 @@ it never triggers a broader permission workaround or automatic paid retry.
 
 ## Exact storage, publication and recovery
 
-`review.md` contains exact model-response bytes. `review-result.json` journals them with
-sanitized diagnostics before final storage. Retry storage with the same directory only
+`review.md` contains exact model-response bytes. `review-capture.json` saves them with
+sanitized diagnostics before assessment reads packet files; `review-result.json` journals
+the resulting assessment before final storage. Retry storage with the same directory only
 when that journal is valid; recovery and completed-result reuse invoke no model. A
 started attempt without a valid journal needs investigation, not a blind rerun.
 Reports exceeding the 60000-byte publication limit remain intact; the prompt requests
@@ -97,11 +98,16 @@ owner can rewrite private records and hashes; they are not independent attestati
 
 ## Report contract
 
-Return JSON matching `report-schema.json`: version 1, findings, coverage and limitations.
-Every required ID must have a reviewed/unread/unsupported row, inspected packet line
-locations and an explicit reason when incomplete. The wrapper correlates locations
-with actual successful tool results. A checkmark, percentage, file listing or diff
-header cannot replace source/test inspection. Observed reads do not prove understanding.
+Return compact schema-2 JSON matching `report-schema.json`: copy `inventory-sha256.txt`,
+list positively inspected IDs in `reviewed`, group specific reasons in `incomplete`,
+and state general `limitations` once. Every unclaimed inventory ID remains unread and
+blocks readiness. The wrapper supplies original paths/ranges from the hash-bound
+inventory and correlates them with actual successful tool results. One complete outer
+`json` fence is accepted without changing saved bytes. A checkmark, percentage, listing
+or diff header cannot replace source/test inspection. Observed reads do not prove
+understanding. Do not infer a provider timeout or exhausted budget from partial coverage.
+Historical assessments/publication bytes retain their original policy; current readiness
+requires the new schema. See COVERAGE.md for recovery and migration.
 
 | Severity | Meaning |
 | --- | --- |

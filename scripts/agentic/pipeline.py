@@ -387,7 +387,7 @@ def review_task(
                 record["status"] = "incomplete"
                 store.save(state)
                 raise
-            record["coverage_qualified"] = independent.qualification(record["directory"])["qualified"]
+            record["coverage_qualified"] = independent.coverage_ready(record["directory"])
             record["status"] = "reviewed" if record["coverage_qualified"] else "reviewed-incomplete"
             store.save(state)
         elif execute and record.get("run_attempted"):
@@ -396,7 +396,7 @@ def review_task(
             independent.recover_review(repo, record["directory"])
             report_record(repo, state, record)
             if record["status"] not in {"publishing", "published", "published-incomplete"}:
-                record["coverage_qualified"] = independent.qualification(record["directory"])["qualified"]
+                record["coverage_qualified"] = independent.coverage_ready(record["directory"])
                 record["status"] = "reviewed" if record["coverage_qualified"] else "reviewed-incomplete"
                 store.save(state)
         if publish:
@@ -417,7 +417,7 @@ def review_task(
             if not observed:
                 raise WorkflowError("Published pipeline review is not yet observable")
             independent.current_pr(repo, state["pr"], binding["head_sha"], binding["base_sha"])
-            qualified = independent.qualification(record["directory"])["qualified"]
+            qualified = independent.coverage_ready(record["directory"])
             record["coverage_qualified"] = qualified
             record["status"] = "published" if qualified else "published-incomplete"
             state.pop("designated_review", None)

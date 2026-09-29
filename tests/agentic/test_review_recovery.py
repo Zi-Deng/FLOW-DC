@@ -106,6 +106,25 @@ class ReviewRecoveryTests(GitFixture):
         self.assertEqual(self.posts[-1][1]["commit_id"], self.head)
         self.assertIn("café", self.posts[-1][1]["body"])
 
+    def test_diagnostic_sidecar_failure_keeps_exact_capture_and_never_retries_provider(self):
+        directory = self.packet()
+        original = review.atomic_json
+
+        def fail_sidecar(path, value):
+            if Path(path).name == "diagnostics.json":
+                raise OSError("Injected diagnostic write failure")
+            return original(path, value)
+
+        with patch.object(review, "atomic_json", side_effect=fail_sidecar):
+            with self.assertRaises(OSError):
+                self.invoke(directory)
+        capture = json.loads((directory / "review-capture.json").read_bytes())
+        self.assertEqual(capture["body"], self.model_report)
+        with patch.object(review, "run", side_effect=AssertionError("No provider retry")):
+            report = review.review(self.repo, directory)
+        self.assertEqual(report.read_bytes(), self.model_report.encode())
+        self.assertEqual(self.model_calls, 1)
+
     def test_report_write_failure_recovers_from_durable_journal(self):
         directory = self.packet()
         with patch.object(review, "atomic_text", side_effect=OSError("Injected report write failure")):

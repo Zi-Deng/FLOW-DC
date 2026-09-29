@@ -1,3 +1,4 @@
+# Historical schema-1 assessment only; never used to qualify a new review.
 """Conservative Copilot session-event adapter and required-material coverage gate.
 
 Only model-facing tool result content is evidence. Provider reasoning, environments,
@@ -13,11 +14,10 @@ import math
 import re
 from pathlib import Path, PurePosixPath
 
-from copilot_policy import CLI_VERSION
 from workflow import WorkflowError
 
-SCHEMA = 2
-ADAPTER = "copilot-session-events-v2"
+SCHEMA = 1
+ADAPTER = "copilot-session-events-v1"
 MAX_EVENTS = 20000
 MAX_TOOL_RECORDS = 4000
 MAX_STREAM_BYTES = 16000000
@@ -59,37 +59,6 @@ IGNORED_EVENTS = {
     "session.custom_agents_updated",
     "session.mcp_servers_loaded",
 }
-
-
-# Public SDK root-agent bookkeeping; payloads are never retained. Supporting a
-# named type does not imply these were the unidentified events in the first run.
-ROOT_EVENTS = {"system.message", "subagent.selected"}
-
-
-def event_restriction(event):
-    data = event.get("data") or {}
-    if "agentId" in event:
-        return "delegated_or_mcp_event"
-    if not isinstance(data, dict):
-        return "malformed_or_uncorrelated_event"
-    if any(data.get(key) for key in ("parentToolCallId", "mcpServerName", "mcpToolName")):
-        return "delegated_or_mcp_event"
-    if event["type"] == "subagent.selected":
-        selected = data.get("tools")
-        if (
-            data.get("agentName") != "independent-reviewer"
-            or not isinstance(selected, list)
-            or len(selected) != len(TOOLS)
-            or any(not isinstance(tool, str) for tool in selected)
-            or set(selected) != TOOLS
-            or "toolCallId" in data
-        ):
-            return "unsupported_agent_selection"
-    if event["type"] == "system.message" and (
-        data.get("role") not in {"system", "developer"} or not isinstance(data.get("content"), str)
-    ):
-        return "unsupported_system_message"
-    return None
 
 
 def checksum(text):
@@ -152,9 +121,9 @@ def line_digest(lines, start, end):
 
 
 def tool_observation(name, arguments, content, workspace, files):
-    """Credit exact model-facing content against immutable packet text.
+    """Credit only returned numbered lines exactly matching known packet content.
 
-    Supported renderings: exact unnumbered view text or N. / N: / N<TAB> lines, grep's
+    Supported renderings: view's N. text / N: text / N<TAB>text, grep's
     packet/path:N:text and glob's newline-separated packet paths. Other formats
     retain a result digest but receive no inspected-range credit.
     """
@@ -163,12 +132,8 @@ def tool_observation(name, arguments, content, workspace, files):
         path = packet_path(arguments.get("path"), workspace, files)
         if path is None:
             return [], [], "unsafe_or_unknown_path"
-        text = files[path]
-        chunks = text.splitlines(keepends=True)
-        lines = text.splitlines()
-        requested = arguments.get("view_range")
-        if requested is None:
-            requested = [1, len(lines)]
+        lines = files[path]
+        requested = arguments.get("view_range", [1, len(lines)])
         if not isinstance(requested, list) or len(requested) != 2:
             return [], [], "unsupported_range"
         start, end = requested
@@ -176,17 +141,6 @@ def tool_observation(name, arguments, content, workspace, files):
             end = len(lines)
         if not valid_range(start, end, len(lines)):
             return [], [], "unsupported_range"
-        # The pinned CLI's generated canary returned the exact unnumbered file.
-        # A range is credited only when its entire returned text equals the exact
-        # requested slice, and that slice is not ambiguous elsewhere in this file.
-        # Never infer a location from the request, a prefix, or UI detailedContent.
-        if content == text:
-            observed[path] = set(range(1, len(lines) + 1))
-        elif content == "".join(chunks[start - 1 : end]):
-            width = end - start + 1
-            matches = sum(content == "".join(chunks[i : i + width]) for i in range(len(chunks) - width + 1))
-            if matches == 1:
-                observed[path] = set(range(start, end + 1))
         for line in content.splitlines():
             match = re.fullmatch(r"\s*([1-9][0-9]*)(?:\. |: |\t)(.*)", line)
             if match:
@@ -201,11 +155,7 @@ def tool_observation(name, arguments, content, workspace, files):
             if match:
                 path = packet_path(match[1], workspace, files)
                 number = int(match[2])
-                if (
-                    path
-                    and number <= len(files[path].splitlines())
-                    and match[3] == files[path].splitlines()[number - 1]
-                ):
+                if path and number <= len(files[path]) and match[3] == files[path][number - 1]:
                     observed.setdefault(path, set()).add(number)
     elif name == "glob":
         paths = [packet_path(line, workspace, files) for line in content.splitlines()]
@@ -218,7 +168,7 @@ def tool_observation(name, arguments, content, workspace, files):
                     "artifact": path,
                     "start_line": start,
                     "end_line": end,
-                    "sha256": line_digest(files[path].splitlines(), start, end),
+                    "sha256": line_digest(files[path], start, end),
                 }
             )
     return spans, [], None if spans else "unrecognized_or_empty_tool_result"
@@ -227,18 +177,12 @@ def tool_observation(name, arguments, content, workspace, files):
 def parse_events(raw, packet, workspace, *, exit_code=0, failure=None, version="unknown", usage=None):
     """Normalize public-shaped JSONL events; never persist the raw provider stream."""
     packet = Path(packet)
-    files, reasons = {}, set()
-    try:
-        for path in packet.rglob("*"):
-            if path.is_file() and not path.is_symlink():
-                try:
-                    files[path.relative_to(packet).as_posix()] = path.read_bytes().decode("utf-8")
-                except UnicodeError:
-                    reasons.add("undecodable_packet_artifact")
-                except OSError:
-                    reasons.add("unreadable_packet_artifact")
-    except OSError:
-        reasons.add("unreadable_packet_artifact")
+    files = {
+        p.relative_to(packet).as_posix(): p.read_bytes().decode("utf-8").splitlines()
+        for p in packet.rglob("*")
+        if p.is_file() and not p.is_symlink()
+    }
+    reasons = set()
     if failure:
         reasons.add(failure)
     if exit_code != 0:
@@ -253,7 +197,6 @@ def parse_events(raw, packet, workspace, *, exit_code=0, failure=None, version="
         raw = ""
         reasons.add("stream_limit_exceeded")
     pending, seen, records = {}, set(), []
-    unknown = {}
     report, final_seen, terminal = "", False, False
     event_count = 0
     for line in raw.split("\n"):
@@ -268,9 +211,6 @@ def parse_events(raw, packet, workspace, *, exit_code=0, failure=None, version="
             if not isinstance(event, dict) or not isinstance(event.get("type"), str):
                 raise ValueError("unsupported envelope")
             kind, data = event["type"], event.get("data", {})
-            restriction = event_restriction(event)
-            if restriction:
-                reasons.add(restriction)
             if kind == "result":
                 # CLI stdout has a terminal envelope in addition to SDK events.
                 # It can supply completion/usage, never fabricate tool evidence.
@@ -390,12 +330,8 @@ def parse_events(raw, packet, workspace, *, exit_code=0, failure=None, version="
                         reasons.add("unsupported_chunked_report")
             elif kind in {"session.idle", "session.shutdown"}:
                 terminal = True
-            elif kind not in IGNORED_EVENTS | ROOT_EVENTS:
+            elif kind not in IGNORED_EVENTS:
                 reasons.add("unsupported_provider_event")
-                key = checksum(kind)
-                if key not in unknown and len(unknown) >= 64:
-                    key = "overflow"
-                unknown[key] = unknown.get(key, 0) + 1
         except (ValueError, TypeError, KeyError):
             reasons.add("malformed_or_uncorrelated_event")
     if not terminal or not final_seen or pending:
@@ -412,11 +348,7 @@ def parse_events(raw, packet, workspace, *, exit_code=0, failure=None, version="
             break
         retained.append(record)
     records = retained
-    try:
-        canary = capability(records, packet)
-    except (WorkflowError, KeyError, TypeError, OSError, UnicodeError):
-        canary = dict.fromkeys(sorted(TOOLS), False)
-        reasons.add("unavailable_capability_artifact")
+    canary = capability(records, packet)
     if not all(canary.values()):
         reasons.add("capability_probe_incomplete")
     diagnostics = {
@@ -429,12 +361,7 @@ def parse_events(raw, packet, workspace, *, exit_code=0, failure=None, version="
         "capability": canary,
         "events": records,
         "usage": sanitize_usage(usage),
-        "telemetry": {
-            "source": "stdout",
-            "stdout_shapes": {},
-            "session_shapes": {},
-            "unknown_types": {"stdout": unknown, "session": {}},
-        },
+        "telemetry": {"source": "stdout", "stdout_shapes": {}, "session_shapes": {}},
     }
     return report, diagnostics
 
@@ -562,7 +489,7 @@ def validate_diagnostics(diagnostics, packet):
         )
     ):
         raise WorkflowError("Invalid diagnostic fields")
-    from review_telemetry import validate_summary
+    # Legacy summary validation is frozen below.
 
     validate_summary(diagnostics["telemetry"])
     ids = set()
@@ -641,10 +568,7 @@ def validate_diagnostics(diagnostics, packet):
             path = Path(packet) / artifact
             if not path.is_file() or path.is_symlink():
                 raise WorkflowError("Missing evidence artifact")
-            try:
-                lines = path.read_bytes().decode("utf-8").splitlines()
-            except (OSError, UnicodeError) as exc:
-                raise WorkflowError("Unreadable evidence artifact") from exc
+            lines = path.read_bytes().decode("utf-8").splitlines()
             start, end = span["start_line"], span["end_line"]
             if not valid_range(start, end, len(lines)) or span["sha256"] != line_digest(lines, start, end):
                 raise WorkflowError("Inspected span differs from packet")
@@ -661,22 +585,18 @@ def assess(packet, body, diagnostics):
     reasons = list(diagnostics["reasons"])
     if diagnostics["exit_code"] != 0 or not all(diagnostics["capability"].values()):
         reasons.append("capability_or_execution_incomplete")
-    if diagnostics["cli_version"] != CLI_VERSION:
+    if diagnostics["cli_version"] != "1.0.83":
         reasons.append("unsupported_cli_version")
     claims = {}
     try:
-        document = report_document(body)
+        document = strict_json(body)
         if (
             not isinstance(document, dict)
-            or set(document)
-            != {"schema_version", "inventory_sha256", "findings", "reviewed", "incomplete", "limitations"}
+            or set(document) != {"schema_version", "findings", "coverage", "limitations"}
             or type(document["schema_version"]) is not int
             or document["schema_version"] != SCHEMA
             or not isinstance(document["findings"], list)
-            or not isinstance(document["reviewed"], list)
-            or not isinstance(document["incomplete"], list)
-            or document["inventory_sha256"]
-            != checksum((packet / "required-material.json").read_bytes().decode("utf-8"))
+            or not isinstance(document["coverage"], list)
             or not isinstance(document["limitations"], list)
             or not all(isinstance(v, str) for v in document["limitations"])
         ):
@@ -704,52 +624,33 @@ def assess(packet, body, diagnostics):
                 )
             ):
                 raise ValueError("invalid finding fields")
-        lookup = {item["id"]: item for item in required}
-        for identifier in document["reviewed"]:
-            if not isinstance(identifier, str) or identifier in claims or identifier not in lookup:
-                raise ValueError("invalid positive inspection ID")
-            item = lookup[identifier]
-            claims[identifier] = {
-                "id": identifier,
-                "state": "reviewed",
-                "reason": "",
-                "locations": [{key: item[key] for key in ("artifact", "start_line", "end_line")}]
-                if not item.get("omitted")
-                else [],
-            }
-        for group in document["incomplete"]:
+        for claim in document["coverage"]:
+            if not isinstance(claim, dict) or set(claim) != {"id", "state", "locations", "reason"}:
+                raise ValueError("invalid coverage row")
+            identifier = claim["id"]
             if (
-                not isinstance(group, dict)
-                or set(group) != {"ids", "state", "reason"}
-                or not isinstance(group["ids"], list)
-                or not group["ids"]
-                or group["state"] not in {"unread", "unsupported"}
-                or not isinstance(group["reason"], str)
-                or not group["reason"].strip()
+                not isinstance(identifier, str)
+                or identifier in claims
+                or claim["state"] not in {"reviewed", "unread", "unsupported"}
+                or not isinstance(claim["locations"], list)
+                or not isinstance(claim["reason"], str)
             ):
-                raise ValueError("invalid incomplete group")
-            for identifier in group["ids"]:
-                if not isinstance(identifier, str) or identifier in claims or identifier not in lookup:
-                    raise ValueError("invalid incomplete ID")
-                claims[identifier] = {"state": group["state"], "reason": group["reason"]}
-        # The immutable inventory, not the model's output length, defines scope.
-        # Every absent ID remains explicitly unread in the materialized assessment.
+                raise ValueError("invalid coverage claim")
+            claims[identifier] = claim
+        if set(claims) != {item["id"] for item in required}:
+            reasons.append("required_material_ids_differ")
     except (ValueError, TypeError, KeyError):
         reasons.append("malformed_report_contract")
         claims = {}
     rows = []
     for item in required:
         claim = claims.get(item["id"])
-        row = {"id": item["id"], "state": "unread", "reason": "not_claimed_by_reviewer", "evidence": []}
-        row["location"] = {
-            key: item.get(key) for key in ("artifact", "start_line", "end_line", "path", "revision", "kind")
-        }
+        row = {"id": item["id"], "state": "unread", "reason": "missing_claim", "evidence": []}
         if item.get("omitted"):
             row.update(state="unsupported", reason="source_omitted")
         elif claim:
             row["state"] = claim["state"]
             if claim["state"] != "reviewed":
-                row["reported_reason"] = claim["reason"]
                 row["reason"] = (
                     "explicit_incomplete" if claim["reason"].strip() else "missing_incomplete_reason"
                 )
@@ -795,12 +696,34 @@ def assess(packet, body, diagnostics):
     }
 
 
-def report_document(body):
-    """Decode bare JSON or one complete outer json fence; never rewrite the body."""
-    text = body.strip(" \t\r\n")
-    if text.startswith("```json\n") or text.startswith("```json\r\n"):
-        opening = text.index("\n") + 1
-        if not text.endswith("\n```"):
-            raise ValueError("incomplete JSON fence")
-        text = text[opening:-4]
-    return strict_json(text)
+# Frozen schema-1 telemetry allowlist for immutable historical assessments.
+KNOWN_TYPES = IGNORED_EVENTS | {
+    "tool.execution_start",
+    "tool.execution_complete",
+    "assistant.message",
+    "session.idle",
+    "session.shutdown",
+    "result",
+    "session.error",
+}
+SHAPE_KEYS = {"count", "call_id", "arguments", "content"}
+
+
+def validate_summary(value):
+    if (
+        not isinstance(value, dict)
+        or set(value) != {"source", "stdout_shapes", "session_shapes"}
+        or value["source"] not in {"stdout", "session-state", "unavailable"}
+    ):
+        raise WorkflowError("Invalid telemetry summary")
+    for name in ("stdout_shapes", "session_shapes"):
+        rows = value[name]
+        if not isinstance(rows, dict) or set(rows) - KNOWN_TYPES - {"unknown"}:
+            raise WorkflowError("Unsafe telemetry event type")
+        for row in rows.values():
+            if (
+                not isinstance(row, dict)
+                or set(row) != SHAPE_KEYS
+                or any(type(n) is not int or not 0 <= n <= MAX_EVENTS for n in row.values())
+            ):
+                raise WorkflowError("Invalid telemetry shape counts")

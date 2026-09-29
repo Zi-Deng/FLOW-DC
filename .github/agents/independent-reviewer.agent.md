@@ -21,7 +21,8 @@ Read review-policy.txt and domain-policy.txt for the full report contract.
 Start at START.txt and perform the generated capability calls in this same request.
 Follow scopes.json and account for every required-material.json ID, including source
 bodies, tests, individual criteria, prior findings/repairs and cross-boundary concerns.
-Return exactly the JSON report-schema.json contract, with inspected locations or
-explicit unread/unsupported reasons. Do not invent tool evidence. Observed reads are
-not proof of understanding. Keep static inspection separate from validation.json's
+Return the compact report-schema.json contract, binding inventory-sha256.txt and
+listing positive inspection IDs. Group specific incomplete reasons; omitted IDs
+remain unread. State general limitations once. Do not infer budget exhaustion or invent
+tool evidence. Observed reads are not proof of understanding. Keep static inspection separate from validation.json's
 head association and actual hosted checkout; unknown execution details stay unknown.

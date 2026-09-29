@@ -8,7 +8,7 @@ accidental changes; they are not a cryptographic attestation against their owner
 
 ## Packet and scope contract
 
-New packets use metadata schema 2. `START.txt` leads to `issue.txt`, `plan.txt`,
+New packets use metadata schema 3. `START.txt` leads to `issue.txt`, `plan.txt`,
 `criteria/*.txt`, `acceptance.txt`, `changed-files.json`, `changes/*.txt`, `test-map.json`,
 `findings/*.txt`, `validation.json`, `scopes.json` and `required-material.json`.
 Full `diff.txt`, `context.json`, `source-index.json`, `base-source-index.json` and inert
@@ -45,12 +45,17 @@ adds `repair-delta.txt`, `prior-review.json`, the exact prior report and finding
 references. Current original-diff scope remains required. Prior unread/unsupported
 source, tests and finding obligations are retained and deduplicated by stable ID;
 old policy/context copies are not recursively added. Prior qualified coverage does
-not qualify the current head. Legacy reports cannot be used as a qualified repair
-basis: prepare a fresh complete packet instead. Unsupported prior data fails explicitly.
+not qualify the current head. Validated schema-2 historical packets may carry their
+original assessment and unread material into a repair; their old qualification cannot establish current readiness.
+Schema-1 packets without coverage require a fresh complete packet. Unsupported prior
+data fails explicitly.
 
 ## Provider adapter and capability probe
 
-The pinned Copilot CLI is 1.0.83. The wrapper requests literal `view`, `grep`, `glob`
+The pinned Copilot CLI is 1.0.83, defined with its archive digest in
+`scripts/agentic/copilot_policy.py`. Installer, invocation and current assessment share
+that pin. Changing it requires verified adapter compatibility; unknown versions fail
+closed. The wrapper requests literal `view`, `grep`, `glob`
 in both the active profile and CLI available/allow lists. It adds a fixture containing
 a known token and asks for actual view, content-and-line-number grep and glob calls
 at the start of that same review. Help output, requested tools, empty findings and the
@@ -63,7 +68,7 @@ invented tool correlation. Nonzero terminal `exitCode` fails even with process e
 Safe event-type/shape counts survive failures; raw streams never do. Chunked final
 messages (`chunkCount` other than one) are explicitly unsupported and fail closed.
 
-The adapter `copilot-session-events-v1` accepts JSONL SDK-shaped events, correlating
+The adapter `copilot-session-events-v2` accepts JSONL SDK-shaped events, correlating
 `tool.execution_start` names/arguments with `tool.execution_complete` by `toolCallId`.
 Only successful **model-facing** `result.content` is evidence; `detailedContent`,
 reasoning and arbitrary metadata are not. The CLI's terminal `result` envelope can
@@ -74,7 +79,12 @@ processes disqualify the run. Supporting upstream research and fixtures are desc
 in [the dated verification notes](COVERAGE-VERIFICATION.md). Synthetic tests are not a
 live 1.0.83 capability demonstration.
 
-Recognized view renderings are numbered `N. text`, `N: text` and `N<TAB>text` lines;
+Recognized unnumbered view results must equal the exact whole artifact, or the exact
+requested contiguous slice with no other identical slice in that artifact. CRLF,
+whitespace and Unicode are not normalized. A request, partial prefix or UI-only result
+cannot establish a read. The generated 1.0.83 fixture proves the whole-file form;
+range support is covered by synthetic regressions, pending separate live verification.
+Also recognized are numbered `N. text`, `N: text` and `N<TAB>text` lines;
 grep uses `packet/path:N:text`; glob uses newline-separated packet paths. Returned
 lines must exactly match the named immutable packet lines and the requested range.
 Grep credits only displayed matching lines. Glob proves discovery, never source
@@ -83,23 +93,46 @@ earn no range credit; later complete reads can satisfy the material. Missing or
 unrecognized canary results cannot qualify. An unsupported provider rendering requires
 a reviewed adapter change, not a wildcard permission or invented evidence.
 
+Root `subagent.selected` is supported only for `independent-reviewer` with exactly
+`view`, `grep`, `glob`; null/all-tools, other agents and top-level `agentId` are refused.
+The SDK uses top-level `agentId` for a delegated instance, absent on root events.
+A well-formed root `system.message` is recognized, but its content is never retained.
+These supported shapes come from primary schema research; the first live run's two
+unknown event identities were not retained and have not been retrospectively identified.
+New unknown names retain only up to 64 SHA-256 digest/count entries plus an overflow
+count per stream. They still fail qualification; arbitrary names/payloads are not saved.
+
 ## Model report and durable records
 
 `report-schema.json` is copied from the trusted `.agentic/schemas/review-report.json`.
-The final model response must be one JSON object with `schema_version: 1`, `findings`,
-`coverage` and `limitations`. Each coverage row names a required `id`, a `state`
-(`reviewed`, `unread`, `unsupported`), `locations` with packet artifact and inclusive
-start/end lines, and `reason`. Incomplete rows need reasons. The validator rejects
-missing/extra/duplicate IDs, invalid ranges, duplicate JSON keys and unsupported claims.
-It correlates claimed locations to actual returned lines and adds sanitized evidence IDs.
+The final model response is one JSON object with `schema_version: 2`, `inventory_sha256`,
+`findings`, `reviewed`, `incomplete` and `limitations`. Copy the exact digest provided in
+`inventory-sha256.txt`. `reviewed` is a unique list of positively inspected required IDs.
+`incomplete` groups specific limitations as `{ids: [...], state: "unread" | "unsupported",
+reason: "..."}`. General limitations appear once; repetitive unread rows are unnecessary.
+
+The wrapper materializes **every** immutable inventory item in `coverage.json`, with
+its original location, state and observed evidence. Omitted claims become unread;
+extra/duplicate/conflicting IDs or a wrong inventory digest fail the contract. A
+positive claim receives credit only for actual returned evidence covering its complete
+immutable range. Even observed reads do not override an explicit unread claim. Source
+omissions remain unsupported. No percentage or reduced checklist can qualify a review.
+
+Bare JSON or one complete outer lowercase `json` code fence is accepted. No surrounding
+prose, second fence or JSON substring is extracted. Parsing never rewrites report bytes.
 
 `review.md` preserves the exact UTF-8 final response, including CRLF, control characters,
 visible escape sequences and leading/trailing whitespace. Its historical filename is
 retained even though new responses are JSON. The attributed publication envelope and
 coverage label are separate; neither is inserted into the saved model output.
 
-`review-result.json` atomically journals exact output and sanitized diagnostics bound
-to the input packet. Final storage writes `review.md`, `diagnostics.json`, `coverage.json`
+`review-capture.json` atomically saves exact output and sanitized diagnostics bound
+to the input packet **before assessment reads packet files**. `review-result.json` then
+journals the assessment hash. Both records use schema 3. A pending capture can recover
+a transient assessment/storage failure after the original packet is restored; it never
+authorizes another model call. Strict UTF-8/IO failures produce fixed diagnostic reasons
+without lossy replacement decoding or raw error text. Final storage writes `review.md`,
+`diagnostics.json`, `coverage.json`
 and their metadata hashes. A saved valid journal can recover interrupted final writes
 without another paid request. Completed altered/missing evidence fails validation.
 `attempt.json` is written before inference; an attempted directory without a recoverable
@@ -142,6 +175,14 @@ without GitHub authorization at approved HTTPS blob hosts. Exact publication com
 uses the original report, not visible escape markers or a rewritten version.
 
 ## Migration and recovery commands
+
+Metadata/result schema 2 and coverage schema 1 are now historical. The frozen
+`review_coverage_v1.py` reproduces their original assessment hashes, recovery and
+publication envelopes, including formerly malformed fenced reports. It cannot qualify
+new reviews. Current readiness and managed designation require schema 3 metadata/result
+and schema 2 evidence/report. Existing schema-1 records retain their older meaning too.
+Never rewrite a historical journal or retrofit new claims. A new packet/authorized
+invocation is needed for current evidence. `verify-publication` remains byte-exact.
 
 From a clean trusted control checkout:
 

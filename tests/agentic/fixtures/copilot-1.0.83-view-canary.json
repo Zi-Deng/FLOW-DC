@@ -1,0 +1,15 @@
+{
+  "provenance": "Actual generated capability fixture result only; no ordinary source, raw session, reasoning, provider IDs or credentials retained",
+  "observed_at": "2026-09-29T19:29:22.201855+00:00",
+  "cli_version": "1.0.83",
+  "reviewed_head": "db525b6b1883147af308a38cbc89f6f2dee5cb74",
+  "tool": "view",
+  "success": true,
+  "packet_artifact": "capability/fixture.txt",
+  "view_range": null,
+  "fixture": "Read-only tool capability fixture\nREVIEW_CANARY_bbf634054c996e97b6402078\n",
+  "model_facing_content": "Read-only tool capability fixture\nREVIEW_CANARY_bbf634054c996e97b6402078\n",
+  "result_sha256": "2fc36a2cf49359deb48d1a30b6e39ec5c48652c28d8b330629eb4b6f8ce318da",
+  "exact_whole_fixture_match": true,
+  "current_numbered_only_adapter_credits_fixture": false
+}

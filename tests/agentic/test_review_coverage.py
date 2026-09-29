@@ -112,14 +112,16 @@ class CoverageTests(GitFixture):
         original = events(self.packet)
         report = json.loads(original[-2]["data"]["content"])
         variants = []
+        # Compact claims cannot supply their own paths/ranges; those come only
+        # from the exact hash-bound immutable inventory.
         for key, value in [("start_line", True), ("end_line", 1000000), ("artifact", "../memory/secret")]:
-            doc = copy.deepcopy(report)
-            doc["coverage"][0]["locations"][0][key] = value
-            variants.append(doc)
+            variants.append({**report, key: value})
         variants.extend(
             [
-                {**report, "coverage": report["coverage"][1:]},
-                {**report, "coverage": report["coverage"] + report["coverage"][:1]},
+                {**report, "reviewed": report["reviewed"][1:]},
+                {**report, "reviewed": report["reviewed"] + report["reviewed"][:1]},
+                {**report, "reviewed": report["reviewed"] + ["unknown-id"]},
+                {**report, "inventory_sha256": "0" * 64},
                 {**report, "coverage_percent": 100},
                 {**report, "schema_version": True},
             ]

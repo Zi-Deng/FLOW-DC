@@ -91,6 +91,66 @@ class PipelineTests(PipelineFixture):
         with self.assertRaises(workflow.WorkflowError):
             pipeline.validate_designated(self.repo, tasks.TaskStore(self.repo).read("issue-12"))
 
+    def test_historical_qualified_report_can_publish_but_cannot_be_designated(self):
+        import json
+
+        import review_coverage_v1 as legacy
+        from review_fixtures import events
+
+        def historical(repo, directory):
+            directory = Path(directory)
+            meta = review.verify_packet(directory)
+            meta["schema_version"] = 2
+            review.atomic_json(directory / "metadata.json", meta)
+            items = legacy.read_json(directory / "packet/required-material.json")["required"]
+            body = json.dumps(
+                {
+                    "schema_version": 1,
+                    "findings": [],
+                    "coverage": [
+                        {
+                            "id": item["id"],
+                            "state": "reviewed",
+                            "reason": "",
+                            "locations": [{key: item[key] for key in ("artifact", "start_line", "end_line")}],
+                        }
+                        for item in items
+                    ],
+                    "limitations": [],
+                }
+            )
+            _, diagnostics = legacy.parse_events(
+                "\n".join(json.dumps(row) for row in events(directory / "packet", body)),
+                directory / "packet",
+                directory / "packet",
+                version="1.0.83",
+            )
+            assessment = legacy.assess(directory / "packet", body, diagnostics)
+            self.assertTrue(assessment["qualified"])
+            review.atomic_json(
+                directory / "review-result.json",
+                {
+                    "schema_version": 2,
+                    "input_digest": review.value_digest(meta),
+                    "body": body,
+                    "review_sha256": legacy.checksum(body),
+                    "copilot_version": "1.0.83",
+                    "diagnostics": diagnostics,
+                    "diagnostics_sha256": review.value_digest(diagnostics),
+                    "coverage_sha256": review.value_digest(assessment),
+                },
+            )
+            return review.recover_review(repo, directory)
+
+        with patch.object(review, "review", side_effect=historical):
+            result = pipeline.review_task(self.repo, 12, execute=True, publish=True)
+        self.assertEqual(result["status"], "published-incomplete")
+        self.assertFalse(result["coverage_qualified"])
+        self.assertIsNone(result["designated_review"])
+        self.assertIn("coverage-qualified static inspection", self.reviews[0]["body"])
+        with self.assertRaises(workflow.WorkflowError):
+            review.verified_published(self.repo, result["directory"], 31, self.head, self.base)
+
     def test_missing_diagnostics_refuse_even_a_manually_changed_designation(self):
         with patch.object(review, "review", side_effect=self.model_double):
             result = pipeline.review_task(self.repo, 12, execute=True, publish=True)

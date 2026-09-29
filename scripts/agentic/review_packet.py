@@ -8,7 +8,7 @@ import json
 import re
 from pathlib import Path, PurePosixPath
 
-from review_coverage import read_json, strict_json
+from review_coverage import read_json, report_document
 from workflow import WorkflowError, run, write_json
 
 MATERIAL_LINES = 120
@@ -22,6 +22,28 @@ def stable_id(*parts):
     return hashlib.sha256(json.dumps(parts, ensure_ascii=False).encode("utf-8")).hexdigest()[:24]
 
 
+def finding_document(body):
+    """Only recognized complete report contracts can omit repetitive accounting."""
+    document = report_document(body)
+    if not isinstance(document, dict) or type(document.get("schema_version")) is not int:
+        raise ValueError("not a structured review")
+    fields = {
+        1: {"schema_version", "findings", "coverage", "limitations"},
+        2: {"schema_version", "inventory_sha256", "findings", "reviewed", "incomplete", "limitations"},
+    }
+    version = document["schema_version"]
+    if version not in fields or set(document) != fields[version]:
+        raise ValueError("unsupported report fields")
+    lists = (
+        ("findings", "limitations", "coverage")
+        if version == 1
+        else ("findings", "limitations", "reviewed", "incomplete")
+    )
+    if not all(isinstance(document[key], list) for key in lists):
+        raise ValueError("invalid report fields")
+    return document
+
+
 def public_finding_text(record):
     """Navigate prior findings without re-requiring an old coverage inventory.
 
@@ -33,17 +55,10 @@ def public_finding_text(record):
     try:
         text = body
         if text.startswith("## Independent Copilot CLI review\n"):
-            text = text[text.index("{") : text.index("\n\n<!-- agentic-review:")].strip()
-        document = strict_json(text)
-        if (
-            not isinstance(document, dict)
-            or document.get("schema_version") != 1
-            or set(document) != {"schema_version", "findings", "coverage", "limitations"}
-            or not isinstance(document["findings"], list)
-            or not isinstance(document["limitations"], list)
-            or not isinstance(document["coverage"], list)
-        ):
-            raise ValueError("not a structured review")
+            text = text.split("unknown execution details remain unknown.\n\n", 1)[1].split(
+                "\n\n<!-- agentic-review:", 1
+            )[0]
+        document = finding_document(text)
         body = json.dumps(
             {"findings": document["findings"], "limitations": document["limitations"]},
             indent=2,
@@ -52,7 +67,7 @@ def public_finding_text(record):
         metadata["prior_coverage"] = (
             "Not inherited. Full original public record is in context.json; only validated --prior-review carries uncovered obligations."
         )
-    except (ValueError, TypeError):
+    except (ValueError, TypeError, KeyError, IndexError):
         pass
     return json.dumps(metadata, indent=2, ensure_ascii=False) + "\n\n" + body + "\n"
 
@@ -445,7 +460,7 @@ def build(repo, packet, head, ancestor, head_index, base_index, context, cfg, pr
         add("prior-review.json", "findings")
         (packet / "prior-report.txt").write_bytes((previous / "review.md").read_bytes())
         try:
-            findings = strict_json((previous / "review.md").read_bytes().decode("utf-8"))["findings"]
+            findings = finding_document((previous / "review.md").read_bytes().decode("utf-8"))["findings"]
         except (ValueError, KeyError, TypeError):
             findings = [
                 {"unstructured_prior_report": "Read prior-report.txt; previous findings could not be parsed."}
@@ -561,6 +576,9 @@ def build(repo, packet, head, ancestor, head_index, base_index, context, cfg, pr
         write_json(packet / artifact, {**scope, "material": [lookup[key] for key in scope["required_ids"]]})
         scope["artifact"] = artifact
     write_json(packet / "required-material.json", {"schema_version": 1, "required": required})
+    (packet / "inventory-sha256.txt").write_text(
+        hashlib.sha256((packet / "required-material.json").read_bytes()).hexdigest() + "\n", encoding="utf-8"
+    )
     write_json(
         packet / "scopes.json",
         {
@@ -595,7 +613,7 @@ def build(repo, packet, head, ancestor, head_index, base_index, context, cfg, pr
         )
         + "Use scopes.json and scopes/*.json to navigate every entry in required-material.json. Full diff.txt, source-index.json and base-source-index.json remain available.\n"
         "Read each required range through view(path, view_range=[start,end]); grep only credits actual returned matching lines, glob only proves discovery.\n"
-        "Return only JSON matching report-schema.json. Include every required ID, original material locations, reviewed/unread/unsupported state and an explicit reason for incomplete rows. Never infer execution from static inspection.\n",
+        "Return compact JSON matching report-schema.json: copy inventory-sha256.txt into inventory_sha256, list only positively inspected IDs in reviewed, and group specific incomplete reasons in incomplete. Omitted IDs remain unread and block readiness; do not repeat an unread row for each ID. Explain general limits once in limitations. Do not assert budget exhaustion without a provider signal. Never infer execution from static inspection.\n",
         encoding="utf-8",
     )
     # Count all source material, including immutable carried-forward material.

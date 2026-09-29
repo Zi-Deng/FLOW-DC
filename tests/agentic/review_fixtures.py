@@ -69,9 +69,15 @@ def events(packet, body=None, *, omit=()):
     if body is None:
         body = json.dumps(
             {
-                "schema_version": 1,
+                "schema_version": 2,
+                "inventory_sha256": review.digest(packet / "required-material.json"),
                 "findings": [],
-                "coverage": claims,
+                "reviewed": [claim["id"] for claim in claims if claim["state"] == "reviewed"],
+                "incomplete": [
+                    {"ids": [claim["id"]], "state": claim["state"], "reason": claim["reason"]}
+                    for claim in claims
+                    if claim["state"] != "reviewed"
+                ],
                 "limitations": ["Synthetic fixture. Reviewer ran no tests."],
             },
             ensure_ascii=False,

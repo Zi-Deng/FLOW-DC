@@ -9,6 +9,8 @@ import tarfile
 import urllib.request
 from pathlib import Path
 
+from copilot_policy import CLI_ARCHIVE_SHA256, CLI_ARCHIVE_URL
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -17,8 +19,8 @@ def main():
     args = parser.parse_args()
     if platform.system() != "Linux" or platform.machine() not in {"x86_64", "AMD64"}:
         parser.error("This pinned archive is for Linux x86-64; use the official installer for your platform")
-    url = "https://github.com/github/copilot-cli/releases/download/v1.0.83/copilot-linux-x64.tar.gz"
-    expected = "ffbe1c429664b8a05efed67ecdb467123e40fcaa3c6c14ef9a98ba74da4687b7"
+    url = CLI_ARCHIVE_URL
+    expected = CLI_ARCHIVE_SHA256
     with urllib.request.urlopen(url, timeout=120) as response:
         data = response.read()
     if hashlib.sha256(data).hexdigest() != expected:

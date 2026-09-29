@@ -6,21 +6,26 @@ session events are the sole tool evidence. Neither raw source is retained.
 
 import json
 import os
+import re
 import stat
 from pathlib import Path
 
 import review_coverage as coverage
 from workflow import WorkflowError
 
-KNOWN_TYPES = coverage.IGNORED_EVENTS | {
-    "tool.execution_start",
-    "tool.execution_complete",
-    "assistant.message",
-    "session.idle",
-    "session.shutdown",
-    "result",
-    "session.error",
-}
+KNOWN_TYPES = (
+    coverage.IGNORED_EVENTS
+    | coverage.ROOT_EVENTS
+    | {
+        "tool.execution_start",
+        "tool.execution_complete",
+        "assistant.message",
+        "session.idle",
+        "session.shutdown",
+        "result",
+        "session.error",
+    }
+)
 SHAPE_KEYS = {"count", "call_id", "arguments", "content"}
 
 
@@ -54,6 +59,21 @@ def shapes(events):
             row["content"] += isinstance(data.get("content"), str) or (
                 isinstance(data.get("result"), dict) and isinstance(data["result"].get("content"), str)
             )
+    return result
+
+
+MAX_UNKNOWN_TYPES = 64
+
+
+def unknown_types(events):
+    """Only bounded digests of unknown names, never arbitrary provider strings."""
+    result = {}
+    for event in events:
+        if event["type"] not in KNOWN_TYPES:
+            key = coverage.checksum(event["type"])
+            if key not in result and len(result) >= MAX_UNKNOWN_TYPES:
+                key = "overflow"
+            result[key] = result.get(key, 0) + 1
     return result
 
 
@@ -91,6 +111,9 @@ def capture(stdout, state, session_id, packet, workspace, **kwargs):
         framing = terminals
     for event in observed:
         kind, data = event["type"], event.get("data") or {}
+        restriction = coverage.event_restriction(event)
+        if restriction:
+            reasons.add(restriction)
         if kind not in KNOWN_TYPES or kind == "session.error":
             reasons.add("unsupported_stdout_event")
         if not isinstance(data, dict):
@@ -121,6 +144,7 @@ def capture(stdout, state, session_id, packet, workspace, **kwargs):
         "source": "session-state" if events else "unavailable",
         "stdout_shapes": shapes(observed),
         "session_shapes": shapes(events),
+        "unknown_types": {"stdout": unknown_types(observed), "session": unknown_types(events)},
     }
     return report, diagnostics
 
@@ -128,7 +152,7 @@ def capture(stdout, state, session_id, packet, workspace, **kwargs):
 def validate_summary(value):
     if (
         not isinstance(value, dict)
-        or set(value) != {"source", "stdout_shapes", "session_shapes"}
+        or set(value) != {"source", "stdout_shapes", "session_shapes", "unknown_types"}
         or value["source"] not in {"stdout", "session-state", "unavailable"}
     ):
         raise WorkflowError("Invalid telemetry summary")
@@ -143,3 +167,18 @@ def validate_summary(value):
                 or any(type(n) is not int or not 0 <= n <= coverage.MAX_EVENTS for n in row.values())
             ):
                 raise WorkflowError("Invalid telemetry shape counts")
+
+    unknown = value["unknown_types"]
+    if not isinstance(unknown, dict) or set(unknown) != {"stdout", "session"}:
+        raise WorkflowError("Invalid unknown event summary")
+    for names in unknown.values():
+        if (
+            not isinstance(names, dict)
+            or len(names) > MAX_UNKNOWN_TYPES + 1
+            or any(
+                not isinstance(key, str) or not re.fullmatch(r"[a-f0-9]{64}|overflow", key) for key in names
+            )
+            or any(type(n) is not int or not 1 <= n <= coverage.MAX_EVENTS for n in names.values())
+            or sum(names.values()) > coverage.MAX_EVENTS
+        ):
+            raise WorkflowError("Unsafe unknown event summary")

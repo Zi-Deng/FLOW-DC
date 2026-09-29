@@ -132,6 +132,63 @@ class TelemetryTests(GitFixture):
         self.assertEqual(clean["models"]["claude-opus-5"]["requests_cost"], 2.5)
         self.assertNotIn("private", json.dumps(clean))
 
+    def test_root_agent_selection_and_system_message_are_narrow_and_private(self):
+        selection = {
+            "type": "subagent.selected",
+            "data": {
+                "agentName": "independent-reviewer",
+                "agentDisplayName": "private-display-name",
+                "tools": ["view", "grep", "glob"],
+            },
+        }
+        message = {"type": "system.message", "data": {"role": "system", "content": "private-system-text"}}
+        rows = self.rows[:1] + [selection, message] + self.rows[1:]
+        result, diag = self.evaluate(rows)
+        self.assertTrue(result["qualified"])
+        self.assertIn("subagent.selected", diag["telemetry"]["session_shapes"])
+        self.assertNotIn("private-", json.dumps(diag))
+        variants = []
+        for tools in (None, ["*"], ["view", "grep", "bash"], ["view", "view", "glob"]):
+            event = copy.deepcopy(selection)
+            event["data"]["tools"] = tools
+            variants.append(event)
+        for key, value in (
+            ("agentName", "other"),
+            ("parentToolCallId", "parent"),
+            ("toolCallId", "delegate"),
+        ):
+            event = copy.deepcopy(selection)
+            event["data"][key] = value
+            variants.append(event)
+        variants.extend(
+            [
+                {**selection, "agentId": "child"},
+                {**message, "agentId": "child"},
+                {"type": "hook.start", "data": {}},
+                {"type": "subagent.deselected", "data": {}},
+            ]
+        )
+        for event in variants:
+            with self.subTest(event=event):
+                self.assertFalse(self.evaluate(self.rows[:1] + [event] + self.rows[1:])[0]["qualified"])
+                terminal = {"type": "result", "exitCode": 0, "result": self.rows[-2]["data"]["content"]}
+                self.assertFalse(self.evaluate(stdout=[event, terminal])[0]["qualified"])
+
+    def test_unknown_event_names_are_bounded_digests_and_never_qualify(self):
+        events = [{"type": f"secret-type-{i}", "data": {"content": "private"}} for i in range(100)]
+        result, diag = self.evaluate(self.rows[:1] + events + self.rows[1:])
+        self.assertFalse(result["qualified"])
+        unknown = diag["telemetry"]["unknown_types"]["session"]
+        self.assertEqual(sum(unknown.values()), 100)
+        self.assertEqual(len(unknown), 65)
+        self.assertEqual(unknown[coverage.checksum("secret-type-0")], 1)
+        self.assertNotIn("secret-type", json.dumps(diag))
+        self.assertNotIn("private", json.dumps(diag))
+        telemetry.validate_summary(diag["telemetry"])
+        unknown["secret-raw-name"] = 1
+        with self.assertRaises(coverage.WorkflowError):
+            telemetry.validate_summary(diag["telemetry"])
+
 
 class CaptureTests(unittest.TestCase):
     def test_owned_process_capture_is_bounded_and_preserves_bytes(self):
