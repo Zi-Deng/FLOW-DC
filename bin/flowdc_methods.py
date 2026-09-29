@@ -71,6 +71,7 @@ class MethodConfig:
     c_max: int = 10000
     c_init: int = 4
     sample_min: int = 5
+    sample_window_s: float | None = None  # None consumes each tick, preserving v1 defaults.
     interval_s: float = 0.2
     queue_tau_s: float = 1.0
     gradient_tau_s: float = 1.0
@@ -115,6 +116,8 @@ class MethodConfig:
         for field in fields(self):
             if field.name not in ("method", "ablation"):
                 value = getattr(self, field.name)
+                if field.name == "sample_window_s" and value is None:
+                    continue
                 require(
                     type(value) in (int, float) and math.isfinite(value) and value > 0,
                     f"{field.name} must be finite and positive",
@@ -126,6 +129,10 @@ class MethodConfig:
         )
         require(self.probe_wait_s >= self.interval_s, "probe must span at least one interval")
         require(self.ratio_buffer_fraction <= 1, "ratio buffer fraction exceeds one")
+        require(
+            self.sample_window_s is None or self.interval_s <= self.sample_window_s < self.stale_after_s,
+            "sample window must span an interval and be shorter than the stale gap",
+        )
 
     @classmethod
     def from_config(cls, config):
@@ -369,16 +376,28 @@ class ObservationBuffer:
             and ttfb > 0
         ):
             require(len(self.samples) < 100000, "observation buffer full")
-            self.samples.append((dispatch_at, ttfb))
+            self.samples.append((dispatch_at, time.monotonic(), ttfb))
 
-    def consume(self, since=None):
-        delays = [
-            delay
-            for dispatched, delay in self.samples
-            if since is None or dispatched is not None and dispatched >= since
+    def consume(self, since=None, *, now=None, window=None, minimum=1):
+        self.samples = [
+            (dispatched, received, delay)
+            for dispatched, received, delay in self.samples
+            if (since is None or dispatched is not None and dispatched >= since)
+            and (
+                window is None
+                or (
+                    type(dispatched) in (int, float)
+                    and math.isfinite(dispatched)
+                    and 0 <= now - dispatched < window
+                    and 0 <= now - received < window
+                )
+            )
         ]
+        delays = [delay for _, _, delay in self.samples]
         snap = {"delays": delays, "overload": self.overload, "total": self.total}
-        self.samples, self.overload, self.total = [], False, 0
+        if window is None or len(delays) >= minimum or self.overload:
+            self.samples = []  # Eligible observations are used once; overload clears pending evidence.
+        self.overload, self.total = False, 0
         return snap
 
 
@@ -391,12 +410,27 @@ class CandidateController:
         self.smoother = None
 
     async def step_interval(self):
-        snap = self.metrics.consume(self.policy.probe_started)
-        record = self.policy.step(
-            time.monotonic(), snap["delays"], overload=snap["overload"], inflight=self.semaphore.inflight
+        now = time.monotonic()
+        snap = self.metrics.consume(
+            self.policy.probe_started,
+            now=now,
+            window=self.config.sample_window_s,
+            minimum=1 if self.config.ablation == "no-sample-gate" else self.config.sample_min,
         )
+        record = self.policy.step(
+            now, snap["delays"], overload=snap["overload"], inflight=self.semaphore.inflight
+        )
+        if record["reason"] == "baseline_probe":
+            self.metrics.samples.clear()
         self.semaphore.set_limit(record["limit"], record["reason"])
-        self.emit({"origin": self.host, **record})
+        self.emit(
+            {
+                "origin": self.host,
+                "new_observations": snap["total"],
+                "pending_samples": len(self.metrics.samples),
+                **record,
+            }
+        )
         return snap
 
     def _calculate_control_interval(self, snap):

@@ -112,8 +112,8 @@ research boundary. `run_benchmark.py` and its help print this limitation.
 | 1: common truth | Independent schema/verifier, metadata guard, tampering tests; real primary fixture at `63ff9c7`; predetermined HTTP cases | Repeat real HTTP cases and primary on final head |
 | 2: timing/work/retention | Common launch-to-verified-index timer, process cleanup, raw precision, retention, source/environment records, aggregate origin logs | Final-head evidence; resource collection if introduced |
 | 3: methods/comparators | [Versioned methods](CONTROL-METHODS.md), same acquisition path, deterministic traces and five ablations; legacy defaults retained | Retained real HTTP trajectories on final head |
-| 4: origin/study harness | Small concurrent success-fixture origin only | Capacity/service model, scenario families, blocked schedule, calibration, resume |
-| 5: pilot/freeze | Advisor decisions explicitly pending | Study/tuning/evaluation plans, paired summaries, precision calculation, freeze gate |
+| 4: origin/study harness | [Controlled origin and study tools](STUDY-HARNESS.md): explicit service model, seven scenarios, frozen order, retained recovery/calibration | Real localhost scenario and calibration evidence |
+| 5: pilot/freeze | Proposed plans/tuning catalog, run-level paired summaries/precision calculation, explicit freeze refusal | Actual advisor decisions and later scientific protocol/campaign |
 | 6: shared-origin authority | Not implemented | Authentication, admission, fencing/recovery, concurrent client evidence |
 | 7: distributed artifacts | Not implemented | Maintained staging and real TaskVine 1/2/4-worker integration |
 | 8: bounded topology | Not implemented; existing accounting untouched | Offline UUID-account migration and 3/4/6-VM fixtures |

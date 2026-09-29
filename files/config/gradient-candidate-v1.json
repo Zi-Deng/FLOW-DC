@@ -8,6 +8,7 @@
   "method_options": {
     "interval_s": 0.2,
     "sample_min": 5,
+    "sample_window_s": 1.5,
     "queue_tau_s": 1.0,
     "gradient_tau_s": 1.0,
     "baseline_max_age_s": 10.0,

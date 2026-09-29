@@ -196,6 +196,67 @@ class TransitionTests(unittest.TestCase):
 
 
 class IntegrationTests(unittest.IsolatedAsyncioTestCase):
+    async def test_default_batches_do_not_accumulate_and_overload_discards_pending_samples(self):
+        self.assertIsNone(MethodConfig().sample_window_s)
+        buffer = ObservationBuffer()
+        with patch("flowdc_methods.time.monotonic", return_value=1):
+            await buffer.record(200, 0.1, latency_eligible=True, dispatch_at=0.9)
+        self.assertEqual(buffer.consume()["delays"], [0.1])
+        self.assertEqual(buffer.consume()["delays"], [])
+        with patch("flowdc_methods.time.monotonic", return_value=2):
+            await buffer.record(200, 0.1, latency_eligible=True, dispatch_at=1.9)
+            await buffer.record(429, None, latency_eligible=False)
+        snap = buffer.consume(now=2.1, window=1.5, minimum=5)
+        self.assertTrue(snap["overload"])
+        self.assertEqual(snap["delays"], [0.1])
+        following = buffer.consume(now=2.2, window=1.5, minimum=5)
+        self.assertFalse(following["overload"])
+        self.assertEqual(following["delays"], [])
+
+    async def test_sampling_window_rejects_ambiguous_or_stale_intervals(self):
+        for window in (0, 0.1, 2, float("nan"), float("inf"), True):
+            with self.subTest(window=window), self.assertRaises(ValueError):
+                MethodConfig(sample_window_s=window)
+        MethodConfig(sample_window_s=0.2)  # One whole control interval is allowed.
+
+    async def test_bounded_fresh_sample_accumulation_never_reuses_or_resurrects_evidence(self):
+        buffer = ObservationBuffer()
+        with patch("flowdc_methods.time.monotonic", return_value=0):
+            for _ in range(4):
+                await buffer.record(200, 0.1, latency_eligible=True, dispatch_at=0)
+        self.assertEqual(len(buffer.consume(now=0.2, window=1.5, minimum=5)["delays"]), 4)
+        with patch("flowdc_methods.time.monotonic", return_value=0.4):
+            await buffer.record(200, 0.1, latency_eligible=True, dispatch_at=0.3)
+        self.assertEqual(len(buffer.consume(now=0.4, window=1.5, minimum=5)["delays"]), 5)
+        self.assertEqual(buffer.consume(now=0.6, window=1.5, minimum=5)["delays"], [])
+        with patch("flowdc_methods.time.monotonic", return_value=1):
+            await buffer.record(200, 0.1, latency_eligible=True, dispatch_at=0.9)
+        self.assertEqual(buffer.consume(now=2.5, window=1.5, minimum=5)["delays"], [])
+        with patch("flowdc_methods.time.monotonic", return_value=3):
+            await buffer.record(200, 0.1, latency_eligible=True, dispatch_at=2.9)
+        self.assertEqual(buffer.consume(since=3, now=3.1, window=1.5, minimum=5)["delays"], [])
+
+    async def test_low_rate_cold_start_and_probe_refresh_with_explicit_window(self):
+        records = []
+        config = base.Config(
+            "unused",
+            "unused",
+            control_method="gradient-candidate-v1",
+            method_options={"sample_window_s": 1.5, "baseline_max_age_s": 2},
+        )
+        manager = ControllerManager(config, base.AdaptiveSemaphore, base.PAARCController, records.append)
+        controller = await manager.get_controller("http://fixture.invalid")
+        for i in range(1, 22):
+            now = i * 0.25  # Four completions/second: insufficient in every single tick.
+            with patch("flowdc_methods.time.monotonic", return_value=now):
+                await controller.metrics.record(200, 0.1, latency_eligible=True, dispatch_at=now - 0.1)
+                await controller.step_interval()
+        reasons = [record["reason"] for record in records]
+        self.assertGreaterEqual(reasons.count("baseline_reset"), 2)
+        self.assertIn("eligible_increase", reasons)
+        self.assertIn("baseline_probe", reasons)
+        self.assertTrue(all(record["pending_samples"] < 5 for record in records))
+
     async def test_selected_controller_changes_actual_acquisition_gate(self):
         records = []
         manager = ControllerManager(

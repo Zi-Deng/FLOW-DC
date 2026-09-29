@@ -30,10 +30,9 @@ def environment_record(root):
             }
         )
     sources = {}
-    for directory in ("bin", "benchmark/core"):
+    for directory in ("bin", "benchmark/core", "benchmark"):
         for path in sorted((root / directory).glob("*.py")):
             sources[str(path.relative_to(root))] = digest(path.read_bytes())
-    sources["benchmark/known_truth.py"] = digest((root / "benchmark/known_truth.py").read_bytes())
     return {
         "python_version": sys.version,
         "platform": platform.platform(),

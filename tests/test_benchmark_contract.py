@@ -3,6 +3,9 @@
 import asyncio
 import io
 import json
+import os
+import signal
+import subprocess
 import sys
 import tarfile
 import tempfile
@@ -414,6 +417,93 @@ class KnownTruthFixtures(unittest.TestCase):
         pid = int(child_pid.read_text())
         if psutil.pid_exists(pid):
             self.assertEqual(psutil.Process(pid).status(), psutil.STATUS_ZOMBIE)
+
+    def test_process_group_is_signalled_before_leader_pid_is_reaped(self):
+        from benchmark.core import lifecycle
+
+        actions = []
+        native_popen, native_signal = subprocess.Popen, lifecycle._signal_group
+
+        class TrackingPopen(native_popen):
+            def wait(self, *args, **kwargs):
+                actions.append("reap")
+                return super().wait(*args, **kwargs)
+
+        def signal_group(*args):
+            actions.append("signal")
+            return native_signal(*args)
+
+        command = [
+            sys.executable,
+            "-c",
+            "import subprocess,sys; subprocess.Popen([sys.executable,'-c','import time;time.sleep(10)'])",
+        ]
+        with (
+            patch.object(lifecycle.subprocess, "Popen", TrackingPopen),
+            patch.object(lifecycle, "_signal_group", signal_group),
+        ):
+            record = run_verified(
+                command,
+                self.root / "orphan-run",
+                self.truth.record,
+                lambda: verify_native("flowdc", self.native, self.truth.record),
+                deadline=2,
+                cleanup=1,
+            )
+        self.assertEqual(record["status"], "descendants_remaining")
+        self.assertIn("signal", actions)
+        self.assertGreater(
+            actions.index("reap"), max(i for i, action in enumerate(actions) if action == "signal")
+        )
+
+    def test_term_interrupts_wrapper_once_and_repeated_term_cannot_abort_cleanup(self):
+        truth_path = self.root / "truth-for-child.json"
+        truth_path.write_bytes(encode(self.truth.record))
+        run = self.root / "term-run"
+        ready = self.root / "child-ready"
+        child = "import signal,time,sys; signal.signal(signal.SIGTERM,signal.SIG_IGN); open(sys.argv[1],'w').write('ready'); time.sleep(20)"
+        wrapper = (
+            "import json,sys; from pathlib import Path; from benchmark.core.lifecycle import run_verified; "
+            "from benchmark.core.truth import initial_outcomes; t=json.load(open(sys.argv[1])); "
+            "r=run_verified([sys.executable,'-c',sys.argv[4],sys.argv[3]],Path(sys.argv[2]),t,"
+            "lambda:{'rows':list(initial_outcomes(t).values()),'artifacts_valid':False,'errors':[]},deadline=20,cleanup=1); "
+            "print(json.dumps(r))"
+        )
+        process = subprocess.Popen(
+            [sys.executable, "-B", "-c", wrapper, str(truth_path), str(run), str(ready), child],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            start_new_session=True,
+        )
+        try:
+            until = time.monotonic() + 5
+            while not ready.exists() and time.monotonic() < until and process.poll() is None:
+                time.sleep(0.01)
+            self.assertTrue(ready.exists(), "native child must install its TERM handler")
+            process.send_signal(signal.SIGTERM)
+            time.sleep(0.05)
+            process.send_signal(signal.SIGTERM)
+            stdout, stderr = process.communicate(timeout=5)
+            self.assertEqual(process.returncode, 0, stderr)
+            result = json.loads(stdout)
+            self.assertEqual(result["status"], "interrupted")
+            self.assertFalse(result["run_complete"])
+            self.assertEqual(result["original_rows"], 6)
+        finally:
+            if process.poll() is None:
+                process.kill()
+            process.communicate(timeout=3)
+            # Only this fixture's positively identified child can be cleaned here.
+            owner = run / "process-owner.json"
+            if owner.exists():
+                record = json.loads(owner.read_bytes())
+                try:
+                    native = psutil.Process(record["pid"])
+                    if native.create_time() == record["create_time"]:
+                        os.killpg(record["pgid"], signal.SIGKILL)
+                except (ProcessLookupError, psutil.NoSuchProcess):
+                    pass
 
     def test_failed_quiescence_never_reads_mutating_native_files(self):
         with patch("benchmark.core.lifecycle._group_running", return_value=True):

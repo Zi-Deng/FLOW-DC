@@ -35,6 +35,13 @@ semantics differ; the common outer deadline does not equate them. No external
 dataset is contacted. An unavailable package or socket is a failed prerequisite,
 never a successful integration or a reason to disable isolation.
 
+The [controlled study harness](../docs/research/STUDY-HARNESS.md) adds explicit
+service capacity/queues, fresh seeded scenario origins, frozen cell ordering,
+retained failures/resume, fixed-client calibration and run-level paired summaries.
+Use `python -B benchmark/study.py --help` for the commands. The tracked 72-cell
+evaluation plan and tuning catalog are unexecuted proposals; non-engineering runs
+refuse to start without explicit advisor decisions bound into a frozen protocol.
+
 Retain the output directory, including failures, and the private pip install report.
 Do not publish install reports without inspecting source URLs for credentials.
 Installed versions and content hashes are recorded by the smoke. This is an

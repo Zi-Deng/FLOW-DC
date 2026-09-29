@@ -3,7 +3,9 @@
 import os
 import signal
 import subprocess
+import threading
 import time
+from contextlib import contextmanager
 from pathlib import Path
 
 import psutil
@@ -33,7 +35,55 @@ def _group_running(pgid):
     return False
 
 
+@contextmanager
+def interruption_signals():
+    """First INT/TERM requests cleanup; repeats cannot interrupt owned cleanup."""
+    previous, state = {}, {"requested": False, "cleanup": False}
+
+    def interrupt(signum, frame):
+        first = not state["requested"]
+        state["requested"] = True
+        if first and not state["cleanup"]:
+            raise KeyboardInterrupt
+
+    if threading.current_thread() is threading.main_thread():
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            previous[sig] = signal.signal(sig, interrupt)
+    try:
+        yield state
+    finally:
+        for sig, handler in previous.items():
+            signal.signal(sig, handler)
+
+
+def _await_exit(pid, seconds):
+    """Observe without reaping; the group leader's PID remains reserved."""
+    until = time.monotonic() + seconds
+    while True:
+        status = os.waitid(os.P_PID, pid, os.WEXITED | os.WNOHANG | os.WNOWAIT)
+        if status is not None:
+            return status.si_status if status.si_code == os.CLD_EXITED else -status.si_status
+        if time.monotonic() >= until:
+            raise subprocess.TimeoutExpired(str(pid), seconds)
+        time.sleep(min(0.01, max(0, until - time.monotonic())))
+
+
 def run_verified(command, directory, truth, verify, *, cwd=None, deadline=180, cleanup=60, provenance=None):
+    with interruption_signals() as interruption:
+        return _run_verified(
+            command,
+            directory,
+            truth,
+            verify,
+            cwd=cwd,
+            deadline=deadline,
+            cleanup=cleanup,
+            provenance=provenance,
+            interruption=interruption,
+        )
+
+
+def _run_verified(command, directory, truth, verify, *, cwd, deadline, cleanup, provenance, interruption):
     """Retain logs and reconcile partial output after exit, timeout or interruption.
 
     Preparation/provenance is outside the timer. The primary timer starts directly
@@ -43,6 +93,7 @@ def run_verified(command, directory, truth, verify, *, cwd=None, deadline=180, c
     """
     require(type(deadline) in (int, float) and 0 < deadline <= 180, "deadline must be in (0,180]")
     require(type(cleanup) in (int, float) and 0 < cleanup <= 60, "cleanup must be in (0,60]")
+    require(signal.getsignal(signal.SIGCHLD) == signal.SIG_DFL, "exclusive child reaping ownership required")
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=False)
     (directory / "invocation.json").write_bytes(
@@ -61,7 +112,12 @@ def run_verified(command, directory, truth, verify, *, cwd=None, deadline=180, c
         started = time.monotonic_ns()
         try:
             proc = subprocess.Popen(command, cwd=cwd, stdout=stdout, stderr=stderr, start_new_session=True)
-            returncode = proc.wait(timeout=deadline)
+            (directory / "process-owner.json").write_bytes(
+                encode(
+                    {"pid": proc.pid, "pgid": proc.pid, "create_time": psutil.Process(proc.pid).create_time()}
+                )
+            )
+            returncode = _await_exit(proc.pid, deadline)
             if returncode != 0:
                 failure = "nonzero_exit"
         except subprocess.TimeoutExpired:
@@ -71,6 +127,7 @@ def run_verified(command, directory, truth, verify, *, cwd=None, deadline=180, c
         except OSError as exc:
             failure, error = "launch_failed", str(exc)
         finally:
+            interruption["cleanup"] = True
             if proc is not None:
                 cleanup_until = time.monotonic() + cleanup
                 if failure is None:
@@ -82,19 +139,20 @@ def run_verified(command, directory, truth, verify, *, cwd=None, deadline=180, c
                 if _group_running(proc.pid):
                     failure = failure or "descendants_remaining"
                     _signal_group(proc.pid, signal.SIGTERM)
-                    try:
-                        proc.wait(timeout=min(5, cleanup / 2))
-                    except subprocess.TimeoutExpired:
-                        pass
+                    grace = min(cleanup_until, time.monotonic() + min(5, cleanup / 2))
+                    while _group_running(proc.pid) and time.monotonic() < grace:
+                        time.sleep(0.01)
                     _signal_group(proc.pid, signal.SIGKILL)
-                try:
-                    returncode = proc.wait(timeout=cleanup / 2)
-                except subprocess.TimeoutExpired:
-                    failure, error = "cleanup_failed", "owned process did not exit within reserve"
                 while _group_running(proc.pid) and time.monotonic() < cleanup_until:
                     time.sleep(0.01)
                 if _group_running(proc.pid):
                     failure, error = "cleanup_failed", "owned descendants remain active"
+                # All group operations precede reaping: a recycled PID must never
+                # identify an unrelated group for a later signal or group scan.
+                try:
+                    returncode = proc.wait(timeout=max(0, cleanup_until - time.monotonic()))
+                except subprocess.TimeoutExpired:
+                    failure, error = "cleanup_failed", "owned process did not exit within reserve"
         process_ended = time.monotonic_ns()
 
     verification_started = time.monotonic_ns()
@@ -121,6 +179,8 @@ def run_verified(command, directory, truth, verify, *, cwd=None, deadline=180, c
     index_path.write_bytes(raw_index)
     require(index_path.read_bytes() == raw_index and parse(raw_index) == index, "index closure mismatch")
     ended = time.monotonic_ns()
+    if interruption["requested"]:
+        failure = failure or "interrupted"
     complete = (
         not failure
         and index["artifacts_valid"]

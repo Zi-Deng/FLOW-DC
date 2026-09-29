@@ -1,0 +1,173 @@
+{
+  "advisor_decisions": "pending_specific_decisions",
+  "blocks": 1,
+  "cells": [
+    {
+      "block": 0,
+      "cell_id": "engineering-b000-steady-fixed-v1",
+      "config_sha256": "09e8664bc626cdcdb57b3a020842b27950da3b0297ff67b65e63b758b43913bd",
+      "fixture_seed": 4212970680,
+      "method": "fixed-v1",
+      "rows": 128,
+      "scenario": "steady"
+    },
+    {
+      "block": 0,
+      "cell_id": "engineering-b000-steady-gradient-candidate-v1",
+      "config_sha256": "63d2fc78a4e6707f56e47b2963204bbf6266ea3bb7995b6c07a9a86b1b105b1e",
+      "fixture_seed": 4212970680,
+      "method": "gradient-candidate-v1",
+      "rows": 128,
+      "scenario": "steady"
+    },
+    {
+      "block": 0,
+      "cell_id": "engineering-b000-steady-paarc-base-v2",
+      "config_sha256": "e9435fbe580be5c90e353b15d79aadc9cfb78e66087b8498350082a0f1c4a48d",
+      "fixture_seed": 4212970680,
+      "method": "paarc-base-v2",
+      "rows": 128,
+      "scenario": "steady"
+    },
+    {
+      "block": 0,
+      "cell_id": "engineering-b000-steady-ratio-v1",
+      "config_sha256": "7a7fb20e7a20da424e3b0f5bded1b7cd689761043ac59c2ea0563e53c36a8a9b",
+      "fixture_seed": 4212970680,
+      "method": "ratio-v1",
+      "rows": 128,
+      "scenario": "steady"
+    },
+    {
+      "block": 0,
+      "cell_id": "engineering-b000-overload-paarc-base-v2",
+      "config_sha256": "e9435fbe580be5c90e353b15d79aadc9cfb78e66087b8498350082a0f1c4a48d",
+      "fixture_seed": 4212970680,
+      "method": "paarc-base-v2",
+      "rows": 128,
+      "scenario": "overload"
+    },
+    {
+      "block": 0,
+      "cell_id": "engineering-b000-overload-ratio-v1",
+      "config_sha256": "7a7fb20e7a20da424e3b0f5bded1b7cd689761043ac59c2ea0563e53c36a8a9b",
+      "fixture_seed": 4212970680,
+      "method": "ratio-v1",
+      "rows": 128,
+      "scenario": "overload"
+    },
+    {
+      "block": 0,
+      "cell_id": "engineering-b000-overload-fixed-v1",
+      "config_sha256": "09e8664bc626cdcdb57b3a020842b27950da3b0297ff67b65e63b758b43913bd",
+      "fixture_seed": 4212970680,
+      "method": "fixed-v1",
+      "rows": 128,
+      "scenario": "overload"
+    },
+    {
+      "block": 0,
+      "cell_id": "engineering-b000-overload-gradient-candidate-v1",
+      "config_sha256": "63d2fc78a4e6707f56e47b2963204bbf6266ea3bb7995b6c07a9a86b1b105b1e",
+      "fixture_seed": 4212970680,
+      "method": "gradient-candidate-v1",
+      "rows": 128,
+      "scenario": "overload"
+    },
+    {
+      "block": 0,
+      "cell_id": "engineering-b000-drop-recovery-gradient-candidate-v1",
+      "config_sha256": "63d2fc78a4e6707f56e47b2963204bbf6266ea3bb7995b6c07a9a86b1b105b1e",
+      "fixture_seed": 4212970680,
+      "method": "gradient-candidate-v1",
+      "rows": 128,
+      "scenario": "drop-recovery"
+    },
+    {
+      "block": 0,
+      "cell_id": "engineering-b000-drop-recovery-fixed-v1",
+      "config_sha256": "09e8664bc626cdcdb57b3a020842b27950da3b0297ff67b65e63b758b43913bd",
+      "fixture_seed": 4212970680,
+      "method": "fixed-v1",
+      "rows": 128,
+      "scenario": "drop-recovery"
+    },
+    {
+      "block": 0,
+      "cell_id": "engineering-b000-drop-recovery-paarc-base-v2",
+      "config_sha256": "e9435fbe580be5c90e353b15d79aadc9cfb78e66087b8498350082a0f1c4a48d",
+      "fixture_seed": 4212970680,
+      "method": "paarc-base-v2",
+      "rows": 128,
+      "scenario": "drop-recovery"
+    },
+    {
+      "block": 0,
+      "cell_id": "engineering-b000-drop-recovery-ratio-v1",
+      "config_sha256": "7a7fb20e7a20da424e3b0f5bded1b7cd689761043ac59c2ea0563e53c36a8a9b",
+      "fixture_seed": 4212970680,
+      "method": "ratio-v1",
+      "rows": 128,
+      "scenario": "drop-recovery"
+    }
+  ],
+  "families": [
+    "steady",
+    "drop-recovery",
+    "overload"
+  ],
+  "limits": {
+    "cleanup_reserve_s": 60,
+    "expected_payload_bytes": 67108864,
+    "process_deadline_s": 180,
+    "rows": 256,
+    "worker_processes": 1
+  },
+  "methods": {
+    "fixed-v1": {
+      "C_init": 4,
+      "C_max": 16,
+      "C_min": 2,
+      "control_method": "fixed-v1",
+      "method_options": {}
+    },
+    "gradient-candidate-v1": {
+      "C_init": 4,
+      "C_max": 16,
+      "C_min": 2,
+      "control_method": "gradient-candidate-v1",
+      "method_options": {
+        "sample_window_s": 1.5
+      }
+    },
+    "paarc-base-v2": {
+      "C_init": 4,
+      "C_max": 16,
+      "C_min": 2,
+      "control_method": "paarc-base-v2",
+      "method_options": {}
+    },
+    "ratio-v1": {
+      "C_init": 4,
+      "C_max": 16,
+      "C_min": 2,
+      "control_method": "ratio-v1",
+      "method_options": {
+        "sample_window_s": 1.5
+      }
+    }
+  },
+  "namespace": "engineering",
+  "proposal": {
+    "approved": false,
+    "blocks": 6,
+    "confidence": 0.95,
+    "families": 3,
+    "relative_half_width": 0.05,
+    "tuning_candidates_per_method": 8
+  },
+  "purpose": "engineering",
+  "replicate": "independent process/run; paired within scenario and block",
+  "schema": "flowdc-study-plan-v1",
+  "seed": 20260929
+}

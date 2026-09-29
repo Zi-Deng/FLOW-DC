@@ -53,7 +53,22 @@ Only complete, nonempty HTTP 200 bodies with finite positive final-hop applicati
 first-byte delay supply samples. Local output failure does not erase a completed
 HTTP observation. Empty/truncated/failed bodies do not supply latency confidence.
 Overload includes transport failures, 408, 429 and 5xx, excluding known local,
-admission and unclassified errors. Each interval consumes observations once.
+admission and unclassified errors. Eligible observations are consumed once.
+
+By default `sample_window_s=null` keeps the original candidate's per-tick batches.
+At the defaults, a service producing only four completions per 0.2-second tick
+stays in sparse hold indefinitely; a slow baseline probe can do the same. That
+regime must be reported as effectively fixed concurrency, not exercised adaptation.
+The study configurations and example explicitly select `sample_window_s=1.5`.
+This opt-in retains a subminimum batch across ticks until enough samples arrive;
+both receipt and final-dispatch ages must remain strictly less than that window.
+Expired or timestamp-less samples are discarded, never reused. The window must
+be at least one interval and shorter than the stale-sample gap. Overload clears
+pending samples immediately and a probe clears all pre-probe observations.
+Trace fields distinguish new observations from pending samples. Cold start and
+probe refresh at four completions/second are deterministic fixtures; still lower
+rates or long requests can remain in sparse hold. No scientific parameter choice
+is inferred from this engineering calibration.
 
 The delay is measured from final-hop dispatch after connector/admission waits to
 the first nonempty application body read. It includes application/network effects;
@@ -90,6 +105,7 @@ to the concurrency bounds (2/4/10000), defaults are:
 | Parameter | Default / units |
 | --- | --- |
 | interval, sample minimum | 0.2 seconds, 5 observations |
+| optional fresh sample window | null by default; study/example explicitly select 1.5 seconds |
 | queue/gradient time constants | 1 second each |
 | baseline maximum age, stale sample gap | 10 seconds, 2 seconds |
 | probe wait | 0.4 seconds |
