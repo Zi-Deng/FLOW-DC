@@ -4,6 +4,7 @@ This module never reads source bytes from the working tree or contacts a remote.
 Selected source remains operator-trusted code; hashes establish provenance only.
 """
 
+import ast
 import hashlib
 import os
 import re
@@ -50,6 +51,33 @@ def _git(repository, *arguments):
     return result.stdout
 
 
+def dependency_required(path, files):
+    """Resolve Python imports and explicit staged filenames, not comment words."""
+    package = Path(path).name == "__init__.py"
+    module = str(Path(path).parent if package else Path(path).with_suffix("")).replace("/", ".")
+    if module.startswith("bin."):
+        module = module[4:]
+    for source_path, content in files.items():
+        try:
+            tree = ast.parse(content)
+        except SyntaxError:
+            raise SourceError("source_entrypoint_invalid") from None
+        for node in ast.walk(tree):
+            names = []
+            if isinstance(node, ast.Import):
+                names = [name.name for name in node.names]
+            elif isinstance(node, ast.ImportFrom):
+                parent = Path(source_path).parent.parts
+                prefix = ".".join(parent[: len(parent) - node.level + 1]) + "." if node.level else ""
+                names = [prefix + (node.module or "")]
+                names.extend(names[0].rstrip(".") + "." + name.name for name in node.names)
+            elif isinstance(node, ast.Constant) and node.value == Path(path).name and not package:
+                return True  # Declarative worker staging closure.
+            if any(name == module or (package and name.startswith(module + ".")) for name in names):
+                return True
+    return False
+
+
 def read_source(repository, revision):
     """Return (manifest, files) for an explicit local commit ID.
 
@@ -82,7 +110,7 @@ def read_source(repository, revision):
         tree = _git(repository, "ls-tree", "-z", commit, "--", path)
         if path not in HISTORICAL_REQUIRED and not tree:
             # Historical schema-1 source commits predate this dependency.
-            if any(Path(path).stem.encode() in content for content in files.values()):
+            if dependency_required(path, files):
                 raise SourceError("source_entrypoint_invalid")
             continue
         try:
@@ -96,7 +124,7 @@ def read_source(repository, revision):
             raise SourceError("source_entrypoint_invalid") from None
         size = int(_git(repository, "cat-file", "-s", object_id))
         total += size
-        if size < 1 or total > MAX_SOURCE_BYTES:
+        if size < 0 or (size == 0 and Path(path).name != "__init__.py") or total > MAX_SOURCE_BYTES:
             raise SourceError("source_size_limit")
         content = _git(repository, "cat-file", "blob", object_id)
         if len(content) != size:
@@ -104,6 +132,6 @@ def read_source(repository, revision):
         files[path] = content
         entries[path] = {"bytes": size, "sha256": hashlib.sha256(content).hexdigest()}
     for path in set(SOURCE_PATHS) - set(files):
-        if any(Path(path).stem.encode() in content for content in files.values()):
+        if dependency_required(path, files):
             raise SourceError("source_entrypoint_invalid")
     return {"schema_version": 1, "commit": commit, "files": entries}, files

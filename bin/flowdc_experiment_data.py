@@ -106,9 +106,16 @@ def specification(value):
     fields(
         value,
         ("schema_version", "state_root", "registration_id", "source", "ssh", "guest", "cases"),
-        ("partitions", "fixture", "bounds"),
+        ("partitions", "fixture", "bounds", "distributed"),
     )
-    require(type(value["schema_version"]) is int and value["schema_version"] == 1)
+    require(type(value["schema_version"]) is int and value["schema_version"] in (1, 2))
+    require(
+        (value["schema_version"] == 2) == ("distributed" in value), "explicit_distributed_schema_required"
+    )
+    if "distributed" in value:
+        from flowdc_experiment_research import validate
+
+        validate(value["distributed"])
     ops.absolute_path(value["state_root"])
     ops.uuid_value(value["registration_id"])
     fields(value["source"], ("repository", "revision"))
@@ -129,6 +136,8 @@ def specification(value):
     fixture = value.get("fixture", False)
     require(type(fixture) is bool)
     require(fixture != ("partitions" in value))
+    if "distributed" in value:
+        require(fixture is True, "distributed_controlled_fixture_required")
     cases = value["cases"]
     require(isinstance(cases, list) and 1 <= len(cases) <= 8)
     names = set()
@@ -217,8 +226,17 @@ FLOAT_CONFIG = {
 
 
 def case_config(value):
-    fields(value, ("enable_paarc",), set(INTEGER_CONFIG) | FLOAT_CONFIG | {"url_col"})
+    fields(
+        value,
+        ("enable_paarc",),
+        set(INTEGER_CONFIG) | FLOAT_CONFIG | {"url_col", "control_method", "method_options"},
+    )
     require(type(value["enable_paarc"]) is bool)
+    if "control_method" in value or "method_options" in value:
+        from download_batch import Config, normalize_config
+
+        allowed = {key: item for key, item in value.items() if key != "url_col"}
+        normalize_config(Config("unused", "unused", **allowed))
     for key, item in value.items():
         if key in INTEGER_CONFIG:
             integer(item, *INTEGER_CONFIG[key])

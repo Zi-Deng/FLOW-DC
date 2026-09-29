@@ -56,14 +56,24 @@ def audit_admission(events):
                 permit not in permits and len(entry["active"]) < entry["limit"] and now >= entry["embargo"],
                 "aggregate admission violated",
             )
-            permits[permit] = {"origin": key, "dispatched": False, "headers": False, "complete": False}
+            permits[permit] = {
+                "origin": key,
+                "client_id": event["client_id"],
+                "dispatched": False,
+                "headers": False,
+                "complete": False,
+                "quiescent": False,
+            }
             entry["active"].add(permit)
             peak = max(peak, len(entry["active"]))
         elif action in ("dispatch", "headers", "complete"):
             permit = event["permit_id"]
             work = permits[permit]
             entry = origins[work["origin"]]
-            require(not work["complete"], "event after completed permit")
+            require(
+                not work["complete"] or (work["quiescent"] and action in ("complete", "headers")),
+                "event after completed permit",
+            )
             if action == "dispatch":
                 require(not work["dispatched"] and now >= entry["embargo"], "embargo/replay violation")
                 work["dispatched"] = True
@@ -77,7 +87,12 @@ def audit_admission(events):
                     work["headers"] = True
                 if action == "complete":
                     work["complete"] = True
-                    entry["active"].remove(permit)
+                    entry["active"].discard(permit)
+        elif action == "prove_quiescent":
+            for permit, work in permits.items():
+                if work["client_id"] == event["client_id"] and not work["complete"]:
+                    work.update(complete=True, quiescent=True)
+                    origins[work["origin"]]["active"].discard(permit)
         elif action in ("restart_fence", "recover_closed_epoch"):
             raise ValueError("this single-epoch audit cannot reinterpret restart clocks")
     return {

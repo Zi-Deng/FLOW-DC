@@ -4,6 +4,7 @@ import asyncio
 import dataclasses
 import ipaddress
 import socket
+import ssl
 import time
 from pathlib import Path
 from uuid import uuid4
@@ -75,7 +76,9 @@ def descriptor(config):
     record = read_private(config.shared_control_file)
     require(
         isinstance(record, dict)
-        and set(record) == {"schema", "endpoint", "binding", "epoch", "credential"}
+        and {"schema", "endpoint", "binding", "epoch", "credential"}
+        <= set(record)
+        <= {"schema", "endpoint", "binding", "epoch", "credential", "ca_pem"}
         and record["schema"] == SCHEMA,
         "invalid private control descriptor",
     )
@@ -94,7 +97,24 @@ def descriptor(config):
         "shared source/config/method mismatch",
     )
     require(type(record["epoch"]) is int and record["epoch"] >= 1, "invalid control epoch")
+    if "ca_pem" in record:
+        require(
+            record["endpoint"].startswith("https://")
+            and isinstance(record["ca_pem"], str)
+            and len(record["ca_pem"].encode()) <= 16384,
+            "invalid explicit control trust",
+        )
+        control_tls_context(record)
     return record
+
+
+def control_tls_context(description):
+    if "ca_pem" not in description:
+        return True  # aiohttp default certificate/hostname verification
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
+    context.load_verify_locations(cadata=description["ca_pem"])
+    return context
 
 
 def observation(value):
@@ -187,7 +207,7 @@ class Authority:
             self.registered_origins.add(origin(url))
         return controller
 
-    def enroll(self, scope_id, rows, path, *, attempts=2):
+    def enroll(self, scope_id, rows, path, *, attempts=2, ca_pem=None):
         require(self.endpoint is not None, "start manager before enrolling a client")
         token = self.ledger.enroll(scope_id, rows, attempts=attempts)
         state = self.ledger.current()
@@ -199,6 +219,7 @@ class Authority:
                 "binding": state["binding"],
                 "epoch": state["epoch"],
                 "credential": token,
+                **({"ca_pem": ca_pem} if ca_pem is not None else {}),
             },
         )
 
@@ -410,7 +431,8 @@ class SharedClient:
     async def start(self):
         # A separate session prevents origin redirects from receiving credentials.
         self.session = aiohttp.ClientSession(
-            timeout=aiohttp.ClientTimeout(total=3), connector=aiohttp.TCPConnector(limit=4)
+            timeout=aiohttp.ClientTimeout(total=3),
+            connector=aiohttp.TCPConnector(limit=4, ssl=control_tls_context(self.description)),
         )
         try:
             result = await self.rpc("connect", worker_id=self.worker_id, epoch=self.description["epoch"])

@@ -8,7 +8,7 @@ import time
 from pathlib import Path
 
 import flowdc_ops as ops
-from flowdc_experiment_data import ROLES, ExperimentError, digest, parse, read_file, require
+from flowdc_experiment_data import ExperimentError, digest, parse, read_file, require
 from flowdc_experiment_process import execute
 from flowdc_pilot_cli import (
     require_persistent_session,
@@ -19,6 +19,7 @@ from flowdc_pilot_cli import (
 )
 from flowdc_pilot_journal import Journal, allowance
 from flowdc_pilot_supervisor import sample_clock
+from flowdc_topology import record_roles, validate_roles
 
 
 def binding(record):
@@ -99,6 +100,17 @@ class Controller:
                 raise ExperimentError("insufficient_allowance") from None
         return value
 
+    def containment(self, seconds):
+        code, raw = execute(
+            [sys.executable, str(Path(__file__).resolve()), str(self.root), "verify-network"], seconds=seconds
+        )
+        value = parse(raw)
+        require(
+            code == 0 and value.get("native_network_contained") is True,
+            "native_network_containment_unverified",
+        )
+        return value
+
     def addresses(self, seconds):
         # Provider use is read-only and isolated under the caller's deadline.
         argv = [sys.executable, str(Path(__file__).resolve()), str(self.root)]
@@ -106,10 +118,20 @@ class Controller:
         value = parse(raw)
         if code:
             raise ExperimentError(value.get("error", "registered_route_unavailable"))
-        require(set(value) == set(ROLES), "registered_route_unavailable")
+        require(set(value) == set(record_roles(Journal(self.root).read())), "registered_route_unavailable")
         for address in value.values():
             require(ipaddress.ip_address(address).version == 4, "registered_route_unavailable")
         return value
+
+
+def valid_selected_status(value):
+    try:
+        names = [vm["role"] for vm in value["vms"]]
+        validate_roles(names, 1 if len(names) == 3 else 2)
+        ids = [vm["id"] for vm in value["vms"]]
+        return len(ids) == len(set(ids))
+    except (ValueError, KeyError, TypeError):
+        return False
 
 
 def idle(value):
@@ -119,8 +141,7 @@ def idle(value):
         and value.get("desired") == "idle"
         and value.get("checkpoint") is None
         and value.get("network_rolled_back") is True
-        and len(value.get("vms", [])) == 3
-        and {v.get("role") for v in value["vms"]} == set(ROLES)
+        and valid_selected_status(value)
         and all(
             v.get("phase") == "offloaded"
             and v.get("account", {}).get("obligation") is False
@@ -136,8 +157,7 @@ def clean(value):
         and value.get("desired") == "idle"
         and value.get("checkpoint") is None
         and value.get("network_rolled_back") is True
-        and len(value.get("vms", [])) == 3
-        and {v.get("role") for v in value["vms"]} == set(ROLES)
+        and valid_selected_status(value)
         and all(
             v.get("observation_fresh") is True
             and v.get("provider_state") == "SHELVED_OFFLOADED"
@@ -155,7 +175,7 @@ def ready(value):
         and value.get("desired") == "run"
         and value.get("checkpoint") is None
         and value.get("network_ready") is True
-        and len(value.get("vms", [])) == 3
+        and valid_selected_status(value)
         and all(
             v.get("observation_fresh") is True and v.get("provider_state") == "ACTIVE" for v in value["vms"]
         )
@@ -192,7 +212,8 @@ def ssh_config(spec, registered, addresses):
     # local references only; private-key bytes never enter staging or public JSON.
     for key in ("identity_file", "known_hosts"):
         require(not any(c in spec[key] for c in '\\\n\r\x00"%'), "unsafe_ssh_reference")
-    require({vm["role"] for vm in registered["spec"]["vms"]} == set(ROLES), "registration_changed")
+    selected_roles = record_roles(registered)
+    require(set(addresses) == set(selected_roles), "registration_changed")
     lines = [
         "Host *",
         "  BatchMode yes",
@@ -214,7 +235,7 @@ def ssh_config(spec, registered, addresses):
         f'  IdentityFile "{spec["identity_file"]}"',
         f"  User {spec['user']}",
     ]
-    for role in ROLES:
+    for role in selected_roles:
         address = str(ipaddress.IPv4Address(addresses[role]))
         lines += [f"Host {role}", f"  HostName {address}", f"  HostKeyAlias flowdc-{role}"]
         if role != "manager":
@@ -237,7 +258,10 @@ class Transport:
         require(digest(self.helper) == manifest["files"]["guest.py"]["sha256"], "staged_content_changed")
 
     def call(self, role, action, case="all", *, seconds, data=b"", extra=(), maximum=262144):
-        require(role in ROLES and action in ("probe", "deploy", "launch", "status", "stop", "collect"))
+        require(
+            role in record_roles(self.manifest["binding"])
+            and action in ("probe", "deploy", "launch", "status", "stop", "collect")
+        )
         require(self.store.read(self.selected, "ssh.conf") == self.configuration, "ssh_configuration_changed")
         spec = self.manifest["spec"]
         require(
@@ -271,7 +295,7 @@ def read_addresses(root):
 
     record = Journal(root).read()
     interfaces = record["access"]["interfaces"]
-    addresses = {role: interfaces[role]["fixed_ip"] for role in ROLES}
+    addresses = {role: interfaces[role]["fixed_ip"] for role in record_roles(record)}
     if record["access"]["route"]["mode"] == "floating":
         provider = Provider(ops.load_profile(record["profile_path"]))
         with provider.step():
@@ -284,6 +308,28 @@ def read_addresses(root):
         )
         addresses["manager"] = str(ipaddress.IPv4Address(selected[0]["floating_ip_address"]))
     return addresses
+
+
+def verify_network(root):
+    """Fresh read-only containment proof; native password is not identity proof."""
+    from flowdc_pilot_provider import Provider
+
+    record = Journal(root).read()
+    require(record["network"]["ready"] and record["desired"] == "run", "network_not_ready")
+    provider = Provider(ops.load_profile(record["profile_path"]))
+    selected = record_roles(record)
+    for role in selected:
+        with provider.step("native_containment", role):
+            provider.context(record)
+            port = provider.topology(record, role)
+            group = record["network"]["seen_groups"].get(role)
+            require(group is not None and port["security_group_ids"] == [group], "native_port_not_contained")
+            provider.verify_ingress(record, role, provider.call("group", group))
+    return {
+        "native_network_contained": True,
+        "roles": list(selected),
+        "scope": "one verified NIC/VM; ingress only selected peer IPv4s and manager SSH",
+    }
 
 
 if __name__ == "__main__":
@@ -305,6 +351,8 @@ if __name__ == "__main__":
             )
             Provider(ops.load_profile(record["profile_path"])).verify_idle(record)
             sys.stdout.buffer.write(encode({"idle_verified": True}))
+        elif len(sys.argv) == 3 and sys.argv[2] == "verify-network":
+            sys.stdout.buffer.write(encode(verify_network(sys.argv[1])))
         else:
             sys.stdout.buffer.write(encode(read_addresses(sys.argv[1])))
     except Exception as exc:

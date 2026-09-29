@@ -122,7 +122,7 @@ class PermitRows(MutableMapping):
 
     def outstanding(self, key=None, client_id=None):
         # No transaction adds/releases a permit before checking this predicate.
-        conditions, args = ["state != 'complete'"], []
+        conditions, args = ["state NOT IN ('complete','quiescent')"], []
         for name, value in (("origin", key), ("client_id", client_id)):
             if value is not None:
                 conditions.append(name + "=?")
@@ -187,9 +187,9 @@ class Ledger:
                     "CREATE TABLE events (seq INTEGER PRIMARY KEY, value TEXT NOT NULL);"
                     "CREATE TABLE permits (id TEXT PRIMARY KEY, state TEXT NOT NULL,"
                     "origin TEXT NOT NULL, client_id TEXT NOT NULL, value TEXT NOT NULL);"
-                    "CREATE INDEX active_origin ON permits(origin) WHERE state != 'complete';"
-                    "CREATE INDEX active_client ON permits(client_id) WHERE state != 'complete';"
-                    "CREATE INDEX active_all ON permits(state) WHERE state != 'complete';"
+                    "CREATE INDEX active_origin ON permits(origin) WHERE state NOT IN ('complete','quiescent');"
+                    "CREATE INDEX active_client ON permits(client_id) WHERE state NOT IN ('complete','quiescent');"
+                    "CREATE INDEX active_all ON permits(state) WHERE state NOT IN ('complete','quiescent');"
                 )
                 initial = {
                     "schema": SCHEMA,
@@ -387,7 +387,7 @@ class Ledger:
         return [
             p
             for p in state["permits"].values()
-            if p["state"] != "complete"
+            if p["state"] not in ("complete", "quiescent")
             and (key is None or p["origin"] == key)
             and (client_id is None or p["client_id"] == client_id)
         ]
@@ -466,7 +466,10 @@ class Ledger:
         if permit["headers"] is not None:
             require(permit["headers"] == value, "conflicting header replay")
             return {"duplicate": True}
-        require(permit["state"] == "dispatched", "headers require dispatched work")
+        require(
+            permit["dispatch_at"] is not None and permit["state"] in ("dispatched", "quiescent"),
+            "headers require dispatched work",
+        )
         with self.change("headers", permit_id=permit_id, observation=value) as state:
             state["permits"][permit_id]["headers"] = value
             if retry_after is not None:
@@ -490,7 +493,7 @@ class Ledger:
                     "invalid completion headers",
                 )
                 headers = {"status": status, "retry_after": delay}
-                require(permit["state"] == "dispatched", "response requires dispatched work")
+                require(permit["dispatch_at"] is not None, "response requires dispatched work")
                 if permit["headers"] is not None:
                     require(permit["headers"] == headers, "conflicting completion headers")
                 else:
@@ -502,6 +505,42 @@ class Ledger:
             state["permits"][permit_id].update(
                 state="complete", completion=observation, completed_at=self.clock()
             )
+        # An owner-proven stopped attempt may deliver a late observation. Retain
+        # it, but never feed a different epoch's controller or release twice.
+        return {"duplicate": permit["state"] == "quiescent", "late": permit["state"] == "quiescent"}
+
+    def prove_quiescent(self, client_id, proof):
+        """Owner-only evidence receipt; NOT exposed on the worker RPC surface.
+
+        Callers must have observed a source-bound task's actual process exit or
+        proven every process in their own local worker tree stopped. Cancellation
+        requests, heartbeat loss, TTL expiry and user-supplied booleans are not
+        such proof. Preserve unknown request work separately from completion.
+        """
+        state = self.current()
+        require(
+            isinstance(proof, dict)
+            and set(proof) == {"kind", "run_id", "source_sha256", "client_id", "evidence_sha256"},
+            "invalid quiescence proof",
+        )
+        require(
+            proof["kind"] in ("native_task_exit", "owned_process_tree_exit")
+            and proof["run_id"] == state["binding"]["run_id"]
+            and proof["source_sha256"] == state["binding"]["source_sha256"]
+            and proof["client_id"] == client_id
+            and isinstance(proof["evidence_sha256"], str)
+            and HEX.fullmatch(proof["evidence_sha256"]),
+            "unbound quiescence proof",
+        )
+        require(client_id in state["clients"], "unknown quiescent client")
+        previous = state["clients"][client_id].get("quiescence_proof")
+        if previous is not None:
+            require(previous == proof, "conflicting quiescence proof")
+            return {"duplicate": True}
+        with self.change("prove_quiescent", client_id=client_id, proof=proof) as state:
+            for permit in self.outstanding(state, client_id=client_id):
+                state["permits"][permit["permit_id"]].update(state="quiescent", quiescence_proof=proof)
+            state["clients"][client_id].update(status="closed", quiescence_proof=proof)
         return {"duplicate": False}
 
     def close_client(self, scope, client_id):

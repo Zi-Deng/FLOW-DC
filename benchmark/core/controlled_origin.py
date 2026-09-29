@@ -1,5 +1,6 @@
 """Auditable bounded concurrent origin; independent service and byte truth."""
 
+import ipaddress
 import threading
 import time
 from collections import Counter, deque
@@ -149,8 +150,20 @@ def public_scenario(plan):
 class ControlledOrigin:
     """Fresh server per independent run; no cross-machine epoch arithmetic."""
 
-    def __init__(self, directory, plan, *, instrument=True, bind="127.0.0.1", port=0):
-        require(bind == "127.0.0.1", "this engineering entrypoint binds IPv4 loopback only")
+    def __init__(self, directory, plan, *, instrument=True, bind="127.0.0.1", port=0, guest=False):
+        address = ipaddress.ip_address(bind)
+        require(
+            bind == "127.0.0.1"
+            or (
+                guest is True
+                and address.version == 4
+                and address.is_private
+                and not address.is_unspecified
+                and not address.is_loopback
+            ),
+            "guest origin requires an explicit private IPv4 binding",
+        )
+        self.bind = bind
         require(type(instrument) is bool, "instrumentation flag must be boolean")
         for spec in plan["objects"].values():
             require(0 < spec["service_s"] <= 1, "object service time must be in (0,1]")
@@ -301,7 +314,7 @@ class ControlledOrigin:
 
     @property
     def base_url(self):
-        return f"http://127.0.0.1:{self.server.server_port}"
+        return f"http://{self.bind}:{self.server.server_port}"
 
     def snapshot(self):
         with self.condition:

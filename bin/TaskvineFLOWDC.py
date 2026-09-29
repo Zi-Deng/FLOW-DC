@@ -89,6 +89,10 @@ def parse_json_config(file_path: str) -> dict:
     with open(file_path, 'r') as config_file:
         config = json.load(config_file)
 
+    if "distributed_profile" in config:
+        from flowdc_vine import validate_config
+        return validate_config(config)[0]
+
     # Required fields
     required_fields = ['port_number', 'parquets_directory']
     for field in required_fields:
@@ -546,6 +550,10 @@ def main():
     except Exception as e:
         print(f"Error loading configuration: {e}")
         sys.exit(1)
+
+    if config.get("distributed_profile"):
+        from flowdc_vine import cli
+        raise SystemExit(cli(config, dry_run=args.dry_run))
 
     # Print configuration summary
     print(f"  Partitions directory: {config['parquets_directory']}")

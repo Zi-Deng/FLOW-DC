@@ -656,3 +656,10 @@ FLOW-DC is built using:
 - [aiohttp](https://docs.aiohttp.org/) for asynchronous HTTP
 - [Polars](https://pola.rs/) for high-performance data processing
 - [NiceGUI](https://nicegui.io/) for the web interface
+
+The explicit `shared-origin-v1` TaskVine engineering profile, pinned runtime, returned
+artifact contract and current limitations are documented in
+[Distributed workflow](docs/research/DISTRIBUTED-WORKFLOW.md). Offline versioned
+3/4/6-VM preparation and accounting migration are documented in
+[Bounded topology](docs/BOUNDED-TOPOLOGY.md). Production migration and live runs remain
+separate human checkpoints; these tools do not imply scientific protocol approval.

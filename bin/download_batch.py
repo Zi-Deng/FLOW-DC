@@ -2457,7 +2457,8 @@ def finalize_run(cfg, store, snapshot, elapsed, report_factory):
     return report
 
 
-async def run_acquisition(cfg, *, manager_factory=HostControllerManager, report_factory=None):
+async def run_acquisition(cfg, *, manager_factory=HostControllerManager, report_factory=None,
+                          shared_client_factory=None):
     """Shared acquisition/reconciliation runner for both controller variants."""
     cfg = normalize_config(cfg)
     if report_factory is None:
@@ -2510,7 +2511,7 @@ async def run_acquisition(cfg, *, manager_factory=HostControllerManager, report_
                 from flowdc_methods import ControlTrace
                 from flowdc_shared import SharedClient
                 trajectory = ControlTrace(store, cfg)
-                shared = SharedClient(cfg, trajectory.emit)
+                shared = (shared_client_factory or SharedClient)(cfg, trajectory.emit)
                 await shared.start()
             elif cfg.enable_paarc:
                 if cfg.control_method is not None:

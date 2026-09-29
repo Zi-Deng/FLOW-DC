@@ -21,6 +21,7 @@ from flowdc_pilot import (
     Allowance,
     ClockSample,
 )
+from flowdc_topology import JOURNAL_SCHEMA, UPGRADE_FENCE, record_roles
 
 JOURNAL_VERSION = 1
 DB_NAME = "pilot.sqlite3"
@@ -218,17 +219,20 @@ def validate_record(record):
             ),
             optional=("fake_actions",),
         )
-        if record["schema_version"] != JOURNAL_VERSION or len(record["vms"]) != 3:
+        if record["schema_version"] not in (JOURNAL_VERSION, JOURNAL_SCHEMA):
             raise ValueError
         from flowdc_pilot_provider import validate_access_value
 
         validate_access_value(record["access"])
         ops.uuid_value(record["registration_id"])
         ops.absolute_path(record["profile_path"])
-        spec = ops.fields(record["spec"], ("schema_version", "context", "vms"))
-        ops.version(spec)
-        ops.validate_context(spec["context"])
-        if len(spec["vms"]) != 3 or {vm["role"] for vm in spec["vms"]} != {"manager", "worker", "origin"}:
+        spec = ops.validate_spec_value(record["spec"])
+        selected_roles = record_roles(record)
+        if (record["schema_version"] == JOURNAL_VERSION) != (spec["schema_version"] == 1):
+            raise ValueError
+        if record["access"]["schema_version"] != spec["schema_version"] or set(
+            record["access"]["interfaces"]
+        ) != set(selected_roles):
             raise ValueError
         if set(record["vms"]) != {vm["id"] for vm in spec["vms"]}:
             raise ValueError
@@ -330,7 +334,7 @@ def validate_record(record):
             raise ValueError
         if "configured" in network and (
             not isinstance(network["configured"], list)
-            or any(role not in ("manager", "worker", "origin") for role in network["configured"])
+            or any(role not in selected_roles for role in network["configured"])
             or len(set(network["configured"])) != len(network["configured"])
         ):
             raise ValueError
@@ -339,14 +343,14 @@ def validate_record(record):
             if type(network[key]) is not bool:
                 raise ValueError
         for role, groups in network["original"].items():
-            if role not in ("manager", "worker", "origin"):
+            if role not in selected_roles:
                 raise ValueError
             for group in groups:
                 ops.uuid_value(group)
         if not isinstance(network["intents"], dict) or not isinstance(network["seen_groups"], dict):
             raise ValueError
         for role, group in network["seen_groups"].items():
-            if role not in ("manager", "worker", "origin"):
+            if role not in selected_roles:
                 raise ValueError
             ops.uuid_value(group)
         # Reuse the fixed adapter's argv grammar, without constructing a provider
@@ -360,15 +364,13 @@ def validate_record(record):
                 raise ValueError
             Provider.validate_call(None, action, args)
             if action == "group_create":
-                valid_key = key in ("group-manager", "group-worker", "group-origin")
+                valid_key = key in tuple("group-" + role for role in selected_roles)
             elif action == "attach":
-                valid_key = key in ("attach-manager", "attach-worker", "attach-origin")
+                valid_key = key in tuple("attach-" + role for role in selected_roles)
             elif action == "floating_create":
                 valid_key = key == "floating"
             elif action == "rule":
-                valid_key = key in (
-                    f"rule-{role}-{args[1]}-{args[2]}" for role in ("manager", "worker", "origin")
-                )
+                valid_key = key in (f"rule-{role}-{args[1]}-{args[2]}" for role in selected_roles)
             else:
                 valid_key = False
             if not valid_key:
@@ -381,6 +383,42 @@ def validate_record(record):
                 ):
                     raise ValueError
         validate_grant_receipts(record)
+        migration_ids = set()
+        for event in record["events"]:
+            if event["kind"] != "topology_migrated":
+                continue
+            receipt = ops.fields(
+                event["data"],
+                (
+                    "migration_id",
+                    "request_sha256",
+                    "previous_state_sha256",
+                    "previous_schema_version",
+                    "new_worker_ids",
+                    "preserved_accounts_sha256",
+                    "backup",
+                    "rollback",
+                ),
+            )
+            identity = ops.uuid_value(receipt["migration_id"])
+            if identity in migration_ids or record["schema_version"] != JOURNAL_SCHEMA:
+                raise ValueError
+            migration_ids.add(identity)
+            for key in ("request_sha256", "previous_state_sha256", "preserved_accounts_sha256"):
+                if not isinstance(receipt[key], str) or not re.fullmatch(r"[0-9a-f]{64}", receipt[key]):
+                    raise ValueError
+            if (
+                receipt["previous_schema_version"] not in (1, JOURNAL_SCHEMA)
+                or receipt["backup"] != "topology-backup-" + identity + ".json"
+                or not isinstance(receipt["new_worker_ids"], list)
+                or len(set(receipt["new_worker_ids"])) != len(receipt["new_worker_ids"])
+                or any(
+                    identifier not in record["vms"]
+                    or not record["vms"][identifier]["role"].startswith("worker-")
+                    for identifier in receipt["new_worker_ids"]
+                )
+            ):
+                raise ValueError
         return record
     except (KeyError, TypeError, ValueError, OverflowError, AttributeError, AccountingError, ops.OpsError):
         raise failure("invalid_journal_history") from None
@@ -436,9 +474,21 @@ class Journal:
                 )
                 connection.execute("PRAGMA synchronous=FULL")
                 connection.execute("PRAGMA trusted_schema=OFF")
-                versions = (JOURNAL_VERSION, 2) if maintenance else (JOURNAL_VERSION,)
+                versions = (
+                    (JOURNAL_VERSION, 2, JOURNAL_SCHEMA, UPGRADE_FENCE)
+                    if maintenance
+                    else (JOURNAL_VERSION, JOURNAL_SCHEMA)
+                )
                 if connection.execute("PRAGMA user_version").fetchone()[0] not in versions:
                     raise failure("unsupported_journal")
+                if not maintenance:
+                    body = connection.execute("SELECT body FROM pilot WHERE id=1").fetchone()
+                    if (
+                        body is not None
+                        and ops.parse_json(body[0]).get("schema_version")
+                        != connection.execute("PRAGMA user_version").fetchone()[0]
+                    ):
+                        raise failure("unsupported_journal")
                 yield connection
             except sqlite3.Error:
                 raise failure("journal_unavailable_or_corrupt") from None
@@ -466,7 +516,13 @@ class Journal:
                     for key in ("schema_version", "registration_id", "profile_path", "spec", "access")
                 }
             )
-            receipts = encode(grant_receipts(record))
+            receipts = encode(
+                [
+                    event
+                    for event in record["events"]
+                    if event["kind"] in ("allowance_granted", "topology_migrated")
+                ]
+            )
             previous = {key: allowance(vm["account"]) for key, vm in record["vms"].items()}
             update(record)
             validate_record(record)
@@ -477,7 +533,13 @@ class Journal:
                 }
             ):
                 raise failure("immutable_journal_binding")
-            if receipts != encode(grant_receipts(record)):
+            if receipts != encode(
+                [
+                    event
+                    for event in record["events"]
+                    if event["kind"] in ("allowance_granted", "topology_migrated")
+                ]
+            ):
                 raise failure("immutable_allowance_receipts")
             for key, old in previous.items():
                 new = allowance(record["vms"][key]["account"])
@@ -599,6 +661,16 @@ def register(profile_path, root, spec, access):
     from silently minting another allowance. Manual removal of both marker and
     journal cannot be detected locally and is explicitly prohibited operationally.
     """
+    ops.validate_spec_value(spec)
+    from flowdc_pilot_provider import validate_access_value
+
+    validate_access_value(access)
+    if (
+        set(access["interfaces"]) != set(record_roles({"spec": spec}))
+        or access["schema_version"] != spec["schema_version"]
+    ):
+        raise failure("topology_access_mismatch")
+    schema = JOURNAL_VERSION if spec["schema_version"] == 1 else JOURNAL_SCHEMA
     profile_path = ops.absolute_path(str(profile_path))
     root = ops.absolute_path(str(root))
     with ops.private_directory(profile_path.parent) as config:
@@ -636,7 +708,7 @@ def register(profile_path, root, spec, access):
                 )
                 os.close(fd)
                 record = {
-                    "schema_version": 1,
+                    "schema_version": schema,
                     "registration_id": str(uuid4()),
                     "profile_path": str(profile_path),
                     "spec": spec,
@@ -662,7 +734,7 @@ def register(profile_path, root, spec, access):
                     with closing(sqlite3.connect(f"/proc/self/fd/{parent}/{DB_NAME}")) as connection:
                         connection.execute("PRAGMA synchronous=FULL")
                         connection.execute("PRAGMA journal_mode=DELETE")
-                        connection.execute(f"PRAGMA user_version={JOURNAL_VERSION}")
+                        connection.execute(f"PRAGMA user_version={schema}")
                         connection.execute(
                             "CREATE TABLE pilot (id INTEGER PRIMARY KEY CHECK(id=1), body TEXT NOT NULL)"
                         )

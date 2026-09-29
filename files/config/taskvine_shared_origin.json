@@ -1,0 +1,21 @@
+{
+  "distributed_profile": "shared-origin-v1",
+  "original_manifest": "/absolute/path/original.parquet",
+  "catalog": "/absolute/path/catalog.json",
+  "output_directory": "/absolute/path/new-retained-run",
+  "environment_archive": "/absolute/path/research-env.tar.gz",
+  "environment_sha256": "REPLACE_WITH_VERIFIED_SHA256",
+  "workers": 2,
+  "deadline_s": 170,
+  "task_deadline_s": 110,
+  "max_attempts": 1,
+  "download": {
+    "control_method": "fixed-v1",
+    "C_min": 1,
+    "C_init": 2,
+    "C_max": 2,
+    "concurrent_downloads": 2,
+    "timeout_sec": 5,
+    "max_retry_attempts": 1
+  }
+}

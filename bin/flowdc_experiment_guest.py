@@ -55,9 +55,17 @@ def command(args):
     return result.stdout
 
 
+def worker_role(role):
+    return role in ("worker", "worker-2", "worker-3", "worker-4")
+
+
+def valid_role(role):
+    return role in ("manager", "origin") or worker_role(role)
+
+
 def unit(run, role, case):
     check(re.fullmatch(r"exp-[0-9a-f]{32}", run))
-    check(role in ("manager", "worker", "origin") and re.fullmatch(r"[a-z][a-z0-9_-]{0,39}", case))
+    check(valid_role(role) and re.fullmatch(r"[a-z][a-z0-9_-]{0,39}", case))
     return f"flowdc-{run}-{role}-{case}.service"
 
 
@@ -65,17 +73,17 @@ def settings(root):
     return json.loads((root / "guest.json").read_bytes())
 
 
-def probe(root, role, worker, disk, mode):
+def probe(root, role, worker, disk, mode, research=False):
     check(sys.version_info >= (3, 12) and os.getuid() != 0)
     private_path(root)
     versions = {}
-    packages = ("polars", "aiohttp", "tqdm") if role != "origin" else ()
+    packages = ("polars", "aiohttp", "tqdm") if role != "origin" or research else ()
     if role == "manager":
         packages += ("ndcctools.taskvine",)
     for package in packages:
         module = importlib.import_module(package)
         versions[package] = getattr(module, "__version__", "available")
-    if role == "worker":
+    if worker_role(role):
         check(Path(worker).is_file() and os.access(worker, os.X_OK))
         versions["vine_worker"] = command([worker, "--version"]).decode().strip()[:256]
         help_text = command([worker, "--help"])
@@ -201,9 +209,10 @@ def launch_service(root, role, case, seconds):
     ]
     if config["service_mode"] == "system":
         args += ["--uid", str(os.getuid()), "--gid", str(os.getgid())]
-    if role == "worker":
+    if worker_role(role):
         args += [
             config["worker"],
+            *(["--ssl", "-P", str(root / "native-password")] if "distributed" in config else []),
             "--single-shot",
             "--wall-time",
             str(seconds),
@@ -266,6 +275,11 @@ def stop_service(root, role, case):
 
 def task(root, case):
     config = settings(root)
+    if "distributed" in config:
+        sys.path.insert(0, str(root / "bin"))
+        from flowdc_experiment_research import run_case
+
+        return run_case(root, case)
     output = root / "results" / case
     sys.path.insert(0, str(root / "bin"))
     module = importlib.import_module("TaskvineFLOWDC")
@@ -377,7 +391,12 @@ def origin_server(root, port=8000):
     return server
 
 
-def origin(root):
+def origin(root, case="all"):
+    if "distributed" in settings(root):
+        sys.path.insert(0, str(root / "bin"))
+        from flowdc_experiment_research import serve_origin
+
+        return serve_origin(root, case)
     server = origin_server(root)
     try:
         # Exit after sending the bounded refusal; shutdown() from the serving
@@ -408,14 +427,20 @@ def collection_paths(base):
 
 
 def collect(root, role, case, maximum):
-    base = root if role == "origin" else root / "results" / case
+    distributed = (root / "guest.json").is_file() and "distributed" in settings(root)
+    base = root if role == "origin" and not distributed else root / "results" / case
     private_path(base)
-    paths = [root / "origin.jsonl"] if role == "origin" else collection_paths(base)
-    if role == "worker":
-        paths = [base / "worker.log"]
+    paths = [base / "origin.jsonl"] if role == "origin" else collection_paths(base)
+    if worker_role(role):
+        paths = [base / (role + ".log")]
     # Bound packaging BEFORE producing any transfer; refuse symlinks even in logs.
     total, regular = 0, []
     for path in paths:
+        if distributed and (
+            path.name in ("control-private.json", "native-password")
+            or "authority" in path.relative_to(base).parts
+        ):
+            continue
         info = path.lstat()
         check(not stat.S_ISLNK(info.st_mode))
         if stat.S_ISDIR(info.st_mode):
@@ -432,10 +457,10 @@ def collect(root, role, case, maximum):
 def main():
     os.umask(0o077)
     action, location, role, case, *extra = sys.argv[1:]
-    check(role in ("manager", "worker", "origin"))
+    check(valid_role(role))
     root = Path(location)
     if action == "probe":
-        value = probe(root, role, extra[0], extra[1], extra[2])
+        value = probe(root, role, extra[0], extra[1], extra[2], len(extra) == 4 and extra[3] == "research")
     elif action == "deploy":
         value = deploy(root, extra[0], int(extra[1]))
     else:
@@ -450,7 +475,7 @@ def main():
         elif action == "task":
             value = task(root, case)
         elif action == "origin":
-            value = origin(root)
+            value = origin(root, case)
         elif action == "collect":
             collect(root, role, case, int(extra[0]))
             return

@@ -105,19 +105,36 @@ def validate_case(raw, case, partitions, maximum):
             "paarc_mode_mismatch",
         )
         if overview.get("report_schema_version") == 2:
-            indices = [(key, value) for key, value in content.items() if PurePosixPath(key).name == "outcome-index.json"]
+            indices = [
+                (key, value)
+                for key, value in content.items()
+                if PurePosixPath(key).name == "outcome-index.json"
+            ]
             require(len(indices) == 1 and indices[0][1] is not None, "outcome_index_missing")
             index_name, index_raw = indices[0]
             index = parse(index_raw)
             rows = index.get("rows", [])
-            require(index.get("manifest", {}).get("sha256") == part.get("manifest_sha256"), "partition_manifest_mismatch")
+            require(
+                index.get("manifest", {}).get("sha256") == part.get("manifest_sha256"),
+                "partition_manifest_mismatch",
+            )
             if "row_ids" in part:
-                require(sorted(row.get("row_id", "") for row in rows) == sorted(part["row_ids"]), "partition_identity_mismatch")
-            require(index.get("schema_version") == 2 and index.get("original_rows") == part["rows"]
-                    and len(rows) == part["rows"], "outcome_denominator_mismatch")
+                require(
+                    sorted(row.get("row_id", "") for row in rows) == sorted(part["row_ids"]),
+                    "partition_identity_mismatch",
+                )
+            require(
+                index.get("schema_version") == 2
+                and index.get("original_rows") == part["rows"]
+                and len(rows) == part["rows"],
+                "outcome_denominator_mismatch",
+            )
             require(all(row.get("disposition") == "verified" for row in rows), "unverified_outcome")
             require(len({row.get("row_id") for row in rows}) == len(rows), "duplicate_row_identity")
-            require(index.get("counts") == {"verified": len(rows), "failed": 0, "skipped": 0, "unattempted": 0}, "outcome_count_mismatch")
+            require(
+                index.get("counts") == {"verified": len(rows), "failed": 0, "skipped": 0, "unattempted": 0},
+                "outcome_count_mismatch",
+            )
             prefix = str(PurePosixPath(index_name).parent)
             try:
                 verify_archive(files[filename], index, prefix)
@@ -126,12 +143,23 @@ def validate_case(raw, case, partitions, maximum):
             hashes = []
             for row in rows:
                 metadata = parse(content[prefix + "/" + row["metadata"]])
-                require(metadata.get("row_id") == row_identity(metadata.get("source_manifest"), metadata.get("source_position")), "row_provenance_mismatch")
-                require(metadata.get("source_manifest") == row.get("source_manifest")
-                        and metadata.get("source_position") == row.get("source_position"), "row_provenance_mismatch")
+                require(
+                    metadata.get("row_id")
+                    == row_identity(metadata.get("source_manifest"), metadata.get("source_position")),
+                    "row_provenance_mismatch",
+                )
+                require(
+                    metadata.get("source_manifest") == row.get("source_manifest")
+                    and metadata.get("source_position") == row.get("source_position"),
+                    "row_provenance_mismatch",
+                )
                 hashes.append(digest(content[prefix + "/" + row["payload"]]))
-            require(sum(row["payload_bytes"] for row in rows) == index.get("verified_payload_bytes")
-                    == summary.get("verified_payload_bytes"), "payload_byte_mismatch")
+            require(
+                sum(row["payload_bytes"] for row in rows)
+                == index.get("verified_payload_bytes")
+                == summary.get("verified_payload_bytes"),
+                "payload_byte_mismatch",
+            )
         else:
             # Preserve historical schema-1 interpretation and member bounds.
             require(len(content) <= ARCHIVE_MEMBER_LIMIT, "archive_member_limit_or_duplicate")
@@ -159,7 +187,12 @@ def validate_origin(raw, cases, worker, maximum):
     logs = members(raw, maximum)
     require(logs.get("origin.jsonl") is not None, "origin_evidence_missing")
     rows = [parse(line) for line in logs["origin.jsonl"].splitlines()]
-    require(all(row.get("source") == worker for row in rows), "origin_source_mismatch")
+    workers = [worker] if isinstance(worker, str) else worker
+    require(
+        isinstance(workers, list) and len(workers) in (1, 2, 4) and len(set(workers)) == len(workers),
+        "invalid_worker_sources",
+    )
+    require(all(row.get("source") in workers for row in rows), "origin_source_mismatch")
     for case in cases:
         prefix = "/" + case["name"] + "/"
         selected = [row for row in rows if row.get("path", "").startswith(prefix)]
@@ -181,13 +214,32 @@ def main():
     require(type(maximum) is int and 0 < maximum <= 1073741824)
     raw = sys.stdin.buffer.read(maximum + 1)
     require(len(raw) <= maximum, "artifact_size_limit")
-    if value["kind"] == "case":
+    if value["kind"] == "distributed":
+        from flowdc_experiment_research import verify_return
+
+        result = verify_return(
+            members(raw, maximum), value["case"], value["truth"], value["source"], value["environment"]
+        )
+    elif value["kind"] == "controlled-origin":
+        files = members(raw, maximum)
+        rows = [parse(line) for line in files["origin.jsonl"].splitlines()]
+        require(
+            bool(rows) and all(row["sequence"] == i for i, row in enumerate(rows, 1)),
+            "origin_sequence_mismatch",
+        )
+        arrivals = {row["request_id"] for row in rows if row["phase"] == "arrival"}
+        responses = {row["request_id"] for row in rows if row["phase"] == "response"}
+        require(arrivals == responses, "origin_unclosed_requests")
+        result = {"requests": len(arrivals), "scope": "origin clock only; no cross-machine subtraction"}
+    elif value["kind"] == "case":
         result = validate_case(raw, value["case"], value["partitions"], maximum)
     elif value["kind"] == "origin":
         result = validate_origin(raw, value["cases"], value["worker"], maximum)
     else:
         require(value["kind"] == "worker")
-        require(members(raw, maximum).get("worker.log") is not None, "worker_log_missing")
+        role = value.get("role", "worker")
+        require(role in ("worker", "worker-2", "worker-3", "worker-4"), "invalid_worker_role")
+        require(members(raw, maximum).get(role + ".log") is not None, "worker_log_missing")
         result = {"worker_log_present": True}
     sys.stdout.buffer.write(encode({"result": result}))
 

@@ -29,6 +29,7 @@ class SourceTests(unittest.TestCase):
         self.contents = {}
         for path in source.SOURCE_PATHS:
             self.contents[path] = f"# committed {path}\n".encode()
+            (self.repo / path).parent.mkdir(parents=True, exist_ok=True)
             (self.repo / path).write_bytes(self.contents[path])
         (self.repo / "private-key").write_text("excluded sentinel")
         self.commit = self.commit_all()
