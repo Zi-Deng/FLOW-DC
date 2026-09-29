@@ -218,7 +218,12 @@ def main():
         from flowdc_experiment_research import verify_return
 
         result = verify_return(
-            members(raw, maximum), value["case"], value["truth"], value["source"], value["environment"]
+            members(raw, maximum),
+            value["case"],
+            value["truth"],
+            value["source"],
+            value["environment"],
+            value["cohort"],
         )
     elif value["kind"] == "controlled-origin":
         files = members(raw, maximum)
@@ -239,7 +244,14 @@ def main():
         require(value["kind"] == "worker")
         role = value.get("role", "worker")
         require(role in ("worker", "worker-2", "worker-3", "worker-4"), "invalid_worker_role")
-        require(members(raw, maximum).get(role + ".log") is not None, "worker_log_missing")
+        files = members(raw, maximum)
+        require(files.get(role + ".log") is not None, "worker_log_missing")
+        if "cohort" in value:
+            from flowdc_experiment_research import verify_worker_launch
+
+            verify_worker_launch(
+                parse(files["owned-worker.json"]), value["cohort"], role, value["case"], value["slot"]
+            )
         result = {"worker_log_present": True}
     sys.stdout.buffer.write(encode({"result": result}))
 

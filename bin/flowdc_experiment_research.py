@@ -142,7 +142,11 @@ def run_case(root, case):
         "max_attempts": 1,
     }
     require(config["deadline_s"] > config["task_deadline_s"], "research_guest_deadline_too_small")
-    raise SystemExit(cli(config))
+    from flowdc_vine_cohort import validate as validate_cohort
+
+    selected_cohort = validate_cohort(settings["worker_cohorts"][case], config["workers"])
+    require(selected_cohort["owner"] == "prepared-guest-service-v1", "guest cohort owner required")
+    raise SystemExit(cli(config, owned_cohort=selected_cohort))
 
 
 def serve_origin(root, case):
@@ -164,11 +168,30 @@ def serve_origin(root, case):
     asyncio.run(serve())
 
 
-def verify_return(files, case, expected_truth, expected_source, expected_environment):
+def verify_worker_launch(value, cohort, role, case, slot):
+    from flowdc_vine_cohort import validate as validate_cohort
+
+    validate_cohort(cohort, len(cohort["slots"]))
+    require(
+        cohort["owner"] == "prepared-guest-service-v1"
+        and value["schema"] == "flowdc-owned-worker-launch-v1"
+        and value["cohort"] == cohort
+        and value["role"] == role
+        and value["case"] == case
+        and value["feature"] == cohort["slots"][slot]["feature"]
+        and value["single_shot"] is True
+        and value["restart"] == "no"
+        and type(value["launch_index"]) is int
+        and value["launch_index"] == 0,
+        "owned_worker_launch_mismatch",
+    )
+
+
+def verify_return(files, case, expected_truth, expected_source, expected_environment, expected_cohort=None):
     """Reverify retained manager returns independently after guest collection."""
     from tempfile import TemporaryDirectory
 
-    from flowdc_vine import Reconciler
+    from flowdc_vine import Reconciler, control_closure
     from flowdc_vine_protocol import parse
 
     prefix = "distributed/"
@@ -180,6 +203,10 @@ def verify_return(files, case, expected_truth, expected_source, expected_environ
     )
     control = parse(files[prefix + "control.json"])
     require(
+        all(control_closure(control["state"], parse(files[prefix + "native-cleanup.json"]))),
+        "distributed_control_or_native_incomplete",
+    )
+    require(
         claimed["schema"] == "flowdc-distributed-result-v1"
         and claimed["method"] == case["config"]["control_method"]
         and control["state"]["binding"].get("method") == claimed["method"],
@@ -187,6 +214,31 @@ def verify_return(files, case, expected_truth, expected_source, expected_environ
     )
     with TemporaryDirectory() as directory:
         parent = Path(directory)
+        if expected_cohort is not None:
+            from flowdc_vine import dispatch_records
+            from flowdc_vine_cohort import dispatch_audit
+
+            require(parse(files[prefix + "cohort.json"]) == expected_cohort, "native_cohort_changed")
+            submissions = [
+                parse(files[name])["native_task_id"]
+                for name in sorted(files)
+                if name.startswith(prefix + "partition-") and name.endswith("/submission.json")
+            ]
+            require(len(submissions) == len(set(submissions)), "duplicate_native_task")
+            for name, raw in files.items():
+                if name.startswith(prefix + "run-info/") and name.endswith("/transactions"):
+                    target = parent / name
+                    require(target.resolve().is_relative_to(parent.resolve()), "unsafe_dispatch_log_path")
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.write_bytes(raw)
+            actual = dispatch_records(parent / prefix / "run-info")
+            audit = dispatch_audit(expected_cohort, submissions, actual)
+            require(
+                actual == claimed["dispatches"]
+                and audit == claimed["native_dispatch_bound"]
+                and audit["within_bound"],
+                "native_dispatch_bound_mismatch",
+            )
         reconciler = Reconciler(truth)
         for returned in claimed["returns"]:
             identifier = returned["scope_id"]

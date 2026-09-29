@@ -20,8 +20,10 @@ from uuid import uuid4
 import polars as pl
 from download_batch import Config, normalize_config
 from flowdc_shared import Authority, protected_endpoint
-from flowdc_shared_state import private_file
+from flowdc_shared_state import Ledger, private_file
 from flowdc_staging import WORKER_FILES
+from flowdc_vine_cohort import dispatch_audit
+from flowdc_vine_cohort import validate as validate_cohort
 from flowdc_vine_native import RUNTIME, NativeManager
 from flowdc_vine_protocol import digest, parse, require, unpack_return, write_new
 
@@ -57,6 +59,7 @@ def validate_config(value):
         "port_number",
         "control_tls",
         "native_password_file",
+        "local_worker_binary",
     }
     require(mandatory <= set(value) <= mandatory | optional, "invalid distributed config fields")
     require(value["distributed_profile"] == PROFILE, "unsupported distributed profile")
@@ -248,14 +251,19 @@ def dispatch_records(run_info):
     return records
 
 
-async def run(value, *, ready=None, pulse=None, engineering_fault=None, worker_features=None):
+async def run(value, *, ready=None, pulse=None, engineering_fault=None, owned_cohort=None):
     """Native manager entrypoint. Hooks only instrument bounded local fixtures."""
     import ndcctools.taskvine as vine
 
     config, download, truth, package, root, sources = prepare(value)
+    owned_cohort = validate_cohort(owned_cohort, config["workers"])
     require(vine.cvine.vine_version_string() == RUNTIME, "shared profile requires TaskVine " + RUNTIME)
-    require(engineering_fault in (None, "partial-artifact"), "unknown engineering fault")
+    require(
+        engineering_fault in (None, "partial-artifact", "preconnect-pause", "sandbox-exhaustion", "forsaken"),
+        "unknown engineering fault",
+    )
     root.mkdir(mode=0o700, parents=True, exist_ok=False)
+    write_new(root / "cohort.json", owned_cohort)
     eligible = truth.write(root / "fixture")
     write_new(
         root / "effective.json", {**config, "download": dataclasses.asdict(download), "runtime": RUNTIME}
@@ -284,6 +292,7 @@ async def run(value, *, ready=None, pulse=None, engineering_fault=None, worker_f
     tasks, returns = {}, []
     manager = None
     status, error_type = "failed", None
+    native_cleanup = None
     started = time.monotonic_ns()
     verified_ns = 0
     try:
@@ -338,8 +347,7 @@ async def run(value, *, ready=None, pulse=None, engineering_fault=None, worker_f
                 "submit",
                 directory=str(directory),
                 spec=spec,
-                max_attempts=config["max_attempts"],
-                feature=worker_features[i] if worker_features else None,
+                feature=owned_cohort["slots"][i]["feature"],
             )
             identifier = response["task_id"]
             tasks[identifier] = (directory, spec)
@@ -400,13 +408,16 @@ async def run(value, *, ready=None, pulse=None, engineering_fault=None, worker_f
     finally:
         # Cancel/shutdown are requests, never evidence that uncertain HTTP stopped.
         if manager is not None:
-            write_new(root / "native-cleanup.json", await manager.close())
+            native_cleanup = await manager.close()
+            write_new(root / "native-cleanup.json", native_cleanup)
         await authority.stop()
         exported = authority.ledger.export()
         write_new(root / "control.json", exported)
         authority.ledger.close()
     before = time.monotonic_ns()
     summary = reconciler.summary()
+    dispatches = dispatch_records(root / "run-info")
+    bound = dispatch_audit(owned_cohort, tasks, dispatches)
     summary.update(
         schema="flowdc-distributed-result-v1",
         method=download.control_method,
@@ -414,10 +425,11 @@ async def run(value, *, ready=None, pulse=None, engineering_fault=None, worker_f
         environment_sha256=config["environment_sha256"],
         status=status,
         error_type=error_type,
-        dispatches=dispatch_records(root / "run-info"),
+        dispatches=dispatches,
+        native_dispatch_bound=bound,
         acquisition_attempts=exported["state"]["clients"],
         attempt_accounting="native dispatches and admitted clients are distinct; pre-connect execution may be unobserved",
-        run_complete=status == "returned"
+        acquisition_complete=status == "returned"
         and len(returns) == len(tasks)
         and all(
             r["accepted"] and r["native"]["successful"] and r.get("receipt", {}).get("status") == "returned"
@@ -425,6 +437,15 @@ async def run(value, *, ready=None, pulse=None, engineering_fault=None, worker_f
         )
         and all(row["disposition"] in ("verified", "skipped") for row in summary["rows"])
         and not summary["errors"],
+    )
+    control_complete, native_complete = control_closure(exported["state"], native_cleanup)
+    summary.update(
+        control_complete=control_complete,
+        native_complete=native_complete,
+        run_complete=summary["acquisition_complete"]
+        and control_complete
+        and native_complete
+        and bound["within_bound"],
     )
     write_new(root / "outcomes.json", summary)
     # Required reconciliation/index closure belongs to this boundary; rendering does not.
@@ -440,7 +461,20 @@ async def run(value, *, ready=None, pulse=None, engineering_fault=None, worker_f
     return {**summary, **timing}
 
 
-def cli(value, *, dry_run=False):
+def control_closure(state, native_cleanup):
+    control_complete = not Ledger.outstanding(state) and all(
+        client["status"] == "closed" for client in state["clients"].values()
+    )
+    native_complete = (
+        isinstance(native_cleanup, dict)
+        and type(native_cleanup.get("native_manager_exit")) is int
+        and native_cleanup["native_manager_exit"] == 0
+        and native_cleanup.get("shutdown_receipt") is True
+    )
+    return control_complete, native_complete
+
+
+def cli(value, *, dry_run=False, owned_cohort=None):
     if dry_run:
         config, _, truth, _, _, _ = prepare(value)
         print(
@@ -455,7 +489,14 @@ def cli(value, *, dry_run=False):
             )
         )
         return 0
-    result = asyncio.run(run(value))
+    if owned_cohort is None:
+        require(
+            "local_worker_binary" in value, "use an owned local worker binary or the prepared guest workflow"
+        )
+        result = asyncio.run(run_local(value))
+    else:
+        require(owned_cohort["owner"] == "prepared-guest-service-v1", "unexpected CLI cohort owner")
+        result = asyncio.run(run(value, owned_cohort=owned_cohort))
     print(
         json.dumps(
             {
@@ -465,3 +506,39 @@ def cli(value, *, dry_run=False):
         )
     )
     return 0 if result["run_complete"] else 2
+
+
+async def run_local(value):
+    """Maintained CLI owns every local worker; no external worker/factory profile."""
+    import subprocess
+
+    from flowdc_vine_cohort import cohort
+    from flowdc_vine_ownership import OwnedWorkers
+
+    config, _, _, _, root, _ = prepare(value)
+    require("control_tls" not in config, "local owned workers require loopback control")
+    executable = Path(config["local_worker_binary"])
+    require(executable.is_absolute() and executable.is_file(), "absolute official worker binary required")
+    version = subprocess.run([str(executable), "--version"], capture_output=True, timeout=5, check=True)
+    require(RUNTIME in (version.stdout + version.stderr).decode().split(), "worker runtime mismatch")
+    directory = root.with_name(root.name + "-workers")
+    require(not directory.exists() and not directory.is_symlink(), "owned worker output collision")
+    directory.mkdir(mode=0o700, parents=True)
+    owned = OwnedWorkers(directory, executable, config["workers"])
+    plan = cohort(config["workers"])
+    owned.bind_cohort(plan)
+    write_new(directory / "runtime.json", {"version": RUNTIME, "binary_sha256": file_digest(executable)})
+    watch = asyncio.create_task(owned.watch())
+
+    async def ready(manager, authority, password):
+        for slot in plan["slots"]:
+            owned.start(manager.port, password, slot["feature"])
+
+    try:
+        return await run(value, ready=ready, owned_cohort=plan)
+    finally:
+        try:
+            write_new(directory / "cleanup.json", await owned.close())
+        finally:
+            owned.stopping = True
+            await watch

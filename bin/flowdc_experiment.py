@@ -63,6 +63,15 @@ def prepare(path):
         files[f"configs/{case['name']}.json"] = encode(config)
     helper = Path(__file__).with_name("flowdc_experiment_guest.py").read_bytes()
     files["guest.py"] = helper
+    cohorts = {}
+    if "distributed" in spec:
+        from flowdc_vine_cohort import cohort
+
+        require("bin/flowdc_vine_cohort.py" in files, "selected_source_has_no_owned_cohort")
+        cohorts = {
+            case["name"]: cohort(len(selected_roles(record)) - 2, owner="prepared-guest-service-v1")
+            for case in cases
+        }
     files["guest.json"] = encode(
         {
             "python": spec["guest"]["python"],
@@ -70,7 +79,11 @@ def prepare(path):
             "service_mode": spec["guest"]["service_mode"],
             "bounds": spec["bounds"],
             "cases": [c["name"] for c in cases],
-            **({"distributed": spec["distributed"]} if "distributed" in spec else {}),
+            **(
+                {"distributed": spec["distributed"], "worker_cohorts": cohorts}
+                if "distributed" in spec
+                else {}
+            ),
             "addresses": {
                 role: record["access"]["interfaces"][role]["fixed_ip"] for role in selected_roles(record)
             },
@@ -151,7 +164,11 @@ def prepare(path):
         "known_hosts_sha256": ssh_preflight(spec["ssh"], binding(record)),
         "cases": cases,
         "partitions": partitions,
-        **({"research_truth": research_truth} if research_truth is not None else {}),
+        **(
+            {"research_truth": research_truth, "worker_cohorts": cohorts}
+            if research_truth is not None
+            else {}
+        ),
         "files": {},
         "bundle_sha256": digest(archive),
         "original_spec_sha256": digest(raw_spec),
@@ -309,6 +326,7 @@ def collect_outputs(store, selected, manifest, state, transport, deadline):
                         name: manifest["source"]["files"]["bin/" + name]["sha256"] for name in WORKER_FILES
                     },
                     environment=manifest["spec"]["distributed"]["environment_sha256"],
+                    cohort=manifest["worker_cohorts"][name],
                 )
                 if "research_truth" in manifest
                 else validate(raw, "case", case=case, partitions=manifest["partitions"][name])
@@ -325,7 +343,15 @@ def collect_outputs(store, selected, manifest, state, transport, deadline):
             key = case["name"] + "-" + role
             try:
                 worker_raw = acquire(key, role, case["name"])
-                validate(worker_raw, "worker", role=role)
+                extra = {}
+                if "research_truth" in manifest:
+                    workers = [r for r in selected_roles(manifest["binding"]) if is_worker(r)]
+                    extra = {
+                        "cohort": manifest["worker_cohorts"][case["name"]],
+                        "slot": workers.index(role),
+                        "case": case["name"],
+                    }
+                validate(worker_raw, "worker", role=role, **extra)
                 state["collected"][key]["valid"] = True
                 save(store, selected, state)
             except Exception as exc:

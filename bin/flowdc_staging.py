@@ -11,7 +11,13 @@ DOWNLOAD_FILES = (
 )
 WORKER_FILES = DOWNLOAD_FILES + ("flowdc_vine_worker.py", "flowdc_vine_protocol.py")
 SOURCE_PATHS = (
-    ("bin/TaskvineFLOWDC.py", "bin/flowdc_vine.py", "bin/flowdc_vine_native.py")
+    (
+        "bin/TaskvineFLOWDC.py",
+        "bin/flowdc_vine.py",
+        "bin/flowdc_vine_native.py",
+        "bin/flowdc_vine_cohort.py",
+        "bin/flowdc_vine_ownership.py",
+    )
     + tuple("bin/" + name for name in WORKER_FILES)
     + (
         "benchmark/__init__.py",

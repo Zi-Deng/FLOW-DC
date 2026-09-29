@@ -365,7 +365,7 @@ class ResearchGuestTests(unittest.TestCase):
         )
         archive = self.root / "return.tar"
         pack_return(output, archive)
-        clients = {attempt: {"scope": scope}}
+        clients = {attempt: {"scope": scope, "status": "closed"}}
         reconciler = Reconciler(fixture.truth.record)
         reconciler.accept(
             self.root / "accepted", archive, spec, {"successful": True, "exit_code": 0}, clients
@@ -377,7 +377,10 @@ class ResearchGuestTests(unittest.TestCase):
         files = {
             "distributed/fixture/truth.json": encode(fixture.truth.record),
             "distributed/outcomes.json": encode(claimed),
-            "distributed/control.json": encode({"state": {"binding": spec["binding"], "clients": clients}}),
+            "distributed/control.json": encode(
+                {"state": {"binding": spec["binding"], "clients": clients, "permits": {}}}
+            ),
+            "distributed/native-cleanup.json": encode({"native_manager_exit": 0, "shutdown_receipt": True}),
             "distributed/partition-0/task.json": encode(spec),
             "distributed/partition-0/return.tar": archive.read_bytes(),
             "distributed/timing.json": encode({"end_to_end_ns": 123456789}),
@@ -397,6 +400,8 @@ class ResearchGuestTests(unittest.TestCase):
             "exit",
             "method",
             "empty",
+            "uncertain-control",
+            "native-cleanup",
         ):
             bad = dict(files)
             if kind in ("source", "environment"):
@@ -420,6 +425,14 @@ class ResearchGuestTests(unittest.TestCase):
                 bad["distributed/partition-0/return.tar"] = archive.read_bytes()[:1024]
             if kind == "missing":
                 del bad["distributed/partition-0/return.tar"]
+            if kind == "uncertain-control":
+                value = json.loads(files["distributed/control.json"])
+                value["state"]["clients"][attempt]["status"] = "uncertain"
+                bad["distributed/control.json"] = encode(value)
+            if kind == "native-cleanup":
+                bad["distributed/native-cleanup.json"] = encode(
+                    {"native_manager_exit": -9, "shutdown_receipt": False}
+                )
             if kind == "empty":
                 from benchmark.core.truth import initial_outcomes
 
@@ -433,6 +446,8 @@ class ResearchGuestTests(unittest.TestCase):
                 verify_return(bad, case, fixture.truth.record, spec["files"], spec["environment_sha256"])
 
     def test_all_worker_counts_select_real_shared_manager_profile(self):
+        from flowdc_vine_cohort import cohort
+
         (self.root / "configs").mkdir()
         (self.root / "configs/case.json").write_text(
             json.dumps({"enable_paarc": True, "control_method": "gradient-candidate-v1"})
@@ -442,6 +457,7 @@ class ResearchGuestTests(unittest.TestCase):
                 "distributed": self.value,
                 "addresses": {str(i): "10.0.0.1" for i in range(count + 2)},
                 "bounds": {"phase_seconds": 150},
+                "worker_cohorts": {"case": cohort(count, owner="prepared-guest-service-v1")},
             }
             (self.root / "guest.json").write_text(json.dumps(settings))
             with patch("flowdc_vine.cli", return_value=0) as cli, self.assertRaises(SystemExit) as stopped:
@@ -452,3 +468,44 @@ class ResearchGuestTests(unittest.TestCase):
             self.assertEqual(cfg["distributed_profile"], "shared-origin-v1")
             self.assertEqual(cfg["control_tls"], self.value["control_tls"])
             self.assertEqual(cfg["download"]["control_method"], "gradient-candidate-v1")
+
+    def test_native_collection_retains_results_without_traversing_runtime_cache_or_private_state(self):
+        import io
+        import os
+        from types import SimpleNamespace
+
+        from flowdc_experiment_artifacts import members
+        from flowdc_experiment_guest import collect
+
+        os.chmod(self.root, 0o700)
+        (self.root / "guest.json").write_text('{"distributed":{}}')
+        base = self.root / "results/case"
+        base.mkdir(parents=True, mode=0o700)
+        (base / "manager.log").write_bytes(b"native log")
+        native = base / "distributed"
+        native.mkdir()
+        logs = native / "run-info/session/vine-logs"
+        logs.mkdir(parents=True)
+        (logs / "transactions").write_bytes(b"retained actual dispatches")
+        (native / "run-info/most-recent").symlink_to("session")
+        (native / "staging").mkdir()
+        (native / "staging/runtime-link").symlink_to("/unavailable-runtime-cache")
+        (native / "authority").mkdir()
+        (native / "authority/private.json").write_bytes(b"private fixture state")
+        (native / "native-password").write_bytes(b"private fixture credential")
+        (native / "outcomes.json").write_bytes(b"retained outcomes")
+        buffer = io.BytesIO()
+        with patch.object(sys, "stdout", SimpleNamespace(buffer=buffer)):
+            collect(self.root, "manager", "case", 1024 * 1024)
+        result = members(buffer.getvalue(), 1024 * 1024)
+        self.assertEqual(
+            set(result),
+            {
+                "manager.log",
+                "distributed/outcomes.json",
+                "distributed/run-info/session/vine-logs/transactions",
+            },
+        )
+        (native / "unsafe-public-link").symlink_to("outcomes.json")
+        with patch.object(sys, "stdout", SimpleNamespace(buffer=io.BytesIO())), self.assertRaises(ValueError):
+            collect(self.root, "manager", "case", 1024 * 1024)

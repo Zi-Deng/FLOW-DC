@@ -210,9 +210,19 @@ def launch_service(root, role, case, seconds):
     if config["service_mode"] == "system":
         args += ["--uid", str(os.getuid()), "--gid", str(os.getgid())]
     if worker_role(role):
+        if "distributed" in config:
+            sys.path.insert(0, str(root / "bin"))
+            from flowdc_vine_cohort import validate as validate_cohort
+
+            roles = sorted(r for r in config["addresses"] if worker_role(r))
+            cohort = validate_cohort(config["worker_cohorts"][case], len(roles))
+            check(cohort["owner"] == "prepared-guest-service-v1")
+            feature = cohort["slots"][roles.index(role)]["feature"]
+            args += ["--property=Restart=no"]
         args += [
             config["worker"],
             *(["--ssl", "-P", str(root / "native-password")] if "distributed" in config else []),
+            *(["--feature", feature] if "distributed" in config else []),
             "--single-shot",
             "--wall-time",
             str(seconds),
@@ -237,6 +247,24 @@ def launch_service(root, role, case, seconds):
             case,
         ]
     command(args)
+    if worker_role(role) and "distributed" in config:
+        write(
+            output / "owned-worker.json",
+            json.dumps(
+                {
+                    "schema": "flowdc-owned-worker-launch-v1",
+                    "role": role,
+                    "case": case,
+                    "service": service,
+                    "cohort": cohort,
+                    "feature": feature,
+                    "single_shot": True,
+                    "restart": "no",
+                    "launch_index": 0,
+                },
+                sort_keys=True,
+            ).encode(),
+        )
     return {"launched": service}
 
 
@@ -408,7 +436,7 @@ def origin(root, case="all"):
         server.fixture_log.close()
 
 
-def collection_paths(base):
+def collection_paths(base, *, distributed=False):
     # Bound directory enumeration too, before allocating the transfer manifest.
     seen = 0
 
@@ -417,6 +445,16 @@ def collection_paths(base):
         check(depth <= 32)
         with os.scandir(directory) as entries:
             for entry in entries:
+                relative = Path(entry.path).relative_to(base).parts
+                if distributed and relative in (
+                    ("distributed", "staging"),
+                    ("distributed", "authority"),
+                    ("distributed", "run-info", "most-recent"),
+                ):
+                    # Native cache and private authority state are retained on
+                    # the guest. The real log directory is collected, not its
+                    # native convenience symlink. Never traverse these exclusions.
+                    continue
                 seen += 1
                 check(seen <= 4096)
                 yield Path(entry.path)
@@ -430,9 +468,11 @@ def collect(root, role, case, maximum):
     distributed = (root / "guest.json").is_file() and "distributed" in settings(root)
     base = root if role == "origin" and not distributed else root / "results" / case
     private_path(base)
-    paths = [base / "origin.jsonl"] if role == "origin" else collection_paths(base)
+    paths = [base / "origin.jsonl"] if role == "origin" else collection_paths(base, distributed=distributed)
     if worker_role(role):
         paths = [base / (role + ".log")]
+        if distributed:
+            paths.append(base / "owned-worker.json")
     # Bound packaging BEFORE producing any transfer; refuse symlinks even in logs.
     total, regular = 0, []
     for path in paths:

@@ -96,6 +96,12 @@ async def execute(spec):
     for signum in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(signum, current.cancel)
     try:
+        if spec.get("engineering_fault") == "preconnect-pause":
+            # Bounded local fault gate: native execution exists before admission.
+            await asyncio.sleep(10)
+        if spec.get("engineering_fault") == "sandbox-exhaustion":
+            (root / "bounded-disk-fault").write_bytes(b"x" * (4 * 1024 * 1024))
+            await asyncio.sleep(12)  # Native 5s disk check, within the task deadline.
         with (root / "stdout.txt").open("x") as out, (root / "stderr.txt").open("x") as err:
             with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
                 await asyncio.wait_for(

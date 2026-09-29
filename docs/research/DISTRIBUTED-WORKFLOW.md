@@ -10,7 +10,12 @@ scientific protocol. Advisor decisions and confirmatory/live checkpoints remain 
 
 Pass a JSON config containing `distributed_profile`, `original_manifest`, `catalog`,
 `output_directory`, `environment_archive`, `environment_sha256`, `workers` (1/2/4),
-and `download` with an explicit `control_method`. Methods are `paarc-base-v2`,
+and `download` with an explicit `control_method`. The maintained local CLI additionally
+requires `local_worker_binary`, an absolute path to the official matching worker;
+it owns every worker process and records the binary hash and cleanup in a new
+`<output_directory>-workers` sibling. Use the prepared guest bridge for remote workers.
+Arbitrary external workers/factories are not a supported bounded research cohort.
+Methods are `paarc-base-v2`,
 `gradient-candidate-v1`, `fixed-v1`, and `ratio-v1`; their equations and provisional
 parameters are in [CONTROL-METHODS.md](CONTROL-METHODS.md). Original-byte truth and
 safe metadata restrictions follow [benchmark-contract.md](benchmark-contract.md).
@@ -33,11 +38,28 @@ Nonzero native exit, incomplete rows and rejected artifacts remain separate fail
 Manager receipt and final verification are included in monotonic end-to-end timing.
 
 `max_attempts` defaults to 1, accepts 1..4 and bounds admitted acquisition clients per
-partition. **An open limitation is native redispatch before acquisition enrollment:**
-7.17.2's retry counter does not bound every worker-loss dispatch. Transaction logs
-retain observed native dispatches, and manager/task deadlines remain bounded. This
-limitation prevents claiming the complete retry acceptance criterion. No absent
-native attempt metric is replaced by a fabricated zero.
+partition. Native dispatch has a separate owned-cohort contract: each partition has
+a unique feature, and only a finite number K of single-shot worker launches can use
+that feature. Local launch intent spends its budget before process creation; a failed
+spawn cannot refund it. Replacement requires fresh process-tree quiescence, not just
+root exit. Prepared guest services use one exclusive launch intent and `Restart=no`.
+Features are eligibility labels, not credentials or a security boundary.
+
+In pinned 7.17.2, `try_count` increments on dispatch and survives worker-loss cleanup.
+The profile explicitly disables default/category fast-abort, uses fixed allocation,
+`max_forsaken=0`, and native `retries=1`. Resource/sandbox exhaustion can therefore
+add at most one dispatch; loss can spend at most K worker connections. The conservative
+per-partition ceiling is **K+1**, conditional on the owned single-shot cohort and
+exclusive native endpoint containment. Normal local/guest K=1; the local worker-loss
+fixture allows K=2 for slot 0 only. Actual RUNNING transactions are retained and
+independently checked against this ceiling. Post-run counting supplements the launch
+enforcement; it is not itself enforcement. Native dispatch, admitted client and HTTP
+attempt counts remain distinct. No absent native metric is replaced by a zero.
+
+`acquisition_complete` describes verified rows and receipts. Overall `run_complete`
+also requires closed clients, no uncertain/outstanding permits, successful native
+manager shutdown and the native dispatch audit. Verified partial bytes remain creditable
+when one of these closure conditions fails. Guest collection rechecks those conditions.
 
 Run a small real fixture in a task-local pinned environment:
 
@@ -46,7 +68,8 @@ NO_ALBUMENTATIONS_UPDATE=1 WANDB_MODE=disabled .agentic-local/research-env-7.17.
 ```
 
 Use a fresh output directory for every invocation. Cases are `primary`, `worker-loss`,
-`manager-stop`, `timeout`, and `partial-artifact`. They use 35 original rows (32 valid),
+`preconnect-loss`, `manager-stop`, `timeout`, `partial-artifact`, `sandbox-exhaustion`
+and `forsaken`. They use 35 original rows (32 valid),
 not an external dataset. The manager deadline is 170 seconds; cleanup has a separate
 bounded reserve. Failure cases require their specific receipts, not just any failed
 run. Linux pidfds pin signal targets; only tracked worker descendants are reaped.
@@ -74,6 +97,12 @@ paths refer to existing guest files. Preparation reads committed source and reje
 older source without this profile. Every independent case gets a new concurrent
 origin/service log, manager session and returned evidence. The collected verifier
 binds original truth, worker source hashes, method and environment to preparation.
+Per-case unique owned-cohort contracts also bind worker launch receipts and native
+transaction counts. Each worker service can launch once, remains single-shot and
+does not restart; a replacement requires a separately prepared run. Collection keeps
+real native transaction directories while excluding the runtime cache, authority
+private state and TaskVine's `most-recent` convenience symlink. Those runtime files
+remain on the guest; other public symlinks still fail collection.
 It independently requires every eligible row to verify and every returned task to
 have a successful zero exit and returned receipt; an empty forged “complete” claim
 cannot pass. Controlled guest origin plans specify schema/name/schedule/queue_bound/
@@ -109,3 +138,13 @@ full product/service gates, both CI jobs and independent review remain required.
 [Example configuration](../../files/config/taskvine_shared_origin.json) is a template:
 replace its paths and hash with verified local inputs before use. It intentionally
 fails validation with the placeholder hash and authorizes no acquisition by itself.
+
+The pinned 7.17.2 native manager has a retained upstream limitation: a worker's
+first `FORSAKEN` task reaches `exit_debug_message` with zero completed tasks,
+causing integer division by zero and SIGFPE. The stage-in-conflict fixture records
+one dispatch and the `RETRIEVED FORSAKEN` transaction, then requires failed/incomplete
+outcomes, EOFError, native exit -8, no fabricated task receipt, and owned-worker
+cleanup. Its engineering assertion can pass while acquisition remains failed.
+No runtime patch, automatic retry cohort, or successful healthy-partition return
+is assumed after this process crash. The raw failed run and transactions remain
+available. A future runtime change requires new provenance and native validation.

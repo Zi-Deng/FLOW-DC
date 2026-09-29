@@ -14,6 +14,7 @@ import time
 from pathlib import Path
 
 from flowdc_staging import WORKER_FILES
+from flowdc_vine_cohort import CATEGORY, NATIVE_RETRIES
 from flowdc_vine_protocol import require
 
 RUNTIME = "7.17.2"
@@ -39,15 +40,20 @@ def pidfd(pid):
     return fd
 
 
-def stop_fd(fd):
+def signal_fd(fd, signum):
     libc = ctypes.CDLL(None, use_errno=True)
-    function = libc.pidfd_send_signal
+    function = getattr(libc, "pidfd_send_signal", None)
+    require(function is not None, "native child cleanup requires pidfd_send_signal")
     function.argtypes, function.restype = (
         [ctypes.c_int, ctypes.c_int, ctypes.c_void_p, ctypes.c_uint],
         ctypes.c_int,
     )
-    if function(fd, signal.SIGKILL, None, 0) < 0 and ctypes.get_errno() != 3:
+    if function(fd, signum, None, 0) < 0 and ctypes.get_errno() != 3:
         raise OSError(ctypes.get_errno(), "native child termination failed")
+
+
+def stop_fd(fd):
+    signal_fd(fd, signal.SIGKILL)
 
 
 def native_child(connection, settings):
@@ -66,6 +72,12 @@ def native_child(connection, settings):
             init_fn=lambda m: m.set_password_file(settings["password"]),
         )
         manager.disable_peer_transfers()
+        require(manager.enable_disconnect_slow_workers(0) == 1, "native fast-abort disable failed")
+        require(
+            manager.enable_disconnect_slow_workers_category(CATEGORY, 0) == 1,
+            "category fast-abort disable failed",
+        )
+        require(manager.set_category_mode(CATEGORY, "fixed") == 1, "native fixed allocation failed")
         environment = manager.declare_poncho(settings["package"], cache=True, peer_transfer=False)
         connection.send({"port": manager.port})
         while True:
@@ -99,9 +111,10 @@ def native_child(connection, settings):
             task = vine.Task("python -B flowdc_vine_worker.py --spec task.json")
             task.set_cores(1)
             task.set_memory(1024)
-            task.set_disk(4096)
-            task.set_retries(command["max_attempts"])
-            task.set_max_forsaken(1)
+            task.set_disk(1 if spec.get("engineering_fault") == "sandbox-exhaustion" else 4096)
+            task.set_category(CATEGORY)
+            task.set_retries(NATIVE_RETRIES)
+            task.set_max_forsaken(0)
             task.set_time_max(spec["deadline_s"] + 10)
             require(
                 task.resources_requested.wall_time == spec["deadline_s"] + 10, "native time unit mismatch"
@@ -109,12 +122,20 @@ def native_child(connection, settings):
             for name, value in (("NO_ALBUMENTATIONS_UPDATE", "1"), ("WANDB_MODE", "disabled")):
                 task.set_env_var(name, value)
             task.add_execution_context(environment)
-            if command["feature"]:
-                task.add_feature(command["feature"])
+            require(command["feature"], "owned worker feature required")
+            task.add_feature(command["feature"])
             for name in WORKER_FILES:
                 task.add_input(
                     manager.declare_file(str(root / "source" / name), cache=True, peer_transfer=False), name
                 )
+            if spec.get("engineering_fault") == "forsaken":
+                # Deterministic engineering fixture: a file cannot also be the
+                # parent directory of another input. Native stage-in must fail.
+                source = manager.declare_file(
+                    str(root / "source/flowdc_vine_worker.py"), cache=False, peer_transfer=False
+                )
+                task.add_input(source, "cohort-collision")
+                task.add_input(source, "cohort-collision/child")
             for name in ("partition.parquet", "task.json", "control-private.json"):
                 task.add_input(
                     manager.declare_file(str(directory / name), cache=False, peer_transfer=False),
@@ -141,7 +162,10 @@ class NativeManager:
     def __init__(self, settings):
         # Check the required cleanup capability before creating any child.
         check_fd = pidfd(os.getpid())
-        os.close(check_fd)
+        try:
+            signal_fd(check_fd, 0)  # Capability/permission probe only; no termination.
+        finally:
+            os.close(check_fd)
         context = multiprocessing.get_context("spawn")
         self.connection, child = context.Pipe()
         self.process = context.Process(target=native_child, args=(child, settings))
