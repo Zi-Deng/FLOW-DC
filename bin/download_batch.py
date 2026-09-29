@@ -761,12 +761,15 @@ class HostMetrics:
         acquisition_success: Optional[bool] = None,
         is_local_error: bool = False,
         is_unknown_error: bool = False,
+        latency_eligible: Optional[bool] = None,
     ) -> None:
         """Record one completed acquisition attempt, separately from overload.
 
         Legacy n_errors counts overload feedback; all unsuccessful attempts are
         also counted by a disjoint outcome category. Callers that omit explicit
         saved-output success retain HTTP-200 inference for compatibility.
+        Explicit completed-body latency eligibility is independent of local
+        output success. Legacy callers retain the saved nonempty-output rule.
         """
         async with self._lock:
             # Track Retry-After if provided
@@ -785,13 +788,13 @@ class HostMetrics:
                 self._n_errors += 1
             success = (status_code == 200 and not is_conn_error and not is_local_error
                        and not is_unknown_error and acquisition_success is not False)
+            eligible = success and bytes_downloaded > 0 if latency_eligible is None else latency_eligible
+            if (eligible and status_code == 200 and not is_conn_error and not is_unknown_error
+                    and ttfb is not None and math.isfinite(ttfb) and ttfb > 0):
+                self._ttfb_samples.append(ttfb)
             if success:
                 self._n_success += 1
                 self._bytes_downloaded += bytes_downloaded
-                
-                # Record TTFB for successful requests
-                if ttfb is not None and math.isfinite(ttfb) and ttfb > 0 and bytes_downloaded > 0:
-                    self._ttfb_samples.append(ttfb)
                 
                 # Record file size
                 if bytes_downloaded > 0:
@@ -1911,16 +1914,23 @@ async def download_one(
             session=session,
             timeout=cfg.timeout_sec,
             filename=filename_override,
-            total_bytes=total_bytes,
+            # Do not credit the shared tally until the final lookup succeeds.
+            total_bytes=[],
         )
         
-        # Get bytes downloaded
+        # A missing output or failed size lookup is a local failed acquisition,
+        # not a successful zero-byte output. Preserve the completed HTTP timing.
         bytes_dl = 0
-        if err is None and file_path and os.path.exists(file_path):
+        if err is None:
             try:
+                if not file_path:
+                    raise OSError("No saved output path")
                 bytes_dl = os.path.getsize(file_path)
-            except Exception:
-                bytes_dl = 0
+            except Exception as exc:
+                err = f"Output size verification failed: {exc}"
+                trace_dict["failure_kind"] = "local"
+            else:
+                total_bytes.append(bytes_dl)
         
         # Record metrics
         failure_kind = trace_dict.get("failure_kind")
@@ -1949,6 +1959,7 @@ async def download_one(
                 acquisition_success=(err is None),
                 is_local_error=is_local_error,
                 is_unknown_error=is_unknown_error,
+                latency_eligible=trace_dict.get("latency_eligible"),
             )
         
         # Track written paths for collision detection
@@ -2119,8 +2130,8 @@ def generate_overview_report(
             "version": HTTP_MEASUREMENT_VERSION,
             "clock": "time.monotonic",
             "controller_latency": "final-hop dispatch to first nonempty application body read",
-            "latency_eligibility": "HTTP 200, nonempty complete body, saved output",
-            "success": "HTTP 200 and saved output; bytes count useful saved payload only",
+            "latency_eligibility": "HTTP 200, nonempty complete body, positive finite timing; independent of local output success",
+            "success": "HTTP 200 and saved output with successful size lookup; bytes count useful saved payload only",
             "n_errors": "overload subset, not all unsuccessful acquisitions",
             "n_unknown_failures": "unexpected acquisition exceptions; cause and overload not inferred",
             "retry_after_scope": "session-local hostname/effective-port authority, all modes and redirects",

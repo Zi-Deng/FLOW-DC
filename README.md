@@ -120,12 +120,17 @@ python bin/download_batch.py --config config.json
 The asynchronous base and gradient paths share [HTTP measurement and Retry-After
 semantics](docs/research/HTTP-MEASUREMENT.md), including authority admission when
 PAARC is disabled. Overview reports label corrected timing/accounting with
-`http_measurement.version = "2-body-first-byte"` and report input URLs without a
+`http_measurement.version = "3-output-independent-latency"` and report input URLs without a
 final outcome as `summary.unattempted_or_cancelled_urls`. Legacy TTFB measurements
 are not directly comparable to this signal.
 Interval `n_unknown_failures` separately counts unexpected acquisition exceptions;
 their cause and any server overload are not inferred. Overview metadata describes
 this category alongside the other corrected accounting semantics.
+Version 3 retains a valid completed-body latency sample when a later local save or
+size lookup fails. That row fails with zero useful-byte credit and no added overload
+feedback. Version 2 excluded these samples; the dispatch/first-byte clock definition
+is unchanged. This is an accounting correction, not a transactional-output or
+recovery guarantee.
 
 ### download_batch_gradient.py
 
