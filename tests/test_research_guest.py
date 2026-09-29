@@ -445,6 +445,48 @@ class ResearchGuestTests(unittest.TestCase):
             ):
                 verify_return(bad, case, fixture.truth.record, spec["files"], spec["environment_sha256"])
 
+        from flowdc_vine_cohort import cohort, dispatch_audit
+
+        owned = cohort(1, owner="prepared-guest-service-v1")
+        transaction = "1 1 TASK 1 RUNNING worker\n"
+        dispatch = {
+            "task_id": 1,
+            "worker_id": "worker",
+            "raw": transaction.strip(),
+            "log": "session/vine-logs/transactions",
+        }
+        native = {"task_id": 1, "successful": True, "exit_code": 0}
+        publication = copy.deepcopy(claimed)
+        publication["returns"][0]["native"] = native
+        publication.update(
+            dispatches=[dispatch], native_dispatch_bound=dispatch_audit(owned, [1], [dispatch])
+        )
+        owned_files = {
+            **files,
+            "distributed/cohort.json": encode(owned),
+            "distributed/partition-0/submission.json": encode({"native_task_id": 1, "scope_id": scope}),
+            "distributed/partition-0/native.json": encode(native),
+            "distributed/run-info/session/vine-logs/transactions": transaction.encode(),
+            "distributed/outcomes.json": encode(publication),
+        }
+        verify_return(
+            owned_files, case, fixture.truth.record, spec["files"], spec["environment_sha256"], owned
+        )
+        for kind in ("missing-dispatch", "missing-submission"):
+            bad = dict(owned_files)
+            del bad["distributed/run-info/session/vine-logs/transactions"]
+            ids = [1]
+            if kind == "missing-submission":
+                del bad["distributed/partition-0/submission.json"]
+                ids = []
+            bad["distributed/outcomes.json"] = encode(
+                dict(publication, dispatches=[], native_dispatch_bound=dispatch_audit(owned, ids, []))
+            )
+            with self.subTest(kind=kind), self.assertRaises(ExperimentError):
+                verify_return(
+                    bad, case, fixture.truth.record, spec["files"], spec["environment_sha256"], owned
+                )
+
     def test_all_worker_counts_select_real_shared_manager_profile(self):
         from flowdc_vine_cohort import cohort
 

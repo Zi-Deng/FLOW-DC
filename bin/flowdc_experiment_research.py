@@ -224,6 +224,11 @@ def verify_return(files, case, expected_truth, expected_source, expected_environ
                 for name in sorted(files)
                 if name.startswith(prefix + "partition-") and name.endswith("/submission.json")
             ]
+            require(
+                len(submissions)
+                == min(len(expected_cohort["slots"]), sum(row["eligible"] for row in truth["rows"])),
+                "missing_native_submission",
+            )
             require(len(submissions) == len(set(submissions)), "duplicate_native_task")
             for name, raw in files.items():
                 if name.startswith(prefix + "run-info/") and name.endswith("/transactions"):
@@ -239,6 +244,7 @@ def verify_return(files, case, expected_truth, expected_source, expected_environ
                 and audit["within_bound"],
                 "native_dispatch_bound_mismatch",
             )
+            require(all(item["dispatches"] > 0 for item in audit["tasks"]), "missing_native_dispatch")
         reconciler = Reconciler(truth)
         for returned in claimed["returns"]:
             identifier = returned["scope_id"]
@@ -256,6 +262,16 @@ def verify_return(files, case, expected_truth, expected_source, expected_environ
             require(len(matches) == 1, "returned_partition_identity_mismatch")
             name = matches[0]
             specification = parse(files[name])
+            if expected_cohort is not None:
+                partition = name.removesuffix("task.json")
+                submission = parse(files[partition + "submission.json"])
+                native = parse(files[partition + "native.json"])
+                require(
+                    submission["scope_id"] == identifier
+                    and submission["native_task_id"] == native["task_id"]
+                    and native == returned["native"],
+                    "native_return_receipt_mismatch",
+                )
             require(
                 specification["files"] == expected_source
                 and specification["environment_sha256"] == expected_environment,
