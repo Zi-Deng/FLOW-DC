@@ -394,9 +394,31 @@ python bin/download_batch.py --input input.parquet --output output --research_pr
 
 The gradient entrypoint accepts the same operations. Resume requires the same input
 bytes, effective configuration and runtime source hashes; use the original configuration
-with `--resume`. Recovery and overwrite are mutually exclusive. Existing outputs still
+with `--resume`. Offline reconciliation also requires the original base or gradient
+entrypoint; a variant mismatch fails before changing reports. Recovery and overwrite
+are mutually exclusive. Existing outputs still
 require interactive consent or `--force` for replacement, after input and ownership
 validation. Conflicting unowned files and symlinks are preserved and cause failures.
+The entire output path, including its ancestors (home, scratch and mount aliases),
+must contain no symlinks. Use the real directory path instead of a symlink alias;
+the filesystem error names the rejected component. Missing ancestors created by the
+integrity layer use `0700` subject to umask; existing ancestor modes are unchanged.
+
+Recorded destination rejections and local/unknown attempt failures are terminal for
+that run, even after a conflicting file is removed or storage is repaired. `--resume`
+does not clear them or consume more attempts for them. Keep the old directory and its
+verified partial outputs as evidence. To reacquire those rows, use the same input and
+configuration with a new, absent output directory (without `--resume` or `--force`).
+This is a separate run that requests the input rows again, not an in-place repair or
+adoption of old artifacts. Do not edit `.flowdc/` to reset dispositions or budgets.
+
+Schema-2 acquisition and `SplitParquet.py` currently require the whole manifest and
+its Python row metadata, ownership journal and outcome index to fit in process memory,
+alongside Polars frames and a downloaded payload. They are not streaming manifest
+processors. There is no validated 40M-row capacity claim for this integrity increment;
+row count alone cannot bound memory when metadata sizes vary. Use only manifests that
+fit the available memory with headroom; partitioning itself has the same whole-input
+requirement. Existing large-scale results describe earlier implementations.
 
 Retain the output directory, including `.flowdc/`: it holds ownership, attempt intent,
 verified staging and completion records. These records support process-interruption
@@ -415,6 +437,10 @@ Gradient resume also sets `gradient_summary` to null with
 persisted across invocations. Offline reconciliation retains the previous summary and
 its scope. The benchmark adapter rejects schema-2 reports with unavailable elapsed
 time rather than treating them as measured zero-duration benchmark runs.
+For measured schema-2 benchmark records, the legacy `throughput_mbps` field means
+MiB/s: exact verified payload bytes / 1,048,576 / elapsed seconds. Its extra metrics
+record that unit and divisor, matching historical benchmark and img2dataset units;
+decimal display MB is not used to compute it. Historical result files are unchanged.
 
 Integrity-created class, staging and ancestor directories use `0700`; payloads,
 sidecars and exports use `0600` (subject to umask). The maintained entrypoint's

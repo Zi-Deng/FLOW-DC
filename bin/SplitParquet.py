@@ -11,7 +11,8 @@ Supports multiple grouping strategies:
 The host-based grouping is recommended for distributed downloads as it ensures
 workers can maximize throughput by dealing with fewer unique hosts per partition.
 
-Uses Polars for high-performance processing of large datasets (40M+ rows).
+Uses Polars for grouping; integrity provenance currently materializes all source rows.
+The source and its metadata must fit in memory; 40M-row capacity is not validated.
 """
 
 import argparse

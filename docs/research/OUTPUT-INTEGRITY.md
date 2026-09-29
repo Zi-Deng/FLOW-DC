@@ -5,6 +5,20 @@ They share one acquisition/publication/reconciliation runner. The gradient contr
 equations and tuning are unchanged. The separate multithread/GBIF helper and simulated
 UI retain their existing behavior; they do not produce schema-2 recovery evidence.
 
+## Capacity boundary
+
+The current implementation supports in-memory manifests: the input bytes, Polars
+frames, Python row/provenance objects, parsed ownership JSON and reconciled index must
+fit in available process memory together with acquisition buffers. Stamping and
+validation visit every original row; reopening and reconciliation repeat full-index
+work. Partitioning also stamps the whole source before splitting it. Row count alone
+is not a sufficient capacity bound because original metadata is retained in full.
+This increment has no validated numeric maximum or 40M-row throughput/memory claim.
+The historical partitioner scale description does not certify the schema-2 path.
+It is not an out-of-core index; avoid inputs whose full representation cannot fit.
+The Polars clone used to retain original columns is a cheap shared-data clone, but
+the Python row materialization and JSON indexes do allocate whole-manifest objects.
+
 ## Identity and row outcomes
 
 Before URL validation or ordering, the loader hashes the original manifest bytes and
@@ -30,6 +44,13 @@ interrupted attempt directory counts as started work, with uncertain execution w
 necessary; it never becomes an invented zero-attempt/unattempted outcome. A rejection
 before an attempt, such as an unowned destination, is explicitly failed with zero
 intents. Only no-start evidence permits `unattempted`.
+Recorded rejections are terminal: removing the original conflict does not erase the
+rejection or make the row retryable. Recorded local/unknown attempt failures are also
+terminal even if their physical cause was transient. Preserve the old run and its
+verified rows; reacquire with the original input/configuration in a new absent output
+directory, without recovery/overwrite flags. That creates a distinct run and may
+redownload previously verified rows. It requires neither deleting the old run nor
+manually editing journals. No in-place reopening of terminal failures is supported.
 If attempt-directory or intent publication fails without a durable row rejection,
 acquisition aborts before HTTP and leaves the final marker incomplete. There is no
 in-memory retry of an unchanged persisted budget. An interrupted attempt directory
@@ -46,6 +67,9 @@ aliases, directory-prefix conflicts and reserved `.flowdc`, `overview.json`, and
 Labels and path components reject dot/dot-dot, absolute paths, encoded separators and
 unsafe components. Directory-descriptor traversal uses no-follow filesystem checks;
 symlinks cannot redirect publication. A same-content pre-existing file is still unowned.
+This includes every ancestor of the absolute output path, not only destinations
+inside it. A symlinked home/scratch/mount alias must be replaced with its real path
+in the configuration. The no-follow open error names the offending component.
 
 Directories created through the integrity layer (including new ancestors, class
 directories and staging) use `0700`; the maintained entrypoint's output root itself
@@ -93,6 +117,9 @@ publications, and writes a deterministic `outcome-index.json`. It does not need 
 file, instantiate an HTTP session or redownload a row. Reconciliation invalidates any
 previous final completion marker before revalidating the result. Repeated reconciliation
 does not duplicate rows, byte credit or attempts.
+The invoking base/gradient variant must match recorded ownership. A cross-entrypoint
+request fails before reconciliation invalidates the final marker or changes reports;
+use the original entrypoint even though offline mode needs no HTTP configuration.
 
 `--resume` reconciles first, then dispatches only eligible unresolved rows with remaining
 attempt budget. Verified rows are not redownloaded. Original manifest bytes, validated
@@ -164,7 +191,11 @@ metadata separately. Schema-2 reports missing valid integer bytes are rejected w
 the offending path and field. Reports with unavailable elapsed time (resume/reconcile)
 are also rejected, since the current benchmark result schema requires measured timing;
 no zero duration or derived throughput is invented. Its schema-1 conversion remains
-historical. Experiment artifact validation supports both schemas, checks partition/parent
+historical. The legacy benchmark field `throughput_mbps` uses MiB/s, consistently with
+the schema-1 and img2dataset adapters. Schema-2 derives it from integer payload bytes
+divided by 1,048,576 and elapsed seconds, ignoring `downloaded_mb`; extra metrics name
+`throughput_unit="MiB/s"` and `throughput_bytes_divisor=1048576`. This does not rewrite
+historical results or establish benchmark fairness. Experiment artifact validation supports both schemas, checks partition/parent
 IDs and validates new archive members. Source packaging and TaskVine sandbox staging
 include `flowdc_integrity.py`.
 The existing experimental cloud upload path still requires compressed output; this

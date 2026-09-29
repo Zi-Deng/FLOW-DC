@@ -897,6 +897,7 @@ class RunStore:
         require(isinstance(index, dict), "invalid export ownership")
         history = index.get(key, [])
         with Files(self.root.parent if external else self.root) as destination:
+            previous = None
             if destination.exists(name):
                 matches = [
                     record
@@ -914,7 +915,8 @@ class RunStore:
             self.event("export_intent")
             if destination.exists(name):
                 require(
-                    self.fs.same(previous["stage"], name, destination), "export changed during publication"
+                    previous is not None and self.fs.same(previous["stage"], name, destination),
+                    "export changed during publication",
                 )
                 destination.unlink(name)
             self.fs.link(stage, name, destination)

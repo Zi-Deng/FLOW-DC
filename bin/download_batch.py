@@ -2413,6 +2413,10 @@ async def run_acquisition(cfg, *, manager_factory=HostControllerManager, report_
         # an HTTP session; effective acquisition settings come from ownership.
         from dataclasses import fields, replace
         with integrity.RunStore(cfg.output_folder) as store:
+            integrity.require(
+                store.owner["config"]["implementation"] == ("gradient" if hasattr(cfg, "gradient_threshold") else "base"),
+                "reconcile controller variant mismatch: use the original downloader entrypoint",
+            )
             accepted = {f.name for f in fields(cfg)} - {"input_path", "output_folder", "force_overwrite", "resume", "reconcile"}
             cfg = replace(cfg, **{k: v for k, v in store.owner["config"]["values"].items() if k in accepted})
             if store.fs.exists("overview.json"):
@@ -2454,7 +2458,8 @@ async def run_acquisition(cfg, *, manager_factory=HostControllerManager, report_
             ) as session:
                 namer, written = SequentialNamer(), {}
                 while keys and not shutdown_flag:
-                    attempt = max(row["attempt_intents"] for row in snapshot["rows"] if row["row_id"] in keys) + 1
+                    selected = set(keys)
+                    attempt = max(row["attempt_intents"] for row in snapshot["rows"] if row["row_id"] in selected) + 1
                     print(f"[Attempt {attempt}] Processing {len(keys)} URLs...")
                     await download_batch_bounded(
                         cfg=cfg, session=session, df=current_df, manager=manager, sequential_namer=namer,

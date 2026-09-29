@@ -222,6 +222,9 @@ class FlowDCAdapter:
             payload_bytes = summary.get("verified_payload_bytes")
             if type(payload_bytes) is not int or payload_bytes < 0:
                 raise ValueError(f"{overview_path}: schema-2 verified_payload_bytes must be a nonnegative integer")
+            # Benchmark throughput has historically used MiB/s, including the
+            # img2dataset adapter. Schema-2 decimal display MB is not its source.
+            downloaded_mb = payload_bytes / (1024 * 1024)
         else:
             elapsed = elapsed or 0.0
             payload_bytes = int(downloaded_mb * 1024 * 1024)
@@ -256,6 +259,8 @@ class FlowDCAdapter:
                 "paarc_version": overview.get("paarc_version"),
                 "paarc_config": inputs.get("paarc_config"),
                 "elapsed_measurement_available": summary.get("elapsed_sec") is not None,
+                "throughput_unit": "MiB/s",
+                "throughput_bytes_divisor": 1024 * 1024,
                 "output_integrity": overview.get("output_integrity"),
             },
         )
