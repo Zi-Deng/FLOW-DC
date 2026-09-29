@@ -520,8 +520,11 @@ class LocalHTTPTests(unittest.IsolatedAsyncioTestCase):
             base.TRACE_CTX.reset(token)
 
     async def download(self, session, url, manager, *, timeout=5, output=None):
+        # Timing/policy cases acquire separate outputs. Collision rejection has
+        # independent coverage and must not obscure these HTTP observations.
+        self.download_count = getattr(self, "download_count", 0) + 1
         cfg = base.Config(
-            input_path="unused", output_folder=str(output or self.root / "output"), timeout_sec=timeout
+            input_path="unused", output_folder=str(output or self.root / f"output-{self.download_count}"), timeout_sec=timeout
         )
         return await base.download_one(
             row={"url": url, "__key__": url.rsplit("/", 1)[-1]},
@@ -795,7 +798,7 @@ class LocalHTTPTests(unittest.IsolatedAsyncioTestCase):
                 self.handlers.update(redirect0=redirect, redirect1=redirect, limited=destination)
                 async with aiohttp.ClientSession() as session:
                     tasks = [asyncio.create_task(self.download(
-                        session, f"{self.url}/redirect{i}", manager, output=self.root / f"limit-{i}"
+                        session, f"{self.url}/redirect{i}", manager, output=self.root / f"limit-{module.__name__}-{i}"
                     ))
                              for i in range(2)]
                     try:
@@ -837,7 +840,7 @@ class LocalHTTPTests(unittest.IsolatedAsyncioTestCase):
                 self.handlers.update({"from-a": redirect, "from-b": redirect})
                 async with aiohttp.ClientSession() as session:
                     tasks = [asyncio.create_task(self.download(
-                        session, url, manager, output=self.root / f"reciprocal-{i}"
+                        session, url, manager, output=self.root / f"reciprocal-{module.__name__}-{i}"
                     )) for i, url in enumerate((f"{self.url}/from-a", f"{other}/from-b"))]
                     try:
                         outcomes = await asyncio.wait_for(asyncio.gather(*tasks), 3)
@@ -1036,8 +1039,6 @@ class LocalHTTPTests(unittest.IsolatedAsyncioTestCase):
                 with self.subTest(module=module.__name__, failure=failure):
                     output = self.root / f"{module.__name__}-{failure}"
                     output.mkdir()
-                    if failure == "metadata":
-                        (output / "payload.json").mkdir()
                     cfg = base.Config(
                         input_path="unused", output_folder=str(output), output_format="webdataset",
                         naming_mode="url_based", file_name_pattern="payload",
@@ -1045,9 +1046,11 @@ class LocalHTTPTests(unittest.IsolatedAsyncioTestCase):
                     manager = module.HostControllerManager(module.PAARCConfig())
                     getsize, lookups, sizes = os.path.getsize, [], []
 
-                    def verify_size(path, failure=failure, lookups=lookups, getsize=getsize):
+                    def verify_size(path, failure=failure, lookups=lookups, getsize=getsize, output=output):
                         self.assertEqual(Path(path).read_bytes(), b"ab")
                         lookups.append(path)
+                        if failure == "metadata" and len(lookups) == 1:
+                            (output / "payload.json").mkdir()
                         if failure == "save-stat" or (failure == "final-stat" and len(lookups) == 2):
                             raise OSError("injected output stat failure")
                         return getsize(path)

@@ -228,7 +228,8 @@ def create_partition_config(base_config: dict, partition_file: str, output_name:
 
         # Output options
         "naming_mode": base_config.get('naming_mode', 'sequential'),
-        "file_name_pattern": base_config.get('file_name_pattern'),
+        "file_name_pattern": base_config.get('file_name_pattern') or "{segment[-2]}",
+        "research_profile": base_config.get('research_profile', False),
         "create_tar": base_config.get('create_tar', True),
         "compress_tar": base_config.get('compress_tar', True),
         "create_overview": base_config.get('create_overview', True),
@@ -295,6 +296,7 @@ def submit_tasks(
     # Declare the download scripts
     download_script_vine = manager.declare_file(download_script)
     single_download_vine = manager.declare_file(single_download_script)
+    integrity_vine = manager.declare_file(os.path.join(os.path.dirname(download_script), "flowdc_integrity.py"))
 
     max_retries = config.get('max_retries', 3)
     task_cores = config.get('task_cores', 4)
@@ -309,7 +311,7 @@ def submit_tasks(
             base_name = file_name.replace(".parquet", "")
             output_name = f"output_{base_name}"
             # Use .tar.gz if compressed, .tar if uncompressed
-            compress_tar = config.get('compress_tar', True)
+            compress_tar = config.get('compress_tar', True) and not config.get('research_profile', False)
             tar_ext = ".tar.gz" if compress_tar else ".tar"
             tar_name = f"{output_name}{tar_ext}"
 
@@ -343,6 +345,7 @@ def submit_tasks(
             # Add input files
             task.add_input(download_script_vine, "download_batch.py")
             task.add_input(single_download_vine, "single_download.py")
+            task.add_input(integrity_vine, "flowdc_integrity.py")
             task.add_input(config_vine, config_filename)
             task.add_input(declared_file, file_name)
 

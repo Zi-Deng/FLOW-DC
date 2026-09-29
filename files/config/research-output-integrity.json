@@ -1,0 +1,15 @@
+{
+  "input": "files/input/dataset.parquet",
+  "output": "files/output/research-run",
+  "url": "url",
+  "research_profile": true,
+  "naming_mode": "row_id",
+  "output_format": "webdataset",
+  "create_tar": true,
+  "compress_tar": false,
+  "create_overview": true,
+  "force_overwrite": false,
+  "resume": false,
+  "reconcile": false,
+  "max_retry_attempts": 3
+}

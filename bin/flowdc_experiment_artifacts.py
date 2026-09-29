@@ -16,6 +16,7 @@ from flowdc_experiment_data import (
     parse,
     require,
 )
+from flowdc_integrity import row_identity, verify_archive
 
 
 def members(raw, maximum, count=ARCHIVE_MEMBER_LIMIT):
@@ -86,7 +87,8 @@ def validate_case(raw, case, partitions, maximum):
     for part in partitions:
         filename = "output_" + part["name"].removesuffix(".parquet") + ".tar.gz"
         require(files.get(filename) is not None, "partition_output_missing")
-        content = members(files[filename], maximum)
+        # Schema 2 adds one metadata member per row plus an outcome index.
+        content = members(files[filename], maximum, count=2 * ARCHIVE_MEMBER_LIMIT)
         overviews = [value for key, value in content.items() if PurePosixPath(key).name == "overview.json"]
         require(len(overviews) == 1 and overviews[0] is not None, "overview_missing")
         overview = parse(overviews[0])
@@ -102,11 +104,42 @@ def validate_case(raw, case, partitions, maximum):
             overview.get("script_inputs", {}).get("enable_paarc") is case["config"]["enable_paarc"],
             "paarc_mode_mismatch",
         )
-        hashes = [
-            digest(value)
-            for key, value in content.items()
-            if value is not None and PurePosixPath(key).name != "overview.json"
-        ]
+        if overview.get("report_schema_version") == 2:
+            indices = [(key, value) for key, value in content.items() if PurePosixPath(key).name == "outcome-index.json"]
+            require(len(indices) == 1 and indices[0][1] is not None, "outcome_index_missing")
+            index_name, index_raw = indices[0]
+            index = parse(index_raw)
+            rows = index.get("rows", [])
+            require(index.get("manifest", {}).get("sha256") == part.get("manifest_sha256"), "partition_manifest_mismatch")
+            if "row_ids" in part:
+                require(sorted(row.get("row_id", "") for row in rows) == sorted(part["row_ids"]), "partition_identity_mismatch")
+            require(index.get("schema_version") == 2 and index.get("original_rows") == part["rows"]
+                    and len(rows) == part["rows"], "outcome_denominator_mismatch")
+            require(all(row.get("disposition") == "verified" for row in rows), "unverified_outcome")
+            require(len({row.get("row_id") for row in rows}) == len(rows), "duplicate_row_identity")
+            require(index.get("counts") == {"verified": len(rows), "failed": 0, "skipped": 0, "unattempted": 0}, "outcome_count_mismatch")
+            prefix = str(PurePosixPath(index_name).parent)
+            try:
+                verify_archive(files[filename], index, prefix)
+            except Exception:
+                require(False, "archive_integrity_mismatch")
+            hashes = []
+            for row in rows:
+                metadata = parse(content[prefix + "/" + row["metadata"]])
+                require(metadata.get("row_id") == row_identity(metadata.get("source_manifest"), metadata.get("source_position")), "row_provenance_mismatch")
+                require(metadata.get("source_manifest") == row.get("source_manifest")
+                        and metadata.get("source_position") == row.get("source_position"), "row_provenance_mismatch")
+                hashes.append(digest(content[prefix + "/" + row["payload"]]))
+            require(sum(row["payload_bytes"] for row in rows) == index.get("verified_payload_bytes")
+                    == summary.get("verified_payload_bytes"), "payload_byte_mismatch")
+        else:
+            # Preserve historical schema-1 interpretation and member bounds.
+            require(len(content) <= ARCHIVE_MEMBER_LIMIT, "archive_member_limit_or_duplicate")
+            hashes = [
+                digest(value)
+                for key, value in content.items()
+                if value is not None and PurePosixPath(key).name != "overview.json"
+            ]
         require(len(hashes) == part["rows"], "image_count_mismatch")
         if "expected_sha256" in part:
             require(Counter(hashes) == Counter(part["expected_sha256"]), "image_hash_mismatch")

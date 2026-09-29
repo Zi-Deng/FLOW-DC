@@ -49,10 +49,11 @@ from urllib.parse import urlsplit
 import aiohttp
 import polars as pl
 from tqdm.asyncio import tqdm
+import flowdc_integrity as integrity
 
 from single_download import (
     download_single, load_input_file, extract_extension, HTTPTraceConfig,
-    HTTP_TRACE_CTX, HTTP_MEASUREMENT_VERSION,
+    HTTP_TRACE_CTX, HTTP_MEASUREMENT_VERSION, OUTPUT_CTX,
 )
 
 
@@ -278,7 +279,7 @@ class Config:
     retry_backoff_sec: float = 2.0
     
     # Filename configuration
-    naming_mode: str = "sequential"     # sequential | url_based
+    naming_mode: str = "sequential"     # sequential | url_based | row_id
     file_name_pattern: str = "{segment[-2]}"
     
     # Output options
@@ -286,6 +287,10 @@ class Config:
     compress_tar: bool = True  # False for uncompressed .tar (faster)
     create_overview: bool = True
     force_overwrite: bool = False  # If True, delete existing output folder without confirmation
+
+    resume: bool = False
+    reconcile: bool = False
+    research_profile: bool = False
 
     def to_paarc_config(self) -> PAARCConfig:
         """Convert to PAARCConfig with relevant parameters."""
@@ -367,7 +372,7 @@ Examples:
     
     # Naming
     p.add_argument("--naming_mode", type=str, default="sequential",
-                   choices=["sequential", "url_based"])
+                   choices=["sequential", "url_based", "row_id"])
     p.add_argument("--file_name_pattern", type=str, default="{segment[-2]}")
     
     # Output options
@@ -378,6 +383,10 @@ Examples:
     p.add_argument("--force", "-f", action="store_true",
                    help="Force overwrite of existing output folder without confirmation")
 
+    recovery = p.add_mutually_exclusive_group()
+    recovery.add_argument("--resume", action="store_true", help="Reconcile owned output and continue eligible rows")
+    recovery.add_argument("--reconcile", action="store_true", help="Reconcile owned output offline; no HTTP calls")
+    p.add_argument("--research_profile", action="store_true", help="Row-ID naming and verified uncompressed WebDataset archive boundary")
     args = p.parse_args()
     
     # Load from JSON config if provided
@@ -421,14 +430,17 @@ Examples:
             compress_tar=bool(data.get("compress_tar", True)),
             create_overview=bool(data.get("create_overview", True)),
             force_overwrite=args.force or bool(data.get("force_overwrite", False)),
+            resume=args.resume or bool(data.get("resume", False)),
+            reconcile=args.reconcile or bool(data.get("reconcile", False)),
+            research_profile=args.research_profile or bool(data.get("research_profile", False)),
         )
 
     # Validate required args
-    if not args.input_path or not args.output_folder:
+    if not args.output_folder or (not args.input_path and not args.reconcile):
         p.error("--input and --output are required unless --config is provided")
     
     return Config(
-        input_path=args.input_path,
+        input_path=args.input_path or "",
         output_folder=args.output_folder,
         input_format=args.input_format,
         url_col=args.url_col,
@@ -461,6 +473,7 @@ Examples:
         compress_tar=not args.no_compress_tar,
         create_overview=not args.no_overview,
         force_overwrite=args.force,
+        resume=args.resume, reconcile=args.reconcile, research_profile=args.research_profile,
     )
 
 
@@ -468,52 +481,77 @@ Examples:
 # INPUT VALIDATION AND LOADING
 # =============================================================================
 
-def validate_and_load(cfg: Config) -> pl.DataFrame:
-    """Load and validate input data."""
-    in_path = Path(cfg.input_path)
-    if not in_path.exists():
-        raise FileNotFoundError(f"Input file not found: {in_path}")
+def normalize_config(cfg):
+    if cfg.resume and cfg.reconcile:
+        raise ValueError("resume and reconcile are mutually exclusive")
+    if (cfg.resume or cfg.reconcile) and cfg.force_overwrite:
+        raise ValueError("overwrite and recovery modes are mutually exclusive")
+    if cfg.research_profile:
+        from dataclasses import replace
+        cfg = replace(cfg, naming_mode="row_id", output_format="webdataset", create_tar=True,
+                      compress_tar=False, create_overview=True)
+    if cfg.naming_mode not in ("sequential", "url_based", "row_id"):
+        raise ValueError("Unsupported naming mode")
+    if cfg.output_format not in ("imagefolder", "webdataset"):
+        raise ValueError("Unsupported output format")
+    if type(cfg.max_retry_attempts) is not int or cfg.max_retry_attempts < 1:
+        raise ValueError("max_retry_attempts must be positive")
+    return cfg
 
-    out_dir = Path(cfg.output_folder)
-    if out_dir.exists():
-        if cfg.force_overwrite:
-            print(f"[I/O] Output folder exists; deleting (--force): {out_dir}")
-            shutil.rmtree(out_dir)
-        else:
-            response = input(f"[I/O] Output folder exists: {out_dir}\n"
-                           f"      Delete and continue? [y/N]: ").strip().lower()
-            if response in ('y', 'yes'):
-                print(f"[I/O] Deleting: {out_dir}")
-                shutil.rmtree(out_dir)
-            else:
-                raise SystemExit("Aborted: output folder exists. Use --force to overwrite.")
-    out_dir.mkdir(parents=True, exist_ok=True)
 
-    # Load data (load_input_file returns Polars DataFrame)
-    df = load_input_file(str(in_path), cfg.input_format)
-
-    # Validate columns
+def load_manifest(cfg):
+    path = Path(cfg.input_path)
+    raw = path.read_bytes()
+    df = load_input_file(str(path), cfg.input_format)
     if cfg.url_col not in df.columns:
-        raise ValueError(f"URL column '{cfg.url_col}' not found. Available: {df.columns[:10]}...")
-
+        raise ValueError(f"URL column '{cfg.url_col}' not found")
     if cfg.label_col is not None and cfg.label_col not in df.columns:
-        raise ValueError(f"Label column '{cfg.label_col}' not found.")
+        raise ValueError(f"Label column '{cfg.label_col}' not found")
+    if cfg.url_col == "__key__" or (cfg.label_col and cfg.label_col == "__key__"):
+        raise ValueError("__key__ is reserved for internal row identity; rename the mapped input column")
+    # Verify input has not changed between hashing and loading.
+    if path.read_bytes() != raw:
+        raise ValueError("Input manifest changed during loading")
+    df = integrity.stamp_frame(df, integrity.digest(raw))
+    return df, {"sha256": integrity.digest(raw), "original_rows": df.height,
+                "source_counts": {row[integrity.PROVENANCE[0]]: row[integrity.PROVENANCE[2]]
+                                  for row in df.iter_rows(named=True)}}
 
-    # Clean data: drop nulls, cast to string, strip whitespace, filter empty
-    df = df.filter(pl.col(cfg.url_col).is_not_null())
-    df = df.with_columns(
-        pl.col(cfg.url_col).cast(pl.Utf8).str.strip_chars().alias(cfg.url_col)
-    )
-    df = df.filter(pl.col(cfg.url_col).str.len_chars() > 0)
 
-    if df.height == 0:
-        raise ValueError("No valid URLs found after filtering.")
-
-    # Add stable keys for retry tracking (row index as string)
-    df = df.with_row_index("__key__").with_columns(
-        pl.col("__key__").cast(pl.Utf8)
-    )
-
+def validate_and_load(cfg: Config, prepared=None) -> pl.DataFrame:
+    """Validate the entire manifest and output ownership before overwrite consent."""
+    cfg = normalize_config(cfg)
+    df, _manifest = prepared if prepared is not None else load_manifest(cfg)
+    out = Path(os.path.abspath(cfg.output_folder))
+    if out == Path(out.anchor) or out == Path.cwd() or out in Path(cfg.input_path).resolve().parents:
+        raise ValueError("Output cannot contain the input or be the working/root directory")
+    integrity.component(out.name)
+    # Opening every existing ancestor rejects symlinks, including the root itself.
+    with integrity.Files(out.parent, create=True):
+        pass
+    if out.exists() or out.is_symlink():
+        with integrity.Files(out):
+            pass
+        if (out / integrity.INTERNAL).exists() or (out / integrity.INTERNAL).is_symlink():
+            # Never erase a malformed/newer journal or an active managed run.
+            with integrity.RunStore(out):
+                pass
+        if cfg.resume or cfg.reconcile:
+            return df
+        if not cfg.force_overwrite:
+            response = input(f"[I/O] Output folder exists: {out}\n      Delete and continue? [y/N]: ").strip().lower()
+            if response not in ("y", "yes"):
+                raise SystemExit("Aborted: output folder exists. Use --force to overwrite.")
+        print(f"[I/O] Deleting existing output with consent: {out}")
+        if (out / integrity.INTERNAL).exists():
+            with integrity.RunStore(out) as previous:
+                previous.remove_owned_exports()
+                shutil.rmtree(out)
+        else:
+            shutil.rmtree(out)
+    elif cfg.resume or cfg.reconcile:
+        raise ValueError("Recovery requires existing owned output")
+    out.mkdir(parents=True)
     return df
 
 
@@ -1858,14 +1896,21 @@ async def download_one(
     manager: Optional[HostControllerManager],
     sequential_namer: SequentialNamer,
     global_written_paths: dict[str, str],
+    store=None,
 ) -> DownloadOutcome:
     """Execute a single download with PAARC control."""
     url = str(row[cfg.url_col]).strip()
     key = str(row.get("__key__", ""))
     class_name = str(row[cfg.label_col]) if cfg.label_col is not None and row.get(cfg.label_col) is not None else None
     
+    try:
+        directory = store.begin(key) if store is not None else None
+    except (OSError, ValueError) as exc:
+        return DownloadOutcome(key, url, False, None, class_name, None, str(exc))
     # Determine filename
-    if cfg.naming_mode == "sequential":
+    if store is not None:
+        filename_override = Path(store.rows[key]["payload"]).name
+    elif cfg.naming_mode == "sequential":
         filename_override = await sequential_namer.filename_for(key, url)
     else:
         filename_override = render_filename(cfg.file_name_pattern, url, key)
@@ -1898,6 +1943,7 @@ async def download_one(
 
         trace_dict["redirect_admit"] = redirect_admit
     trace_token = TRACE_CTX.set(trace_dict)
+    output_token = OUTPUT_CTX.set((store, directory, key) if store is not None else None)
     
     try:
         # Apply smoothing if available
@@ -1925,13 +1971,23 @@ async def download_one(
             try:
                 if not file_path:
                     raise OSError("No saved output path")
-                bytes_dl = os.path.getsize(file_path)
+                if store is None:
+                    bytes_dl = os.path.getsize(file_path)
+                else:
+                    record = store.fs.json(f".flowdc/commits/{key}.json")
+                    bytes_dl = record["payload_bytes"]
             except Exception as exc:
                 err = f"Output size verification failed: {exc}"
                 trace_dict["failure_kind"] = "local"
             else:
                 total_bytes.append(bytes_dl)
         
+        if store is not None and err is not None:
+            store.fail(directory, key, error=err, status=status,
+                       retryable=_is_retryable(status, err) and trace_dict.get("failure_kind") not in ("local", "unknown"),
+                       observed_bytes=trace_dict.get("observed_response_body_bytes", 0),
+                       latency_eligible=trace_dict.get("latency_eligible", False),
+                       body_complete=trace_dict.get("body_completed_at") is not None)
         # Record metrics
         failure_kind = trace_dict.get("failure_kind")
         is_unknown_error = failure_kind == "unknown"
@@ -1982,6 +2038,7 @@ async def download_one(
         )
     
     finally:
+        OUTPUT_CTX.reset(output_token)
         TRACE_CTX.reset(trace_token)
         if ctrl is not None:
             await ctrl.semaphore.release()
@@ -1996,6 +2053,7 @@ async def download_batch_bounded(
     sequential_namer: SequentialNamer,
     global_written_paths: dict[str, str],
     effective_workers: int,
+    store=None,
 ) -> dict[str, DownloadOutcome]:
     """
     Bounded batch download scheduler.
@@ -2005,6 +2063,8 @@ async def download_batch_bounded(
     Args:
         effective_workers: Number of worker coroutines (auto-detected or configured)
     """
+    integrity.require("__key__" in df.columns and df["__key__"].null_count() == 0
+                      and df["__key__"].n_unique() == df.height, "duplicate or missing internal row identity")
     q: asyncio.Queue[dict] = asyncio.Queue()
     for row in df.iter_rows(named=True):
         q.put_nowait(row)
@@ -2028,6 +2088,7 @@ async def download_batch_bounded(
                 manager=manager,
                 sequential_namer=sequential_namer,
                 global_written_paths=global_written_paths,
+                store=store,
             )
             
             outcomes[out.key] = out
@@ -2076,6 +2137,14 @@ def create_tar(output_folder: str, compress: bool = True) -> str:
         Path to the created tar archive
     """
     out = Path(output_folder)
+
+    if (out / ".flowdc").exists() or (out / ".flowdc").is_symlink():
+        # Compatibility helper: a managed directory must use committed records,
+        # never a recursive walk that includes private staging or unknown files.
+        with integrity.RunStore(out) as store:
+            snapshot = store.reconcile()
+            report = store.fs.json("overview.json") if store.fs.exists("overview.json") else {}
+            return store.make_archive(snapshot, report, compress=compress)[0]
 
     if compress:
         suffix = ".tar.gz"
@@ -2239,188 +2308,167 @@ def write_overview(
 # MAIN
 # =============================================================================
 
-async def main() -> None:
-    """Main entry point."""
-    # Setup signal handlers here to avoid side effects on module import
-    _setup_signal_handlers()
-
-    cfg = parse_args()
-
-    print("=" * 72)
-    print("FLOW-DC Batch Downloader with PAARC v2.0")
-    print("=" * 72)
-    
-    # Load and validate input
-    df = validate_and_load(cfg)
-    print(f"[Load] URLs after filtering: {df.height}")
-
-    effective_workers = resolve_worker_count(cfg, df)
-
-    # Initialize PAARC controller manager if enabled
-    manager: Optional[HostControllerManager] = None
-    ctrl_task: Optional[asyncio.Task] = None
-
-    if cfg.enable_paarc:
-        paarc_config = cfg.to_paarc_config()
-        manager = HostControllerManager(paarc_config)
-        ctrl_task = asyncio.create_task(controller_loop(manager))
-        print(f"[PAARC] Enabled | C_init={paarc_config.C_init} | μ={paarc_config.mu}")
-    else:
-        print("[PAARC] Disabled - using fixed concurrency")
-
-    # Configure aiohttp with auto-sized connection pool (10% headroom)
-    connector = aiohttp.TCPConnector(
-        limit=max(50, int(effective_workers * 1.1)),
-        ttl_dns_cache=300,
-        use_dns_cache=True,
+def integrity_report(cfg, store, snapshot, elapsed, report_factory):
+    outcomes = {}
+    for row in snapshot["rows"]:
+        outcomes[row["row_id"]] = DownloadOutcome(
+            row["row_id"], str(store.rows[row["row_id"]]["url"]), row["disposition"] == "verified",
+            row["payload"], None, row.get("status_code"), row["error"], row["payload_bytes"],
+        )
+    report = report_factory(cfg, outcomes, elapsed)
+    counts = snapshot["counts"]
+    report["report_schema_version"] = integrity.SCHEMA
+    report["summary"].update(
+        total_urls=snapshot["original_rows"], successful_downloads=counts["verified"], failed_downloads=counts["failed"],
+        skipped_rows=counts["skipped"], unattempted_rows=counts["unattempted"],
+        unattempted_or_cancelled_urls=counts["unattempted"],
+        verified_payload_bytes=snapshot["verified_payload_bytes"], unique_content_bytes=snapshot["unique_content_bytes"],
+        artifact_file_bytes=snapshot["artifact_file_bytes"], observed_response_body_bytes=snapshot["observed_response_body_bytes"],
+        observed_bytes_complete=snapshot["observed_bytes_complete"],
     )
-    trace_config = build_trace_config()
-    
-    sequential_namer = SequentialNamer()
-    global_written_paths: dict[str, str] = {}
-    final_outcomes: dict[str, DownloadOutcome] = {}
-    
-    start = _monotonic()
-    
+    boundary = "verified_uncompressed_archive" if cfg.research_profile else (
+        "verified_archive" if cfg.output_format == "webdataset" and cfg.create_tar else "committed_local_files")
+    report["output_integrity"] = {
+        "schema_version": integrity.SCHEMA, "run_id": store.owner["run_id"], "manifest": snapshot["manifest"],
+        "counts": counts, "completion_boundary": boundary, "run_complete": False,
+        "useful_final_payload_bytes": 0, "outcome_index": "outcome-index.json",
+        "outcome_index_sha256": integrity.digest(integrity.encode(snapshot)),
+        "byte_semantics": "integer payload bytes; observed response bodies are decoded application bytes, not wire bytes",
+        "artifact_file_bytes_scope": "committed payload and row-metadata files plus published archive, excluding reports and staging",
+        "successful_downloads_semantics": "rows with verified committed local files",
+        "display_mb_divisor": 1000000,
+    }
+    if cfg.resume or cfg.reconcile:
+        report["summary"].update(elapsed_sec=None, avg_speed_MBps=None)
+        report["output_integrity"]["elapsed_scope"] = "not reconstructed across interruptions or offline reconciliation"
+    return report
+
+
+def finalize_run(cfg, store, snapshot, elapsed, report_factory):
+    store.fs.atomic(".flowdc/final.json", {"run_complete": False, "run_id": store.owner["run_id"]}, replace=True)
+    report = integrity_report(cfg, store, snapshot, elapsed, report_factory)
+    store.emit("outcome-index.json", integrity.encode(snapshot))
+    if cfg.create_overview:
+        store.emit("overview.json", integrity.encode(report))
+    tar_time, artifact_error = 0.0, None
+    if cfg.create_tar and not shutdown_flag:
+        try:
+            started = _monotonic()
+            path, size, sha256 = store.make_archive(snapshot, report, compress=cfg.compress_tar)
+            tar_time = _monotonic() - started
+            report["summary"]["tar_path"] = path
+            report["summary"]["artifact_file_bytes"] += size
+            report["output_integrity"]["archive"] = {"path": path, "bytes": size, "sha256": sha256, "verified": True}
+        except (OSError, ValueError, tarfile.TarError) as exc:
+            artifact_error = str(exc)
+            report["output_integrity"]["artifact_error"] = artifact_error
+    boundary_ok = report["output_integrity"]["completion_boundary"] == "committed_local_files" or "archive" in report["output_integrity"]
+    if boundary_ok:
+        report["output_integrity"]["useful_final_payload_bytes"] = snapshot["verified_payload_bytes"]
+    complete = boundary_ok and not artifact_error and not shutdown_flag and not (
+        snapshot["counts"]["failed"] or snapshot["counts"]["unattempted"])
+    report["output_integrity"]["run_complete"] = complete
+    final_record = dict(report["output_integrity"])
+    if cfg.create_overview:
+        # Two reports and the completion record cannot be published atomically.
+        # Reports reference the expected last record; only that record confirms
+        # final useful-byte credit. A crash/report failure cannot leave a report
+        # falsely declaring a completed run before the last publication.
+        report["output_integrity"].update(
+            run_complete=None, useful_final_payload_bytes=None,
+            completion_record=".flowdc/final.json",
+            completion_record_sha256=integrity.digest(integrity.encode(final_record)),
+        )
+        store.emit("overview.json", integrity.encode(report))
+        store.emit(store.root.name + "_overview.json", integrity.encode(report), external=True)
+    store.fs.atomic(".flowdc/final.json", final_record, replace=True)
+    report["output_integrity"] = final_record
+    print(f"Download time:         {elapsed:.2f}s")
+    print(f"Tar creation time:     {tar_time:.2f}s")
+    print(f"Total time:            {elapsed + tar_time:.2f}s")
+    print(f"Reconciled rows:        {snapshot['counts']}")
+    print(f"Completion record:     {store.root / '.flowdc/final.json'}")
+    if artifact_error:
+        raise integrity.IntegrityError("Archive/report finalization failed: " + artifact_error)
+    return report
+
+
+async def run_acquisition(cfg, *, manager_factory=HostControllerManager, report_factory=None):
+    """Shared acquisition/reconciliation runner for both controller variants."""
+    cfg = normalize_config(cfg)
+    if report_factory is None:
+        report_factory = lambda config, outcomes, elapsed: generate_overview_report(
+            cfg=config, df_total=len(outcomes), outcomes=outcomes, elapsed_sec=elapsed)
+    if cfg.reconcile:
+        # Offline mode needs only owned output. It neither loads input nor opens
+        # an HTTP session; effective acquisition settings come from ownership.
+        from dataclasses import fields, replace
+        with integrity.RunStore(cfg.output_folder) as store:
+            accepted = {f.name for f in fields(cfg)} - {"input_path", "output_folder", "force_overwrite", "resume", "reconcile"}
+            cfg = replace(cfg, **{k: v for k, v in store.owner["config"]["values"].items() if k in accepted})
+            if store.fs.exists("overview.json"):
+                previous = store.fs.json("overview.json")
+                if previous.get("output_integrity", {}).get("run_id") == store.owner["run_id"]:
+                    original_factory = report_factory
+                    def report_factory(config, outcomes, elapsed):
+                        report = original_factory(config, outcomes, elapsed)
+                        for field in ("controller_variant", "gradient_summary"):
+                            if field in previous:
+                                report[field] = previous[field]
+                        return report
+            snapshot = store.reconcile()
+            return finalize_run(cfg, store, snapshot, 0.0, report_factory)
+    prepared = load_manifest(cfg)
+    df, manifest = prepared
+    rows = integrity.plan_rows(df, cfg, render_filename)
+    # Finish all pure validation and provenance checks before destructive consent.
+    validate_and_load(cfg, prepared=prepared)
+    config = integrity.effective_config(cfg)
+    store = integrity.RunStore(cfg.output_folder, manifest=manifest, config=config,
+                               rows=None if cfg.resume else rows)
+    manager, ctrl_task = None, None
+    started = _monotonic()
     try:
-        async with aiohttp.ClientSession(
-            connector=connector,
-            timeout=aiohttp.ClientTimeout(total=max(1, cfg.timeout_sec * 2)),
-            headers={"User-Agent": "FLOW-DC/2.0 PAARC/2.0"},
-            trace_configs=[trace_config],
-        ) as session:
-            current_df = df.clone()
-            attempt = 1
-
-            while attempt <= cfg.max_retry_attempts and current_df.height > 0 and not shutdown_flag:
-                print(f"\n[Attempt {attempt}] Processing {current_df.height} URLs...")
-                
-                outcomes = await download_batch_bounded(
-                    cfg=cfg,
-                    session=session,
-                    df=current_df,
-                    manager=manager,
-                    sequential_namer=sequential_namer,
-                    global_written_paths=global_written_paths,
-                    effective_workers=effective_workers,
-                )
-                
-                # Merge outcomes
-                final_outcomes.update(outcomes)
-                
-                # Build retry set
-                retry_keys = []
-                for row in current_df.iter_rows(named=True):
-                    key = str(row["__key__"])
-                    out = outcomes.get(key)
-                    if out is None:
-                        continue
-                    if out.success:
-                        continue
-                    if _is_retryable(out.status_code, out.error):
-                        retry_keys.append(key)
-
-                # Summary
-                succ = sum(1 for o in outcomes.values() if o.success)
-                fail = sum(1 for o in outcomes.values() if not o.success)
-                retryable = len(retry_keys)
-                print(f"[Attempt {attempt}] Success={succ} Failed={fail} Retryable={retryable}")
-
-                if retry_keys and attempt < cfg.max_retry_attempts and not shutdown_flag:
-                    await asyncio.sleep(cfg.retry_backoff_sec)
-                    # Filter to only retryable rows
-                    current_df = current_df.filter(pl.col("__key__").is_in(retry_keys))
-                    attempt += 1
-                else:
-                    break
-    
+        integrity.require(store.owner["rows"] == rows, "resume row provenance or publication plan mismatch")
+        snapshot = store.reconcile()
+        keys = store.eligible(snapshot)
+        if keys and not shutdown_flag:
+            current_df = df.filter(pl.col("__key__").is_in(keys))
+            effective_workers = resolve_worker_count(cfg, current_df)
+            if cfg.enable_paarc:
+                manager = manager_factory(cfg.to_paarc_config())
+                ctrl_task = asyncio.create_task(controller_loop(manager))
+            connector = aiohttp.TCPConnector(limit=max(50, int(effective_workers * 1.1)), ttl_dns_cache=300)
+            async with aiohttp.ClientSession(
+                connector=connector, timeout=aiohttp.ClientTimeout(total=max(1, cfg.timeout_sec * 2)),
+                headers={"User-Agent": "FLOW-DC/2.0 PAARC/2.0"}, trace_configs=[build_trace_config()],
+            ) as session:
+                namer, written = SequentialNamer(), {}
+                while keys and not shutdown_flag:
+                    attempt = max(row["attempt_intents"] for row in snapshot["rows"] if row["row_id"] in keys) + 1
+                    print(f"[Attempt {attempt}] Processing {len(keys)} URLs...")
+                    await download_batch_bounded(
+                        cfg=cfg, session=session, df=current_df, manager=manager, sequential_namer=namer,
+                        global_written_paths=written, effective_workers=effective_workers, store=store,
+                    )
+                    snapshot = store.reconcile()
+                    keys = store.eligible(snapshot)
+                    if keys and not shutdown_flag:
+                        await asyncio.sleep(cfg.retry_backoff_sec)
+                        current_df = df.filter(pl.col("__key__").is_in(keys))
+        snapshot = store.reconcile()
+        return finalize_run(cfg, store, snapshot, _monotonic() - started, report_factory)
     finally:
         if ctrl_task is not None:
             ctrl_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await ctrl_task
-    
-    elapsed = _monotonic() - start
-    
-    # Final summary
-    successes = [o for o in final_outcomes.values() if o.success]
-    failures = [o for o in final_outcomes.values() if not o.success]
-    
-    download_elapsed = elapsed  # Rename for clarity
+        store.close()
 
-    print("\n" + "=" * 72)
-    print("FINAL SUMMARY")
-    print("=" * 72)
-    print(f"Total URLs:            {df.height}")
-    print(f"Successful downloads:  {len(successes)}")
-    print(f"Failed downloads:      {len(failures)}")
-    print(f"Download time:         {download_elapsed:.2f}s")
-    if df.height > 0:
-        print(f"Success rate:          {(len(successes) / df.height) * 100:.2f}%")
 
-    total_mb = sum(o.bytes_downloaded for o in successes) / 1e6
-    print(f"Total downloaded:      {total_mb:.2f} MB")
-    if download_elapsed > 0:
-        print(f"Average speed:         {total_mb / download_elapsed:.2f} MB/s")
-    
-    # Generate overview report (before tar so it can be included)
-    overview_report = None
-    if cfg.create_overview:
-        try:
-            overview_report = generate_overview_report(
-                cfg=cfg,
-                df_total=df.height,
-                outcomes=final_outcomes,
-                elapsed_sec=elapsed,
-                tar_path=None,  # Will be updated after tar creation
-            )
-            # Write overview INSIDE output folder so it gets included in tar
-            internal_overview_path = Path(cfg.output_folder) / "overview.json"
-            with internal_overview_path.open("w") as f:
-                json.dump(overview_report, f, indent=2)
-            print(f"[Report] Internal overview written: {internal_overview_path}")
-        except Exception as e:
-            print(f"[Report] Failed to generate overview: {e}")
-
-    # Create tar archive (now includes overview.json)
-    tar_path = None
-    tar_elapsed = 0.0
-    if cfg.create_tar and not shutdown_flag and len(successes) > 0:
-        try:
-            tar_start = _monotonic()
-            tar_path = create_tar(cfg.output_folder, compress=cfg.compress_tar)
-            tar_elapsed = _monotonic() - tar_start
-            tar_size_mb = Path(tar_path).stat().st_size / 1e6
-            compress_str = "compressed" if cfg.compress_tar else "uncompressed"
-            print(f"[Tar] Created ({compress_str}): {tar_path}")
-            print(f"[Tar] Size: {tar_size_mb:.2f} MB, Time: {tar_elapsed:.2f}s")
-        except Exception as e:
-            print(f"[Tar] Failed: {e}")
-
-    # Write external overview (with tar_path included)
-    if cfg.create_overview and overview_report is not None:
-        try:
-            external_overview = write_overview(
-                cfg=cfg,
-                df_total=df.height,
-                outcomes=final_outcomes,
-                elapsed_sec=elapsed,
-                tar_path=tar_path,
-                report=overview_report,
-            )
-            print(f"[Report] External overview: {external_overview}")
-        except Exception as e:
-            print(f"[Report] Failed to write external overview: {e}")
-
-    # Timing breakdown
-    total_elapsed = download_elapsed + tar_elapsed
-    print("\n" + "-" * 72)
-    print("TIMING BREAKDOWN")
-    print("-" * 72)
-    print(f"Download time:         {download_elapsed:.2f}s ({download_elapsed/total_elapsed*100:.1f}%)" if total_elapsed > 0 else f"Download time:         {download_elapsed:.2f}s")
-    print(f"Tar creation time:     {tar_elapsed:.2f}s ({tar_elapsed/total_elapsed*100:.1f}%)" if total_elapsed > 0 else f"Tar creation time:     {tar_elapsed:.2f}s")
-    print(f"Total time:            {total_elapsed:.2f}s")
-    print("=" * 72)
+async def main() -> None:
+    _setup_signal_handlers()
+    await run_acquisition(parse_args())
 
 
 if __name__ == "__main__":

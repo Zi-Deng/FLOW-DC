@@ -361,10 +361,58 @@ Hard overload signals still take precedence and enter the inherited `BACKOFF` pa
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `naming_mode` | string | `sequential` | Filename strategy: `sequential` or `url_based` |
-| `create_tar` | bool | true | Create tar.gz archive of output |
-| `create_overview` | bool | true | Write an internal `overview.json` before archiving and an external overview containing the archive path |
+| `naming_mode` | string | `sequential` | Filename strategy: `sequential`, `url_based`, or immutable `row_id`; conflicting legacy destinations fail affected rows |
+| `create_tar` | bool | true | Create an archive from verified committed rows |
+| `compress_tar` | bool | true | Gzip the archive; false produces an uncompressed `.tar` |
+| `create_overview` | bool | true | Write internal/external overview reports referencing the final completion record |
 | `force_overwrite` | bool | false | Allow deletion of an existing output folder; CLI equivalent: `--force` / `-f` |
+| `research_profile` | bool | false | Select row-ID naming, WebDataset metadata, uncompressed archive and overview; CLI: `--research_profile` |
+| `resume` | bool | false | Reconcile, then continue eligible unresolved rows within their original attempt budgets; CLI: `--resume` |
+| `reconcile` | bool | false | Inspect/recover owned output offline, with no HTTP calls; CLI: `--reconcile` |
+
+### Output integrity and recovery
+
+Both maintained downloaders preserve every original input row, including invalid URLs
+and duplicate URL/content requests. Identity combines the original manifest SHA-256
+and source position; `SplitParquet.py` preserves parent identities. Each row receives
+one disposition: verified, failed, skipped (invalid URL), or demonstrably unattempted.
+Interrupted attempts remain failed with uncertain attempt information until recovered.
+
+For research runs, use [the example configuration](files/config/research-output-integrity.json)
+or the preset flag:
+
+```bash
+python bin/download_batch.py --input input.parquet --output output --research_profile
+python bin/download_batch.py --output output --reconcile
+python bin/download_batch.py --input input.parquet --output output --research_profile --resume
+```
+
+The gradient entrypoint accepts the same operations. Resume requires the same input
+bytes, effective configuration and runtime source hashes; use the original configuration
+with `--resume`. Recovery and overwrite are mutually exclusive. Existing outputs still
+require interactive consent or `--force` for replacement, after input and ownership
+validation. Conflicting unowned files and symlinks are preserved and cause failures.
+
+Retain the output directory, including `.flowdc/`: it holds ownership, attempt intent,
+verified staging and completion records. These records support process-interruption
+recovery. They do not promise host-power-loss durability or atomic publication of two
+files. Research completion requires a closed verified uncompressed archive and outcome
+index. ImageFolder and `--no_tar` select a separately labeled local-files boundary.
+
+Schema-2 reports expose integer `verified_payload_bytes`, `unique_content_bytes`,
+`artifact_file_bytes` and measured `observed_response_body_bytes`. Body counts are
+decoded application bytes, not network wire bytes. Repeated rows receive separate
+payload credit; identical content counts once in unique-content bytes. Compatibility
+MB fields remain decimal displays. Resumed/offline elapsed time and throughput are
+null because the implementation does not reconstruct elapsed time across interruptions.
+
+The authoritative run result is `.flowdc/final.json`, written last. Final overview
+reports carry its expected SHA-256 and leave `run_complete` and
+`useful_final_payload_bytes` null until that record is checked. The overview inside
+the archive describes the earlier local-files stage. `successful_downloads` counts
+verified local rows, so it alone does not establish archive/run completion. See the
+[protocol and compatibility specification](docs/research/OUTPUT-INTEGRITY.md) and
+[validation record](docs/research/OUTPUT-INTEGRITY-VALIDATION.md).
 
 ## Input File Format
 
@@ -388,7 +436,8 @@ FLOW-DC accepts input files in multiple formats. The file must contain a column 
 
 ### ImageFolder
 
-Organizes images into class-specific subdirectories, compatible with PyTorch's `ImageFolder` dataset class:
+Organizes images into class-specific subdirectories, with per-row JSON sidecars and
+an outcome index. Consumers should select payloads by extension or the outcome index:
 
 ```
 output/
@@ -398,6 +447,9 @@ output/
 └── Species_B/
     └── 00000002.jpg
 ```
+
+The run root also contains `.flowdc/` recovery state. Class-directory discovery must
+exclude it; loaders that treat every subdirectory as a class need that filter.
 
 ### WebDataset
 
@@ -412,13 +464,24 @@ output/
 └── ...
 ```
 
-Each JSON file contains metadata about the corresponding image:
+Each maintained-run JSON sidecar includes the original row metadata, immutable identity,
+payload path, byte length and SHA-256. The legacy helper's small metadata tuple/API remains
+available; standalone helper calls do not create a recoverable run. A schema-2 sidecar
+has this shape (hashes abbreviated):
 
 ```json
 {
-    "key": "00000001",
+    "schema_version": 2,
+    "key": "row-sha256",
+    "row_id": "row-sha256",
     "url": "https://example.com/img1.jpg",
-    "class_name": "Species_A"
+    "source_manifest": "manifest-sha256",
+    "source_position": 0,
+    "source_rows": 3,
+    "row": {"url": "https://example.com/img1.jpg", "species": "Species_A"},
+    "payload": "00000001.jpg",
+    "payload_bytes": 1000000,
+    "payload_sha256": "content-sha256"
 }
 ```
 

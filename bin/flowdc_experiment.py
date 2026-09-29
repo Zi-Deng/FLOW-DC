@@ -41,6 +41,7 @@ def prepare(path):
     record = Journal(spec["state_root"]).read()
     require(record["registration_id"] == spec["registration_id"], "registration_changed")
     source, files = read_source(spec["source"]["repository"], spec["source"]["revision"])
+    integrity_source = b"import flowdc_integrity" in files["bin/download_batch.py"]
     cases = []
     originals = {}
     for case in spec["cases"]:
@@ -68,7 +69,8 @@ def prepare(path):
         )
         require(all(case["config"].get("url_col", "url") == "url" for case in cases), "fixture_url_column")
         generated, partitions = generate(
-            record["access"]["interfaces"]["origin"]["fixed_ip"], [case["name"] for case in cases]
+            record["access"]["interfaces"]["origin"]["fixed_ip"], [case["name"] for case in cases],
+            preserve_identity=integrity_source,
         )
         files.update(generated)
     else:
@@ -95,7 +97,14 @@ def prepare(path):
                     "partition_row_count_mismatch",
                 )
                 files[f"inputs/{case['name']}/{filename}"] = raw
-                selected = {"name": filename, "rows": part["rows"]}
+                selected = {"name": filename, "rows": part["rows"], "manifest_sha256": digest(raw)}
+                if integrity_source:
+                    import io
+
+                    import polars as pl
+                    from flowdc_integrity import stamp_frame
+                    frame = stamp_frame(pl.read_parquet(io.BytesIO(raw)), digest(raw))
+                    selected["row_ids"] = frame["__key__"].to_list()
                 if "expected_sha256" in part:
                     selected["expected_sha256"] = part["expected_sha256"]
                 partitions[case["name"]].append(selected)

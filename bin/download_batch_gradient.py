@@ -11,16 +11,11 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import contextlib
 import json
-import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
 from urllib.parse import urlsplit
-
-import aiohttp
-import polars as pl
 
 import download_batch as base
 
@@ -156,7 +151,7 @@ Examples:
     p.add_argument("--retry_backoff_sec", type=float, default=2.0)
 
     # Naming
-    p.add_argument("--naming_mode", type=str, default="sequential", choices=["sequential", "url_based"])
+    p.add_argument("--naming_mode", type=str, default="sequential", choices=["sequential", "url_based", "row_id"])
     p.add_argument("--file_name_pattern", type=str, default="{segment[-2]}")
 
     # Output options
@@ -170,6 +165,10 @@ Examples:
     p.add_argument("--force", "-f", action="store_true",
                    help="Overwrite an existing output directory without confirmation")
 
+    recovery = p.add_mutually_exclusive_group()
+    recovery.add_argument("--resume", action="store_true")
+    recovery.add_argument("--reconcile", action="store_true")
+    p.add_argument("--research_profile", action="store_true")
     args = p.parse_args()
 
     if args.config:
@@ -225,13 +224,16 @@ Examples:
             compress_tar=bool(data.get("compress_tar", True)),
             create_overview=bool(data.get("create_overview", True)),
             force_overwrite=args.force or bool(data.get("force_overwrite", False)),
+            resume=args.resume or bool(data.get("resume", False)),
+            reconcile=args.reconcile or bool(data.get("reconcile", False)),
+            research_profile=args.research_profile or bool(data.get("research_profile", False)),
         )
 
-    if not args.input_path or not args.output_folder:
+    if not args.output_folder or (not args.input_path and not args.reconcile):
         p.error("--input and --output are required unless --config is provided")
 
     return Config(
-        input_path=args.input_path,
+        input_path=args.input_path or "",
         output_folder=args.output_folder,
         input_format=args.input_format,
         url_col=args.url_col,
@@ -274,6 +276,7 @@ Examples:
         compress_tar=not args.no_compress_tar,
         create_overview=not args.no_overview,
         force_overwrite=args.force,
+        resume=args.resume, reconcile=args.reconcile, research_profile=args.research_profile,
     )
 
 
@@ -896,178 +899,21 @@ def write_overview(
 
 async def main() -> None:
     base._setup_signal_handlers()
-    cfg = parse_args()
+    managers = []
 
-    print("=" * 72)
-    print("FLOW-DC Batch Downloader with Gradient PAARC")
-    print("=" * 72)
+    def manager_factory(config):
+        manager = HostControllerManager(config)
+        managers.append(manager)
+        return manager
 
-    df = base.validate_and_load(cfg)
-    print(f"[Load] URLs after filtering: {df.height}")
-    effective_workers = base.resolve_worker_count(cfg, df)
-
-    manager: Optional[HostControllerManager] = None
-    ctrl_task: Optional[asyncio.Task] = None
-
-    if cfg.enable_paarc:
-        paarc_config = cfg.to_paarc_config()
-        manager = HostControllerManager(paarc_config)
-        ctrl_task = asyncio.create_task(base.controller_loop(manager))
-        print(
-            f"[PAARC-GRAD] Enabled | C_init={paarc_config.C_init} | "
-            f"μ={paarc_config.mu} | gradient_threshold={paarc_config.gradient_threshold}"
+    def report_factory(cfg, outcomes, elapsed):
+        controllers = list(managers[0]._controllers.values()) if managers else []
+        return generate_overview_report(
+            cfg=cfg, df_total=len(outcomes), outcomes=outcomes, elapsed_sec=elapsed,
+            gradient_summary=collect_gradient_summary(controllers),
         )
-    else:
-        print("[PAARC-GRAD] Disabled - using fixed concurrency")
 
-    connector = aiohttp.TCPConnector(
-        limit=max(50, int(effective_workers * 1.1)),
-        ttl_dns_cache=300,
-        use_dns_cache=True,
-    )
-    trace_config = base.build_trace_config()
-
-    sequential_namer = base.SequentialNamer()
-    global_written_paths: dict[str, str] = {}
-    final_outcomes: dict[str, base.DownloadOutcome] = {}
-
-    start = base._monotonic()
-
-    try:
-        async with aiohttp.ClientSession(
-            connector=connector,
-            timeout=aiohttp.ClientTimeout(total=max(1, cfg.timeout_sec * 2)),
-            headers={"User-Agent": "FLOW-DC/2.0 PAARC-GRADIENT/2.0"},
-            trace_configs=[trace_config],
-        ) as session:
-            current_df = df.clone()
-            attempt = 1
-
-            while attempt <= cfg.max_retry_attempts and current_df.height > 0 and not base.shutdown_flag:
-                print(f"\n[Attempt {attempt}] Processing {current_df.height} URLs...")
-
-                outcomes = await base.download_batch_bounded(
-                    cfg=cfg,
-                    session=session,
-                    df=current_df,
-                    manager=manager,
-                    sequential_namer=sequential_namer,
-                    global_written_paths=global_written_paths,
-                    effective_workers=effective_workers,
-                )
-
-                final_outcomes.update(outcomes)
-
-                retry_keys = []
-                for row in current_df.iter_rows(named=True):
-                    key = str(row["__key__"])
-                    out = outcomes.get(key)
-                    if out is None:
-                        continue
-                    if out.success:
-                        continue
-                    if base._is_retryable(out.status_code, out.error):
-                        retry_keys.append(key)
-
-                succ = sum(1 for o in outcomes.values() if o.success)
-                fail = sum(1 for o in outcomes.values() if not o.success)
-                retryable = len(retry_keys)
-                print(f"[Attempt {attempt}] Success={succ} Failed={fail} Retryable={retryable}")
-
-                if retry_keys and attempt < cfg.max_retry_attempts and not base.shutdown_flag:
-                    await asyncio.sleep(cfg.retry_backoff_sec)
-                    current_df = current_df.filter(pl.col("__key__").is_in(retry_keys))
-                    attempt += 1
-                else:
-                    break
-
-    finally:
-        if ctrl_task is not None:
-            ctrl_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await ctrl_task
-
-    elapsed = base._monotonic() - start
-    controllers = await manager.all_controllers() if manager is not None else []
-    gradient_summary = collect_gradient_summary(controllers)
-
-    successes = [o for o in final_outcomes.values() if o.success]
-    failures = [o for o in final_outcomes.values() if not o.success]
-
-    download_elapsed = elapsed
-
-    print("\n" + "=" * 72)
-    print("FINAL SUMMARY")
-    print("=" * 72)
-    print(f"Total URLs:            {df.height}")
-    print(f"Successful downloads:  {len(successes)}")
-    print(f"Failed downloads:      {len(failures)}")
-    print(f"Download time:         {download_elapsed:.2f}s")
-    if df.height > 0:
-        print(f"Success rate:          {(len(successes) / df.height) * 100:.2f}%")
-
-    total_mb = sum(o.bytes_downloaded for o in successes) / 1e6
-    print(f"Total downloaded:      {total_mb:.2f} MB")
-    if download_elapsed > 0:
-        print(f"Average speed:         {total_mb / download_elapsed:.2f} MB/s")
-    print(f"Gradient holds:        {gradient_summary['gradient_hold_events']}")
-    print(f"Soft backoffs:         {gradient_summary['gradient_soft_backoffs']}")
-    print(f"Gradient plateaus:     {gradient_summary['gradient_plateau_events']}")
-    print(f"Grace windows:         {gradient_summary['post_backoff_grace_events']}")
-    print(f"Avg grad samples:      {gradient_summary['avg_gradient_sample_count']:.2f}")
-    print(f"Avg grad confidence:   {gradient_summary['avg_gradient_confidence']:.3f}")
-
-    overview_report = None
-    if cfg.create_overview:
-        overview_report = generate_overview_report(
-            cfg=cfg, df_total=df.height, outcomes=final_outcomes,
-            elapsed_sec=elapsed, gradient_summary=gradient_summary,
-        )
-        internal_overview = Path(cfg.output_folder) / "overview.json"
-        internal_overview.write_text(json.dumps(overview_report, indent=2))
-        print(f"[Report] Internal overview written: {internal_overview}")
-
-    tar_path = None
-    tar_elapsed = 0.0
-    if cfg.create_tar and not base.shutdown_flag and successes:
-        try:
-            tar_start = base._monotonic()
-            tar_path = base.create_tar(cfg.output_folder, compress=cfg.compress_tar)
-            tar_elapsed = base._monotonic() - tar_start
-            tar_size_mb = Path(tar_path).stat().st_size / 1e6
-            compress_str = "compressed" if cfg.compress_tar else "uncompressed"
-            print(f"[Tar] Created ({compress_str}): {tar_path}")
-            print(f"[Tar] Size: {tar_size_mb:.2f} MB, Time: {tar_elapsed:.2f}s")
-        except Exception as e:
-            print(f"[Tar] Failed: {e}")
-
-    if cfg.create_overview:
-        try:
-            overview = write_overview(
-                cfg=cfg,
-                df_total=df.height,
-                outcomes=final_outcomes,
-                elapsed_sec=elapsed,
-                tar_path=tar_path,
-                gradient_summary=gradient_summary,
-                report=overview_report,
-            )
-            print(f"[Report] Overview: {overview}")
-        except Exception as e:
-            print(f"[Report] Failed: {e}")
-
-    total_elapsed = download_elapsed + tar_elapsed
-    print("\n" + "-" * 72)
-    print("TIMING BREAKDOWN")
-    print("-" * 72)
-    if total_elapsed > 0:
-        print(f"Download time:         {download_elapsed:.2f}s ({download_elapsed / total_elapsed * 100:.1f}%)")
-        print(f"Tar creation time:     {tar_elapsed:.2f}s ({tar_elapsed / total_elapsed * 100:.1f}%)")
-    else:
-        print(f"Download time:         {download_elapsed:.2f}s")
-        print(f"Tar creation time:     {tar_elapsed:.2f}s")
-    print(f"Total time:            {total_elapsed:.2f}s")
-    print("=" * 72)
+    await base.run_acquisition(parse_args(), manager_factory=manager_factory, report_factory=report_factory)
 
 
 if __name__ == "__main__":

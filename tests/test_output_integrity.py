@@ -38,6 +38,8 @@ class OutputObservationTests(unittest.IsolatedAsyncioTestCase):
             # Observe the actual closed payload before injecting a failed stat.
             self.assertEqual(Path(path).read_bytes(), payload)
             lookups.append(path)
+            if failure == "metadata" and len(lookups) == 1:
+                (root / "payload.json").mkdir()
             if failure == "save-stat" or (failure == "final-stat" and len(lookups) == 2):
                 raise OSError("injected output stat failure")
             if failure == "missing" and len(lookups) == 1:
@@ -59,9 +61,6 @@ class OutputObservationTests(unittest.IsolatedAsyncioTestCase):
                     content=SimpleNamespace(read=AsyncMock(side_effect=[payload[:1], body_error or payload[1:]])),
                 )
 
-            # A directory at the metadata target triggers a real open failure.
-            if failure == "metadata":
-                (root / "payload.json").mkdir()
             with patch.object(session, "get", side_effect=response), patch("os.path.getsize", side_effect=verify_size):
                 out = await base.download_one(
                     row={"url": url, "__key__": "original-row"}, cfg=cfg, session=session,

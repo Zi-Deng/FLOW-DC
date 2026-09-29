@@ -207,7 +207,7 @@ class FlowDCAdapter:
         total_urls = summary.get("total_urls", 0)
         successful = summary.get("successful_downloads", 0)
         failed = summary.get("failed_downloads", 0)
-        elapsed = summary.get("elapsed_sec", 0.0)
+        elapsed = summary.get("elapsed_sec") or 0.0
         downloaded_mb = summary.get("downloaded_mb", 0.0)
 
         # Calculate derived metrics
@@ -230,7 +230,9 @@ class FlowDCAdapter:
             successful_downloads=successful,
             failed_downloads=failed,
             success_rate_percent=success_rate,
-            total_bytes_downloaded=int(downloaded_mb * 1024 * 1024),
+            total_bytes_downloaded=(int(summary["verified_payload_bytes"])
+                                    if overview.get("report_schema_version") == 2
+                                    else int(downloaded_mb * 1024 * 1024)),
             elapsed_seconds=elapsed,
             throughput_mbps=throughput_mbps,
             throughput_imgs_per_sec=throughput_imgs,
@@ -239,5 +241,7 @@ class FlowDCAdapter:
             extra_metrics={
                 "paarc_version": overview.get("paarc_version"),
                 "paarc_config": inputs.get("paarc_config"),
+                "elapsed_measurement_available": summary.get("elapsed_sec") is not None,
+                "output_integrity": overview.get("output_integrity"),
             },
         )

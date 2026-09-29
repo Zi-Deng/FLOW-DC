@@ -27,10 +27,12 @@ from urllib.parse import urlparse, unquote
 from http import HTTPStatus
 from typing import Optional, Tuple, List
 from yarl import URL
+from flowdc_integrity import component, safe_save
 
 
-# Shared with both asynchronous batch variants; no additional staged module.
+# Shared with both asynchronous batch variants.
 HTTP_TRACE_CTX: ContextVar[dict | None] = ContextVar("HTTP_TRACE_CTX", default=None)
+OUTPUT_CTX: ContextVar[tuple | None] = ContextVar("OUTPUT_CTX", default=None)
 HTTP_MEASUREMENT_VERSION = "3-output-independent-latency"
 
 
@@ -291,9 +293,7 @@ def save_imagefolder(content: bytes, file_path: str, key: str, image_url: str,
         Tuple of (success: bool, error: str or None)
     """
     try:
-        os.makedirs(os.path.dirname(file_path), exist_ok=True)
-        with open(file_path, 'wb') as f:
-            f.write(content)
+        safe_save(content, file_path)
         file_size = os.path.getsize(file_path)
         total_bytes.append(file_size)
         return True, None
@@ -318,9 +318,12 @@ def save_webdataset(content: bytes, file_path: str, key: str, image_url: str,
         Tuple of (success: bool, error: str or None)
     """
     try:
-        os.makedirs(os.path.dirname(file_path), exist_ok=True)
-        with open(file_path, 'wb') as f:
-            f.write(content)
+        json_path = file_path.rsplit('.', 1)[0] + ".json"
+        if os.path.lexists(json_path):
+            raise FileExistsError("Metadata destination already exists")
+        if json_path == file_path:
+            raise ValueError("Payload and metadata destinations collide")
+        safe_save(content, file_path)
         file_size = os.path.getsize(file_path)
         # Create JSON metadata file
         json_path = file_path.rsplit('.', 1)[0] + ".json"
@@ -332,8 +335,7 @@ def save_webdataset(content: bytes, file_path: str, key: str, image_url: str,
         if class_name is not None:
             metadata['class_name'] = class_name
 
-        with open(json_path, 'w') as f:
-            json.dump(metadata, f)
+        safe_save(json.dumps(metadata).encode(), json_path)
 
         total_bytes.append(file_size)
         return True, None
@@ -360,6 +362,7 @@ async def download_via_http_get(
         attempt_started_at=time.monotonic(), t0=None, final_headers_at=None,
         first_body_byte_at=None, body_completed_at=None, ttfb=None, hops=[],
         latency_eligible=False, failure_kind=None, retry_after=None, feedback_url=url,
+        observed_response_body_bytes=0,
     )
     token = HTTP_TRACE_CTX.set(measurement)
 
@@ -372,9 +375,12 @@ async def download_via_http_get(
             if response.status == 200:
                 measurement["phase"] = "body"
                 first = await response.content.read(1)
+                measurement["observed_response_body_bytes"] = len(first)
                 if first:
                     measurement["first_body_byte_at"] = time.monotonic()
-                content = first + await response.content.read()
+                tail = await response.content.read()
+                measurement["observed_response_body_bytes"] += len(tail)
+                content = first + tail
                 measurement["body_completed_at"] = time.monotonic()
                 if first and measurement["t0"] is not None:
                     measurement["ttfb"] = measurement["first_body_byte_at"] - measurement["t0"]
@@ -508,6 +514,14 @@ async def download_single(
         - status_code: HTTP status code (or None if connection error)
         - retry_after_sec: Retry-After header value if present (for 429 responses)
     """
+    # Reject unsafe labels before sanitization can hide an escape or collision.
+    try:
+        if class_name is not None:
+            component(str(class_name))
+        if filename is not None:
+            component(filename)
+    except ValueError as exc:
+        return key, None, class_name, str(exc), None, None
     # Sanitize class name
     class_name = sanitize_class_name(class_name)
 
@@ -530,6 +544,10 @@ async def download_single(
 
     # Determine file path
     file_path = determine_file_path(output_folder, output_format, class_name, filename)
+    try:
+        component(filename)
+    except (OSError, ValueError) as exc:
+        return key, None, class_name, str(exc), None, None
 
     # Download content
     content, status_code, error, retry_after = await download_via_http_get(session, url, timeout)
@@ -543,7 +561,16 @@ async def download_single(
         total_bytes = []
 
     # Save based on output format
-    if output_format == "imagefolder":
+    publication = OUTPUT_CTX.get()
+    if publication is not None:
+        store, directory, row_id = publication
+        try:
+            file_path = store.publish(directory, row_id, content)
+            total_bytes.append(len(content))
+            success, save_error = True, None
+        except (OSError, ValueError) as exc:
+            success, save_error = False, str(exc)
+    elif output_format == "imagefolder":
         success, save_error = save_imagefolder(content, file_path, key, url, class_name, total_bytes)
     elif output_format == "webdataset":
         success, save_error = save_webdataset(content, file_path, key, url, class_name, total_bytes)

@@ -93,10 +93,14 @@ reports retain their original version and interpretation. Direct `HostMetrics.re
 callers that omit `latency_eligible` retain the legacy saved-nonempty-output rule;
 the maintained HTTP helper provides explicit eligibility for base and gradient.
 
-Overview `successful_downloads`/`failed_downloads` retain final-per-URL semantics.
-The additive `unattempted_or_cancelled_urls` counts input URLs without a final outcome,
-making the input denominator interpretable on shutdown. If a prior failed attempt
-exists when its retry is cancelled, that URL retains its last failed outcome.
+Schema-2 overview `successful_downloads`/`failed_downloads` count final original-row
+dispositions, with duplicate URLs retained as distinct rows. Invalid URLs are skipped;
+`unattempted_or_cancelled_urls` is a compatibility alias for demonstrably unattempted
+rows. An interrupted intent is a failed unresolved row with uncertain attempt evidence.
+Integer verified payload bytes and observed decoded response-body bytes are separate.
+Local verification can later revoke payload credit without erasing an observed HTTP
+sample. See [output integrity](OUTPUT-INTEGRITY.md) for final completion boundaries;
+historical schema-1 reports retain their original interpretation.
 
 ## Shared Retry-After policy
 
