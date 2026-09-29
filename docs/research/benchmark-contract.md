@@ -111,7 +111,7 @@ research boundary. `run_benchmark.py` and its help print this limitation.
 | --- | --- | --- |
 | 1: common truth | Independent schema/verifier, metadata guard, tampering tests; real primary fixture at `63ff9c7`; predetermined HTTP cases | Repeat real HTTP cases and primary on final head |
 | 2: timing/work/retention | Common launch-to-verified-index timer, process cleanup, raw precision, retention, source/environment records, aggregate origin logs | Final-head evidence; resource collection if introduced |
-| 3: methods/comparators | No change to legacy controller defaults | Entire milestone B, formulas/traces, shared acquisition selection, ablations |
+| 3: methods/comparators | [Versioned methods](CONTROL-METHODS.md), same acquisition path, deterministic traces and five ablations; legacy defaults retained | Retained real HTTP trajectories on final head |
 | 4: origin/study harness | Small concurrent success-fixture origin only | Capacity/service model, scenario families, blocked schedule, calibration, resume |
 | 5: pilot/freeze | Advisor decisions explicitly pending | Study/tuning/evaluation plans, paired summaries, precision calculation, freeze gate |
 | 6: shared-origin authority | Not implemented | Authentication, admission, fencing/recovery, concurrent client evidence |

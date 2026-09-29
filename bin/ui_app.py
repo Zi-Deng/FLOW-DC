@@ -98,6 +98,8 @@ DEFAULT_CONFIG = {
 
     # PAARC toggle
     "enable_paarc": True,
+    "control_method": None,
+    "method_options": {},
 
     # PAARC concurrency bounds
     "C_init": 8,
@@ -166,7 +168,7 @@ class UIState:
             # Direct mappings for PAARC parameters
             direct_keys = [
                 "input_format", "output_format", "concurrent_downloads",
-                "enable_paarc",
+                "enable_paarc", "control_method", "method_options",
                 # PAARC concurrency bounds
                 "C_init", "C_min", "C_max",
                 # PAARC utilization and backoff
@@ -211,6 +213,8 @@ class UIState:
 
                 # PAARC toggle
                 "enable_paarc": self.config["enable_paarc"],
+                "control_method": self.config["control_method"],
+                "method_options": self.config["method_options"],
 
                 # PAARC concurrency bounds
                 "C_init": self.config["C_init"],

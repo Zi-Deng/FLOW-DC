@@ -149,6 +149,8 @@ class HTTPTraceConfig(aiohttp.TraceConfig):
         # aiohttp calls this before writing request headers, after connector/DNS
         # waits, and again for each redirect hop. A new embargo must win here.
         await self._admit(session, ctx, params.url)
+        if ctx.measurement is not None and ctx.measurement.get("dispatch_check") is not None:
+            ctx.measurement["dispatch_check"]()
         if ctx.measurement is not None:
             now = time.monotonic()
             ctx.measurement["t0"] = now

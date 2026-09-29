@@ -16,6 +16,9 @@ import polars as pl
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "bin"))
+
+from flowdc_methods import METHODS  # noqa: E402
 
 from benchmark.core.flowdc_adapter import FlowDCAdapter, FlowDCConfig  # noqa: E402
 from benchmark.core.http_cases import CASES, Response, case_plan, policy_record  # noqa: E402
@@ -154,7 +157,7 @@ class FixtureOrigin:
             return list(self.events[offset:])
 
 
-def smoke(output, case="primary"):
+def smoke(output, case="primary", control_method=None):
     output = output.absolute()
     require(not output.exists() and not output.is_symlink(), "output collision; evidence must be retained")
     # Do not silently pick a global executable from an unrelated environment.
@@ -215,6 +218,7 @@ def smoke(output, case="primary"):
                     paarc_c_max=2,
                     research_profile=True,
                     max_retry_attempts=plan["attempt_budget"],
+                    control_method=control_method,
                 )
                 adapter = FlowDCAdapter(ROOT)
                 adapter.generate_config(config, config_path)
@@ -317,9 +321,14 @@ def main():
     parser.add_argument(
         "--case", choices=CASES, default="primary", help="Predetermined engineering response case"
     )
+    parser.add_argument(
+        "--control-method",
+        choices=METHODS,
+        help="Explicit FLOW-DC method; native img2dataset settings are unchanged",
+    )
     args = parser.parse_args()
     try:
-        success = smoke(args.output, args.case)
+        success = smoke(args.output, args.case, args.control_method)
     except (OSError, ValueError, importlib.metadata.PackageNotFoundError) as exc:
         print(f"Known-truth integration unavailable/failed: {exc}", file=sys.stderr)
         return 2

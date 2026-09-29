@@ -254,6 +254,8 @@ class Config:
     
     # PAARC controller toggle
     enable_paarc: bool = True
+    control_method: str | None = None  # Explicit version; None preserves legacy behavior.
+    method_options: dict = field(default_factory=dict)
     
     # PAARC parameters (passed to PAARCConfig)
     C_init: int = 4
@@ -345,6 +347,9 @@ Examples:
     # PAARC toggle
     p.add_argument("--enable_paarc", action="store_true", default=True)
     p.add_argument("--disable_paarc", action="store_true")
+    p.add_argument("--control_method", choices=("paarc-base-v2", "gradient-candidate-v1", "fixed-v1", "ratio-v1"),
+                   help="Explicit versioned per-origin control method; omitted preserves legacy defaults")
+    p.add_argument("--method_options", type=json.loads, default={}, help="JSON object of versioned engineering parameters")
     
     # PAARC parameters
     p.add_argument("--C_init", type=int, default=4)
@@ -433,6 +438,8 @@ Examples:
             resume=args.resume or bool(data.get("resume", False)),
             reconcile=args.reconcile or bool(data.get("reconcile", False)),
             research_profile=args.research_profile or bool(data.get("research_profile", False)),
+            control_method=args.control_method or data.get("control_method"),
+            method_options=args.method_options or data.get("method_options", {}),
         )
 
     # Validate required args
@@ -474,6 +481,7 @@ Examples:
         create_overview=not args.no_overview,
         force_overwrite=args.force,
         resume=args.resume, reconcile=args.reconcile, research_profile=args.research_profile,
+        control_method=args.control_method, method_options=args.method_options,
     )
 
 
@@ -482,6 +490,15 @@ Examples:
 # =============================================================================
 
 def normalize_config(cfg):
+    if cfg.control_method is not None:
+        from flowdc_methods import MethodConfig
+        if not cfg.enable_paarc or not isinstance(cfg.method_options, dict):
+            raise ValueError("Explicit control_method requires enabled admission and object method_options")
+        if hasattr(cfg, "gradient_threshold"):
+            raise ValueError("Select versioned methods through download_batch.py; gradient entrypoint is legacy")
+        MethodConfig.from_config(cfg)
+    elif cfg.method_options:
+        raise ValueError("method_options requires an explicit control_method")
     if cfg.resume and cfg.reconcile:
         raise ValueError("resume and reconcile are mutually exclusive")
     if (cfg.resume or cfg.reconcile) and cfg.force_overwrite:
@@ -509,6 +526,9 @@ def load_manifest(cfg):
         raise ValueError(f"Label column '{cfg.label_col}' not found")
     if cfg.url_col == "__key__" or (cfg.label_col and cfg.label_col == "__key__"):
         raise ValueError("__key__ is reserved for internal row identity; rename the mapped input column")
+    if cfg.control_method is not None:
+        from flowdc_methods import validate_research_metadata
+        validate_research_metadata(df, cfg.url_col)
     # Verify input has not changed between hashing and loading.
     if path.read_bytes() != raw:
         raise ValueError("Input manifest changed during loading")
@@ -800,6 +820,7 @@ class HostMetrics:
         is_local_error: bool = False,
         is_unknown_error: bool = False,
         latency_eligible: Optional[bool] = None,
+        dispatch_at: float | None = None,
     ) -> None:
         """Record one completed acquisition attempt, separately from overload.
 
@@ -1783,6 +1804,9 @@ async def controller_loop(manager: HostControllerManager) -> None:
                     host_next_step[host] = now + interval
                     
                 except Exception as e:
+                    if hasattr(manager, "failure"):
+                        manager.failure = e
+                        return  # New methods fail closed at subsequent HTTP dispatch.
                     print(f"[PAARC] Error for {host}: {e}")
                     host_next_step[host] = now + 0.2  # Fallback
         
@@ -1931,6 +1955,8 @@ async def download_one(
     
     # Set up tracing context
     trace_dict: dict[str, Any] = {}
+    if manager is not None and hasattr(manager, "check_health"):
+        trace_dict["dispatch_check"] = manager.check_health
     if manager is not None:
         async def redirect_admit(destination: str) -> None:
             nonlocal ctrl
@@ -2021,6 +2047,7 @@ async def download_one(
                 is_local_error=is_local_error,
                 is_unknown_error=is_unknown_error,
                 latency_eligible=trace_dict.get("latency_eligible"),
+                dispatch_at=trace_dict.get("t0"),
             )
         
         # Track written paths for collision detection
@@ -2226,6 +2253,8 @@ def generate_overview_report(
             "concurrent_downloads": cfg.concurrent_downloads,
             "timeout_sec": cfg.timeout_sec,
             "enable_paarc": cfg.enable_paarc,
+            "control_method": cfg.control_method,
+            "method_options": cfg.method_options,
             "paarc_config": {
                 "C_init": cfg.C_init,
                 "C_min": cfg.C_min,
@@ -2325,6 +2354,9 @@ def integrity_report(cfg, store, snapshot, elapsed, report_factory):
             row["payload"], None, row.get("status_code"), row["error"], row["payload_bytes"],
         )
     report = report_factory(cfg, outcomes, elapsed)
+    from flowdc_methods import control_records, method_record
+    report["control_method"] = method_record(cfg)
+    report["control_trajectories"] = control_records(store)
     counts = snapshot["counts"]
     report["report_schema_version"] = integrity.SCHEMA
     report["summary"].update(
@@ -2345,6 +2377,7 @@ def integrity_report(cfg, store, snapshot, elapsed, report_factory):
         "byte_semantics": "integer payload bytes; observed response bodies are decoded application bytes, not wire bytes",
         "artifact_file_bytes_scope": "committed payload and row-metadata files plus published archive, excluding reports and staging",
         "successful_downloads_semantics": "rows with verified committed local files",
+        "control_trajectories_sha256": integrity.digest(integrity.encode(report["control_trajectories"])),
         "display_mb_divisor": 1000000,
     }
     if cfg.resume or cfg.reconcile:
@@ -2439,7 +2472,7 @@ async def run_acquisition(cfg, *, manager_factory=HostControllerManager, report_
     config = integrity.effective_config(cfg)
     store = integrity.RunStore(cfg.output_folder, manifest=manifest, config=config,
                                rows=None if cfg.resume else rows)
-    manager, ctrl_task = None, None
+    manager, ctrl_task, trajectory = None, None, None
     started = _monotonic()
     try:
         integrity.require(store.owner["rows"] == rows, "resume row provenance or publication plan mismatch")
@@ -2449,7 +2482,12 @@ async def run_acquisition(cfg, *, manager_factory=HostControllerManager, report_
             current_df = df.filter(pl.col("__key__").is_in(keys))
             effective_workers = resolve_worker_count(cfg, current_df)
             if cfg.enable_paarc:
-                manager = manager_factory(cfg.to_paarc_config())
+                if cfg.control_method is not None:
+                    from flowdc_methods import ControllerManager, ControlTrace
+                    trajectory = ControlTrace(store, cfg)
+                    manager = ControllerManager(cfg, AdaptiveSemaphore, PAARCController, trajectory.emit)
+                else:
+                    manager = manager_factory(cfg.to_paarc_config())
                 ctrl_task = asyncio.create_task(controller_loop(manager))
             connector = aiohttp.TCPConnector(limit=max(50, int(effective_workers * 1.1)), ttl_dns_cache=300)
             async with aiohttp.ClientSession(
@@ -2471,13 +2509,29 @@ async def run_acquisition(cfg, *, manager_factory=HostControllerManager, report_
                         await asyncio.sleep(cfg.retry_backoff_sec)
                         current_df = df.filter(pl.col("__key__").is_in(keys))
         snapshot = store.reconcile()
+        if ctrl_task is not None:
+            ctrl_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await ctrl_task
+            ctrl_task = None
+        if trajectory is not None:
+            manager.check_health()
+            # Include the final short interval and close retained trajectories
+            # before publishing the result boundary.
+            for controller in await manager.all_controllers():
+                await controller.step_interval()
+            trajectory.close(complete=not shutdown_flag)
         return finalize_run(cfg, store, snapshot, _monotonic() - started, report_factory)
     finally:
         if ctrl_task is not None:
             ctrl_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await ctrl_task
-        store.close()
+        try:
+            if trajectory is not None:
+                trajectory.close()
+        finally:
+            store.close()
 
 
 async def main() -> None:

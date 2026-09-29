@@ -1,0 +1,24 @@
+{
+  "input": "input.parquet",
+  "output": "candidate-output",
+  "url": "url",
+  "research_profile": true,
+  "enable_paarc": true,
+  "control_method": "gradient-candidate-v1",
+  "method_options": {
+    "interval_s": 0.2,
+    "sample_min": 5,
+    "queue_tau_s": 1.0,
+    "gradient_tau_s": 1.0,
+    "baseline_max_age_s": 10.0,
+    "stale_after_s": 2.0,
+    "probe_wait_s": 0.4
+  },
+  "C_init": 4,
+  "C_min": 2,
+  "C_max": 16,
+  "concurrent_downloads": 16,
+  "timeout": 5,
+  "max_retry_attempts": 1,
+  "force_overwrite": false
+}

@@ -372,6 +372,8 @@ Hard overload signals still take precedence and enter the inherited `BACKOFF` pa
 | `create_overview` | bool | true | Write internal/external overview reports referencing the final completion record |
 | `force_overwrite` | bool | false | Allow deletion of an existing output folder; CLI equivalent: `--force` / `-f` |
 | `research_profile` | bool | false | Select row-ID naming, WebDataset metadata, uncompressed archive and overview; CLI: `--research_profile` |
+| `control_method` | string/null | null | Explicit `paarc-base-v2`, `gradient-candidate-v1`, `fixed-v1` or `ratio-v1`; null preserves the legacy entrypoint default |
+| `method_options` | object | {} | Versioned engineering parameters/ablation for the selected method; see [method contract](docs/research/CONTROL-METHODS.md) |
 | `resume` | bool | false | Reconcile, then continue eligible unresolved rows within their original attempt budgets; CLI: `--resume` |
 | `reconcile` | bool | false | Inspect/recover owned output offline, with no HTTP calls; CLI: `--reconcile` |
 
@@ -602,6 +604,13 @@ expanded cases still require final-head validation.
 Historical benchmark reports retain a separate schema and cannot establish the new
 timing/output boundary. See [benchmark setup](benchmark/README.md) for the isolated
 research environment, retained artifacts, and outstanding manuscript milestones.
+
+The [versioned method contract](docs/research/CONTROL-METHODS.md) specifies the
+candidate/comparator equations, sample gates, baseline freshness, ablations and
+retained control trajectories. Use `bin/download_batch.py --control_method METHOD`
+or [the candidate example](files/config/gradient-candidate-v1.json). These are
+engineering defaults awaiting specific advisor decisions; the legacy gradient
+entrypoint retains its old behavior.
 
 Run the focused regression checks with the project environment:
 

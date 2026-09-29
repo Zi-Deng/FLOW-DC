@@ -5,7 +5,7 @@ import json
 import math
 import sys
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from .metrics import BenchmarkResult, ResourceMetrics
@@ -31,6 +31,8 @@ class FlowDCConfig:
     paarc_theta_95: float = 4.0
     max_retry_attempts: int = 1
     research_profile: bool = False
+    control_method: str | None = None
+    method_options: dict = field(default_factory=dict)
 
 
 class FlowDCAdapter:
@@ -73,6 +75,8 @@ class FlowDCAdapter:
             "concurrent_downloads": config.concurrent_downloads,
             "timeout": config.timeout_sec,
             "enable_paarc": config.enable_paarc,
+            "control_method": config.control_method,
+            "method_options": config.method_options,
             "C_init": config.paarc_c_init,
             "C_min": config.paarc_c_min,
             "C_max": c_max,

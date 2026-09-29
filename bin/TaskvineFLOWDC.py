@@ -190,6 +190,8 @@ def create_partition_config(base_config: dict, partition_file: str, output_name:
 
         # PAARC toggle
         "enable_paarc": base_config.get('enable_paarc', True),
+        "control_method": base_config.get('control_method'),
+        "method_options": base_config.get('method_options', {}),
 
         # PAARC concurrency bounds
         "C_init": base_config.get('C_init', 8),
@@ -297,6 +299,7 @@ def submit_tasks(
     download_script_vine = manager.declare_file(download_script)
     single_download_vine = manager.declare_file(single_download_script)
     integrity_vine = manager.declare_file(os.path.join(os.path.dirname(download_script), "flowdc_integrity.py"))
+    methods_vine = manager.declare_file(os.path.join(os.path.dirname(download_script), "flowdc_methods.py"))
 
     max_retries = config.get('max_retries', 3)
     task_cores = config.get('task_cores', 4)
@@ -346,6 +349,7 @@ def submit_tasks(
             task.add_input(download_script_vine, "download_batch.py")
             task.add_input(single_download_vine, "single_download.py")
             task.add_input(integrity_vine, "flowdc_integrity.py")
+            task.add_input(methods_vine, "flowdc_methods.py")
             task.add_input(config_vine, config_filename)
             task.add_input(declared_file, file_name)
 

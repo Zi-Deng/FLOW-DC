@@ -794,10 +794,15 @@ with p.RunStore(root, manifest={'sha256':'a'*64,'original_rows':1}, config=p.eff
                 )
             self.assertEqual(count, 1)
             manager.declare_file.assert_any_call(str(ROOT / "bin/flowdc_integrity.py"))
+            manager.declare_file.assert_any_call(str(ROOT / "bin/flowdc_methods.py"))
             self.assertIn("flowdc_integrity.py", [call.args[1] for call in task.add_input.call_args_list])
+            self.assertIn("flowdc_methods.py", [call.args[1] for call in task.add_input.call_args_list])
             self.assertIn("output_part.tar", [call.args[1] for call in task.add_output.call_args_list])
             config = vine.create_partition_config({"research_profile": True}, "part", "output")
             self.assertTrue(config["research_profile"])
+            config = vine.create_partition_config({"control_method": "fixed-v1", "method_options": {"interval_s": 0.4}}, "part", "output")
+            self.assertEqual(config["control_method"], "fixed-v1")
+            self.assertEqual(config["method_options"], {"interval_s": 0.4})
 
     def test_both_entrypoints_parse_recovery_and_reject_overwrite(self):
         for module in (base, gradient):
