@@ -5,7 +5,7 @@ import signal
 import subprocess
 import threading
 import time
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
 
 import psutil
@@ -36,19 +36,24 @@ def _group_running(pgid):
 
 
 @contextmanager
-def interruption_signals():
+def interruption_signals(*, raise_on_signal=True):
     """First INT/TERM requests cleanup; repeats cannot interrupt owned cleanup."""
-    previous, state = {}, {"requested": False, "cleanup": False}
+    require(
+        threading.current_thread() is threading.main_thread(),
+        "worker-thread lifecycle requires an explicit main-thread interruption owner",
+    )
+    previous, state = {}, {"requested": False, "cleanup": False, "signal": None}
 
     def interrupt(signum, frame):
         first = not state["requested"]
         state["requested"] = True
-        if first and not state["cleanup"]:
+        if first:
+            state["signal"] = signal.Signals(signum).name
+        if first and raise_on_signal and not state["cleanup"]:
             raise KeyboardInterrupt
 
-    if threading.current_thread() is threading.main_thread():
-        for sig in (signal.SIGINT, signal.SIGTERM):
-            previous[sig] = signal.signal(sig, interrupt)
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        previous[sig] = signal.signal(sig, interrupt)
     try:
         yield state
     finally:
@@ -56,10 +61,12 @@ def interruption_signals():
             signal.signal(sig, handler)
 
 
-def _await_exit(pid, seconds):
+def _await_exit(pid, seconds, interruption=None):
     """Observe without reaping; the group leader's PID remains reserved."""
     until = time.monotonic() + seconds
     while True:
+        if interruption is not None and interruption["requested"]:
+            raise KeyboardInterrupt
         status = os.waitid(os.P_PID, pid, os.WEXITED | os.WNOHANG | os.WNOWAIT)
         if status is not None:
             return status.si_status if status.si_code == os.CLD_EXITED else -status.si_status
@@ -68,8 +75,21 @@ def _await_exit(pid, seconds):
         time.sleep(min(0.01, max(0, until - time.monotonic())))
 
 
-def run_verified(command, directory, truth, verify, *, cwd=None, deadline=180, cleanup=60, provenance=None):
-    with interruption_signals() as interruption:
+def run_verified(
+    command,
+    directory,
+    truth,
+    verify,
+    *,
+    cwd=None,
+    deadline=180,
+    cleanup=60,
+    provenance=None,
+    interruption=None,
+):
+    # Threads must borrow the main harness's signal state. They never silently
+    # claim signal ownership or change process-global handlers themselves.
+    with interruption_signals() if interruption is None else nullcontext(interruption) as interruption:
         return _run_verified(
             command,
             directory,
@@ -108,18 +128,36 @@ def _run_verified(command, directory, truth, verify, *, cwd, deadline, cleanup, 
         )
     )
     proc, returncode, failure, error = None, None, None, None
+    cleanup_errors = []
+
+    def signal_owned(sig):
+        try:
+            _signal_group(proc.pid, sig)
+        except PermissionError:
+            cleanup_errors.append({"signal": sig.name, "error": "permission_denied"})
+
     with (directory / "stdout.log").open("xb") as stdout, (directory / "stderr.log").open("xb") as stderr:
         started = time.monotonic_ns()
         try:
+            if interruption["requested"]:
+                raise KeyboardInterrupt
             proc = subprocess.Popen(command, cwd=cwd, stdout=stdout, stderr=stderr, start_new_session=True)
-            (directory / "process-owner.json").write_bytes(
-                encode(
-                    {"pid": proc.pid, "pgid": proc.pid, "create_time": psutil.Process(proc.pid).create_time()}
+            try:
+                (directory / "process-owner.json").write_bytes(
+                    encode(
+                        {
+                            "pid": proc.pid,
+                            "pgid": proc.pid,
+                            "create_time": psutil.Process(proc.pid).create_time(),
+                        }
+                    )
                 )
-            )
-            returncode = _await_exit(proc.pid, deadline)
-            if returncode != 0:
-                failure = "nonzero_exit"
+            except (OSError, psutil.Error) as exc:
+                failure, error = "owner_record_unavailable", type(exc).__name__
+            if failure is None:
+                returncode = _await_exit(proc.pid, deadline, interruption)
+                if returncode != 0:
+                    failure = "nonzero_exit"
         except subprocess.TimeoutExpired:
             failure = "timeout"
         except KeyboardInterrupt:
@@ -138,11 +176,11 @@ def _run_verified(command, directory, truth, verify, *, cwd, deadline, cleanup, 
                 # cannot claim completion; terminate only its owned process group.
                 if _group_running(proc.pid):
                     failure = failure or "descendants_remaining"
-                    _signal_group(proc.pid, signal.SIGTERM)
+                    signal_owned(signal.SIGTERM)
                     grace = min(cleanup_until, time.monotonic() + min(5, cleanup / 2))
                     while _group_running(proc.pid) and time.monotonic() < grace:
                         time.sleep(0.01)
-                    _signal_group(proc.pid, signal.SIGKILL)
+                    signal_owned(signal.SIGKILL)
                 while _group_running(proc.pid) and time.monotonic() < cleanup_until:
                     time.sleep(0.01)
                 if _group_running(proc.pid):
@@ -196,6 +234,9 @@ def _run_verified(command, directory, truth, verify, *, cwd, deadline, cleanup, 
         "status": "complete" if complete else failure or "incomplete",
         "process_exit_code": returncode,
         "process_error": error,
+        "cleanup_errors": cleanup_errors,
+        "interruption_requested": bool(interruption["requested"]),
+        "interruption_signal": interruption.get("signal"),
         "run_complete": complete,
         "original_rows": truth["original_rows"],
         "verified_rows": verified,

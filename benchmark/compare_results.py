@@ -22,6 +22,7 @@ def load_report(path: Path) -> dict:
             "This reader supports only historical native-counter reports; do not mix timing contracts"
         )
     report["benchmark_schema"] = schema
+    report.setdefault("numeric_precision", "unspecified_legacy")
     return report
 
 
@@ -38,6 +39,7 @@ def compare_reports(reports: list[tuple[str, dict]]) -> None:
         meta = report["metadata"]
         print(f"  {name}:")
         print(f"    Date: {meta['timestamp'][:10]}")
+        print(f"    Numeric precision: {report.get('numeric_precision', 'unspecified_legacy')}")
         print(f"    Dataset: {meta['dataset']['path']} ({meta['dataset']['total_urls']} URLs)")
         print(f"    System: {meta['system_info']['platform']}, {meta['system_info']['cpu_count']} cores")
 
@@ -146,8 +148,14 @@ def main() -> int:
         try:
             report = load_report(path)
             reports.append((name, report))
-        except ValueError as e:
+        except json.JSONDecodeError as e:
             print(f"Error: Invalid JSON in {path}: {e}")
+            return 1
+        except ValueError as e:
+            print(f"Error: Unsupported report contract in {path}: {e}")
+            return 1
+        except OSError as e:
+            print(f"Error: Cannot read report {path}: {e}")
             return 1
 
     # Compare

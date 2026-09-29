@@ -73,6 +73,9 @@ def dependency_required(path, files):
                 names.extend(names[0].rstrip(".") + "." + name.name for name in node.names)
             elif isinstance(node, ast.Constant) and node.value == Path(path).name and not package:
                 return True  # Declarative worker staging closure.
+            # bin/ is staged as the runtime import root. Apply the same mapping
+            # to resolved relative imports; this does not enable package execution.
+            names = [name.removeprefix("bin.") for name in names]
             if any(name == module or (package and name.startswith(module + ".")) for name in names):
                 return True
     return False

@@ -31,7 +31,7 @@ from benchmark.core.controlled_origin import (  # noqa: E402
     public_scenario,
     scenario,
 )
-from benchmark.core.lifecycle import _group_running, run_verified  # noqa: E402
+from benchmark.core.lifecycle import _group_running, interruption_signals, run_verified  # noqa: E402
 from benchmark.core.provenance import environment_record  # noqa: E402
 from benchmark.core.study import write_new  # noqa: E402
 from benchmark.core.truth import PROVENANCE, Truth, digest, parse, partition_truth, require  # noqa: E402
@@ -164,11 +164,13 @@ def signal_pidfd(fd, signum):
         )
 
 
-async def inject_failure(directory, case, authority, futures, events):
+async def inject_failure(directory, case, authority, futures, events, interruption):
     if case in ("primary", "reciprocal-redirect", "retry-after"):
         return
     until = time.monotonic() + 30
     while time.monotonic() < until and not all(future.done() for future in futures):
+        if interruption["requested"]:
+            return
         if sum(event["phase"] == "arrival" for event in events) >= 4:
             if case == "manager-stop":
                 await authority.stop()
@@ -194,6 +196,13 @@ async def inject_failure(directory, case, authority, futures, events):
 
 
 async def run(directory, workers, method, case):
+    # The event-loop thread owns signals for all child lifecycles. Requests are
+    # observed by each worker's bounded wait, without cancelling to_thread futures.
+    with interruption_signals(raise_on_signal=False) as interruption:
+        return await _run(directory, workers, method, case, interruption)
+
+
+async def _run(directory, workers, method, case, interruption):
     require(not directory.exists() and not directory.is_symlink(), "shared smoke output collision")
     environment = environment_record(ROOT)
     directory.mkdir(parents=True, exist_ok=False)
@@ -303,6 +312,7 @@ async def run(directory, workers, method, case):
                             cwd=ROOT,
                             deadline=120,
                             cleanup=20,
+                            interruption=interruption,
                             provenance={
                                 "scope": "partition",
                                 "parent_original_rows": truth.record["original_rows"],
@@ -311,8 +321,8 @@ async def run(directory, workers, method, case):
                         )
                     )
                 )
-            await inject_failure(directory, case, authority, futures, servers[0].events)
-            results = await asyncio.gather(*futures)
+            await inject_failure(directory, case, authority, futures, servers[0].events, interruption)
+            results = await asyncio.shield(asyncio.gather(*futures))
         origin_work = [server.snapshot() for server in servers]
         origin_audit = [
             audit_events(server.events, work) for server, work in zip(servers, origin_work, strict=True)
@@ -338,9 +348,16 @@ async def run(directory, workers, method, case):
             "origin arrival-to-response work exceeds aggregate cap, including queued requests",
         )
         for i in range(workers):
-            owner = parse((directory / f"client-{i}/run/process-owner.json").read_bytes())
+            owner_path = directory / f"client-{i}/run/process-owner.json"
+            if not owner_path.exists():
+                require(
+                    results[i]["interruption_requested"] and results[i]["process_exit_code"] is None,
+                    "native process ownership unavailable",
+                )
+                continue  # Interruption before launch has no child group to clean.
+            owner = parse(owner_path.read_bytes())
             require(not _group_running(owner["pgid"]), "owned process group remains active/uncertain")
-        if case in ("primary", "reciprocal-redirect", "retry-after"):
+        if not interruption["requested"] and case in ("primary", "reciprocal-redirect", "retry-after"):
             require(all(result["run_complete"] for result in results), "native shared client failed")
             require(
                 not authority.ledger.outstanding(state["state"]),
@@ -351,11 +368,15 @@ async def run(directory, workers, method, case):
                 == sum(event["action"] == "dispatch" for event in state["events"]),
                 "origin attempts do not match manager dispatches",
             )
-        else:
+        elif not interruption["requested"]:
             require(any(not result["run_complete"] for result in results), "loss fixture fabricated success")
             require(bool(authority.ledger.outstanding(state["state"])), "uncertain remote work was recycled")
         summary = {
             "schema": "flowdc-shared-smoke-v1",
+            "status": "interrupted" if interruption["requested"] else "assessed",
+            "run_complete": not interruption["requested"]
+            and all(result["run_complete"] for result in results),
+            "interruption_signal": interruption["signal"],
             "case": case,
             "method": method,
             "workers": workers,
@@ -378,7 +399,8 @@ async def run(directory, workers, method, case):
         write_new(
             directory / "failure.json",
             {
-                "status": "failed",
+                "status": "interrupted" if interruption["requested"] else "failed",
+                "interruption_signal": interruption["signal"],
                 "exception_type": type(exc).__name__,
                 "original_rows": 32,
                 "case": case,
@@ -388,11 +410,19 @@ async def run(directory, workers, method, case):
         )
         raise
     finally:
-        # Threads retain the lifecycle's own bounded native deadline and cleanup.
-        if futures:
-            await asyncio.gather(*futures, return_exceptions=True)
-        await authority.stop()
-        authority.ledger.close()
+        # Even external task cancellation must join the actual lifecycle threads
+        # before closing the authority; cancelling a to_thread wrapper is not proof
+        # that its child process stopped.
+        try:
+            if any(not future.done() for future in futures):
+                interruption["requested"] = True
+            if futures:
+                await asyncio.shield(asyncio.gather(*futures, return_exceptions=True))
+        finally:
+            try:
+                await authority.stop()
+            finally:
+                authority.ledger.close()
 
 
 def main():
@@ -420,7 +450,7 @@ def main():
                 }
             )
         )
-        return 0
+        return 2 if result["status"] == "interrupted" else 0
     except (ValueError, OSError) as exc:
         print(f"Shared integration unavailable/failed: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 2

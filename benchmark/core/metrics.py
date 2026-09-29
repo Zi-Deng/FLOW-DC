@@ -22,6 +22,7 @@ class ResourceMetrics:
 
     def to_dict(self) -> dict:
         return {
+            "numeric_precision": "unrounded",
             "cpu_avg_percent": self.cpu_avg_percent,
             "cpu_max_percent": self.cpu_max_percent,
             "memory_avg_mb": self.memory_avg_mb,
@@ -67,6 +68,7 @@ class BenchmarkResult:
 
     def to_dict(self) -> dict:
         return {
+            "numeric_precision": "unrounded",
             "tool": self.tool,
             "benchmark_schema": "historical-native-counters-v1",
             "comparison_eligible": False,
@@ -127,6 +129,7 @@ class AggregatedResult:
 
     def to_dict(self) -> dict:
         return {
+            "numeric_precision": "unrounded",
             "tool": self.tool,
             "variant": self.variant,
             "concurrency": self.concurrency,
@@ -187,6 +190,7 @@ class BenchmarkReport:
 
     def to_dict(self) -> dict:
         return {
+            "numeric_precision": "unrounded",
             "benchmark_schema": "historical-native-counters-v1",
             "comparison_eligible": False,
             "metadata": {

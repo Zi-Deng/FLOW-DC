@@ -79,6 +79,15 @@ class SourceTests(unittest.TestCase):
             ):
                 source.read_source(self.repo, revision)
 
+    def test_relative_import_cannot_omit_committed_dependency(self):
+        (self.repo / "bin/flowdc_methods.py").unlink()
+        for statement in ("from . import flowdc_methods", "from .flowdc_methods import MethodConfig"):
+            with self.subTest(statement=statement):
+                (self.repo / "bin/download_batch.py").write_text(statement + "\n")
+                broken = self.commit_all()
+                with self.assertRaisesRegex(source.SourceError, "source_entrypoint_invalid"):
+                    source.read_source(self.repo, broken)
+
     def test_hex_named_refs_do_not_override_object_ids(self):
         (self.repo / source.SOURCE_PATHS[0]).write_text("later")
         later = self.commit_all()

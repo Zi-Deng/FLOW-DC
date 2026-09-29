@@ -7,6 +7,11 @@ execution passed on the first committed checkpoint; final-head validation remain
 required. See the [contract and acceptance map](../docs/research/benchmark-contract.md).
 `run_benchmark.py` and its HTML/comparison consumers retain the historical native-counter
 contract. Those timing/output boundaries do not establish a fair efficacy comparison.
+New historical-contract JSON includes `numeric_precision: "unrounded"` in reports,
+aggregates, runs and resource metrics. The historical comparison reader labels an
+absent marker `unspecified_legacy`: older artifacts can contain either rounded or
+unrounded values. This annotation does not change their timing contract or rewrite
+archived evidence; presentation may still round values for display.
 
 ## Features
 
@@ -47,6 +52,23 @@ one authenticated aggregate authority. See the
 [shared-admission contract](../docs/research/SHARED-ADMISSION.md) for bounded commands,
 loss/redirect cases and evidence limits. This is separate from required TaskVine
 runtime integration.
+
+The shared-origin harness owns INT/TERM on its main thread and passes that signal
+state to every subprocess lifecycle thread. Interrupted runs retain original rows,
+partial verification and the signal name, join owned process cleanup, and exit 2.
+Already closed client results keep their own completed boundary; the interrupted
+harness cannot claim a complete distributed run. A standalone `run_verified` call
+off the main thread must receive an explicit main-thread interruption state.
+Use a fresh directory for the real bounded signal regression:
+
+```bash
+python -B benchmark/shared_interrupt.py --workers 2 --signal TERM --output benchmark/results/shared-term-001
+```
+
+`--signal INT` and `--workers 1`/`4` cover the other supported cases. The regression
+waits for real origin arrivals, sends the signal twice, checks retained native and
+manager records, and verifies process exit. Failure cleanup targets only identified
+fixture processes, including partial startup. These are engineering failure checks.
 
 Retain the output directory, including failures, and the private pip install report.
 Do not publish install reports without inspecting source URLs for credentials.
