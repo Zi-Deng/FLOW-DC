@@ -497,6 +497,8 @@ def normalize_config(cfg):
     if cfg.shared_control_file is not None:
         if not isinstance(cfg.shared_control_file, str) or not cfg.shared_control_file or cfg.control_method is None:
             raise ValueError("shared control requires a private descriptor path and explicit control_method")
+        if type(cfg.timeout_sec) not in (int, float) or not math.isfinite(cfg.timeout_sec) or cfg.timeout_sec <= 0:
+            raise ValueError("shared control requires a finite positive acquisition timeout")
     if cfg.control_method is not None:
         from flowdc_methods import MethodConfig
         if not cfg.enable_paarc or not isinstance(cfg.method_options, dict):

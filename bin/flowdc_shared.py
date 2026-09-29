@@ -29,6 +29,8 @@ from flowdc_staging import DOWNLOAD_FILES
 from yarl import URL
 
 MODULES = DOWNLOAD_FILES
+RPC_TIMEOUT_S = 3.0
+BACKPRESSURE_DELAYS_S = (0.05, 0.1, 0.2)
 
 
 class SharedControlError(RuntimeError):
@@ -395,24 +397,9 @@ class SharedClient:
             "arguments": arguments,
         }
         try:
-            async with self.messages:
-                async with self.session.post(
-                    self.description["endpoint"] + "/control",
-                    json=message,
-                    headers={"Authorization": "Bearer " + self.description["credential"]},
-                    allow_redirects=False,
-                ) as response:
-                    require(response.status == 200, "control request failed")
-                    raw = bytearray()
-                    while True:
-                        chunk = await response.content.read(32769 - len(raw))
-                        if not chunk:
-                            break
-                        raw.extend(chunk)
-                        require(len(raw) <= 32768, "oversize control response")
-                    import json
-
-                    result = json.loads(raw)
+            # One deadline includes local queueing, replies and safe backpressure
+            # retries. A lost/ambiguous acknowledgement is never retried here.
+            result, retries = await asyncio.wait_for(self.exchange(message), RPC_TIMEOUT_S)
             self.emit(
                 {
                     "shared_event": operation,
@@ -421,6 +408,7 @@ class SharedClient:
                     "worker_id": self.worker_id,
                     "arguments": arguments,
                     "receipt": result,
+                    "control_backpressure_retries": retries,
                 }
             )
             return result
@@ -430,10 +418,49 @@ class SharedClient:
             self.fail()
             raise SharedControlError("shared manager unavailable; acquisition stopped") from None
 
+    async def exchange(self, message):
+        import json
+
+        for retries in range(len(BACKPRESSURE_DELAYS_S) + 1):
+            self.check_health()
+            async with self.messages:
+                async with self.session.post(
+                    self.description["endpoint"] + "/control",
+                    json=message,
+                    headers={"Authorization": "Bearer " + self.description["credential"]},
+                    allow_redirects=False,
+                ) as response:
+                    status = response.status
+                    raw = bytearray()
+                    while True:
+                        chunk = await response.content.read(32769 - len(raw))
+                        if not chunk:
+                            break
+                        raw.extend(chunk)
+                        require(len(raw) <= 32768, "oversize control response")
+                    result = json.loads(raw)
+            if status == 200:
+                return result, retries
+            # Only this authority's pre-execution refusal is safe to replay.
+            # In particular 503 can follow a partially committed operation.
+            require(status == 429 and result == {"error": "backpressure"}, "control request failed")
+            self.emit(
+                {
+                    "shared_event": "backpressure",
+                    "session_run_id": self.description["binding"]["run_id"],
+                    "task_attempt_id": self.client_id,
+                    "worker_id": self.worker_id,
+                    "operation": message["operation"],
+                    "refusal_number": retries + 1,
+                }
+            )
+            require(retries < len(BACKPRESSURE_DELAYS_S), "control backpressure exhausted")
+            await asyncio.sleep(BACKPRESSURE_DELAYS_S[retries])
+
     async def start(self):
         # A separate session prevents origin redirects from receiving credentials.
         self.session = aiohttp.ClientSession(
-            timeout=aiohttp.ClientTimeout(total=3),
+            timeout=aiohttp.ClientTimeout(total=RPC_TIMEOUT_S),
             connector=aiohttp.TCPConnector(limit=4, ssl=control_tls_context(self.description)),
         )
         try:

@@ -147,6 +147,12 @@ and grace rules. Its update is
 `C_next=clamp(floor(C * min(1, b*(1+buffer_fraction)/max(d,epsilon)) + headroom))`.
 Headroom is a positive integer, bounded by the final concurrency clamp. This is
 FLOW-DC's specified comparator, not an exact implementation of another project.
+Because the ratio is capped at one, growth is at most `headroom` permits per
+eligible interval; the gradient-only `eligible_increase` branch is not used by
+`ratio-v1`. The engineering defaults give both methods one permit of additive
+growth, while their delay-dependent decrease rules differ. This specified comparison
+does not establish scientific fairness or authorize parameter tuning on evaluation
+results; the advisor protocol remains provisional.
 
 ## Single-mechanism ablations
 

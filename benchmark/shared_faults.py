@@ -18,9 +18,10 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "bin"))
 sys.path.insert(0, str(ROOT))
 from download_batch import Config  # noqa: E402
-from flowdc_shared import Authority, SharedClient, SharedControlError  # noqa: E402
+from flowdc_shared import Authority, RemoteAttempt, SharedClient, SharedControlError  # noqa: E402
 from flowdc_shared_state import SCHEMA, read_private  # noqa: E402
 from flowdc_staging import DOWNLOAD_FILES  # noqa: E402
+from single_download import HTTP_TRACE_CTX, download_via_http_get  # noqa: E402
 
 from benchmark.core.provenance import environment_record  # noqa: E402
 
@@ -233,6 +234,163 @@ async def protocol(output, results):
         authority.ledger.close()
 
 
+async def backpressure(output, results):
+    """Fill all real HTTP handlers, then release them after a genuine 429."""
+    path = output / "backpressure"
+    path.mkdir(mode=0o700)
+
+    class BusyAuthority(Authority):
+        def __init__(self):
+            super().__init__(path / "authority", CONFIG)
+            self.held = asyncio.Event()
+            self.release = asyncio.Event()
+            self.refused = 0
+
+        async def request(self, token, message):
+            if message["operation"] == "heartbeat" and not self.release.is_set():
+                if self.connections == 64:
+                    self.held.set()
+                await self.release.wait()
+            return await super().request(token, message)
+
+        async def handle(self, request):
+            response = await super().handle(request)
+            if response.status == 429:
+                self.refused += 1
+                self.release.set()
+            return response
+
+    authority = BusyAuthority()
+    client = raw_session = None
+    requests = []
+    try:
+        await authority.start()
+        authority.enroll(uuid4().hex, ROWS, path / "descriptor.json")
+        trace = []
+        client = SharedClient(
+            dataclasses.replace(CONFIG, shared_control_file=str(path / "descriptor.json")), trace.append
+        )
+        # Explicit connect keeps the periodic heartbeat from being an extra test
+        # participant. All 64 held requests use actual authenticated HTTP.
+        client.session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=3))
+        await client.rpc("connect", worker_id=client.worker_id, epoch=1)
+        message = dict(
+            schema=SCHEMA,
+            binding=client.description["binding"],
+            client_id=client.client_id,
+            operation="heartbeat",
+            arguments={},
+        )
+        raw_session = aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=3), connector=aiohttp.TCPConnector(limit=64)
+        )
+
+        async def occupy():
+            async with raw_session.post(
+                authority.endpoint + "/control",
+                json=message,
+                headers={"Authorization": "Bearer " + client.description["credential"]},
+            ) as response:
+                assert response.status == 200
+                assert await response.json() == {"status": "open"}
+
+        requests = [asyncio.create_task(occupy()) for _ in range(64)]
+        await asyncio.wait_for(authority.held.wait(), 3)
+        receipt = await client.rpc("heartbeat")
+        await asyncio.gather(*requests)
+        assert receipt == {"status": "open"} and client.failure is None
+        assert authority.refused >= 1
+        assert any(event.get("shared_event") == "backpressure" for event in trace)
+        (path / "trace.json").write_text(json.dumps(trace, indent=2))
+        results.append(
+            dict(
+                case="handler-backpressure",
+                passed=True,
+                held_handlers=64,
+                actual_429=authority.refused,
+                heartbeat_recovered=True,
+            )
+        )
+    finally:
+        authority.release.set()
+        for request in requests:
+            request.cancel()
+        await asyncio.gather(*requests, return_exceptions=True)
+        if raw_session is not None:
+            await raw_session.close()
+        if client is not None:
+            await client.close()
+        await authority.stop()
+        authority.ledger.close()
+
+
+async def admission_deadline(output, results):
+    """Real HTTP hook waits behind an uncertain permit, bounded by acquisition."""
+    path = output / "admission-deadline"
+    path.mkdir(mode=0o700)
+    config = dataclasses.replace(CONFIG, C_init=1, C_max=1, timeout_sec=1)
+    authority = Authority(path / "authority", config)
+    client = origin_runner = None
+    origin_events = []
+
+    async def origin(request):
+        origin_events.append("unexpected arrival")
+        return web.Response(body=b"never expected")
+
+    try:
+        app = web.Application()
+        app.router.add_get("/image", origin)
+        origin_runner = web.AppRunner(app, access_log=None)
+        await origin_runner.setup()
+        site = web.TCPSite(origin_runner, "127.0.0.1", 0)
+        await site.start()
+        url = f"http://127.0.0.1:{site._server.sockets[0].getsockname()[1]}/image"
+        await authority.start()
+        authority.enroll(uuid4().hex, ROWS, path / "descriptor.json")
+        trace = []
+        client = SharedClient(
+            dataclasses.replace(config, shared_control_file=str(path / "descriptor.json")), trace.append
+        )
+        await client.start()
+        permit = await client.rpc("acquire", row_id=ROWS[0], request_id=uuid4().hex, url=url)
+        await client.rpc("dispatch", permit_id=permit["permit_id"], epoch=1)
+        incomplete = observation(status=None)
+        incomplete.update(response_complete=False, reason="cancelled")
+        await client.rpc("complete", permit_id=permit["permit_id"], observation=incomplete)
+        attempt = RemoteAttempt(client, ROWS[1])
+        measurement = {"shared_dispatch": attempt.dispatch, "shared_headers": attempt.headers}
+        token = HTTP_TRACE_CTX.set(measurement)
+        try:
+            async with aiohttp.ClientSession() as session:
+                receipt = await asyncio.wait_for(download_via_http_get(session, url, 1), 3)
+            assert receipt == (None, 408, "Request Timeout", None)
+            assert measurement["failure_kind"] == "admission" and not measurement["latency_eligible"]
+            assert not origin_events and attempt.permit is None
+        finally:
+            HTTP_TRACE_CTX.reset(token)
+            await attempt.close(measurement)
+        remaining = authority.ledger.outstanding(authority.ledger.current())
+        assert len(remaining) == 1 and remaining[0]["state"] == "uncertain"
+        (path / "trace.json").write_text(json.dumps(trace, indent=2))
+        (path / "ledger.json").write_text(json.dumps(authority.ledger.export(), indent=2))
+        results.append(
+            dict(
+                case="admission-deadline",
+                passed=True,
+                origin_arrivals=0,
+                status=408,
+                retained_uncertain_permits=1,
+            )
+        )
+    finally:
+        if client is not None:
+            await client.close()
+        await authority.stop()
+        authority.ledger.close()
+        if origin_runner is not None:
+            await origin_runner.cleanup()
+
+
 async def main(output):
     output.mkdir(mode=0o700, parents=True)
     (output / "environment.json").write_text(json.dumps(environment_record(ROOT), indent=2))
@@ -241,6 +399,8 @@ async def main(output):
     await lost_ack(output, results, "acquire")
     await lost_ack(output, results, "complete")
     await protocol(output, results)
+    await backpressure(output, results)
+    await admission_deadline(output, results)
     after = sources()
     assert before == after, "source changed during probe"
     result = dict(

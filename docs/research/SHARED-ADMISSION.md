@@ -58,6 +58,15 @@ Fresh-window dispatch ages use the manager's recorded dispatch time. Control RPC
 and instrumentation overhead are part of the acquisition path and must be included
 in later calibration; this is not a transport RTT measurement or an efficacy claim.
 
+Shared acquisition requires a finite positive `timeout` (default 30 seconds).
+The existing total acquisition timer covers local Retry-After waiting, both remote
+acquire/dispatch loops, connector waits, redirect hops and the body. An admission
+timeout is recorded as a failed attempt without a latency sample or remote overload
+claim; retries consume the existing finite `max_retry_attempts` budget. A timeout
+does not settle previously dispatched uncertain work. Local legacy configurations
+retain their existing zero/negative timeout meaning; shared configurations reject it
+before loading input or handling output.
+
 ## Loss, restart and fencing
 
 There are no expiring permits. An expired heartbeat marks a client uncertain and
@@ -65,6 +74,15 @@ prevents its new admissions, while its permits continue consuming aggregate
 capacity. A manager/channel failure cancels the client's active acquisition tasks
 and leaves uncertain work recorded. The worker never creates an independent full
 capacity controller as fallback.
+
+Heartbeats run every 0.5 seconds; a control RPC has one 3-second deadline including
+its four-message client queue, transport and any backpressure retries. Five seconds
+without a processed heartbeat fences that client. This is a conservative failure
+detector, not a promise that every live client survives arbitrary disk, event-loop
+or network stalls. It deliberately does not reopen an uncertain client in place.
+Authenticated late completions and closure still drain acknowledged work; new work
+requires the documented recovery/new-attempt path. A false suspicion may stop useful
+work but cannot manufacture free origin capacity.
 
 Reopening a ledger fences all new admission. Old authenticated completions and
 closure acknowledgements may drain it. Owner recovery requires every permit and
@@ -102,6 +120,15 @@ capacity. The 256-row ceiling is currently a limit of this engineering API, not 
 its fixture. This increment is not manuscript-scale acquisition. These bounds are
 not advisor-selected parameters. Synchronous RPC/transaction overhead still needs
 native calibration even after removing growing whole-permit serialization.
+
+The manager's handler-limit 429 (`{"error":"backpressure"}`) is returned before
+operation execution. The client retries only that complete refusal, at most three
+times after 0.05/0.1/0.2-second waits, within the same 3-second RPC deadline. Retries
+reuse the exact envelope and are retained in the control trace. Other responses,
+including authentication refusal (403), storage/session failure (503), malformed
+replies and lost acknowledgements, remain fatal and are not automatically replayed.
+Exhausted backpressure stops the client conservatively. Control-channel 429 handling
+is separate from the origin's mandatory Retry-After embargo.
 
 `flowdc_staging.py` is the declarative acquisition-module closure used by maintained
 TaskVine staging, source hashing and committed guest source packaging. Historical
@@ -155,7 +182,9 @@ The additional explicit transport-fault entrypoints use the same research depend
 `shared_faults.py` aborts actual TCP replies after durable acquire/incomplete
 completion, tests simultaneous permits, forged credentials/identity/row scope,
 idempotent reconnect, duplicate/reordered completion and Retry-After, then reopens
-a fenced ledger. `shared_restart.py` kills an actual child manager while an origin
+a fenced ledger. It also occupies all 64 actual HTTP handlers to exercise 429
+backpressure recovery and verifies an acquisition timeout behind a deliberately
+uncertain permit without an origin request. `shared_restart.py` kills an actual child manager while an origin
 request is held, opens the same ledger in a new manager process, verifies admission
 is fenced, then acknowledges the actual completed response. It preserves the epoch
 and never automatically recycles outstanding work. Child processes are owned and

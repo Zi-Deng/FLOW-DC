@@ -624,6 +624,9 @@ and offline topology evidence. The explicit
 [shared-origin admission path](docs/research/SHARED-ADMISSION.md) adds authenticated
 manager permits through `--shared_control_file`; its private descriptor is generated
 by the manager and its contents must not be copied into public configs.
+Shared runs require a finite positive `--timeout` (default 30 seconds), covering
+admission waits as well as HTTP. Transient manager backpressure has bounded retries;
+lost acknowledgements and uncertain origin work remain conservatively accounted.
 
 Run the focused regression checks with the project environment:
 
