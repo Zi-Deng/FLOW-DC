@@ -4,18 +4,15 @@ This module never reads source bytes from the working tree or contacts a remote.
 Selected source remains operator-trusted code; hashes establish provenance only.
 """
 
+import ast
 import hashlib
 import os
 import re
 import subprocess
 from pathlib import Path
 
-SOURCE_PATHS = (
-    "bin/TaskvineFLOWDC.py",
-    "bin/download_batch.py",
-    "bin/single_download.py",
-    "bin/flowdc_integrity.py",
-)
+from flowdc_staging import HISTORICAL_REQUIRED, SOURCE_PATHS
+
 MAX_SOURCE_BYTES = 4 * 1024 * 1024
 GIT_TIMEOUT_SECONDS = 10
 
@@ -54,6 +51,36 @@ def _git(repository, *arguments):
     return result.stdout
 
 
+def dependency_required(path, files):
+    """Resolve Python imports and explicit staged filenames, not comment words."""
+    package = Path(path).name == "__init__.py"
+    module = str(Path(path).parent if package else Path(path).with_suffix("")).replace("/", ".")
+    if module.startswith("bin."):
+        module = module[4:]
+    for source_path, content in files.items():
+        try:
+            tree = ast.parse(content)
+        except SyntaxError:
+            raise SourceError("source_entrypoint_invalid") from None
+        for node in ast.walk(tree):
+            names = []
+            if isinstance(node, ast.Import):
+                names = [name.name for name in node.names]
+            elif isinstance(node, ast.ImportFrom):
+                parent = Path(source_path).parent.parts
+                prefix = ".".join(parent[: len(parent) - node.level + 1]) + "." if node.level else ""
+                names = [prefix + (node.module or "")]
+                names.extend(names[0].rstrip(".") + "." + name.name for name in node.names)
+            elif isinstance(node, ast.Constant) and node.value == Path(path).name and not package:
+                return True  # Declarative worker staging closure.
+            # bin/ is staged as the runtime import root. Apply the same mapping
+            # to resolved relative imports; this does not enable package execution.
+            names = [name.removeprefix("bin.") for name in names]
+            if any(name == module or (package and name.startswith(module + ".")) for name in names):
+                return True
+    return False
+
+
 def read_source(repository, revision):
     """Return (manifest, files) for an explicit local commit ID.
 
@@ -84,9 +111,9 @@ def read_source(repository, revision):
     total = 0
     for path in SOURCE_PATHS:
         tree = _git(repository, "ls-tree", "-z", commit, "--", path)
-        if path == "bin/flowdc_integrity.py" and not tree:
+        if path not in HISTORICAL_REQUIRED and not tree:
             # Historical schema-1 source commits predate this dependency.
-            if any(b"flowdc_integrity" in content for content in files.values()):
+            if dependency_required(path, files):
                 raise SourceError("source_entrypoint_invalid")
             continue
         try:
@@ -100,11 +127,14 @@ def read_source(repository, revision):
             raise SourceError("source_entrypoint_invalid") from None
         size = int(_git(repository, "cat-file", "-s", object_id))
         total += size
-        if size < 1 or total > MAX_SOURCE_BYTES:
+        if size < 0 or (size == 0 and Path(path).name != "__init__.py") or total > MAX_SOURCE_BYTES:
             raise SourceError("source_size_limit")
         content = _git(repository, "cat-file", "blob", object_id)
         if len(content) != size:
             raise SourceError("source_size_changed")
         files[path] = content
         entries[path] = {"bytes": size, "sha256": hashlib.sha256(content).hexdigest()}
+    for path in set(SOURCE_PATHS) - set(files):
+        if dependency_required(path, files):
+            raise SourceError("source_entrypoint_invalid")
     return {"schema_version": 1, "commit": commit, "files": entries}, files

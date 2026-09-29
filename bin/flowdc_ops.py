@@ -1219,16 +1219,27 @@ def validate_context(value):
 
 
 def validate_spec(path):
-    spec = fields(read_document(path), ("schema_version", "context", "vms"), name="pilot specification")
-    version(spec)
+    return validate_spec_value(read_document(path))
+
+
+def validate_spec_value(value):
+    from flowdc_topology import roles as topology_roles
+
+    spec = fields(
+        value, ("schema_version", "context", "vms"), optional=("topology",), name="pilot specification"
+    )
+    try:
+        selected_roles = topology_roles(spec)
+    except (ValueError, KeyError, TypeError, AttributeError):
+        raise schema_error("pilot specification") from None
     spec["context"] = validate_context(spec["context"])
-    if not isinstance(spec["vms"], list) or len(spec["vms"]) != 3:
+    if not isinstance(spec["vms"], list) or len(spec["vms"]) != len(selected_roles):
         raise schema_error("pilot specification")
     roles, ids = set(), set()
     now = datetime.now(UTC)
     for vm in spec["vms"]:
         fields(vm, ("role", "id", "active_seconds", "rate"))
-        if not isinstance(vm["role"], str) or vm["role"] not in ("manager", "origin", "worker"):
+        if not isinstance(vm["role"], str) or vm["role"] not in selected_roles:
             raise schema_error("pilot specification")
         vm["id"] = uuid_value(vm["id"])
         if vm["role"] in roles or vm["id"] in ids:
@@ -1418,7 +1429,7 @@ def plan(args):
             "Resolve named prerequisites using a fresh complete inventory and verified per-VM rates with source, time and matching flavor.",
             "This validates a bounded specification only. No resource was activated, and guest/network readiness is not inferred.",
             "Activation is not guaranteed. Stopping guest services does not establish that billing stops; verify provider lifecycle/billing rules manually.",
-            "pilot lifecycle commands require separate explicit preparation and operational authorization; guest deployment and experiments are not implemented.",
+            "pilot lifecycle commands require explicit preparation and operational authorization; the separate flowdc_experiment.py route prepares bounded guest experiments offline before an authorized run.",
         ],
         data={
             "validated": not pending,
@@ -1498,7 +1509,7 @@ def parser():
     inv.add_argument("--profile", required=True)
     inv.add_argument("--output")
     pilot = commands.add_parser(
-        "plan", help="Validate an offline three-VM pilot specification.", allow_abbrev=False
+        "plan", help="Validate an offline versioned 3/4/6-VM pilot specification.", allow_abbrev=False
     )
     pilot.add_argument("--spec", required=True)
     pilot.add_argument("--inventory", required=True)

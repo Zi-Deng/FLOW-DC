@@ -7,6 +7,7 @@ from pathlib import Path
 import flowdc_ops as ops
 from flowdc_pilot import AccountingError, ClockSample
 from flowdc_pilot_journal import allowance, failure, fresh_network
+from flowdc_topology import action_lead_seconds, selected_ids, selection
 
 POLL_SECONDS = 2
 # Allow three 20s observation + 20s mutation steps, a preceding 20s call,
@@ -67,35 +68,49 @@ def heartbeat_fresh(record, now, *, maximum_age=HEARTBEAT_SECONDS):
         return False
 
 
-def request(journal, command, *, window=1800, inspection=True, clock=sample_clock):
+def request(journal, command, *, window=1800, inspection=True, clock=sample_clock, worker_ids=None):
     now = clock()
     if command == "start" and not journal.supervisor_locked():
         raise failure("supervisor_not_ready")
 
     def update(record):
         if command == "start":
+            try:
+                chosen = selection(record["spec"], worker_ids)
+            except ValueError:
+                raise failure("invalid_worker_selection", invalid=True) from None
+            run_record = dict(record, selection=chosen) if record["schema_version"] != 1 else record
+            ids = selected_ids(run_record)
             if not heartbeat_fresh(record, now) or record["service"] is None:
                 raise failure("supervisor_not_ready")
             if record["desired"] == "run":
-                if record["window"] != {"seconds": window, "inspection": inspection}:
+                if (
+                    record["window"] != {"seconds": window, "inspection": inspection}
+                    or selected_ids(record) != ids
+                ):
                     raise failure("run_already_requested")
                 return
             if record["desired"] != "idle" or any(
-                allowance(vm["account"]).obligation for vm in record["vms"].values()
+                allowance(vm["account"]).obligation or allowance(vm["account"]).uncertain
+                for vm in record["vms"].values()
             ):
                 raise failure("cleanup_outstanding")
-            for vm in record["vms"].values():
+            for vm_id in ids:
+                vm = record["vms"][vm_id]
                 allowance(vm["account"]).activation_intent(now, window_seconds=window, inspection=inspection)
             if record["network"]["rolled_back"]:
                 journal.event(record, "network_history", record["network"])
                 record["network"] = fresh_network()
+            if record["schema_version"] != 1:
+                record["selection"] = chosen
             record["window"] = {"seconds": window, "inspection": inspection}
             record["desired"] = "run"
             record["checkpoint"] = None
-            for vm in record["vms"].values():
+            for vm_id in ids:
+                vm = record["vms"][vm_id]
                 vm["phase"] = "pending"
                 vm["activation_seen"] = False
-            journal.event(record, "start_requested", record["window"])
+            journal.event(record, "start_requested", {**record["window"], "selected_ids": list(ids)})
         elif command in ("stop", "reconcile"):
             if (
                 command == "stop"
@@ -158,7 +173,8 @@ class Supervisor:
                 vm["account"] = asdict(account)
                 if account.obligation and (
                     account.uncertain
-                    or account.consumed + ACTION_LEAD_SECONDS >= account.shutdown_at_consumed
+                    or account.consumed + action_lead_seconds(len(selected_ids(record)))
+                    >= account.shutdown_at_consumed
                 ):
                     record["desired"] = "stop"
             if record["desired"] == "stop":
@@ -196,8 +212,9 @@ class Supervisor:
         try:
             if record["desired"] == "stop":
                 return self.cleanup(record)
-            # Charge setup as well as activation, for all three selected VMs.
-            if all(vm["phase"] == "pending" for vm in record["vms"].values()) and not any(
+            # Charge setup only to selected UUID accounts. Never drop other obligations.
+            ids = selected_ids(record)
+            if all(record["vms"][key]["phase"] == "pending" for key in ids) and not any(
                 allowance(vm["account"]).obligation for vm in record["vms"].values()
             ):
                 # Fresh provider context and selected states are mandatory before intent.
@@ -206,7 +223,8 @@ class Supervisor:
                 def intent(current):
                     if current["desired"] != "run":
                         return
-                    for vm in current["vms"].values():
+                    for vm_id in selected_ids(current):
+                        vm = current["vms"][vm_id]
                         vm["account"] = asdict(
                             allowance(vm["account"]).activation_intent(
                                 self.clock(),
@@ -214,7 +232,7 @@ class Supervisor:
                                 inspection=current["window"]["inspection"],
                             )
                         )
-                    self.journal.event(current, "activation_intent", {"ids": list(current["vms"])})
+                    self.journal.event(current, "activation_intent", {"ids": list(selected_ids(current))})
 
                 self.journal.change(intent)
                 return
@@ -222,7 +240,7 @@ class Supervisor:
                 self.provider.network_step(self.journal, rollback=False)
                 return
             ordered = sorted(
-                record["vms"].items(),
+                ((key, record["vms"][key]) for key in ids),
                 key=lambda item: (
                     item[1]["phase"] != "pending",
                     (item[1]["observed"] or {"clock": {"utc": 0}})["clock"]["utc"],

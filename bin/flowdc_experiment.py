@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Prepare, explicitly execute and recover bounded three-role FLOW-DC experiments."""
+"""Prepare, explicitly execute and recover bounded selected-topology FLOW-DC experiments."""
 
 import argparse
 import os
+import secrets
 import signal
 import sys
 import tarfile
@@ -14,7 +15,6 @@ import flowdc_ops as ops
 from flowdc_experiment_artifacts import bundle, members
 from flowdc_experiment_data import (
     LIMIT,
-    ROLES,
     ExperimentError,
     Store,
     case_config,
@@ -33,6 +33,8 @@ from flowdc_experiment_process import CANCEL_CHECK, check_cancel, execute
 from flowdc_experiment_source import SourceError, read_source
 from flowdc_experiment_transport import Controller, Transport, binding, clean, ready, remaining, ssh_preflight
 from flowdc_pilot_journal import Journal
+from flowdc_staging import WORKER_FILES
+from flowdc_topology import action_lead_seconds, is_worker, selected_roles, selection
 
 
 def prepare(path):
@@ -40,6 +42,15 @@ def prepare(path):
     spec = specification(parse(raw_spec))
     record = Journal(spec["state_root"]).read()
     require(record["registration_id"] == spec["registration_id"], "registration_changed")
+    if record["spec"]["schema_version"] == 2:
+        record["selection"] = selection(record["spec"], spec.get("worker_ids"))
+    else:
+        require("worker_ids" not in spec, "versioned_registry_required")
+    require(
+        spec["bounds"]["stop_after_seconds"]
+        <= spec["bounds"]["window_seconds"] - 600 - action_lead_seconds(len(selected_roles(record))),
+        "selected_topology_stop_bound",
+    )
     source, files = read_source(spec["source"]["repository"], spec["source"]["revision"])
     integrity_source = b"import flowdc_integrity" in files["bin/download_batch.py"]
     cases = []
@@ -52,6 +63,15 @@ def prepare(path):
         files[f"configs/{case['name']}.json"] = encode(config)
     helper = Path(__file__).with_name("flowdc_experiment_guest.py").read_bytes()
     files["guest.py"] = helper
+    cohorts = {}
+    if "distributed" in spec:
+        from flowdc_vine_cohort import cohort
+
+        require("bin/flowdc_vine_cohort.py" in files, "selected_source_has_no_owned_cohort")
+        cohorts = {
+            case["name"]: cohort(len(selected_roles(record)) - 2, owner="prepared-guest-service-v1")
+            for case in cases
+        }
     files["guest.json"] = encode(
         {
             "python": spec["guest"]["python"],
@@ -59,17 +79,41 @@ def prepare(path):
             "service_mode": spec["guest"]["service_mode"],
             "bounds": spec["bounds"],
             "cases": [c["name"] for c in cases],
-            "addresses": {role: record["access"]["interfaces"][role]["fixed_ip"] for role in ROLES},
+            **(
+                {"distributed": spec["distributed"], "worker_cohorts": cohorts}
+                if "distributed" in spec
+                else {}
+            ),
+            "addresses": {
+                role: record["access"]["interfaces"][role]["fixed_ip"] for role in selected_roles(record)
+            },
         }
     )
-    if spec["fixture"]:
+    research_truth = None
+    if "distributed" in spec:
+        from flowdc_experiment_research import prepare as prepare_research
+
+        require(
+            all(case["config"].get("control_method") and case["config"]["enable_paarc"] for case in cases),
+            "explicit_shared_method_required",
+        )
+        require(
+            "bin/flowdc_vine.py" in files and "bin/flowdc_experiment_research.py" in files,
+            "selected_source_has_no_shared_profile",
+        )
+        generated, research_truth = prepare_research(spec["distributed"], record)
+        files.update(generated)
+        files["native-password"] = (secrets.token_hex(32) + "\n").encode()
+        partitions = {case["name"]: [] for case in cases}
+    elif spec["fixture"]:
         require(
             len(cases) == 2 and {case["config"]["enable_paarc"] for case in cases} == {False, True},
             "fixture_requires_both_paarc_modes",
         )
         require(all(case["config"].get("url_col", "url") == "url" for case in cases), "fixture_url_column")
         generated, partitions = generate(
-            record["access"]["interfaces"]["origin"]["fixed_ip"], [case["name"] for case in cases],
+            record["access"]["interfaces"]["origin"]["fixed_ip"],
+            [case["name"] for case in cases],
             preserve_identity=integrity_source,
         )
         files.update(generated)
@@ -103,6 +147,7 @@ def prepare(path):
 
                     import polars as pl
                     from flowdc_integrity import stamp_frame
+
                     frame = stamp_frame(pl.read_parquet(io.BytesIO(raw)), digest(raw))
                     selected["row_ids"] = frame["__key__"].to_list()
                 if "expected_sha256" in part:
@@ -119,6 +164,11 @@ def prepare(path):
         "known_hosts_sha256": ssh_preflight(spec["ssh"], binding(record)),
         "cases": cases,
         "partitions": partitions,
+        **(
+            {"research_truth": research_truth, "worker_cohorts": cohorts}
+            if research_truth is not None
+            else {}
+        ),
         "files": {},
         "bundle_sha256": digest(archive),
         "original_spec_sha256": digest(raw_spec),
@@ -266,29 +316,69 @@ def collect_outputs(store, selected, manifest, state, transport, deadline):
         name = case["name"]
         try:
             raw = acquire(name, "manager", name)
-            reports = validate(raw, "case", case=case, partitions=manifest["partitions"][name])
+            reports = (
+                validate(
+                    raw,
+                    "distributed",
+                    case=case,
+                    truth=manifest["research_truth"],
+                    source={
+                        name: manifest["source"]["files"]["bin/" + name]["sha256"] for name in WORKER_FILES
+                    },
+                    environment=manifest["spec"]["distributed"]["environment_sha256"],
+                    cohort=manifest["worker_cohorts"][name],
+                )
+                if "research_truth" in manifest
+                else validate(raw, "case", case=case, partitions=manifest["partitions"][name])
+            )
             store.save(selected, f"validation-{name}.json", reports)
             state["collected"][name]["valid"] = True
             save(store, selected, state)
         except Exception as exc:
             failures.append(error_code(exc))
     for case in manifest["cases"]:
-        key = case["name"] + "-worker"
-        try:
-            worker_raw = acquire(key, "worker", case["name"])
-            validate(worker_raw, "worker")
-            state["collected"][key]["valid"] = True
-            save(store, selected, state)
-        except Exception as exc:
-            failures.append(error_code(exc))
-    if manifest["spec"]["fixture"]:
+        for role in selected_roles(manifest["binding"]):
+            if not is_worker(role):
+                continue
+            key = case["name"] + "-" + role
+            try:
+                worker_raw = acquire(key, role, case["name"])
+                extra = {}
+                if "research_truth" in manifest:
+                    workers = [r for r in selected_roles(manifest["binding"]) if is_worker(r)]
+                    extra = {
+                        "cohort": manifest["worker_cohorts"][case["name"]],
+                        "slot": workers.index(role),
+                        "case": case["name"],
+                    }
+                validate(worker_raw, "worker", role=role, **extra)
+                state["collected"][key]["valid"] = True
+                save(store, selected, state)
+            except Exception as exc:
+                failures.append(error_code(exc))
+    if "research_truth" in manifest:
+        for case in manifest["cases"]:
+            key = "origin-" + case["name"]
+            try:
+                raw = acquire(key, "origin", case["name"])
+                report = validate(raw, "controlled-origin")
+                store.save(selected, "validation-" + key + ".json", report)
+                state["collected"][key]["valid"] = True
+                save(store, selected, state)
+            except Exception as exc:
+                failures.append(error_code(exc))
+    elif manifest["spec"]["fixture"]:
         try:
             raw = acquire("origin", "origin")
             report = validate(
                 raw,
-                "origin",
+                "controlled-origin" if "research_truth" in manifest else "origin",
                 cases=manifest["cases"],
-                worker=manifest["binding"]["access"]["interfaces"]["worker"]["fixed_ip"],
+                worker=[
+                    manifest["binding"]["access"]["interfaces"][role]["fixed_ip"]
+                    for role in selected_roles(manifest["binding"])
+                    if is_worker(role)
+                ],
             )
             store.save(selected, "validation-origin.json", report)
             state["collected"]["origin"]["valid"] = True
@@ -407,10 +497,13 @@ def run(store, selected, manifest, state):
             "insufficient_work_time",
         )
         addresses = controller.addresses(min(bounds["phase_seconds"], work_end - time.monotonic()))
+        if "research_truth" in manifest:
+            proof = controller.containment(min(bounds["phase_seconds"], work_end - time.monotonic()))
+            store.write(selected, "native-network-containment.json", encode(proof))
         state["addresses"] = addresses
         save(store, selected, state, "deploying")
         transport = Transport(store, selected, manifest, addresses)
-        for role in ROLES:
+        for role in selected_roles(manifest["binding"]):
             environment = transport.call(
                 role,
                 "probe",
@@ -422,11 +515,18 @@ def run(store, selected, manifest, state):
                     manifest["spec"]["guest"]["worker"],
                     bounds["disk_mb"],
                     manifest["spec"]["guest"]["service_mode"],
+                    *(("research",) if "research_truth" in manifest else ()),
                 ),
             )
+            if "research_truth" in manifest:
+                packages = environment["packages"]
+                if role == "manager":
+                    require(packages.get("ndcctools.taskvine") == "7.17.2", "research_runtime_mismatch")
+                elif is_worker(role):
+                    require("7.17.2" in packages.get("vine_worker", "").split(), "research_runtime_mismatch")
             store.write(selected, f"environment-{role}.json", encode(environment))
         raw = store.read(selected, "bundle.tar")
-        for role in ROLES:
+        for role in selected_roles(manifest["binding"]):
             transport.call(
                 role,
                 "deploy",
@@ -450,7 +550,7 @@ def run(store, selected, manifest, state):
                 extra=(max(1, int(seconds)),),
             )
 
-        if manifest["spec"]["fixture"]:
+        if manifest["spec"]["fixture"] and "research_truth" not in manifest:
             launch("origin", "all", work_end - time.monotonic() + bounds["collect_seconds"])
         save(store, selected, state, "running")
         for index, case in enumerate(manifest["cases"]):
@@ -462,8 +562,12 @@ def run(store, selected, manifest, state):
             )
             require(case_budget >= bounds["min_case_seconds"], "insufficient_work_time")
             end = time.monotonic() + case_budget
+            if "research_truth" in manifest:
+                launch("origin", case["name"], end - time.monotonic() + bounds["collect_seconds"])
             launch("manager", case["name"], end - time.monotonic())
-            launch("worker", case["name"], end - time.monotonic())
+            for role in selected_roles(manifest["binding"]):
+                if is_worker(role):
+                    launch(role, case["name"], end - time.monotonic())
             while True:
                 require(time.monotonic() < end, "case_deadline_expired")
                 result = transport.call(
@@ -482,12 +586,19 @@ def run(store, selected, manifest, state):
                 require(time.monotonic() < end, "case_deadline_expired")
                 time.sleep(min(1, max(0, end - time.monotonic())))
             require(time.monotonic() < work_end, "work_deadline_expired")
-            transport.call("worker", "stop", case["name"], seconds=min(10, work_end - time.monotonic()))
-            next(s for s in state["services"] if s["role"] == "worker" and s["case"] == case["name"])[
-                "stopped"
-            ] = True
+            for role in selected_roles(manifest["binding"]):
+                if is_worker(role):
+                    transport.call(role, "stop", case["name"], seconds=min(10, work_end - time.monotonic()))
+                    next(s for s in state["services"] if s["role"] == role and s["case"] == case["name"])[
+                        "stopped"
+                    ] = True
+            if "research_truth" in manifest:
+                transport.call("origin", "stop", case["name"], seconds=min(10, work_end - time.monotonic()))
+                next(s for s in state["services"] if s["role"] == "origin" and s["case"] == case["name"])[
+                    "stopped"
+                ] = True
             save(store, selected, state)
-        if manifest["spec"]["fixture"]:
+        if manifest["spec"]["fixture"] and "research_truth" not in manifest:
             transport.call(
                 "origin", "stop", seconds=min(10, start + bounds["stop_after_seconds"] - time.monotonic())
             )
@@ -585,9 +696,14 @@ def operate_locked(args, store, selected):
     if args.command == "stop":
         store.claim(selected)
     required = [case["name"] for case in manifest["cases"]] + [
-        case["name"] + "-worker" for case in manifest["cases"]
+        case["name"] + "-" + role
+        for case in manifest["cases"]
+        for role in selected_roles(manifest["binding"])
+        if is_worker(role)
     ]
-    if manifest["spec"]["fixture"]:
+    if "research_truth" in manifest:
+        required.extend("origin-" + case["name"] for case in manifest["cases"])
+    elif manifest["spec"]["fixture"]:
         required.append("origin")
     if args.command == "collect" and all(state["collected"].get(key, {}).get("valid") for key in required):
         collect_outputs(

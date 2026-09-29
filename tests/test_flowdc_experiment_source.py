@@ -4,12 +4,14 @@ import hashlib
 import importlib.util
 import os
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
 MODULE = Path(__file__).resolve().parents[1] / "bin/flowdc_experiment_source.py"
+sys.path.insert(0, str(MODULE.parent))
 SPEC = importlib.util.spec_from_file_location("flowdc_experiment_source", MODULE)
 source = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(source)
@@ -27,6 +29,7 @@ class SourceTests(unittest.TestCase):
         self.contents = {}
         for path in source.SOURCE_PATHS:
             self.contents[path] = f"# committed {path}\n".encode()
+            (self.repo / path).parent.mkdir(parents=True, exist_ok=True)
             (self.repo / path).write_bytes(self.contents[path])
         (self.repo / "private-key").write_text("excluded sentinel")
         self.commit = self.commit_all()
@@ -75,6 +78,15 @@ class SourceTests(unittest.TestCase):
                 self.assertRaisesRegex(source.SourceError, "source_commit_required"),
             ):
                 source.read_source(self.repo, revision)
+
+    def test_relative_import_cannot_omit_committed_dependency(self):
+        (self.repo / "bin/flowdc_methods.py").unlink()
+        for statement in ("from . import flowdc_methods", "from .flowdc_methods import MethodConfig"):
+            with self.subTest(statement=statement):
+                (self.repo / "bin/download_batch.py").write_text(statement + "\n")
+                broken = self.commit_all()
+                with self.assertRaisesRegex(source.SourceError, "source_entrypoint_invalid"):
+                    source.read_source(self.repo, broken)
 
     def test_hex_named_refs_do_not_override_object_ids(self):
         (self.repo / source.SOURCE_PATHS[0]).write_text("later")

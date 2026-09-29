@@ -1,16 +1,12 @@
 """Main benchmark orchestrator."""
 
-import asyncio
 import platform
-import shutil
 import sys
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
 import psutil
-import yaml
 
 from .flowdc_adapter import FlowDCAdapter, FlowDCConfig
 from .img2dataset_adapter import Img2DatasetAdapter, Img2DatasetConfig
@@ -24,20 +20,18 @@ class BenchmarkConfig:
     # Dataset
     dataset_path: str
     url_column: str = "url"
-    label_column: Optional[str] = None
+    label_column: str | None = None
 
     # Output
     output_base_dir: str = "benchmark/results"
-    run_name: Optional[str] = None
+    run_name: str | None = None
 
     # Tools to benchmark
     flowdc_enabled: bool = True
-    flowdc_variants: list[str] = field(
-        default_factory=lambda: ["paarc_enabled", "paarc_disabled"]
-    )
+    flowdc_variants: list[str] = field(default_factory=lambda: ["paarc_enabled", "paarc_disabled"])
     img2dataset_enabled: bool = True
     img2dataset_processes: int = 1
-    img2dataset_threads: Optional[int] = None  # None = use concurrency_levels / processes
+    img2dataset_threads: int | None = None  # None = use concurrency_levels / processes
 
     # Concurrency levels
     concurrency_levels: list[int] = field(default_factory=lambda: [64, 128, 256])
@@ -61,6 +55,8 @@ class BenchmarkConfig:
     @classmethod
     def from_yaml(cls, path: str) -> "BenchmarkConfig":
         """Load configuration from YAML file."""
+        import yaml
+
         with open(path) as f:
             data = yaml.safe_load(f)
 
@@ -115,7 +111,7 @@ class BenchmarkRunner:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         run_name = config.run_name or "benchmark"
         self.output_dir = Path(config.output_base_dir) / f"{run_name}_{timestamp}"
-        self.output_dir.mkdir(parents=True, exist_ok=True)
+        self.output_dir.mkdir(parents=True, exist_ok=False)
 
         # Count URLs in dataset
         self.dataset_urls = self._count_urls()
@@ -202,9 +198,7 @@ class BenchmarkRunner:
             self._log(f"  {run_label}...")
 
             # Create unique output folder for this run
-            output_folder = (
-                self.output_dir / f"flowdc_{variant}_c{concurrency}_r{run_num}"
-            )
+            output_folder = self.output_dir / f"flowdc_{variant}_c{concurrency}_r{run_num}"
 
             config = FlowDCConfig(
                 input_path=self.config.dataset_path,
@@ -233,12 +227,7 @@ class BenchmarkRunner:
                     f"Throughput: {result.throughput_mbps:.2f} MB/s"
                 )
 
-            # Clean up output to save disk space
-            if output_folder.exists():
-                shutil.rmtree(output_folder)
-            overview_path = Path(f"{output_folder}_overview.json")
-            if overview_path.exists():
-                overview_path.unlink()
+            # Native evidence, including warmups and failed runs, is retained.
 
         return results
 
@@ -272,7 +261,7 @@ class BenchmarkRunner:
             self._log(f"  {run_label}...")
 
             # Create unique output folder for this run
-            output_folder = self.output_dir / f"img2dataset_p{processes}t{threads}_r{run_num}"
+            output_folder = self.output_dir / f"img2dataset_c{concurrency}_p{processes}t{threads}_r{run_num}"
 
             config = Img2DatasetConfig(
                 input_path=self.config.dataset_path,
@@ -281,7 +270,7 @@ class BenchmarkRunner:
                 thread_count=threads,
                 processes_count=processes,
                 timeout_sec=self.config.timeout_sec,
-                retries=1,
+                retries=0,
                 resize_mode="no",  # Disable resize for fair comparison
             )
 
@@ -301,9 +290,7 @@ class BenchmarkRunner:
                     f"Throughput: {result.throughput_mbps:.2f} MB/s"
                 )
 
-            # Clean up output to save disk space
-            if output_folder.exists():
-                shutil.rmtree(output_folder)
+            # Native evidence, including warmups and failed runs, is retained.
 
         return results
 

@@ -1,0 +1,441 @@
+{
+  "advisor_decisions": "pending_specific_decisions",
+  "candidates": {
+    "fixed-v1": [
+      {
+        "config": {
+          "C_init": 2,
+          "C_max": 16,
+          "C_min": 2,
+          "control_method": "fixed-v1",
+          "method_options": {}
+        },
+        "id": "tuning-fixed-v1-0",
+        "sha256": "afd4a7428ff14aee8654e6f03e99be9fec5a4e85b1d056ace652ab525feeb067"
+      },
+      {
+        "config": {
+          "C_init": 3,
+          "C_max": 16,
+          "C_min": 2,
+          "control_method": "fixed-v1",
+          "method_options": {}
+        },
+        "id": "tuning-fixed-v1-1",
+        "sha256": "5e863d4593abdef08e73bf2010224f2b020de416aaae8cfdbb14843a7af0813e"
+      },
+      {
+        "config": {
+          "C_init": 4,
+          "C_max": 16,
+          "C_min": 2,
+          "control_method": "fixed-v1",
+          "method_options": {}
+        },
+        "id": "tuning-fixed-v1-2",
+        "sha256": "09e8664bc626cdcdb57b3a020842b27950da3b0297ff67b65e63b758b43913bd"
+      },
+      {
+        "config": {
+          "C_init": 5,
+          "C_max": 16,
+          "C_min": 2,
+          "control_method": "fixed-v1",
+          "method_options": {}
+        },
+        "id": "tuning-fixed-v1-3",
+        "sha256": "3136cafa82fbce9323cd6e2b91aca3b51d28ce17264a5a6cc0dec3366e602b98"
+      },
+      {
+        "config": {
+          "C_init": 6,
+          "C_max": 16,
+          "C_min": 2,
+          "control_method": "fixed-v1",
+          "method_options": {}
+        },
+        "id": "tuning-fixed-v1-4",
+        "sha256": "caf960ad291c3b01c31b82bb67c557da163a109238a03d7c2900de0d7982ff23"
+      },
+      {
+        "config": {
+          "C_init": 8,
+          "C_max": 16,
+          "C_min": 2,
+          "control_method": "fixed-v1",
+          "method_options": {}
+        },
+        "id": "tuning-fixed-v1-5",
+        "sha256": "8c779bb5d4b7430d99df331f960516420d8e6a243c252bd3ec6da7091349ae43"
+      },
+      {
+        "config": {
+          "C_init": 12,
+          "C_max": 16,
+          "C_min": 2,
+          "control_method": "fixed-v1",
+          "method_options": {}
+        },
+        "id": "tuning-fixed-v1-6",
+        "sha256": "2b0fc1740124ee7d96d9fcf761defa82aadefeedaf4dddd98e44e93a8f6b74ac"
+      },
+      {
+        "config": {
+          "C_init": 16,
+          "C_max": 16,
+          "C_min": 2,
+          "control_method": "fixed-v1",
+          "method_options": {}
+        },
+        "id": "tuning-fixed-v1-7",
+        "sha256": "9551fd5e210cce4e331d358f1c40e39cb6072f6a24071bdc7c91697701811710"
+      }
+    ],
+    "gradient-candidate-v1": [
+      {
+        "config": {
+          "C_init": 4,
+          "C_max": 16,
+          "C_min": 2,
+          "control_method": "gradient-candidate-v1",
+          "method_options": {
+            "gradient_tau_s": 0.25,
+            "queue_tau_s": 0.25,
+            "sample_min": 3,
+            "sample_window_s": 1.5
+          }
+        },
+        "id": "tuning-gradient-candidate-v1-0",
+        "sha256": "bd327d8f7b8f20264710a70959c341327a3f8f44a9deb001dd6a49fc5a61a815"
+      },
+      {
+        "config": {
+          "C_init": 4,
+          "C_max": 16,
+          "C_min": 2,
+          "control_method": "gradient-candidate-v1",
+          "method_options": {
+            "gradient_tau_s": 0.25,
+            "queue_tau_s": 0.25,
+            "sample_min": 5,
+            "sample_window_s": 1.5
+          }
+        },
+        "id": "tuning-gradient-candidate-v1-1",
+        "sha256": "48f95f7399736b71db593430610e3eee5d4c7830b4a9a484b221f21a2e9ea7bb"
+      },
+      {
+        "config": {
+          "C_init": 4,
+          "C_max": 16,
+          "C_min": 2,
+          "control_method": "gradient-candidate-v1",
+          "method_options": {
+            "gradient_tau_s": 0.5,
+            "queue_tau_s": 0.5,
+            "sample_min": 3,
+            "sample_window_s": 1.5
+          }
+        },
+        "id": "tuning-gradient-candidate-v1-2",
+        "sha256": "46f97822a01addb184d0915e035d6159fafb4adf48391079dce61dd8fd34cb26"
+      },
+      {
+        "config": {
+          "C_init": 4,
+          "C_max": 16,
+          "C_min": 2,
+          "control_method": "gradient-candidate-v1",
+          "method_options": {
+            "gradient_tau_s": 0.5,
+            "queue_tau_s": 0.5,
+            "sample_min": 5,
+            "sample_window_s": 1.5
+          }
+        },
+        "id": "tuning-gradient-candidate-v1-3",
+        "sha256": "dbd84d18f091f7abd9399a8904cba606648d6da42662607ea6ec9e2a4e68cc83"
+      },
+      {
+        "config": {
+          "C_init": 4,
+          "C_max": 16,
+          "C_min": 2,
+          "control_method": "gradient-candidate-v1",
+          "method_options": {
+            "gradient_tau_s": 1,
+            "queue_tau_s": 1,
+            "sample_min": 3,
+            "sample_window_s": 1.5
+          }
+        },
+        "id": "tuning-gradient-candidate-v1-4",
+        "sha256": "f8429c2a7cf2e61a5d59df8363cd1b06b9b9a23159f084e25dc30fc29b3a81f5"
+      },
+      {
+        "config": {
+          "C_init": 4,
+          "C_max": 16,
+          "C_min": 2,
+          "control_method": "gradient-candidate-v1",
+          "method_options": {
+            "gradient_tau_s": 1,
+            "queue_tau_s": 1,
+            "sample_min": 5,
+            "sample_window_s": 1.5
+          }
+        },
+        "id": "tuning-gradient-candidate-v1-5",
+        "sha256": "dfe5156043f1615503771ab888e6834fd7510d8dac140c639fa43214c629d592"
+      },
+      {
+        "config": {
+          "C_init": 4,
+          "C_max": 16,
+          "C_min": 2,
+          "control_method": "gradient-candidate-v1",
+          "method_options": {
+            "gradient_tau_s": 2,
+            "queue_tau_s": 2,
+            "sample_min": 3,
+            "sample_window_s": 1.5
+          }
+        },
+        "id": "tuning-gradient-candidate-v1-6",
+        "sha256": "47742842d828e532fea0a463ed6c266e8db4cc74b1e0e79ebca221d18587d146"
+      },
+      {
+        "config": {
+          "C_init": 4,
+          "C_max": 16,
+          "C_min": 2,
+          "control_method": "gradient-candidate-v1",
+          "method_options": {
+            "gradient_tau_s": 2,
+            "queue_tau_s": 2,
+            "sample_min": 5,
+            "sample_window_s": 1.5
+          }
+        },
+        "id": "tuning-gradient-candidate-v1-7",
+        "sha256": "f799e8004779add93d3122db86d2cbea5379029204e858202e3e885c10131107"
+      }
+    ],
+    "paarc-base-v2": [
+      {
+        "config": {
+          "C_init": 2,
+          "C_max": 16,
+          "C_min": 2,
+          "control_method": "paarc-base-v2",
+          "method_options": {}
+        },
+        "id": "tuning-paarc-base-v2-0",
+        "sha256": "2a0ceff4cf6b8cfc8b2bf108d7ce22c5637b05bae8a0477ee0d567c4551f6e34"
+      },
+      {
+        "config": {
+          "C_init": 3,
+          "C_max": 16,
+          "C_min": 2,
+          "control_method": "paarc-base-v2",
+          "method_options": {}
+        },
+        "id": "tuning-paarc-base-v2-1",
+        "sha256": "b3b3fd09d2d86af5e4ce025d80e262abd23c7a1d7d3b9c11fff3019f12f4c8b7"
+      },
+      {
+        "config": {
+          "C_init": 4,
+          "C_max": 16,
+          "C_min": 2,
+          "control_method": "paarc-base-v2",
+          "method_options": {}
+        },
+        "id": "tuning-paarc-base-v2-2",
+        "sha256": "e9435fbe580be5c90e353b15d79aadc9cfb78e66087b8498350082a0f1c4a48d"
+      },
+      {
+        "config": {
+          "C_init": 5,
+          "C_max": 16,
+          "C_min": 2,
+          "control_method": "paarc-base-v2",
+          "method_options": {}
+        },
+        "id": "tuning-paarc-base-v2-3",
+        "sha256": "01aa09b4a0bc3134dd6c015c6fcee9b94605599a4ec2ccff78dc50149b1edc5d"
+      },
+      {
+        "config": {
+          "C_init": 6,
+          "C_max": 16,
+          "C_min": 2,
+          "control_method": "paarc-base-v2",
+          "method_options": {}
+        },
+        "id": "tuning-paarc-base-v2-4",
+        "sha256": "4668e446389d0b0eb6550755de89582fbb9fcb66a49c142cea55ac345cb1b139"
+      },
+      {
+        "config": {
+          "C_init": 8,
+          "C_max": 16,
+          "C_min": 2,
+          "control_method": "paarc-base-v2",
+          "method_options": {}
+        },
+        "id": "tuning-paarc-base-v2-5",
+        "sha256": "44c5de504a879c2b3ce888378488b406d3eb70ebfe2b5765ec5666a3ff38bc44"
+      },
+      {
+        "config": {
+          "C_init": 12,
+          "C_max": 16,
+          "C_min": 2,
+          "control_method": "paarc-base-v2",
+          "method_options": {}
+        },
+        "id": "tuning-paarc-base-v2-6",
+        "sha256": "127a09d3521be106c064c0735a8e1aec6477acd45a011b4e41854758aaaa07dc"
+      },
+      {
+        "config": {
+          "C_init": 16,
+          "C_max": 16,
+          "C_min": 2,
+          "control_method": "paarc-base-v2",
+          "method_options": {}
+        },
+        "id": "tuning-paarc-base-v2-7",
+        "sha256": "d65a273475019e9508231b2cf86dd4ec5b793335b547be891bff34a751de6086"
+      }
+    ],
+    "ratio-v1": [
+      {
+        "config": {
+          "C_init": 4,
+          "C_max": 16,
+          "C_min": 2,
+          "control_method": "ratio-v1",
+          "method_options": {
+            "ratio_buffer_fraction": 0.05,
+            "ratio_headroom": 1,
+            "sample_window_s": 1.5
+          }
+        },
+        "id": "tuning-ratio-v1-0",
+        "sha256": "47d8a402dc2ac8765160191461ba1dfb7f0e74eb9e54bb4ea95928b755e5b0f9"
+      },
+      {
+        "config": {
+          "C_init": 4,
+          "C_max": 16,
+          "C_min": 2,
+          "control_method": "ratio-v1",
+          "method_options": {
+            "ratio_buffer_fraction": 0.05,
+            "ratio_headroom": 2,
+            "sample_window_s": 1.5
+          }
+        },
+        "id": "tuning-ratio-v1-1",
+        "sha256": "ec48d2860dc21cd05e640c1d943387f782793e1d5ccb2425e7861d23653e17d9"
+      },
+      {
+        "config": {
+          "C_init": 4,
+          "C_max": 16,
+          "C_min": 2,
+          "control_method": "ratio-v1",
+          "method_options": {
+            "ratio_buffer_fraction": 0.1,
+            "ratio_headroom": 1,
+            "sample_window_s": 1.5
+          }
+        },
+        "id": "tuning-ratio-v1-2",
+        "sha256": "48d6484fc5ef47352c43b741fd17f1e03dc47c00ca5fc82b76a9c50431773afb"
+      },
+      {
+        "config": {
+          "C_init": 4,
+          "C_max": 16,
+          "C_min": 2,
+          "control_method": "ratio-v1",
+          "method_options": {
+            "ratio_buffer_fraction": 0.1,
+            "ratio_headroom": 2,
+            "sample_window_s": 1.5
+          }
+        },
+        "id": "tuning-ratio-v1-3",
+        "sha256": "5f0cb9df9420a9ee57b3af1357d66fb9ee4becc518c99c742f604a52a63804ca"
+      },
+      {
+        "config": {
+          "C_init": 4,
+          "C_max": 16,
+          "C_min": 2,
+          "control_method": "ratio-v1",
+          "method_options": {
+            "ratio_buffer_fraction": 0.2,
+            "ratio_headroom": 1,
+            "sample_window_s": 1.5
+          }
+        },
+        "id": "tuning-ratio-v1-4",
+        "sha256": "ad983df4430599d090a0edbb05783e0b46a1c9c43804b74ee6dcc7111660dc04"
+      },
+      {
+        "config": {
+          "C_init": 4,
+          "C_max": 16,
+          "C_min": 2,
+          "control_method": "ratio-v1",
+          "method_options": {
+            "ratio_buffer_fraction": 0.2,
+            "ratio_headroom": 2,
+            "sample_window_s": 1.5
+          }
+        },
+        "id": "tuning-ratio-v1-5",
+        "sha256": "46d97716f18fdb289450ea232c904c464606031192068382986fc935dbbfcb3a"
+      },
+      {
+        "config": {
+          "C_init": 4,
+          "C_max": 16,
+          "C_min": 2,
+          "control_method": "ratio-v1",
+          "method_options": {
+            "ratio_buffer_fraction": 0.3,
+            "ratio_headroom": 1,
+            "sample_window_s": 1.5
+          }
+        },
+        "id": "tuning-ratio-v1-6",
+        "sha256": "88077b55279ff655b90e4abf3cdc66be80df3316307f346409a728b6439c0c4a"
+      },
+      {
+        "config": {
+          "C_init": 4,
+          "C_max": 16,
+          "C_min": 2,
+          "control_method": "ratio-v1",
+          "method_options": {
+            "ratio_buffer_fraction": 0.3,
+            "ratio_headroom": 2,
+            "sample_window_s": 1.5
+          }
+        },
+        "id": "tuning-ratio-v1-7",
+        "sha256": "b2d8a9fa1c331c86fd5d6e7e4e1f271f737311fada906ee4cc41890c8a456b72"
+      }
+    ]
+  },
+  "evaluation_rule": "freeze selected configs before opening evaluation outcomes",
+  "namespace": "tuning",
+  "schema": "flowdc-tuning-catalog-v1",
+  "status": "proposal_only"
+}

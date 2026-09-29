@@ -15,6 +15,7 @@ from uuid import UUID
 
 import flowdc_ops as ops
 from flowdc_pilot_journal import failure
+from flowdc_topology import record_roles, selected_ids, selected_roles, validate_roles
 
 # No arbitrary command is accepted. Arguments come from validated identities and
 # fixed rules below. OpenRC remains trusted code; no credential output is retained.
@@ -255,8 +256,8 @@ def validate_access(path):
 
 def validate_access_value(value):
     value = ops.fields(value, ("schema_version", "operator_cidr", "route", "interfaces"))
-    ops.version(value)
     try:
+        selected_roles = validate_roles(value["interfaces"], value["schema_version"])
         operator = ipaddress.ip_network(value["operator_cidr"], strict=True)
         if operator.version != 4 or operator.prefixlen != 32:
             raise ValueError
@@ -270,7 +271,7 @@ def validate_access_value(value):
             route["router_id"] = ops.uuid_value(route["router_id"])
         elif route["external_network_id"] is not None or route["router_id"] is not None:
             raise ValueError
-        ops.fields(value["interfaces"], ("manager", "worker", "origin"))
+        ops.fields(value["interfaces"], selected_roles)
         ports, addresses, networks, subnets = set(), set(), set(), set()
         for interface in value["interfaces"].values():
             ops.fields(interface, ("port_id", "network_id", "subnet_id", "fixed_ip"))
@@ -288,7 +289,12 @@ def validate_access_value(value):
             addresses.add(interface["fixed_ip"])
             networks.add(interface["network_id"])
             subnets.add(interface["subnet_id"])
-        if len(ports) != 3 or len(addresses) != 3 or len(networks) != 1 or len(subnets) != 1:
+        if (
+            len(ports) != len(selected_roles)
+            or len(addresses) != len(selected_roles)
+            or len(networks) != 1
+            or len(subnets) != 1
+        ):
             raise ValueError
     except (TypeError, ValueError):
         raise failure("access_facts_required", invalid=True) from None
@@ -417,7 +423,7 @@ class Provider:
         def marker(value):
             import re
 
-            if not re.fullmatch(r"flowdc-[0-9a-f-]{36}-(manager|worker|origin|entry)", value):
+            if not re.fullmatch(r"flowdc-[0-9a-f-]{36}-(manager|worker(?:-[234])?|origin|entry)", value):
                 raise failure("invalid_adapter_argument", invalid=True)
 
         if action in single_ids and len(args) == 1:
@@ -484,6 +490,8 @@ class Provider:
             network = record["network"]
             if action in ("unshelve", "shelve", "offload") and args[0] not in record["vms"]:
                 raise failure("vm_not_allowlisted")
+            if action == "unshelve" and args[0] not in selected_ids(record):
+                raise failure("vm_not_selected")
             if action in ("rule", "group_delete") and args[0] not in network["seen_groups"].values():
                 raise failure("network_resource_not_owned")
             if action == "attach":
@@ -501,9 +509,7 @@ class Provider:
                 ):
                     raise failure("selected_attachment_not_authorized")
             marker = "flowdc-" + network["generation"] + "-"
-            if action == "group_create" and args[0] not in [
-                marker + role for role in ("manager", "worker", "origin")
-            ]:
+            if action == "group_create" and args[0] not in [marker + role for role in selected_roles(record)]:
                 raise failure("network_resource_not_owned")
             if action == "floating_create":
                 interface = record["access"]["interfaces"]["manager"]
@@ -734,7 +740,7 @@ class Provider:
             marker = "flowdc-" + record["network"]["generation"] + "-entry"
             if any(value.get("description") == marker for value in self.floating(record)):
                 raise failure("maintenance_network_rollback_required")
-        for role in ("manager", "worker", "origin"):
+        for role in record_roles(record):
             with self.step("idle_verification", role):
                 self.context(record)
                 port = self.topology(record, role)
@@ -758,7 +764,7 @@ class Provider:
             raise failure("owned_group_identity_changed")
         expected = {("tcp", record["access"]["operator_cidr"], 22, 22)} if role == "manager" else set()
         for peer, interface in record["access"]["interfaces"].items():
-            if peer != role:
+            if peer != role and peer in selected_roles(record):
                 expected.update(
                     (protocol, interface["fixed_ip"] + "/32", None, None)
                     for protocol in ("tcp", "udp", "icmp")
@@ -788,6 +794,8 @@ class Provider:
     def lifecycle(self, record, vm_id, action):
         if action not in ("unshelve", "shelve", "offload"):
             raise failure("unsupported_lifecycle_action")
+        if action == "unshelve" and vm_id not in selected_ids(record):
+            raise failure("vm_not_selected")
         self.activating = action == "unshelve"
         role = record["vms"].get(vm_id, {}).get("role", "unknown")
         with self.step("activation" if action == "unshelve" else "cleanup", role):
@@ -861,7 +869,7 @@ class Provider:
             )
             if known_role is not None and row.get("Name") != prefix + known_role:
                 raise failure("owned_group_identity_changed")
-            if row.get("Name") not in [prefix + role for role in ("manager", "worker", "origin")]:
+            if row.get("Name") not in [prefix + role for role in record_roles(record)]:
                 continue
             selected.append(row)
         values = self.read_batch([("group", row["ID"]) for row in selected])
@@ -947,7 +955,7 @@ class Provider:
                 self.route_step(journal, record, inspect_only=True)
                 return
             # One role/action per iteration, always inspected before mutation.
-            for role in ("manager", "worker", "origin"):
+            for role in selected_roles(record):
                 if role in record["network"].get("configured", []):
                     continue
                 port = self.topology(record, role)
@@ -968,7 +976,7 @@ class Provider:
                     raise failure("provider_schema")
                 desired = [("tcp", record["access"]["operator_cidr"], "22")] if role == "manager" else []
                 for peer, interface in record["access"]["interfaces"].items():
-                    if peer != role:
+                    if peer != role and peer in selected_roles(record):
                         desired += [
                             (protocol, interface["fixed_ip"] + "/32", "any")
                             for protocol in ("tcp", "udp", "icmp")

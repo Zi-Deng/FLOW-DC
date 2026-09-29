@@ -149,6 +149,13 @@ class HTTPTraceConfig(aiohttp.TraceConfig):
         # aiohttp calls this before writing request headers, after connector/DNS
         # waits, and again for each redirect hop. A new embargo must win here.
         await self._admit(session, ctx, params.url)
+        if ctx.measurement is not None and ctx.measurement.get("shared_dispatch") is not None:
+            ctx.measurement["phase"] = "admission"
+            ctx.measurement["remote_response_complete"] = False
+            await ctx.measurement["shared_dispatch"](str(params.url))
+            ctx.measurement["phase"] = "request"
+        if ctx.measurement is not None and ctx.measurement.get("dispatch_check") is not None:
+            ctx.measurement["dispatch_check"]()
         if ctx.measurement is not None:
             now = time.monotonic()
             ctx.measurement["t0"] = now
@@ -157,7 +164,7 @@ class HTTPTraceConfig(aiohttp.TraceConfig):
                 "url": str(params.url), "dispatch_at": now,
             })
 
-    def _headers(self, session, ctx, response, *, final):
+    async def _headers(self, session, ctx, response, *, final):
         # A 3xx without Location reaches both redirect and end callbacks. Observe
         # its header once; rereading a delay-seconds value would extend it twice.
         if getattr(ctx, "observed_response", None) is response:
@@ -167,6 +174,8 @@ class HTTPTraceConfig(aiohttp.TraceConfig):
             retry_after = session_http_gate(session).observe(response.url, response.headers.get("Retry-After"))
             ctx.observed_response = response
             ctx.observed_headers = now, retry_after
+            if ctx.measurement is not None and ctx.measurement.get("shared_headers") is not None:
+                await ctx.measurement["shared_headers"](response.status, retry_after)
         if ctx.measurement is not None:
             d = ctx.measurement
             if d.get("hops"):
@@ -177,7 +186,7 @@ class HTTPTraceConfig(aiohttp.TraceConfig):
 
     async def _redirect(self, session, ctx, params):
         response = params.response
-        retry_after = self._headers(session, ctx, response, final=False)
+        retry_after = await self._headers(session, ctx, response, final=False)
         location = response.headers.get("Location") or response.headers.get("URI")
         if location is None:
             return  # aiohttp returns this 3xx as a final response.
@@ -185,7 +194,17 @@ class HTTPTraceConfig(aiohttp.TraceConfig):
         # aiohttp normally releases the redirect response after this callback.
         # Release it before our waits so timeout/cancellation cannot strand its
         # connection. Redirect bodies are not acquisition bodies.
+        if ctx.measurement is not None and ctx.measurement.get("shared_redirect_release") is not None:
+            # EOF, not closing the connection, establishes response completion.
+            # The existing request timeout bounds this drain; memory stays bounded.
+            while await response.content.read(65536):
+                pass
+            ctx.measurement["remote_response_complete"] = True
         response.release()
+        if ctx.measurement is not None and ctx.measurement.get("shared_redirect_release") is not None:
+            # Every redirect hop releases its prior permit, including same-origin
+            # and invalid targets, before any Retry-After or destination wait.
+            await ctx.measurement["shared_redirect_release"]()
         if retry_after is not None:
             # RFC 9110 10.2.3 also delays this chain's follow-up, even to another
             # authority. Do not install the source's embargo on the destination.
@@ -206,7 +225,7 @@ class HTTPTraceConfig(aiohttp.TraceConfig):
             await self._admit(session, ctx, destination)
 
     async def _end(self, session, ctx, params):
-        self._headers(session, ctx, params.response, final=True)
+        await self._headers(session, ctx, params.response, final=True)
 
 
 def sanitize_class_name(class_name) -> str:
@@ -387,6 +406,10 @@ async def download_via_http_get(
                     measurement["latency_eligible"] = math.isfinite(measurement["ttfb"]) and measurement["ttfb"] > 0
                 return content, response.status, None, retry_after
             measurement["failure_kind"] = "http"
+            if measurement.get("shared_dispatch") is not None:
+                while await response.content.read(65536):
+                    pass
+                measurement["remote_response_complete"] = True
             try:
                 status_name = HTTPStatus(response.status).phrase
             except ValueError:

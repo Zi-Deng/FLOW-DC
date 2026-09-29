@@ -147,7 +147,10 @@ python bin/download_batch_gradient.py --config files/config/spider_test_gradient
 - Preserves explicit overload handling for 429/408/5xx/connection errors
 - Emits gradient-specific overview counters (`gradient_hold_events`, `gradient_soft_backoffs`, `gradient_plateau_events`, `post_backoff_grace_events`)
 
-This gradient variant is currently only wired into the single-machine downloader path. It is not yet exposed through `ui_app.py` or the TaskVine orchestration scripts.
+This historical `gradient-legacy-v1` entrypoint remains a single-machine variant.
+The explicit `gradient-candidate-v1` method uses the maintained base acquisition
+path and the shared-origin TaskVine profile; see [the versioned contract](docs/research/CONTROL-METHODS.md).
+`ui_app.py` remains a simulation prototype, not a distributed execution frontend.
 
 ### SplitParquet.py
 
@@ -372,6 +375,8 @@ Hard overload signals still take precedence and enter the inherited `BACKOFF` pa
 | `create_overview` | bool | true | Write internal/external overview reports referencing the final completion record |
 | `force_overwrite` | bool | false | Allow deletion of an existing output folder; CLI equivalent: `--force` / `-f` |
 | `research_profile` | bool | false | Select row-ID naming, WebDataset metadata, uncompressed archive and overview; CLI: `--research_profile` |
+| `control_method` | string/null | null | Explicit `paarc-base-v2`, `gradient-candidate-v1`, `fixed-v1` or `ratio-v1`; null preserves the legacy entrypoint default |
+| `method_options` | object | {} | Versioned engineering parameters/ablation for the selected method; see [method contract](docs/research/CONTROL-METHODS.md) |
 | `resume` | bool | false | Reconcile, then continue eligible unresolved rows within their original attempt budgets; CLI: `--resume` |
 | `reconcile` | bool | false | Inspect/recover owned output offline, with no HTTP calls; CLI: `--reconcile` |
 
@@ -595,13 +600,41 @@ The September 14, 2026 consolidation incorporates GitHub commit `efdadb2` and pr
 
 Benchmark source code, configurations, and manifests are versioned. Generated `benchmark/results/`, download payloads, and local recovery bundles remain Git-ignored. Existing April results remain historical measurements of the pre-consolidation implementation.
 
+The new [known-truth benchmark contract](docs/research/benchmark-contract.md) provides
+a bounded localhost smoke command for original-byte and archive verification. Its
+real-executable primary fixture passed at the first issue #26 checkpoint; the
+expanded cases still require final-head validation.
+Historical benchmark reports retain a separate schema and cannot establish the new
+timing/output boundary. See [benchmark setup](benchmark/README.md) for the isolated
+research environment, retained artifacts, and outstanding manuscript milestones.
+
+The [versioned method contract](docs/research/CONTROL-METHODS.md) specifies the
+candidate/comparator equations, sample gates, baseline freshness, ablations and
+retained control trajectories. Use `bin/download_batch.py --control_method METHOD`
+or [the candidate example](files/config/gradient-candidate-v1.json). These are
+engineering defaults awaiting specific advisor decisions; the legacy gradient
+entrypoint retains its old behavior.
+
+The [study harness](docs/research/STUDY-HARNESS.md) provides controlled-origin
+scenarios, retained engineering cells, calibration and provisional run-level
+precision tools. Machine-readable plans keep tuning and evaluation separate;
+scientific campaigns require an explicit frozen protocol with supplied advisor
+decisions. The issue #26 acceptance map links distributed admission, native execution
+and offline topology evidence. The explicit
+[shared-origin admission path](docs/research/SHARED-ADMISSION.md) adds authenticated
+manager permits through `--shared_control_file`; its private descriptor is generated
+by the manager and its contents must not be copied into public configs.
+Shared runs require a finite positive `--timeout` (default 30 seconds), covering
+admission waits as well as HTTP. Transient manager backpressure has bounded retries;
+lost acknowledgements and uncertain origin work remain conservatively accounted.
+
 Run the focused regression checks with the project environment:
 
 ```bash
 python -m unittest discover -s tests -v
 ```
 
-These checks exercise both downloaders against a local HTTP server, retries, output preservation, archives/reports, benchmark integration, and controller scheduling. They do not contact dataset servers or submit TaskVine/cloud jobs. The cloud orchestrator translates PAARC settings using the standard TaskVine configuration builder; its upload commands require compressed `.tar.gz` output.
+These checks exercise both downloaders against a local HTTP server, retries, output preservation, archives/reports, benchmark integration, and controller scheduling. They do not contact dataset servers or submit TaskVine/cloud jobs. The separate legacy cloud submitter is unsupported by the research profile; these tests do not validate its staging or upload path.
 
 ## Citation
 
@@ -629,3 +662,15 @@ FLOW-DC is built using:
 - [aiohttp](https://docs.aiohttp.org/) for asynchronous HTTP
 - [Polars](https://pola.rs/) for high-performance data processing
 - [NiceGUI](https://nicegui.io/) for the web interface
+
+The explicit `shared-origin-v1` TaskVine engineering profile, pinned runtime, returned
+artifact contract and current limitations are documented in
+[Distributed workflow](docs/research/DISTRIBUTED-WORKFLOW.md). Offline versioned
+3/4/6-VM preparation and accounting migration are documented in
+[Bounded topology](docs/BOUNDED-TOPOLOGY.md). A versioned registry can select 1/2/4
+workers per run using explicit enrolled UUIDs while preserving every account.
+Generate synthetic offline examples with `python -B benchmark/topology_plan.py examples
+--output benchmark/results/topology-examples-001`. See the
+[production checkpoint packet](docs/PRODUCTION-CHECKPOINT.md) for exact later
+installation/migration, trust enrollment and bounded live-run requirements. These
+tools do not imply scientific protocol approval.

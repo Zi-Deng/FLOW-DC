@@ -8,7 +8,7 @@ import time
 from pathlib import Path
 
 import flowdc_ops as ops
-from flowdc_experiment_data import ROLES, ExperimentError, digest, parse, read_file, require
+from flowdc_experiment_data import ExperimentError, digest, parse, read_file, require
 from flowdc_experiment_process import execute
 from flowdc_pilot_cli import (
     require_persistent_session,
@@ -19,10 +19,19 @@ from flowdc_pilot_cli import (
 )
 from flowdc_pilot_journal import Journal, allowance
 from flowdc_pilot_supervisor import sample_clock
+from flowdc_topology import action_lead_seconds, selected_ids, selected_roles, validate_roles
+
+
+def registration_binding(record):
+    return {key: record[key] for key in ("registration_id", "spec", "access", "service")}
 
 
 def binding(record):
-    return {key: record[key] for key in ("registration_id", "spec", "access", "service")}
+    result = registration_binding(record)
+    if "selection" in record:
+        selected_ids(record)
+        result["selection"] = record["selection"]
+    return result
 
 
 class Controller:
@@ -30,7 +39,7 @@ class Controller:
         self.root, self.expected = Path(root), expected
         self.journal = Journal(root)
         self.record = self.journal.read()
-        require(binding(self.record) == expected, "registration_changed")
+        require(registration_binding(self.record) == registration_binding(expected), "registration_changed")
         service = self.record["service"]
         require(service is not None, "supervisor_not_installed")
         verify_release(service, self.root)
@@ -45,11 +54,17 @@ class Controller:
 
     def call(self, action, seconds=10, window=1800):
         require(action in ("status", "start", "stop", "reconcile"))
-        require(binding(self.journal.read()) == self.expected, "registration_changed")
+        require(
+            registration_binding(self.journal.read()) == registration_binding(self.expected),
+            "registration_changed",
+        )
         verify_release(self.record["service"], self.root)
         argv = [*self.command, action, "--state-root", str(self.root)]
         if action == "start":
             argv += ["--window-seconds", str(window)]
+            if "selection" in self.expected:
+                for vm_id in self.expected["selection"]["worker_ids"]:
+                    argv += ["--worker-id", vm_id]
         code, raw = execute(argv, seconds=seconds)
         value = parse(raw)
         require(isinstance(value, dict), "controller_response_invalid")
@@ -65,6 +80,12 @@ class Controller:
             and value.get("data", {}).get("registration_id") == self.expected["registration_id"],
             "controller_response_invalid",
         )
+        if action in ("start", "status") and value["data"].get("desired") == "run":
+            require(
+                set(value["data"].get("selected_ids", [v["id"] for v in value["data"]["vms"]]))
+                == set(selected_ids(self.expected)),
+                "run_selection_changed",
+            )
         return value["data"]
 
     def preflight(self, window):
@@ -91,12 +112,25 @@ class Controller:
                 require(time.monotonic() < deadline, "fresh_idle_verification_timeout")
                 time.sleep(0.2)
         for vm in value["vms"]:
+            if vm["id"] not in selected_ids(self.expected):
+                continue
             try:
                 allowance(vm["account"]).activation_intent(
                     sample_clock(), window_seconds=window, inspection=True
                 )
             except ValueError:
                 raise ExperimentError("insufficient_allowance") from None
+        return value
+
+    def containment(self, seconds):
+        code, raw = execute(
+            [sys.executable, str(Path(__file__).resolve()), str(self.root), "verify-network"], seconds=seconds
+        )
+        value = parse(raw)
+        require(
+            code == 0 and value.get("native_network_contained") is True,
+            "native_network_containment_unverified",
+        )
         return value
 
     def addresses(self, seconds):
@@ -106,10 +140,29 @@ class Controller:
         value = parse(raw)
         if code:
             raise ExperimentError(value.get("error", "registered_route_unavailable"))
-        require(set(value) == set(ROLES), "registered_route_unavailable")
+        require(set(value) == set(selected_roles(self.expected)), "registered_route_unavailable")
         for address in value.values():
             require(ipaddress.ip_address(address).version == 4, "registered_route_unavailable")
         return value
+
+
+def valid_selected_status(value):
+    try:
+        names = [vm["role"] for vm in value["vms"]]
+        validate_roles(names, 1 if len(names) == 3 else 2)
+        ids = [vm["id"] for vm in value["vms"]]
+        chosen = value.get("selected_ids", ids)
+        if (
+            not isinstance(chosen, list)
+            or len(chosen) not in (3, 4, 6)
+            or len(chosen) != len(set(chosen))
+            or not set(chosen).issubset(ids)
+        ):
+            return False
+        members = {vm["role"] for vm in value["vms"] if vm["id"] in chosen}
+        return len(ids) == len(set(ids)) and {"manager", "origin"}.issubset(members)
+    except (ValueError, KeyError, TypeError):
+        return False
 
 
 def idle(value):
@@ -119,8 +172,7 @@ def idle(value):
         and value.get("desired") == "idle"
         and value.get("checkpoint") is None
         and value.get("network_rolled_back") is True
-        and len(value.get("vms", [])) == 3
-        and {v.get("role") for v in value["vms"]} == set(ROLES)
+        and valid_selected_status(value)
         and all(
             v.get("phase") == "offloaded"
             and v.get("account", {}).get("obligation") is False
@@ -136,8 +188,7 @@ def clean(value):
         and value.get("desired") == "idle"
         and value.get("checkpoint") is None
         and value.get("network_rolled_back") is True
-        and len(value.get("vms", [])) == 3
-        and {v.get("role") for v in value["vms"]} == set(ROLES)
+        and valid_selected_status(value)
         and all(
             v.get("observation_fresh") is True
             and v.get("provider_state") == "SHELVED_OFFLOADED"
@@ -155,19 +206,25 @@ def ready(value):
         and value.get("desired") == "run"
         and value.get("checkpoint") is None
         and value.get("network_ready") is True
-        and len(value.get("vms", [])) == 3
+        and valid_selected_status(value)
         and all(
-            v.get("observation_fresh") is True and v.get("provider_state") == "ACTIVE" for v in value["vms"]
+            v.get("observation_fresh") is True and v.get("provider_state") == "ACTIVE"
+            for v in value["vms"]
+            if v["id"] in value.get("selected_ids", [vm["id"] for vm in value["vms"]])
         )
     )
 
 
 def remaining(value):
+    require(valid_selected_status(value), "invalid_selection_status")
     left = []
+    chosen = value.get("selected_ids", [vm["id"] for vm in value["vms"]])
     for vm in value["vms"]:
+        if vm["id"] not in chosen:
+            continue
         account = allowance(vm["account"])
         require(account.obligation and not account.uncertain, "account_not_active")
-        left.append(account.shutdown_at_consumed - account.consumed - 180)
+        left.append(account.shutdown_at_consumed - account.consumed - action_lead_seconds(len(chosen)))
     return min(left)
 
 
@@ -180,6 +237,8 @@ def ssh_preflight(spec, registered):
         pass
     hosts = read_file(spec["known_hosts"], maximum=262144, private=True)
     for vm in registered["spec"]["vms"]:
+        if vm["role"] not in selected_roles(registered):
+            continue
         code, raw = execute(
             ["ssh-keygen", "-F", "flowdc-" + vm["role"], "-f", spec["known_hosts"]], seconds=5
         )
@@ -192,7 +251,8 @@ def ssh_config(spec, registered, addresses):
     # local references only; private-key bytes never enter staging or public JSON.
     for key in ("identity_file", "known_hosts"):
         require(not any(c in spec[key] for c in '\\\n\r\x00"%'), "unsafe_ssh_reference")
-    require({vm["role"] for vm in registered["spec"]["vms"]} == set(ROLES), "registration_changed")
+    chosen_roles = selected_roles(registered)
+    require(set(addresses) == set(chosen_roles), "registration_changed")
     lines = [
         "Host *",
         "  BatchMode yes",
@@ -214,7 +274,7 @@ def ssh_config(spec, registered, addresses):
         f'  IdentityFile "{spec["identity_file"]}"',
         f"  User {spec['user']}",
     ]
-    for role in ROLES:
+    for role in chosen_roles:
         address = str(ipaddress.IPv4Address(addresses[role]))
         lines += [f"Host {role}", f"  HostName {address}", f"  HostKeyAlias flowdc-{role}"]
         if role != "manager":
@@ -237,7 +297,10 @@ class Transport:
         require(digest(self.helper) == manifest["files"]["guest.py"]["sha256"], "staged_content_changed")
 
     def call(self, role, action, case="all", *, seconds, data=b"", extra=(), maximum=262144):
-        require(role in ROLES and action in ("probe", "deploy", "launch", "status", "stop", "collect"))
+        require(
+            role in selected_roles(self.manifest["binding"])
+            and action in ("probe", "deploy", "launch", "status", "stop", "collect")
+        )
         require(self.store.read(self.selected, "ssh.conf") == self.configuration, "ssh_configuration_changed")
         spec = self.manifest["spec"]
         require(
@@ -271,7 +334,7 @@ def read_addresses(root):
 
     record = Journal(root).read()
     interfaces = record["access"]["interfaces"]
-    addresses = {role: interfaces[role]["fixed_ip"] for role in ROLES}
+    addresses = {role: interfaces[role]["fixed_ip"] for role in selected_roles(record)}
     if record["access"]["route"]["mode"] == "floating":
         provider = Provider(ops.load_profile(record["profile_path"]))
         with provider.step():
@@ -284,6 +347,28 @@ def read_addresses(root):
         )
         addresses["manager"] = str(ipaddress.IPv4Address(selected[0]["floating_ip_address"]))
     return addresses
+
+
+def verify_network(root):
+    """Fresh read-only containment proof; native password is not identity proof."""
+    from flowdc_pilot_provider import Provider
+
+    record = Journal(root).read()
+    require(record["network"]["ready"] and record["desired"] == "run", "network_not_ready")
+    provider = Provider(ops.load_profile(record["profile_path"]))
+    selected = selected_roles(record)
+    for role in selected:
+        with provider.step("native_containment", role):
+            provider.context(record)
+            port = provider.topology(record, role)
+            group = record["network"]["seen_groups"].get(role)
+            require(group is not None and port["security_group_ids"] == [group], "native_port_not_contained")
+            provider.verify_ingress(record, role, provider.call("group", group))
+    return {
+        "native_network_contained": True,
+        "roles": list(selected),
+        "scope": "one verified NIC/VM; ingress only selected peer IPv4s and manager SSH",
+    }
 
 
 if __name__ == "__main__":
@@ -305,6 +390,8 @@ if __name__ == "__main__":
             )
             Provider(ops.load_profile(record["profile_path"])).verify_idle(record)
             sys.stdout.buffer.write(encode({"idle_verified": True}))
+        elif len(sys.argv) == 3 and sys.argv[2] == "verify-network":
+            sys.stdout.buffer.write(encode(verify_network(sys.argv[1])))
         else:
             sys.stdout.buffer.write(encode(read_addresses(sys.argv[1])))
     except Exception as exc:

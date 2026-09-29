@@ -1,17 +1,12 @@
 """Deterministic accounting tests; no credentials, network or cloud mutation."""
 
-import importlib.util
 import sys
 import unittest
 from dataclasses import asdict
 from pathlib import Path
 
-SPEC = importlib.util.spec_from_file_location(
-    "flowdc_pilot", Path(__file__).resolve().parents[1] / "bin/flowdc_pilot.py"
-)
-pilot = importlib.util.module_from_spec(SPEC)
-sys.modules[SPEC.name] = pilot
-SPEC.loader.exec_module(pilot)
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "bin"))
+import flowdc_pilot as pilot
 
 
 def clock(seconds=0, *, boot="test-boot", wall=None):

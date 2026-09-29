@@ -162,6 +162,9 @@ def stamp_frame(frame, manifest):
 def effective_config(cfg):
     excluded = {"input_path", "output_folder", "force_overwrite", "resume", "reconcile"}
     modules = ["download_batch.py", "single_download.py", "flowdc_integrity.py"]
+    modules.append("flowdc_methods.py")
+    if getattr(cfg, "shared_control_file", None) is not None:
+        modules.extend(("flowdc_shared_state.py", "flowdc_shared.py", "flowdc_staging.py"))
     variant = "gradient" if hasattr(cfg, "gradient_threshold") else "base"
     if variant == "gradient":
         modules.append("download_batch_gradient.py")
@@ -484,6 +487,10 @@ class RunStore:
         require(owner["config"].get("implementation") in ("base", "gradient"), "invalid owned implementation")
         sources = owner["config"].get("source_sha256")
         expected_sources = {"download_batch.py", "single_download.py", "flowdc_integrity.py"}
+        if "control_method" in owner["config"]["values"]:
+            expected_sources.add("flowdc_methods.py")
+        if owner["config"]["values"].get("shared_control_file") is not None:
+            expected_sources.update(("flowdc_shared_state.py", "flowdc_shared.py", "flowdc_staging.py"))
         if owner["config"]["implementation"] == "gradient":
             expected_sources.add("download_batch_gradient.py")
         require(

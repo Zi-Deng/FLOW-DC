@@ -54,6 +54,8 @@ PERMANENT_VERIFICATION_FAILURES = {
 }
 MODULES = (
     "flowdc_ops.py",
+    "flowdc_topology.py",
+    "flowdc_pilot_topology.py",
     "flowdc_pilot.py",
     "flowdc_pilot_journal.py",
     "flowdc_pilot_provider.py",
@@ -75,8 +77,12 @@ def arguments(commands):
         "upgrade-supervisor",
         "extend-allowance",
         "runtime-check",
+        "topology-preview",
+        "topology-apply",
     ):
         parser = actions.add_parser(action, allow_abbrev=False)
+        if action in ("topology-preview", "topology-apply"):
+            parser.add_argument("--request", required=True)
         if action == "runtime-check":
             parser.add_argument("--profile", required=True)
         else:
@@ -91,13 +97,18 @@ def arguments(commands):
             parser.add_argument("--expected-current-digest", required=True)
             parser.add_argument("--expected-candidate-digest", required=True)
             parser.add_argument(
-                "--candidate-source", help="Absolute directory of the six reviewed candidate modules."
+                "--candidate-source", help="Absolute directory of the reviewed supervisor module closure."
             )
             parser.add_argument("--recover", choices=("complete", "rollback"))
         if action == "extend-allowance":
             parser.add_argument("--grant", required=True)
         if action == "start":
             parser.add_argument("--window-seconds", type=int, default=1800)
+            parser.add_argument(
+                "--worker-id",
+                action="append",
+                help="Enrolled worker UUID; repeat for exactly 1/2/4 workers (default all enrolled)",
+            )
             parser.add_argument(
                 "--full-window",
                 action="store_true",
@@ -368,7 +379,7 @@ def maintenance_update(journal, phase, *, service=None, publish=False):
             (encode(value),),
         )
         if publish:
-            connection.execute("PRAGMA user_version=1")
+            connection.execute(f"PRAGMA user_version={current['schema_version']}")
         connection.commit()
 
 
@@ -431,9 +442,9 @@ def upgrade_supervisor(journal, args):
                     "CREATE TABLE IF NOT EXISTS pilot_maintenance (id INTEGER PRIMARY KEY, body TEXT NOT NULL)"
                 )
                 connection.execute("INSERT INTO pilot_maintenance(body) VALUES (?)", (encode(value),))
-                connection.execute("PRAGMA user_version=2")
+                connection.execute("PRAGMA user_version=" + ("2" if old["schema_version"] == 1 else "4"))
                 connection.commit()
-            version = 2
+            version = 2 if old["schema_version"] == 1 else 4
         if (
             old["service"]["digest"] != args.expected_current_digest
             or candidate["digest"] != args.expected_candidate_digest
@@ -443,7 +454,7 @@ def upgrade_supervisor(journal, args):
         verify_release(candidate, journal.root)
         target = old["service"] if args.recover == "rollback" else candidate
         phase = "published_rollback" if args.recover == "rollback" else "published_complete"
-        if version == 1:
+        if version in (1, 3):
             # Publication already committed. Do not restore a snapshot over any
             # later activity. An idempotent completion may only start its service.
             if value["phase"] != phase or journal.read() != dict(old, service=target, heartbeat=None):
@@ -612,9 +623,12 @@ def prepare(args):
 
 
 def status(journal, operation="pilot status"):
+    from flowdc_topology import selected_ids
+
     record = journal.read()
     now = sample_clock()
     ready = heartbeat_fresh(record, now) and journal.supervisor_locked()
+    ids = selected_ids(record)
     vms = []
     for vm_id, vm in record["vms"].items():
         account = allowance(vm["account"]).account(now)
@@ -626,6 +640,7 @@ def status(journal, operation="pilot status"):
             {
                 "id": vm_id,
                 "role": vm["role"],
+                "selected": vm_id in ids,
                 "account": asdict(account),
                 "phase": vm["phase"],
                 "provider_state": observed["state"] if observation_fresh else "UNKNOWN",
@@ -637,8 +652,11 @@ def status(journal, operation="pilot status"):
         bool(record["checkpoint"])
         or not ready
         or record["desired"] == "stop"
-        or any(not vm["observation_fresh"] for vm in vms)
-        or (record["desired"] == "run" and any(vm["provider_state"] != "ACTIVE" for vm in vms))
+        or any(not vm["observation_fresh"] for vm in vms if record["desired"] != "run" or vm["selected"])
+        or (
+            record["desired"] == "run"
+            and any(vm["provider_state"] != "ACTIVE" for vm in vms if vm["selected"])
+        )
     )
     return ops.outcome(
         operation,
@@ -654,6 +672,7 @@ def status(journal, operation="pilot status"):
             "checkpoint": record["checkpoint"],
             "cleanup_diagnostics": cleanup_diagnostics(record),
             "vms": vms,
+            "selected_ids": list(ids),
             "network_ready": record["network"]["ready"],
             "network_rolled_back": record["network"]["rolled_back"],
             "request_acceptance_is_completion": False,
@@ -746,6 +765,10 @@ def supervise(journal):
 def run(args):
     mask = os.umask(0o077)
     try:
+        if args.pilot_command in ("topology-preview", "topology-apply"):
+            from flowdc_pilot_topology import run as topology_run
+
+            return topology_run(args)
         if args.pilot_command == "prepare":
             return prepare(args)
         if args.pilot_command == "runtime-check":
@@ -793,6 +816,7 @@ def run(args):
                 args.pilot_command,
                 window=getattr(args, "window_seconds", 1800),
                 inspection=not getattr(args, "full_window", False),
+                worker_ids=getattr(args, "worker_id", None),
             )
             value, code = status(journal, "pilot " + args.pilot_command)
             value["data"]["request_accepted"] = True

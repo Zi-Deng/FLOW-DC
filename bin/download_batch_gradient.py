@@ -176,6 +176,9 @@ Examples:
         with cfg_path.open("r") as f:
             data = json.load(f)
 
+        if data.get("control_method") is not None or data.get("method_options"):
+            raise ValueError("Versioned method selection requires download_batch.py; this entrypoint is gradient-legacy-v0")
+
         return Config(
             input_path=data.get("input", ""),
             output_folder=data.get("output", ""),
