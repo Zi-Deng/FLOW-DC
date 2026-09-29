@@ -3,12 +3,10 @@
 import asyncio
 import json
 import math
-import shutil
 import sys
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
 
 from .metrics import BenchmarkResult, ResourceMetrics
 from .resource_monitor import ProcessResourceMonitor
@@ -21,23 +19,24 @@ class FlowDCConfig:
     input_path: str
     output_folder: str
     url_column: str
-    label_column: Optional[str]
+    label_column: str | None
     concurrent_downloads: int
     timeout_sec: int
     enable_paarc: bool
     paarc_c_init: int = 8
     paarc_c_min: int = 2
-    paarc_c_max: Optional[int] = None
+    paarc_c_max: int | None = None
     paarc_mu: float = 0.85
     paarc_theta_50: float = 3.0
     paarc_theta_95: float = 4.0
     max_retry_attempts: int = 1
+    research_profile: bool = False
 
 
 class FlowDCAdapter:
     """Adapter for running FLOW-DC download_batch.py benchmarks."""
 
-    def __init__(self, project_root: Optional[Path] = None):
+    def __init__(self, project_root: Path | None = None):
         """Initialize adapter.
 
         Args:
@@ -53,7 +52,7 @@ class FlowDCAdapter:
         if not self.bin_path.exists():
             raise FileNotFoundError(f"FLOW-DC script not found: {self.bin_path}")
 
-    def generate_config(self, config: FlowDCConfig) -> Path:
+    def generate_config(self, config: FlowDCConfig, config_path: Path | None = None) -> Path:
         """Generate a FLOW-DC config JSON file.
 
         Args:
@@ -68,7 +67,7 @@ class FlowDCAdapter:
             "input": str(config.input_path),
             "input_format": "parquet",
             "output": str(config.output_folder),
-            "output_format": "imagefolder",
+            "output_format": "webdataset" if config.research_profile else "imagefolder",
             "url": config.url_column,
             "label": config.label_column,
             "concurrent_downloads": config.concurrent_downloads,
@@ -81,14 +80,20 @@ class FlowDCAdapter:
             "theta_50": config.paarc_theta_50,
             "theta_95": config.paarc_theta_95,
             "max_retry_attempts": config.max_retry_attempts,
-            "create_tar": False,
+            "research_profile": config.research_profile,
+            "create_tar": config.research_profile,
+            "compress_tar": False,
             "create_overview": True,
-            "force_overwrite": True,  # The adapter owns and recreates this output directory.
+            "force_overwrite": not config.research_profile,
         }
 
-        # Create temp config file
-        config_path = Path(tempfile.mktemp(suffix=".json", prefix="flowdc_config_"))
-        with open(config_path, "w") as f:
+        if config_path is None:
+            with tempfile.NamedTemporaryFile(suffix=".json", prefix="flowdc_config_", delete=False) as f:
+                config_path = Path(f.name)
+            mode = "w"
+        else:
+            mode = "x"
+        with open(config_path, mode) as f:
             json.dump(config_dict, f, indent=2)
 
         return config_path
@@ -115,11 +120,10 @@ class FlowDCAdapter:
         config_path = self.generate_config(config)
 
         try:
-            # Ensure output directory is clean
+            # Retained runs are immutable from the benchmark's perspective.
             output_path = Path(config.output_folder)
-            if output_path.exists():
-                shutil.rmtree(output_path)
-            output_path.mkdir(parents=True, exist_ok=True)
+            if output_path.exists() or output_path.is_symlink():
+                raise FileExistsError(f"Benchmark output already exists: {output_path}")
 
             # Start resource monitor
             monitor = None

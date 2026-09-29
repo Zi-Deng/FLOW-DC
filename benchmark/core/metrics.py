@@ -1,8 +1,7 @@
 """Unified metrics schema for benchmark results."""
 
-from dataclasses import dataclass, field
-from typing import Optional
 import json
+from dataclasses import dataclass, field
 from pathlib import Path
 
 
@@ -23,12 +22,13 @@ class ResourceMetrics:
 
     def to_dict(self) -> dict:
         return {
-            "cpu_avg_percent": round(self.cpu_avg_percent, 2),
-            "cpu_max_percent": round(self.cpu_max_percent, 2),
-            "memory_avg_mb": round(self.memory_avg_mb, 2),
-            "memory_max_mb": round(self.memory_max_mb, 2),
+            "cpu_avg_percent": self.cpu_avg_percent,
+            "cpu_max_percent": self.cpu_max_percent,
+            "memory_avg_mb": self.memory_avg_mb,
+            "memory_max_mb": self.memory_max_mb,
             "net_bytes_sent": self.net_bytes_sent,
             "net_bytes_recv": self.net_bytes_recv,
+            "network_scope": "system-wide counters, not downloader wire bytes",
             "sample_count": self.sample_count,
         }
 
@@ -68,17 +68,19 @@ class BenchmarkResult:
     def to_dict(self) -> dict:
         return {
             "tool": self.tool,
+            "benchmark_schema": "historical-native-counters-v1",
+            "comparison_eligible": False,
             "variant": self.variant,
             "concurrency": self.concurrency,
             "run_number": self.run_number,
             "input_urls": self.input_urls,
             "successful_downloads": self.successful_downloads,
             "failed_downloads": self.failed_downloads,
-            "success_rate_percent": round(self.success_rate_percent, 2),
+            "success_rate_percent": self.success_rate_percent,
             "total_bytes_downloaded": self.total_bytes_downloaded,
-            "elapsed_seconds": round(self.elapsed_seconds, 2),
-            "throughput_mbps": round(self.throughput_mbps, 3),
-            "throughput_imgs_per_sec": round(self.throughput_imgs_per_sec, 2),
+            "elapsed_seconds": self.elapsed_seconds,
+            "throughput_mbps": self.throughput_mbps,
+            "throughput_imgs_per_sec": self.throughput_imgs_per_sec,
             "error_counts": self.error_counts,
             "resources": self.resources.to_dict(),
             "extra_metrics": self.extra_metrics,
@@ -131,13 +133,13 @@ class AggregatedResult:
             "variant": self.variant,
             "concurrency": self.concurrency,
             "num_runs": len(self.runs),
-            "avg_success_rate": round(self.avg_success_rate, 2),
-            "avg_throughput_mbps": round(self.avg_throughput_mbps, 3),
-            "avg_throughput_imgs_per_sec": round(self.avg_throughput_imgs_per_sec, 2),
-            "avg_elapsed_seconds": round(self.avg_elapsed_seconds, 2),
-            "std_throughput_mbps": round(self.std_throughput_mbps, 3),
-            "avg_cpu_percent": round(self.avg_cpu_percent, 2),
-            "avg_memory_mb": round(self.avg_memory_mb, 2),
+            "avg_success_rate": self.avg_success_rate,
+            "avg_throughput_mbps": self.avg_throughput_mbps,
+            "avg_throughput_imgs_per_sec": self.avg_throughput_imgs_per_sec,
+            "avg_elapsed_seconds": self.avg_elapsed_seconds,
+            "std_throughput_mbps": self.std_throughput_mbps,
+            "avg_cpu_percent": self.avg_cpu_percent,
+            "avg_memory_mb": self.avg_memory_mb,
             "runs": [r.to_dict() for r in self.runs],
         }
 
@@ -187,13 +189,15 @@ class BenchmarkReport:
 
     def to_dict(self) -> dict:
         return {
+            "benchmark_schema": "historical-native-counters-v1",
+            "comparison_eligible": False,
             "metadata": {
                 "name": self.name,
                 "timestamp": self.timestamp,
                 "system_info": {
                     "platform": self.platform,
                     "cpu_count": self.cpu_count,
-                    "memory_gb": round(self.memory_gb, 1),
+                    "memory_gb": self.memory_gb,
                     "python_version": self.python_version,
                 },
                 "dataset": {

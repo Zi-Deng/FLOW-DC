@@ -2,11 +2,9 @@
 
 import asyncio
 import json
-import shutil
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
 
 from .metrics import BenchmarkResult, ResourceMetrics
 from .resource_monitor import ProcessResourceMonitor
@@ -22,10 +20,13 @@ class Img2DatasetConfig:
     thread_count: int
     processes_count: int = 1
     timeout_sec: int = 30
-    retries: int = 1
+    retries: int = 0
     output_format: str = "files"
     resize_mode: str = "no"
     image_size: int = 256
+    max_shard_retry: int = 0
+    additional_columns: list[str] = field(default_factory=list)
+    executable: str = "img2dataset"
 
 
 class Img2DatasetAdapter:
@@ -44,8 +45,10 @@ class Img2DatasetAdapter:
         Returns:
             Command as list of strings
         """
+        if config.resize_mode != "no":
+            raise ValueError("Original-byte benchmarks require resize_mode=no")
         cmd = [
-            "img2dataset",
+            config.executable,
             "--url_list",
             str(config.input_path),
             "--output_folder",
@@ -66,10 +69,16 @@ class Img2DatasetAdapter:
             str(config.retries),
             "--resize_mode",
             config.resize_mode,
+            "--disable_all_reencoding",
+            "True",
+            "--extract_exif",
+            "False",
+            "--max_shard_retry",
+            str(config.max_shard_retry),
         ]
 
-        if config.resize_mode != "no":
-            cmd.extend(["--image_size", str(config.image_size)])
+        if config.additional_columns:
+            cmd.extend(["--save_additional_columns", json.dumps(config.additional_columns)])
 
         return cmd
 
@@ -92,10 +101,10 @@ class Img2DatasetAdapter:
         Returns:
             BenchmarkResult with metrics
         """
-        # Ensure output directory is clean
+        # Never erase evidence from a previous invocation.
         output_path = Path(config.output_folder)
-        if output_path.exists():
-            shutil.rmtree(output_path)
+        if output_path.exists() or output_path.is_symlink():
+            raise FileExistsError(f"Benchmark output already exists: {output_path}")
 
         # Build command
         cmd = self.build_command(config)
@@ -216,7 +225,7 @@ class Img2DatasetAdapter:
             extra_metrics=extra,
         )
 
-    def _parse_shard_stats(self, output_path: Path) -> Optional[dict]:
+    def _parse_shard_stats(self, output_path: Path) -> dict | None:
         """Parse img2dataset shard statistics if available."""
         stats_files = list(output_path.rglob("_stats.json"))
 
@@ -236,7 +245,7 @@ class Img2DatasetAdapter:
                     aggregated["successes"] += shard_stats.get("successes", 0)
                     aggregated["failed"] += shard_stats.get("failed_to_download", 0)
                     aggregated["shards"] += 1
-            except (json.JSONDecodeError, IOError):
+            except (OSError, json.JSONDecodeError):
                 continue
 
         return aggregated if aggregated["shards"] > 0 else None

@@ -1,17 +1,45 @@
 # FLOW-DC vs img2dataset Benchmark Suite
 
-A reusable benchmark framework for comparing FLOW-DC against img2dataset on image downloading tasks.
+A retained benchmark framework with two explicitly separate evidence contracts.
+`known_truth.py` prepares a bounded localhost comparison using the real executables,
+original bytes, per-row metadata and closed uncompressed archives. Its initial V2
+execution is still pending; see the [contract and acceptance map](../docs/research/benchmark-contract.md).
+`run_benchmark.py` and its HTML/comparison consumers retain the historical native-counter
+contract. Those timing/output boundaries do not establish a fair efficacy comparison.
 
 ## Features
 
 - **Comprehensive Metrics**: Throughput (MB/s, images/sec), success rate, CPU/memory usage
-- **Fair Comparison**: Disables img2dataset resizing, matches timeouts and retry settings
-- **Multiple Runs**: Warmup runs + multiple measured runs for statistical validity
+- **Original bytes**: Explicit img2dataset byte bypass, no EXIF extraction, zero native retry/replay defaults
+- **Retained Runs**: Warmup and measured native artifacts remain on disk; existing output directories are refused
 - **Resource Monitoring**: Real-time CPU, memory, and network tracking via psutil
 - **Rich Reports**: JSON data + interactive HTML reports with Chart.js visualizations
 - **Flexible Configuration**: YAML config files or CLI arguments
 
-## Quick Start
+## Known-truth local engineering check
+
+Use a task-local Python 3.12 environment; do not install into the shared environment:
+
+```bash
+python3 -m venv .agentic-local/research
+.agentic-local/research/bin/python -m pip install --report .agentic-local/research-install.json -r benchmark/requirements-research.txt
+.agentic-local/research/bin/python -B benchmark/known_truth.py --output benchmark/results/known-truth-smoke-001
+```
+
+This command uses nine original rows (six eligible), valid JPEG/PNG bytes, duplicate
+URLs/content and basename collisions. Each native invocation has one downloader
+process, two download slots/threads, a 180-second deadline and 60-second cleanup
+reserve. FLOW-DC keeps mandatory admission and Retry-After behavior. Native timeout
+semantics differ; the common outer deadline does not equate them. No external
+dataset is contacted. An unavailable package or socket is a failed prerequisite,
+never a successful integration or a reason to disable isolation.
+
+Retain the output directory, including failures, and the private pip install report.
+Do not publish install reports without inspecting source URLs for credentials.
+Installed versions and content hashes are recorded by the smoke. This is an
+engineering smoke, not a pilot or a confirmatory campaign.
+
+## Historical native-counter runner
 
 ### 1. Install Dependencies
 
@@ -180,15 +208,15 @@ benchmark/
 
 ## Fairness Considerations
 
-To ensure fair comparison:
+The historical runner has these limitations; use the known-truth contract for new engineering evidence:
 
-1. **No Image Resizing**: img2dataset runs with `--resize_mode no`
-2. **Same Timeouts**: Both tools use identical timeout values
-3. **Same Retries**: Both limited to 1 retry attempt
-4. **Fresh Outputs**: Output directories cleaned between runs
-5. **Warmup Runs**: First run(s) discarded to stabilize caches
-6. **Multiple Runs**: Results averaged over 3+ runs
-7. **Sequential Execution**: Tools run sequentially to avoid interference
+1. **Original bytes**: img2dataset runs with `--disable_all_reencoding True`, `--extract_exif False` and `--resize_mode no`
+2. **Native Timeouts**: Equal numeric values do not mean equal urllib/aiohttp timeout semantics
+3. **Primary attempt budgets**: FLOW-DC uses one total attempt; img2dataset uses `retries=0` and `max_shard_retry=0`. Actual request work needs origin logs.
+4. **Retained Outputs**: Every run has a new directory; collisions fail rather than delete evidence
+5. **Warmup Runs**: Excluded from historical aggregates, but their artifacts remain retained
+6. **Multiple Runs**: Historical averages do not implement the proposed paired independent-run study
+7. **Sequential Execution**: Tools run in fixed order; randomized blocked scheduling remains future work
 
 ## Extending the Suite
 

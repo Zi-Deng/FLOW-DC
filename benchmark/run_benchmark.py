@@ -23,7 +23,7 @@ from benchmark.reports.generator import ReportGenerator
 def parse_args() -> argparse.Namespace:
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(
-        description="Benchmark FLOW-DC against img2dataset",
+        description="Historical native-counter benchmark (known-truth validation: benchmark/known_truth.py)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -215,9 +215,10 @@ async def main() -> int:
     runner = BenchmarkRunner(config, verbose=verbose)
 
     print(f"Starting benchmark: {config.run_name}")
+    print("  Historical metrics only: unequal native timing/output boundaries. Use known_truth.py for verified fixtures.")
     print(f"  Dataset: {config.dataset_path} ({runner.dataset_urls} URLs)")
     print(f"  Concurrency levels: {config.concurrency_levels}")
-    print(f"  Tools: ", end="")
+    print("  Tools: ", end="")
     tools = []
     if config.flowdc_enabled:
         tools.append(f"FLOW-DC ({', '.join(config.flowdc_variants)})")

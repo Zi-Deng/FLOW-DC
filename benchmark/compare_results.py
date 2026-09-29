@@ -15,13 +15,19 @@ from pathlib import Path
 def load_report(path: Path) -> dict:
     """Load a benchmark report JSON file."""
     with open(path) as f:
-        return json.load(f)
+        report = json.load(f)
+    schema = report.get("benchmark_schema", "historical-native-counters-v1")
+    if report.get("schema") or schema != "historical-native-counters-v1":
+        raise ValueError("This reader supports only historical native-counter reports; do not mix timing contracts")
+    report["benchmark_schema"] = schema
+    return report
 
 
 def compare_reports(reports: list[tuple[str, dict]]) -> None:
     """Print comparison of multiple benchmark reports."""
     print("\n" + "=" * 80)
     print("BENCHMARK COMPARISON")
+    print("Historical native-counter reports: unequal timing/output boundaries; no verified efficacy claim.")
     print("=" * 80)
 
     # Print metadata for each report
@@ -57,7 +63,7 @@ def compare_reports(reports: list[tuple[str, dict]]) -> None:
 
         for conc in all_concurrencies:
             row = f"  {conc:>11} |"
-            for name, report in reports:
+            for _name, report in reports:
                 results = report["results"].get(tool_key, {})
                 conc_data = results.get(str(conc), {})
                 throughput = conc_data.get("avg_throughput_mbps", 0)
@@ -77,7 +83,7 @@ def compare_reports(reports: list[tuple[str, dict]]) -> None:
 
         for conc in all_concurrencies:
             row = f"  {conc:>11} |"
-            for name, report in reports:
+            for _name, report in reports:
                 results = report["results"].get(tool_key, {})
                 conc_data = results.get(str(conc), {})
                 success = conc_data.get("avg_success_rate", 0)
@@ -136,11 +142,11 @@ def main() -> int:
         print("Error: Number of names must match number of reports")
         return 1
 
-    for name, path in zip(names, args.reports):
+    for name, path in zip(names, args.reports, strict=True):
         try:
             report = load_report(path)
             reports.append((name, report))
-        except json.JSONDecodeError as e:
+        except ValueError as e:
             print(f"Error: Invalid JSON in {path}: {e}")
             return 1
 
