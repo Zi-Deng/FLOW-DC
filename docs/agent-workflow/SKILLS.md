@@ -105,8 +105,9 @@ a malicious executor harmless. This is distinct from the independent reviewer's
 restricted model-tool surface.
 
 The Opus reviewer is a new Copilot process with a fresh snapshot and state directory
-for every round. Its selected model is `claude-opus-5`; its available tools are only
-`view`, `grep` and `glob`. It sees the public contract, source/diff, checks and rubric.
+for every round. Its selected model is `claude-opus-5`; the profile and invocation
+request only the literal tools `view`, `grep` and `glob`. These settings do not attest
+successful provider tool calls. It sees the public contract, source/diff, checks and rubric.
 It receives neither the Astra conversation nor private task memory. Read
 [REVIEW.md](REVIEW.md) for the exact isolation boundary and evidence limitations.
 

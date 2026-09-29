@@ -417,6 +417,10 @@ class ReviewTests(GitFixture):
                 return subprocess.CompletedProcess(args, 0, "Copilot test double\n", "")
             observed.append((args, kwargs))
             self.assertFalse(Path(kwargs["cwd"]).is_relative_to(self.root))
+            profile = (Path(kwargs["cwd"]) / ".github/agents/independent-reviewer.agent.md").read_text(
+                encoding="utf-8"
+            )
+            self.assertIn("tools: [view, grep, glob]", profile.splitlines())
             self.assertNotIn("GH_TOKEN", kwargs["env"])
             self.assertNotIn("COPILOT_PROVIDER_BASE_URL", kwargs["env"])
             settings = json.loads((Path(kwargs["env"]["COPILOT_HOME"]) / "settings.json").read_text())
@@ -444,6 +448,7 @@ class ReviewTests(GitFixture):
         self.assertTrue(report.exists())
         argv = observed[0][0]
         self.assertIn("--available-tools=view,grep,glob", argv)
+        self.assertIn("--allow-tool=view,grep,glob", argv)
         self.assertNotIn("--allow-all", argv)
         self.assertNotIn("--continue", argv)
         self.assertEqual(argv[argv.index("--model") + 1], requested_model)
@@ -507,6 +512,8 @@ class InstallerTests(unittest.TestCase):
             self.assertTrue((target / "scripts/finish-task.sh").exists())
             self.assertEqual(len(list((target / ".agents/skills").glob("*/SKILL.md"))), 8)
             self.assertFalse((target / ".agentic-local").exists())
+            profile = (target / ".github/agents/independent-reviewer.agent.md").read_text(encoding="utf-8")
+            self.assertIn("tools: [view, grep, glob]", profile.splitlines())
 
     def test_installer_rejects_non_directory_ancestor_before_writes(self):
         with tempfile.TemporaryDirectory() as tmp:

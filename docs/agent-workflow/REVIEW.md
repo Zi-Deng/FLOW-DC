@@ -1,8 +1,18 @@
 # Independent Copilot review
 
 The reviewer runs in a new Copilot CLI process and receives committed artifacts,
-not the implementation conversation. Its model-facing tools are `view`, `grep` and
-`glob`. The wrapper performs Git/GitHub operations outside that model process.
+not the implementation conversation. The custom profile and CLI availability/allow
+lists request the literal tool names `view`, `grep` and `glob`; the profile does not
+rely on the `read` and `search` aliases. The wrapper performs Git/GitHub operations
+outside that model process.
+
+Matching configuration and mocked invocation tests do not prove that the provider
+exposed or successfully executed these tools. The current wrapper checks CLI flags
+and a nonempty report, but does not yet verify actual tool events or required-material
+coverage. Issue #29 tracks those gates. Until they are implemented, a saved report
+must not be described as coverage-qualified. This configuration correction does not
+establish the cause of PR #27's missing search tools or retrospectively certify its
+reviews.
 
 ## Managed skill procedure
 

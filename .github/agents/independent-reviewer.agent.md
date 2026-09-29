@@ -1,7 +1,7 @@
 ---
 name: independent-reviewer
 description: Independent static reviewer for an immutable issue and PR snapshot.
-tools: [read, search]
+tools: [view, grep, glob]
 disable-model-invocation: true
 ---
 
