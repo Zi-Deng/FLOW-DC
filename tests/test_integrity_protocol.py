@@ -524,6 +524,7 @@ with p.RunStore(root, manifest={'sha256':'a'*64,'original_rows':1}, config=p.eff
             with self.assertRaisesRegex(protocol.IntegrityError, "unknown row"):
                 reopened.reconcile()
             self.assertEqual(reopened.fs.read("unowned.txt"), b"preserve but do not archive")
+
     def test_managed_metadata_and_stat_failures_keep_body_observation(self):
         for module in (base, gradient):
             for failure in ("metadata", "stat"):
@@ -798,11 +799,16 @@ with p.RunStore(root, manifest={'sha256':'a'*64,'original_rows':1}, config=p.eff
             self.assertIn("flowdc_integrity.py", [call.args[1] for call in task.add_input.call_args_list])
             self.assertIn("flowdc_methods.py", [call.args[1] for call in task.add_input.call_args_list])
             from flowdc_staging import DOWNLOAD_FILES
-            self.assertTrue(set(DOWNLOAD_FILES).issubset(call.args[1] for call in task.add_input.call_args_list))
+
+            self.assertTrue(
+                set(DOWNLOAD_FILES).issubset(call.args[1] for call in task.add_input.call_args_list)
+            )
             self.assertIn("output_part.tar", [call.args[1] for call in task.add_output.call_args_list])
             config = vine.create_partition_config({"research_profile": True}, "part", "output")
             self.assertTrue(config["research_profile"])
-            config = vine.create_partition_config({"control_method": "fixed-v1", "method_options": {"interval_s": 0.4}}, "part", "output")
+            config = vine.create_partition_config(
+                {"control_method": "fixed-v1", "method_options": {"interval_s": 0.4}}, "part", "output"
+            )
             self.assertEqual(config["control_method"], "fixed-v1")
             self.assertEqual(config["method_options"], {"interval_s": 0.4})
 

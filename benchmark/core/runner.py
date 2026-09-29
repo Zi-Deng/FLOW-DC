@@ -28,9 +28,7 @@ class BenchmarkConfig:
 
     # Tools to benchmark
     flowdc_enabled: bool = True
-    flowdc_variants: list[str] = field(
-        default_factory=lambda: ["paarc_enabled", "paarc_disabled"]
-    )
+    flowdc_variants: list[str] = field(default_factory=lambda: ["paarc_enabled", "paarc_disabled"])
     img2dataset_enabled: bool = True
     img2dataset_processes: int = 1
     img2dataset_threads: int | None = None  # None = use concurrency_levels / processes
@@ -200,9 +198,7 @@ class BenchmarkRunner:
             self._log(f"  {run_label}...")
 
             # Create unique output folder for this run
-            output_folder = (
-                self.output_dir / f"flowdc_{variant}_c{concurrency}_r{run_num}"
-            )
+            output_folder = self.output_dir / f"flowdc_{variant}_c{concurrency}_r{run_num}"
 
             config = FlowDCConfig(
                 input_path=self.config.dataset_path,

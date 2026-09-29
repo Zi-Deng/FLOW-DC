@@ -215,7 +215,9 @@ async def main() -> int:
     runner = BenchmarkRunner(config, verbose=verbose)
 
     print(f"Starting benchmark: {config.run_name}")
-    print("  Historical metrics only: unequal native timing/output boundaries. Use known_truth.py for verified fixtures.")
+    print(
+        "  Historical metrics only: unequal native timing/output boundaries. Use known_truth.py for verified fixtures."
+    )
     print(f"  Dataset: {config.dataset_path} ({runner.dataset_urls} URLs)")
     print(f"  Concurrency levels: {config.concurrency_levels}")
     print("  Tools: ", end="")

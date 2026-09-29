@@ -114,9 +114,7 @@ class AggregatedResult:
 
         self.avg_success_rate = sum(r.success_rate_percent for r in self.runs) / n
         self.avg_throughput_mbps = sum(r.throughput_mbps for r in self.runs) / n
-        self.avg_throughput_imgs_per_sec = (
-            sum(r.throughput_imgs_per_sec for r in self.runs) / n
-        )
+        self.avg_throughput_imgs_per_sec = sum(r.throughput_imgs_per_sec for r in self.runs) / n
         self.avg_elapsed_seconds = sum(r.elapsed_seconds for r in self.runs) / n
         self.avg_cpu_percent = sum(r.resources.cpu_avg_percent for r in self.runs) / n
         self.avg_memory_mb = sum(r.resources.memory_avg_mb for r in self.runs) / n
@@ -212,9 +210,7 @@ class BenchmarkReport:
                 },
             },
             "results": {
-                tool_key: {
-                    str(conc): agg.to_dict() for conc, agg in concurrency_results.items()
-                }
+                tool_key: {str(conc): agg.to_dict() for conc, agg in concurrency_results.items()}
                 for tool_key, concurrency_results in self.results.items()
             },
         }

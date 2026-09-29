@@ -18,7 +18,9 @@ def load_report(path: Path) -> dict:
         report = json.load(f)
     schema = report.get("benchmark_schema", "historical-native-counters-v1")
     if report.get("schema") or schema != "historical-native-counters-v1":
-        raise ValueError("This reader supports only historical native-counter reports; do not mix timing contracts")
+        raise ValueError(
+            "This reader supports only historical native-counter reports; do not mix timing contracts"
+        )
     report["benchmark_schema"] = schema
     return report
 
@@ -111,9 +113,7 @@ def compare_reports(reports: list[tuple[str, dict]]) -> None:
 
 def main() -> int:
     """Main entry point."""
-    parser = argparse.ArgumentParser(
-        description="Compare multiple benchmark results"
-    )
+    parser = argparse.ArgumentParser(description="Compare multiple benchmark results")
     parser.add_argument(
         "reports",
         nargs="+",

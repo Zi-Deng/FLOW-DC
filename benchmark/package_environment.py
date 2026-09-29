@@ -3,6 +3,7 @@
 
 import argparse
 import hashlib
+import importlib.metadata
 import json
 import os
 import sys
@@ -25,7 +26,9 @@ if not prefix.is_relative_to(root / ".agentic-local"):
     parser.error("run with the task-private environment Python under .agentic-local")
 if vine.cvine.vine_version_string() != "7.17.2":
     parser.error("matching official TaskVine 7.17.2 required")
-out = args.output.absolute()
+out = args.output.resolve()
+if out.is_relative_to(prefix):
+    parser.error("output must be outside the read-only source environment")
 out.mkdir(mode=0o700, parents=True, exist_ok=False)
 started = time.monotonic_ns()
 env = conda_pack.CondaEnv.from_prefix(str(prefix), ignore_missing_files=False, ignore_editable_packages=False)
@@ -68,7 +71,11 @@ result = {
     "archive_bytes": archive.stat().st_size,
     "source_unchanged": True,
     "elapsed_ns": time.monotonic_ns() - started,
-    "versions": {"conda_pack": conda_pack.__version__, "taskvine": vine.cvine.vine_version_string()},
+    "versions": {
+        "conda_pack": importlib.metadata.version("conda-pack"),
+        "conda_pack_module": conda_pack.__version__,
+        "taskvine": vine.cvine.vine_version_string(),
+    },
     "conda_metadata_sha256": {
         p.name: hashlib.sha256(p.read_bytes()).hexdigest()
         for p in sorted((prefix / "conda-meta").glob("*.json"))
