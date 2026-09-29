@@ -256,6 +256,7 @@ class Config:
     enable_paarc: bool = True
     control_method: str | None = None  # Explicit version; None preserves legacy behavior.
     method_options: dict = field(default_factory=dict)
+    shared_control_file: str | None = None  # Private descriptor path, never a credential value.
     
     # PAARC parameters (passed to PAARCConfig)
     C_init: int = 4
@@ -350,6 +351,7 @@ Examples:
     p.add_argument("--control_method", choices=("paarc-base-v2", "gradient-candidate-v1", "fixed-v1", "ratio-v1"),
                    help="Explicit versioned per-origin control method; omitted preserves legacy defaults")
     p.add_argument("--method_options", type=json.loads, default={}, help="JSON object of versioned engineering parameters")
+    p.add_argument("--shared_control_file", help="Owner-private authenticated manager descriptor; no local fallback")
     
     # PAARC parameters
     p.add_argument("--C_init", type=int, default=4)
@@ -440,6 +442,7 @@ Examples:
             research_profile=args.research_profile or bool(data.get("research_profile", False)),
             control_method=args.control_method or data.get("control_method"),
             method_options=args.method_options or data.get("method_options", {}),
+            shared_control_file=args.shared_control_file or data.get("shared_control_file"),
         )
 
     # Validate required args
@@ -482,6 +485,7 @@ Examples:
         force_overwrite=args.force,
         resume=args.resume, reconcile=args.reconcile, research_profile=args.research_profile,
         control_method=args.control_method, method_options=args.method_options,
+        shared_control_file=args.shared_control_file,
     )
 
 
@@ -490,6 +494,9 @@ Examples:
 # =============================================================================
 
 def normalize_config(cfg):
+    if cfg.shared_control_file is not None:
+        if not isinstance(cfg.shared_control_file, str) or not cfg.shared_control_file or cfg.control_method is None:
+            raise ValueError("shared control requires a private descriptor path and explicit control_method")
     if cfg.control_method is not None:
         from flowdc_methods import MethodConfig
         if not cfg.enable_paarc or not isinstance(cfg.method_options, dict):
@@ -1921,6 +1928,7 @@ async def download_one(
     sequential_namer: SequentialNamer,
     global_written_paths: dict[str, str],
     store=None,
+    shared=None,
 ) -> DownloadOutcome:
     """Execute a single download with PAARC control."""
     url = str(row[cfg.url_col]).strip()
@@ -1955,6 +1963,13 @@ async def download_one(
     
     # Set up tracing context
     trace_dict: dict[str, Any] = {}
+    remote = shared.attempt(key) if shared is not None else None
+    if remote is not None:
+        trace_dict["shared_dispatch"] = remote.dispatch
+        trace_dict["shared_headers"] = remote.headers
+        async def release_remote_redirect():
+            await remote.finish_hop(trace_dict, "redirect")
+        trace_dict["shared_redirect_release"] = release_remote_redirect
     if manager is not None and hasattr(manager, "check_health"):
         trace_dict["dispatch_check"] = manager.check_health
     if manager is not None:
@@ -2050,6 +2065,9 @@ async def download_one(
                 dispatch_at=trace_dict.get("t0"),
             )
         
+        if remote is not None:
+            await remote.finish_hop(trace_dict, "final")
+
         # Track written paths for collision detection
         if err is None and file_path:
             prev = global_written_paths.get(file_path)
@@ -2074,6 +2092,8 @@ async def download_one(
         TRACE_CTX.reset(trace_token)
         if ctrl is not None:
             await ctrl.semaphore.release()
+        if remote is not None:
+            await remote.close(trace_dict)
 
 
 async def download_batch_bounded(
@@ -2086,6 +2106,7 @@ async def download_batch_bounded(
     global_written_paths: dict[str, str],
     effective_workers: int,
     store=None,
+    shared=None,
 ) -> dict[str, DownloadOutcome]:
     """
     Bounded batch download scheduler.
@@ -2121,6 +2142,7 @@ async def download_batch_bounded(
                 sequential_namer=sequential_namer,
                 global_written_paths=global_written_paths,
                 store=store,
+                shared=shared,
             )
             
             outcomes[out.key] = out
@@ -2467,12 +2489,15 @@ async def run_acquisition(cfg, *, manager_factory=HostControllerManager, report_
     prepared = load_manifest(cfg)
     df, manifest = prepared
     rows = integrity.plan_rows(df, cfg, render_filename)
+    if cfg.shared_control_file is not None:
+        from flowdc_shared import descriptor
+        descriptor(cfg)  # Validate credentials/binding before output mutation or HTTP.
     # Finish all pure validation and provenance checks before destructive consent.
     validate_and_load(cfg, prepared=prepared)
     config = integrity.effective_config(cfg)
     store = integrity.RunStore(cfg.output_folder, manifest=manifest, config=config,
                                rows=None if cfg.resume else rows)
-    manager, ctrl_task, trajectory = None, None, None
+    manager, ctrl_task, trajectory, shared = None, None, None, None
     started = _monotonic()
     try:
         integrity.require(store.owner["rows"] == rows, "resume row provenance or publication plan mismatch")
@@ -2481,7 +2506,13 @@ async def run_acquisition(cfg, *, manager_factory=HostControllerManager, report_
         if keys and not shutdown_flag:
             current_df = df.filter(pl.col("__key__").is_in(keys))
             effective_workers = resolve_worker_count(cfg, current_df)
-            if cfg.enable_paarc:
+            if cfg.shared_control_file is not None:
+                from flowdc_methods import ControlTrace
+                from flowdc_shared import SharedClient
+                trajectory = ControlTrace(store, cfg)
+                shared = SharedClient(cfg, trajectory.emit)
+                await shared.start()
+            elif cfg.enable_paarc:
                 if cfg.control_method is not None:
                     from flowdc_methods import ControllerManager, ControlTrace
                     trajectory = ControlTrace(store, cfg)
@@ -2502,6 +2533,7 @@ async def run_acquisition(cfg, *, manager_factory=HostControllerManager, report_
                     await download_batch_bounded(
                         cfg=cfg, session=session, df=current_df, manager=manager, sequential_namer=namer,
                         global_written_paths=written, effective_workers=effective_workers, store=store,
+                        shared=shared,
                     )
                     snapshot = store.reconcile()
                     keys = store.eligible(snapshot)
@@ -2515,11 +2547,15 @@ async def run_acquisition(cfg, *, manager_factory=HostControllerManager, report_
                 await ctrl_task
             ctrl_task = None
         if trajectory is not None:
-            manager.check_health()
+            if shared is not None:
+                shared.check_health()
+                await shared.close()
             # Include the final short interval and close retained trajectories
             # before publishing the result boundary.
-            for controller in await manager.all_controllers():
-                await controller.step_interval()
+            if manager is not None:
+                manager.check_health()
+                for controller in await manager.all_controllers():
+                    await controller.step_interval()
             trajectory.close(complete=not shutdown_flag)
         return finalize_run(cfg, store, snapshot, _monotonic() - started, report_factory)
     finally:
@@ -2528,6 +2564,8 @@ async def run_acquisition(cfg, *, manager_factory=HostControllerManager, report_
             with contextlib.suppress(asyncio.CancelledError):
                 await ctrl_task
         try:
+            if shared is not None:
+                await shared.close()
             if trajectory is not None:
                 trajectory.close()
         finally:

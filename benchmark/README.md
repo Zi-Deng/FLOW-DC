@@ -42,6 +42,12 @@ Use `python -B benchmark/study.py --help` for the commands. The tracked 72-cell
 evaluation plan and tuning catalog are unexecuted proposals; non-engineering runs
 refuse to start without explicit advisor decisions bound into a frozen protocol.
 
+`benchmark/shared_origin.py` exercises real concurrent downloader clients against
+one authenticated aggregate authority. See the
+[shared-admission contract](../docs/research/SHARED-ADMISSION.md) for bounded commands,
+loss/redirect cases and evidence limits. This is separate from required TaskVine
+runtime integration.
+
 Retain the output directory, including failures, and the private pip install report.
 Do not publish install reports without inspecting source URLs for credentials.
 Installed versions and content hashes are recorded by the smoke. This is an

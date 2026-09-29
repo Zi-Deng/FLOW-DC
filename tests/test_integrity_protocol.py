@@ -797,6 +797,8 @@ with p.RunStore(root, manifest={'sha256':'a'*64,'original_rows':1}, config=p.eff
             manager.declare_file.assert_any_call(str(ROOT / "bin/flowdc_methods.py"))
             self.assertIn("flowdc_integrity.py", [call.args[1] for call in task.add_input.call_args_list])
             self.assertIn("flowdc_methods.py", [call.args[1] for call in task.add_input.call_args_list])
+            from flowdc_staging import DOWNLOAD_FILES
+            self.assertTrue(set(DOWNLOAD_FILES).issubset(call.args[1] for call in task.add_input.call_args_list))
             self.assertIn("output_part.tar", [call.args[1] for call in task.add_output.call_args_list])
             config = vine.create_partition_config({"research_profile": True}, "part", "output")
             self.assertTrue(config["research_profile"])

@@ -13,7 +13,17 @@ from pathlib import Path
 
 import polars as pl
 
-from .truth import MAX_BYTES, MAX_ROWS, PROVENANCE, digest, encode, initial_outcomes, parse, require
+from .truth import (
+    MAX_BYTES,
+    MAX_ROWS,
+    PROVENANCE,
+    digest,
+    encode,
+    initial_outcomes,
+    parse,
+    require,
+    validate_partition,
+)
 
 MAX_ARTIFACT_BYTES = 128 * 1024 * 1024
 
@@ -238,6 +248,7 @@ def verify_native(tool, output, truth):
     outcomes = initial_outcomes(truth)
     details, errors = {}, []
     try:
+        validate_partition(truth)
         details = (_flowdc if tool == "flowdc" else _img2dataset)(Path(output), truth, outcomes)
     except (ValueError, OSError, KeyError, TypeError, tarfile.TarError, pl.exceptions.PolarsError) as exc:
         errors.append(f"{type(exc).__name__}: {exc}")

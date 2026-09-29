@@ -45,6 +45,7 @@ import tempfile
 from pathlib import Path
 from contextlib import redirect_stderr
 from io import StringIO
+from flowdc_staging import DOWNLOAD_FILES
 
 # Suppress "DaskVine not available" warning from taskvine import
 with redirect_stderr(StringIO()):
@@ -192,6 +193,7 @@ def create_partition_config(base_config: dict, partition_file: str, output_name:
         "enable_paarc": base_config.get('enable_paarc', True),
         "control_method": base_config.get('control_method'),
         "method_options": base_config.get('method_options', {}),
+        "shared_control_file": base_config.get('shared_control_file'),
 
         # PAARC concurrency bounds
         "C_init": base_config.get('C_init', 8),
@@ -296,10 +298,11 @@ def submit_tasks(
         Number of tasks submitted
     """
     # Declare the download scripts
-    download_script_vine = manager.declare_file(download_script)
-    single_download_vine = manager.declare_file(single_download_script)
-    integrity_vine = manager.declare_file(os.path.join(os.path.dirname(download_script), "flowdc_integrity.py"))
-    methods_vine = manager.declare_file(os.path.join(os.path.dirname(download_script), "flowdc_methods.py"))
+    staged = {
+        name: manager.declare_file(download_script if name == "download_batch.py" else single_download_script if name == "single_download.py"
+                                   else os.path.join(os.path.dirname(download_script), name))
+        for name in DOWNLOAD_FILES
+    }
 
     max_retries = config.get('max_retries', 3)
     task_cores = config.get('task_cores', 4)
@@ -346,10 +349,8 @@ def submit_tasks(
             task.set_disk(task_disk)
 
             # Add input files
-            task.add_input(download_script_vine, "download_batch.py")
-            task.add_input(single_download_vine, "single_download.py")
-            task.add_input(integrity_vine, "flowdc_integrity.py")
-            task.add_input(methods_vine, "flowdc_methods.py")
+            for name, declared in staged.items():
+                task.add_input(declared, name)
             task.add_input(config_vine, config_filename)
             task.add_input(declared_file, file_name)
 

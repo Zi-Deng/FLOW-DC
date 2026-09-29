@@ -174,6 +174,8 @@ def _run_verified(command, directory, truth, verify, *, cwd, deadline, cleanup, 
     index.update(
         schema=SCHEMA, manifest_sha256=truth["manifest_sha256"], original_rows=truth["original_rows"]
     )
+    scope = {key: truth[key] for key in ("scope", "partition_rows", "parent_truth_sha256") if key in truth}
+    index.update(scope)
     raw_index = encode(index)
     index_path = directory / "outcomes.json"
     index_path.write_bytes(raw_index)
@@ -190,6 +192,7 @@ def _run_verified(command, directory, truth, verify, *, cwd, deadline, cleanup, 
     verified = sum(row["disposition"] == "verified" for row in rows)
     record = {
         "schema": SCHEMA,
+        **scope,
         "status": "complete" if complete else failure or "incomplete",
         "process_exit_code": returncode,
         "process_error": error,

@@ -200,3 +200,55 @@ def initial_outcomes(truth):
         }
         for row in truth["rows"]
     }
+
+
+def partition_truth(parent, identifiers):
+    """An explicitly scoped view; the original scientific denominator never changes.
+
+    Retain the full independent parent catalog and row membership, not a native
+    output-derived denominator. Parent order is authoritative for reconciliation.
+    """
+    require(parent.get("schema") == SCHEMA and "scope" not in parent, "invalid partition parent")
+    require(
+        type(parent["original_rows"]) is int
+        and 1 <= parent["original_rows"] <= MAX_ROWS
+        and len(parent["rows"]) == parent["original_rows"],
+        "invalid parent denominator",
+    )
+    require(parent["catalog_sha256"] == digest(encode(parent["catalog"])), "parent catalog mismatch")
+    for position, row in enumerate(parent["rows"]):
+        require(
+            row["position"] == position
+            and row["row_id"] == digest(encode([parent["manifest_sha256"], position]))
+            and row["eligible"] == valid_url(row["metadata"]["url"])
+            and row["expected_payload"] == parent["catalog"].get(row["metadata"]["url"]),
+            "invalid parent row identity/truth",
+        )
+    identifiers = list(identifiers)
+    require(bool(identifiers) and len(set(identifiers)) == len(identifiers), "empty/duplicate partition rows")
+    rows = [row for row in parent["rows"] if row["row_id"] in identifiers]
+    require(
+        len(rows) == len(identifiers) and all(row["eligible"] for row in rows),
+        "partition contains unexpected/ineligible logical rows",
+    )
+    # A serialization copy prevents later caller mutation from changing the view.
+    return parse(
+        encode(
+            {
+                **parent,
+                "rows": rows,
+                "scope": "partition_only",
+                "partition_rows": len(rows),
+                "parent_truth_sha256": digest(encode(parent)),
+                "parent_truth": parent,
+            }
+        )
+    )
+
+
+def validate_partition(truth):
+    if "scope" not in truth:
+        require("parent_truth" not in truth and "partition_rows" not in truth, "unscoped partition")
+        return
+    expected = partition_truth(truth["parent_truth"], [row["row_id"] for row in truth["rows"]])
+    require(encode(expected) == encode(truth), "partition parent/membership binding mismatch")

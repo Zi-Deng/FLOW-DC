@@ -617,7 +617,10 @@ scenarios, retained engineering cells, calibration and provisional run-level
 precision tools. Machine-readable plans keep tuning and evaluation separate;
 scientific campaigns require an explicit frozen protocol with supplied advisor
 decisions. Distributed admission and offline topology support remain tracked in
-the issue #26 acceptance map.
+the issue #26 acceptance map. The explicit
+[shared-origin admission path](docs/research/SHARED-ADMISSION.md) adds authenticated
+manager permits through `--shared_control_file`; its private descriptor is generated
+by the manager and its contents must not be copied into public configs.
 
 Run the focused regression checks with the project environment:
 

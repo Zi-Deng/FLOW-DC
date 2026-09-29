@@ -240,6 +240,43 @@ class KnownTruthFixtures(unittest.TestCase):
         with self.assertRaises(FileExistsError):
             self.truth.write(source.parent)
 
+    def test_partition_verification_preserves_parent_provenance_for_both_tools(self):
+        from benchmark.shared_origin import partition_truth
+
+        identifiers = [row["row_id"] for row in self.truth.record["rows"] if row["eligible"]]
+        view = partition_truth(self.truth.record, identifiers)
+        self.assertEqual(view["original_rows"], 6)
+        self.img_fixture()
+        result = verify_native("img2dataset", self.native, view)
+        self.assertTrue(result["artifacts_valid"], result["errors"])
+        self.assertEqual(len(result["rows"]), 3)
+        self.native = self.root / "flow-native"
+        self.flow_fixture()
+        result = verify_native("flowdc", self.native, view)
+        self.assertTrue(result["artifacts_valid"], result["errors"])
+        self.assertEqual(sum(row["useful_bytes"] for row in result["rows"]), 3 * len(self.payload))
+
+    def test_partition_tampering_cannot_change_membership_or_parent_denominator(self):
+        from benchmark.core.truth import partition_truth
+
+        ids = [row["row_id"] for row in self.truth.record["rows"] if row["eligible"]]
+        self.img_fixture()
+        for field, value in (
+            ("original_rows", 3),
+            ("parent_truth_sha256", "0" * 64),
+            ("partition_rows", 2),
+            ("scope", "complete_run"),
+        ):
+            view = partition_truth(self.truth.record, ids)
+            view[field] = value
+            result = verify_native("img2dataset", self.native, view)
+            self.assertFalse(result["artifacts_valid"], field)
+            self.assertEqual(sum(row["useful_bytes"] for row in result["rows"]), 0)
+        with self.assertRaises(ValueError):
+            partition_truth(self.truth.record, [ids[0], ids[0]])
+        with self.assertRaises(ValueError):
+            partition_truth(self.truth.record, ["f" * 64])
+
     def test_unsupported_or_lossy_metadata_fails_before_output_creation(self):
         import datetime
         from decimal import Decimal

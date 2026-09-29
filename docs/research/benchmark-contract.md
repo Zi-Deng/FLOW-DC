@@ -112,9 +112,9 @@ research boundary. `run_benchmark.py` and its help print this limitation.
 | 1: common truth | Independent schema/verifier, metadata guard, tampering tests; real primary fixture at `63ff9c7`; predetermined HTTP cases | Repeat real HTTP cases and primary on final head |
 | 2: timing/work/retention | Common launch-to-verified-index timer, process cleanup, raw precision, retention, source/environment records, aggregate origin logs | Final-head evidence; resource collection if introduced |
 | 3: methods/comparators | [Versioned methods](CONTROL-METHODS.md), same acquisition path, deterministic traces and five ablations; legacy defaults retained | Retained real HTTP trajectories on final head |
-| 4: origin/study harness | [Controlled origin and study tools](STUDY-HARNESS.md): explicit service model, seven scenarios, frozen order, retained recovery/calibration | Real localhost scenario and calibration evidence |
+| 4: origin/study harness | [Controlled origin and study tools](STUDY-HARNESS.md): explicit service model, seven scenarios, frozen order, retained recovery/calibration | Final-head reruns; clean C already passed all scenarios, calibration and in-flight TERM |
 | 5: pilot/freeze | Proposed plans/tuning catalog, run-level paired summaries/precision calculation, explicit freeze refusal | Actual advisor decisions and later scientific protocol/campaign |
-| 6: shared-origin authority | Not implemented | Authentication, admission, fencing/recovery, concurrent client evidence |
+| 6: shared-origin authority | [Authenticated ledger and HTTP hooks](SHARED-ADMISSION.md); aggregate limits, idempotency, Retry-After, restart fencing and no fallback | Real concurrent-client gate; supervisor-proven quiescence and remaining distributed integration |
 | 7: distributed artifacts | Not implemented | Maintained staging and real TaskVine 1/2/4-worker integration |
 | 8: bounded topology | Not implemented; existing accounting untouched | Offline UUID-account migration and 3/4/6-VM fixtures |
 | 9: handoff | This contract, CLI help, regression evidence, prepared coordinator commands | All remaining implementation, final-head product/service gates, both CI jobs, independent review |
@@ -123,8 +123,11 @@ research boundary. `run_benchmark.py` and its help print this limitation.
 artifacts are not real img2dataset execution. The coordinator established V2 on
 committed `63ff9c7306408ac31f59e08c92ff85c3df31b7b2`: both real tools verified six
 payload rows, 2,157 original bytes, the nine-row denominator and six origin-observed
-requests. The coordinator also ran the four new HTTP cases successfully on a
-development tree; that evidence requires repetition on the final committed head.
+requests. At clean `23294685cd4bdb5453ff3fc5b539da3173250617`, the coordinator also
+validated all four methods, primary/HTTP/empty/retry/deadline cases, twelve frozen
+engineering cells, the remaining scenario families, calibration and in-flight TERM.
+The full gate passed 472 product and 141 workflow tests, plus check-clean. These
+A–C results do not validate the later shared-admission source or final combined head.
 These are accounting and semantic checks, not efficacy evidence. The exact
 commands, exits, source/environment hashes, retained failures and omissions are
 indexed in the coordinator's private evidence and prepared PR body.

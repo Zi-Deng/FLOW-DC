@@ -10,13 +10,8 @@ import re
 import subprocess
 from pathlib import Path
 
-SOURCE_PATHS = (
-    "bin/TaskvineFLOWDC.py",
-    "bin/download_batch.py",
-    "bin/single_download.py",
-    "bin/flowdc_integrity.py",
-    "bin/flowdc_methods.py",
-)
+from flowdc_staging import HISTORICAL_REQUIRED, SOURCE_PATHS
+
 MAX_SOURCE_BYTES = 4 * 1024 * 1024
 GIT_TIMEOUT_SECONDS = 10
 
@@ -85,7 +80,7 @@ def read_source(repository, revision):
     total = 0
     for path in SOURCE_PATHS:
         tree = _git(repository, "ls-tree", "-z", commit, "--", path)
-        if path in ("bin/flowdc_integrity.py", "bin/flowdc_methods.py") and not tree:
+        if path not in HISTORICAL_REQUIRED and not tree:
             # Historical schema-1 source commits predate this dependency.
             if any(Path(path).stem.encode() in content for content in files.values()):
                 raise SourceError("source_entrypoint_invalid")
@@ -108,4 +103,7 @@ def read_source(repository, revision):
             raise SourceError("source_size_changed")
         files[path] = content
         entries[path] = {"bytes": size, "sha256": hashlib.sha256(content).hexdigest()}
+    for path in set(SOURCE_PATHS) - set(files):
+        if any(Path(path).stem.encode() in content for content in files.values()):
+            raise SourceError("source_entrypoint_invalid")
     return {"schema_version": 1, "commit": commit, "files": entries}, files

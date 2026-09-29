@@ -200,6 +200,8 @@ class ControlledOrigin:
                     self.send_header("Content-Length", str(len(payload)))
                     if "retry_after" in policy:
                         self.send_header("Retry-After", policy["retry_after"])
+                    if "location" in policy:
+                        self.send_header("Location", policy["location"])
                     self.end_headers()
                     content = payload[: len(payload) // 2] if policy.get("truncate") else payload
                     self.wfile.write(content)

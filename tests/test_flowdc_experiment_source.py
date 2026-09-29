@@ -4,12 +4,14 @@ import hashlib
 import importlib.util
 import os
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
 MODULE = Path(__file__).resolve().parents[1] / "bin/flowdc_experiment_source.py"
+sys.path.insert(0, str(MODULE.parent))
 SPEC = importlib.util.spec_from_file_location("flowdc_experiment_source", MODULE)
 source = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(source)

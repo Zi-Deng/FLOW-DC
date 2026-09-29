@@ -33,6 +33,7 @@ class FlowDCConfig:
     research_profile: bool = False
     control_method: str | None = None
     method_options: dict = field(default_factory=dict)
+    shared_control_file: str | None = None
 
 
 class FlowDCAdapter:
@@ -77,6 +78,7 @@ class FlowDCAdapter:
             "enable_paarc": config.enable_paarc,
             "control_method": config.control_method,
             "method_options": config.method_options,
+            "shared_control_file": config.shared_control_file,
             "C_init": config.paarc_c_init,
             "C_min": config.paarc_c_min,
             "C_max": c_max,
@@ -229,7 +231,9 @@ class FlowDCAdapter:
                 )
             payload_bytes = summary.get("verified_payload_bytes")
             if type(payload_bytes) is not int or payload_bytes < 0:
-                raise ValueError(f"{overview_path}: schema-2 verified_payload_bytes must be a nonnegative integer")
+                raise ValueError(
+                    f"{overview_path}: schema-2 verified_payload_bytes must be a nonnegative integer"
+                )
             # Benchmark throughput has historically used MiB/s, including the
             # img2dataset adapter. Schema-2 decimal display MB is not its source.
             downloaded_mb = payload_bytes / (1024 * 1024)
