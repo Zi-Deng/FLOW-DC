@@ -178,6 +178,18 @@ async def inject_failure(directory, case, authority, futures, events, interrupti
             owner_file = directory / "client-0/run/process-owner.json"
             if owner_file.exists():
                 owner = parse(owner_file.read_bytes())
+                rows = {
+                    row["row_id"]
+                    for row in parse((directory / "client-0/partition-truth.json").read_bytes())["rows"]
+                }
+                outstanding = [
+                    permit["permit_id"]
+                    for permit in authority.ledger.outstanding(authority.ledger.current())
+                    if permit["row_id"] in rows and permit["state"] == "dispatched"
+                ]
+                if not outstanding:
+                    await asyncio.sleep(0.01)
+                    continue  # Other workers' arrivals do not prove this worker owns remote work.
                 # Open a kernel process handle before checking retained identity;
                 # PID reuse afterward cannot redirect this fixture's signal.
                 try:
@@ -187,6 +199,10 @@ async def inject_failure(directory, case, authority, futures, events, interrupti
                 try:
                     process = psutil.Process(owner["pid"])
                     require(process.create_time() == owner["create_time"], "owned child identity changed")
+                    write_new(
+                        directory / "failure-injection.json",
+                        {"case": case, "owner": owner, "outstanding_dispatched_permits": outstanding},
+                    )
                     signal_pidfd(fd, signal.SIGKILL)
                 finally:
                     os.close(fd)

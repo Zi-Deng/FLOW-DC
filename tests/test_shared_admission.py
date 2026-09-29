@@ -305,12 +305,12 @@ class NativeFixtureTests(unittest.IsolatedAsyncioTestCase):
         result = audit_events(events, {"instrumented": True, "requests": 3, "responses": 3})
         self.assertEqual(result.get("peak_open_requests"), 3)
 
-    async def test_pidfd_injection_does_not_require_cpython_pidfd_bindings(self):
+    async def test_pidfd_injection_waits_for_target_dispatch_without_cpython_bindings(self):
         import signal
 
         import psutil
 
-        from benchmark.shared_origin import inject_failure
+        import benchmark.shared_origin as smoke
 
         process = subprocess.Popen(
             [sys.executable, "-B", "-c", "import time; time.sleep(10)"], start_new_session=True
@@ -323,16 +323,48 @@ class NativeFixtureTests(unittest.IsolatedAsyncioTestCase):
                 owner.write_text(
                     json.dumps({"pid": process.pid, "create_time": psutil.Process(process.pid).create_time()})
                 )
+                (root / "client-0/partition-truth.json").write_text(
+                    json.dumps({"rows": [{"row_id": "target"}]})
+                )
+                reads = []
+
+                def current():
+                    reads.append(True)
+                    # Global arrivals belong to another worker; even a target's
+                    # issued-but-undispatched permit is not the loss precondition.
+                    return {
+                        "permits": {
+                            "p": {
+                                "permit_id": "p",
+                                "row_id": "other" if len(reads) == 1 else "target",
+                                "state": "issued" if len(reads) == 2 else "dispatched",
+                            }
+                        }
+                    }
+
+                authority = SimpleNamespace(
+                    ledger=SimpleNamespace(current=current, outstanding=Ledger.outstanding)
+                )
+                original_signal = smoke.signal_pidfd
+
+                def checked_signal(fd, signum):
+                    self.assertGreaterEqual(
+                        len(reads), 3, "injection killed a worker without dispatched work"
+                    )
+                    original_signal(fd, signum)
+
                 with (
                     patch.object(os, "pidfd_open", None, create=True),
                     patch.object(signal, "pidfd_send_signal", None, create=True),
+                    patch.object(smoke, "signal_pidfd", side_effect=checked_signal),
                 ):
-                    await inject_failure(
+                    await smoke.inject_failure(
                         root,
                         "worker-loss",
-                        None,
+                        authority,
                         [SimpleNamespace(done=lambda: False)],
                         [{"phase": "arrival"}] * 4,
+                        {"requested": False},
                     )
             self.assertEqual(process.wait(timeout=3), -signal.SIGKILL)
         finally:
