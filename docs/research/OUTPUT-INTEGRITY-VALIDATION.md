@@ -1,5 +1,63 @@
 # Output integrity validation — issue #22
 
+## Staging-budget repair after coordinator validation
+
+The [coordinator finding](https://github.com/Zi-Deng/FLOW-DC/pull/24#issuecomment-5882043580)
+records a real regression in the staging-budget test fixture at clean committed head
+`022022a47662a50d0c03b4aa188f6351b33540e0`. Its localhost-capable `make check` ran
+**401 product tests**, exit **2**, with **one error**, no assertion failures and no
+socket setup errors. The product suite took 115.270 s (115.478 s command time); workflow
+targets were not reached. The coordinator reported product CI failing and workflow CI
+passing at that head. No independent model review has been attempted; the supplied
+timeline has one conversation finding, no review records and no inline comments.
+
+The executor checked the saved coordinator log SHA-256 and 32 committed runtime/test
+hashes against that exact head; the recorded before/after hashes and clean status match.
+The earlier diagnostic HTTP findings are addressed by `022022a`: the four named HTTP
+methods ran in this committed-head full suite without error. No additional HTTP repair
+or deferral is indicated by that record. The coordinator also independently fetched the
+historical PR-21 completion comment and confirmed the D5 addendum's counts and head.
+
+The staging test used raw `b"x"` buffers while mocking `parquet_rows`. Once the
+committed source bundle included output integrity, preparation also read Parquet to
+validate row provenance, so the fake bytes failed with `The file must end with PAR1`
+before reaching the intended size limit. The earlier pre-commit passes selected the
+older source bundle through Git HEAD. Matching working runtime/test hashes alone did
+not establish equivalent execution for this HEAD-sensitive fixture.
+
+The repair writes valid one-row Parquet fixtures with uncompressed binary padding and
+executes real URL/row validation. It retains the 2 MiB staging limit, the two-case workload,
+the expected `staging_size_limit`, exactly two attempted reads, and the first-read ceiling
+below 524,288 bytes. The exact reduction assertion now uses the first file's independently
+measured serialized size, including Parquet overhead, instead of the old raw 100,000-byte
+buffer. An additional assertion requires that only the first partition reaches validation;
+the second oversized partition is rejected during its bounded read. Production code,
+permissions and limits are unchanged.
+
+Inspection of other HEAD-sensitive fixtures found that supplied-partition validation and
+distinct-URL-column caching already use real Parquet. Generated experiment fixtures also
+produce real Parquet; source-packaging tests use explicit commits in temporary repositories,
+including historical/no-dependency and missing-required-dependency cases. They retain their
+existing assertions. Post-commit validation is necessary to exercise the actual prepared
+source revision; the coordinator response records the resulting repair commit and checks.
+
+Using the same read-only `PY`/`RUFF` executables and environment defined below:
+
+| Command | Exit / observed result before repair commit |
+| --- | --- |
+| `PYTHONPATH=tests $PY -B -m unittest test_flowdc_experiment.ExperimentTests.test_partition_reads_use_remaining_aggregate_staging_budget -v` on unchanged `022022a` | **1**, one error with the exact reported Parquet footer failure; reproduced before editing. |
+| Same targeted command with repaired fixture and HEAD still `022022a` | **0**, one test, 0.091 s. |
+| `PYTHONPATH=tests $PY -B -m unittest test_integrity_protocol test_output_integrity test_http_measurement.GateTests test_http_measurement.ClassificationTests test_flowdc_experiment_source test_flowdc_experiment -v` | **0**, 97 tests, 17.721 s; this run selects the integrity-aware committed source bundle. |
+| `$RUFF check tests/test_flowdc_experiment.py` | **0**. |
+| `$PY -m py_compile tests/test_flowdc_experiment.py` | **0**. |
+| `git diff --check` | **0**. |
+
+The prior validation remains historical evidence for its recorded heads. Required full
+checks, both CI jobs and a fresh independent review must assess the repaired head/base;
+no extra review round is requested or consumed by this test-fixture repair. The executor's
+socket restriction remains unchanged. Public response and post-commit results are prepared
+for coordinator publication, with no direct push, GitHub write, cloud action or merge.
+
 ## PR #24 implementation handoff
 
 The approved [issue-22 contract](https://github.com/Zi-Deng/FLOW-DC/issues/22#issuecomment-5881275556)
