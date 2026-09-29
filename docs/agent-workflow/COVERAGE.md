@@ -228,3 +228,85 @@ packets/journals inspectable under their original semantics; do not rewrite prov
 hashes, historical review claims or PR #27's limitations. Review this workflow-changing
 PR under clean-main policy. Only the already-authorized narrow literal-tool/capability
 invocation may be used before merge; arbitrary PR policy must not become active.
+
+## Explicit bounded batches (metadata schema 4)
+
+Single-request schema-3 records keep their existing semantics. A batch is an explicit
+opt-in before inference; a deterministic preview makes no model call. From the clean
+trusted control checkout, prepare the original packet, then inspect:
+
+```bash
+python3 scripts/agentic/review.py batch-preview /absolute/review-directory
+```
+
+The preview partitions every original required ID, omissions included, into the
+existing bounded component scopes and a separate integration assignment. Links and
+source/test mapping supply navigation context. Each component owns its assigned IDs;
+reading another component's material does not transfer credit. Overlapping source
+ranges can support distinct obligations, but each parent ID counts once. Every unit
+retains the complete original packet. Assignments are not proof of coherent reasoning
+or exhaustive semantic coverage; the integration pass must assess interactions and
+test adequacy across those assignments.
+
+Execution needs **all five explicit bounds**: `--batch-requests`, `--batch-credits`,
+`--batch-seconds`, `--batch-unit-credits`, and `--batch-unit-seconds`. Supply them to
+`review.py batch-run DIRECTORY`; there are no paid batch defaults. Requests count
+fresh Copilot CLI invocations, including failed or uncertain attempts, not internal
+provider API calls. Per-unit allocations are reserved durably before dispatch and
+cannot exceed remaining aggregate allocations. A deliberately insufficient allocation
+stops incomplete; the wrapper never silently increases it to finish a checklist.
+
+`batch.json` freezes repository/PR/issue/plan, exact head/base, every parent artifact,
+inventory digest, policy, assignments and budget. `batch-state.json` persists the
+start, deadline and ordered reservations. Each `units/UNIT` holds its own packet,
+assignment, exact capture/report, sanitized diagnostics and recovery journal. Unit
+reports remain schema 3 and cannot qualify the parent independently. For integration,
+exact component reports become additional required material; changed, missing or
+incomplete dependencies prevent completion. The parent inventory is never replaced
+by a reduced checklist.
+
+Each invocation uses the existing isolated Copilot path and must establish actual
+`view`, `grep`, `glob` capability. The aggregate credits only assigned positive
+inspections supported by immutable ranges and validated telemetry. Missing, masked,
+truncated, malformed, omitted and unsupported material stays incomplete. A complete
+parent source count cannot replace required integration report reads.
+
+`review.py batch-recover DIRECTORY` recovers saved captures without inference.
+`review.py batch-resume DIRECTORY` additionally permits never-started eligible units
+under the **original** budget and deadline. Attempted units without recoverable reports
+are not retried. Incomplete prior units, unknown usage, exhausted limits, stale
+snapshots/contracts and ambiguous state stop further requests. Clock rollback before
+the persisted start is refused. A process interruption after reservation but before
+inference conservatively consumes that reservation; inspect it rather than retrying.
+
+The retained `totalNanoAiu` counter uses the SDK's `1e9` nano-unit scaling for AI-credit
+accounting; other counters remain retained but cannot substitute for it. See GitHub's
+[usage metric definitions](https://docs.github.com/en/copilot/how-tos/copilot-sdk/features/usage-and-billing)
+and [CLI unit reference](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-command-reference).
+No currency conversion is inferred. Provider limits are **soft**: an in-flight request
+can overshoot. Known actual usage is retained, unknown or over-allocation usage blocks
+readiness and further spending. Reservation bounds are not a hard monetary cap.
+
+The parent `review.md` is explicitly attributed aggregate bookkeeping, not a model
+response. Publication retains each exact unit report in a separate attributed COMMENT,
+then publishes the aggregate status with report hashes. Reports are never concatenated
+and presented as one response. Readiness validates all exact published unit reports
+and the aggregate on the current head/base. Partial output remains publishable as
+incomplete. Each COMMENT retains the existing 60000-byte transport ceiling; an
+oversized report fails publication without truncating or editing its bytes.
+
+The managed equivalent is `workflow.py task-review ISSUE --batch` for preview, adding
+`--execute` and the five bounds for the initial run. Use `--batch --execute
+--batch-resume` for eligible continuation, or `--batch --execute` to recover only after
+an attempted run. `--publish` publishes retained evidence. The complete batch is one
+explicitly budgeted managed round; starting a fresh batch still obeys the existing
+round-continuation authorization. `--prior-review` can retain validated batch findings,
+exact unit reports and original uncovered obligations without inheriting readiness.
+
+All qualification, managed designation, hosted qualification, preflight and finish
+use the same version-aware gate. Hosted automation keeps its single-request default;
+it does not silently fan out. Installer payload discovery includes the new module and
+tests without a path-manifest change. Synthetic tests cover budgeting, isolation,
+recovery, report binding and publication. No live multi-invocation completion has been
+validated by those tests. A separate finite trial budget and explicit trust in the
+invocation code are required before applying unmerged batch policy to its own PR.

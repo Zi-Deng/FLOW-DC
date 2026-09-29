@@ -459,8 +459,23 @@ def build(repo, packet, head, ancestor, head_index, base_index, context, cfg, pr
         )
         add("prior-review.json", "findings")
         (packet / "prior-report.txt").write_bytes((previous / "review.md").read_bytes())
+        if metadata.get("schema_version") == 4:
+            (packet / "prior-unit-reports").mkdir()
+            for unit in assessment["units"]:
+                if "review_sha256" in unit:
+                    artifact = f"prior-unit-reports/{unit['id']}.txt"
+                    (packet / artifact).write_bytes(
+                        (previous / "units" / unit["id"] / "review.md").read_bytes()
+                    )
+            findings = assessment["findings"]
+        else:
+            findings = None
         try:
-            findings = finding_document((previous / "review.md").read_bytes().decode("utf-8"))["findings"]
+            findings = (
+                findings
+                if findings is not None
+                else finding_document((previous / "review.md").read_bytes().decode("utf-8"))["findings"]
+            )
         except (ValueError, KeyError, TypeError):
             findings = [
                 {"unstructured_prior_report": "Read prior-report.txt; previous findings could not be parsed."}

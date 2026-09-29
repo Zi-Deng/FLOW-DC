@@ -293,8 +293,11 @@ gaps. Preparation keeps the contract discoverable. Implementation/repair supply 
 commands, omissions and finding dispositions without claiming the reviewer ran tests.
 
 `task-review --prior-review DIRECTORY` accepts a validated same-PR ancestor packet,
-retains old uncovered material and adds repair/finding links. Scope planning remains
-one bounded request. Actual successful canary and source-range evidence are required;
+retains old uncovered material and adds repair/finding links. Default scope planning remains
+one bounded request. Explicit `task-review --batch` previews the full partition;
+execution requires five finite budget options. Resume never retries attempted units.
+See [batch controls and evidence](COVERAGE.md#explicit-bounded-batches-metadata-schema-4).
+Actual successful canary and source-range evidence are required;
 configuration or nonempty prose is insufficient. Partial publication returns incomplete
 and never designates readiness. Finish also rejects legacy, missing or changed evidence.
 Keep the exact model response separate from its publication envelope, retain sanitized

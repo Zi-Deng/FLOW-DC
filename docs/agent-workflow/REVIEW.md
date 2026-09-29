@@ -64,8 +64,10 @@ secret detector: inspect public source and comments for sensitive material.
 `max_diff_bytes` is unlimited when null/omitted; an explicit positive integer opts into
 a hard pre-packet cap. There is no silent diff truncation. Per-source-file limit is
 250000 bytes and the combined head/base/carried-source budget is 12000000 bytes.
-Scopes are navigation within one request, not additional paid rounds. Existing limits
-remain 900 seconds and 400 Copilot AI credits; in-flight provider requests can overshoot
+By default, scopes are navigation within one request, not additional paid rounds.
+Explicit schema-4 batches require separately supplied finite aggregate and per-unit
+bounds; see [bounded batches](COVERAGE.md#explicit-bounded-batches-metadata-schema-4).
+Single-request defaults remain 900 seconds and 400 Copilot AI credits; in-flight provider requests can overshoot
 credits. Large reviews may still exhaust time/context/credits and remain incomplete.
 The separate managed executor prompt limit remains 300000 bytes.
 

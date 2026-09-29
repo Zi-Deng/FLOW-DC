@@ -13,10 +13,12 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import uuid
 from pathlib import Path, PurePosixPath
 
 import ci_evidence
+import review_batch
 import review_coverage as coverage
 import review_coverage_v1 as legacy_coverage
 import review_packet
@@ -224,7 +226,7 @@ def prepare(repo, number, issue_number, plan_comment, expected_head=None, output
             ["git", "-C", repo.root, "merge-base", "--is-ancestor", old["head_sha"], head], check=False
         ).returncode:
             raise WorkflowError("Prior review head is not an ancestor of current head")
-        if old.get("schema_version") not in {2, 3}:
+        if old.get("schema_version") not in {2, 3, review_batch.SCHEMA}:
             raise WorkflowError(
                 "Legacy prior review has no required-material inventory; use a full fresh packet"
             )
@@ -343,6 +345,10 @@ def qualification(directory, *, require=False):
     """Shared gate used by recovery, publication, managed designation and preflight."""
     directory = plain_path(directory)
     meta = verify_packet(directory)
+    if meta.get("schema_version") == review_batch.SCHEMA:
+        return review_batch.qualification(directory, require)
+    if require and meta.get("batch_unit"):
+        raise WorkflowError("A batch unit cannot independently qualify the parent review")
     result, assessment = stored_result(directory, meta)
     for name, key in (("review.md", "review_sha256"),):
         if not (directory / name).is_file() or digest(plain_path(directory / name)) != meta.get(key):
@@ -364,12 +370,19 @@ def qualification(directory, *, require=False):
 def coverage_ready(directory):
     """Current-policy readiness, distinct from an immutable historical assessment."""
     assessment = qualification(directory)
-    return verify_packet(directory).get("schema_version") == 3 and assessment["qualified"]
+    meta = verify_packet(directory)
+    return (
+        meta.get("schema_version") in {3, review_batch.SCHEMA}
+        and not meta.get("batch_unit")
+        and assessment["qualified"]
+    )
 
 
 def recover_review(repo, directory):
     """Finalize a durably saved exact result without another model request."""
     directory = plain_path(directory)
+    if verify_packet(directory).get("schema_version") == review_batch.SCHEMA:
+        return review_batch.execute(repo, directory, recover_only=True)
     result_path = plain_path(directory / "review-result.json")
     capture_path = plain_path(directory / "review-capture.json")
     if not result_path.exists() and not capture_path.exists():
@@ -436,9 +449,11 @@ def save_result(directory, meta, body, diagnostics, version):
     atomic_json(directory / "review-result.json", {**capture, "coverage_sha256": value_digest(assessment)})
 
 
-def review(repo, directory):
+def review(repo, directory, *, _batch_authorized=False, _batch_deadline=None):
     try:
-        return run_review(repo, directory)
+        return run_review(
+            repo, directory, _batch_authorized=_batch_authorized, _batch_deadline=_batch_deadline
+        )
     except BaseException:
         # Failures before inference still leave bounded diagnostic reasons. Never
         # replace a journal or already-captured attempt with a generic failure.
@@ -455,9 +470,13 @@ def review(repo, directory):
         raise
 
 
-def run_review(repo, directory):
+def run_review(repo, directory, *, _batch_authorized=False, _batch_deadline=None):
     directory = plain_path(directory)
     meta = verify_packet(directory)
+    if meta.get("schema_version") == review_batch.SCHEMA:
+        raise WorkflowError("Batch execution requires explicit batch-run or batch-resume")
+    if meta.get("batch_unit") and (not _batch_authorized or _batch_deadline is None):
+        raise WorkflowError("Batch units require an aggregate reservation before invocation")
     if repo.name != meta["repository"]:
         raise WorkflowError("Review packet belongs to another repository")
     current_pr(repo, meta["pr"], meta["head_sha"], meta["base_sha"])
@@ -521,6 +540,13 @@ def run_review(repo, directory):
         "Keep the complete report under 50000 UTF-8 bytes; prioritize material findings and state coverage limits. "
         "If none are supported, return an empty findings array. Partial output must explicitly retain unread material."
     )
+    if meta.get("batch_unit"):
+        prompt += (
+            " This is one bounded batch unit. Read assignment.json and inspect every required_ids entry there. "
+            "The full parent inventory stays available as context; unassigned IDs may remain unread in this report. "
+            "For integration, inspect all exact component-reports inputs and cross-unit interactions, findings and test adequacy. "
+            "Report only actual inspections; the aggregate wrapper accounts for remaining parent obligations."
+        )
     # A new config/state directory gives a new session without personal MCP, hooks or memory.
     with tempfile.TemporaryDirectory(prefix="agentic-copilot-") as temporary:
         reviewer_home = Path(temporary) / "home"
@@ -597,6 +623,11 @@ def run_review(repo, directory):
             "--prompt",
             prompt,
         ]
+        timeout = meta["config"]["review_timeout_seconds"]
+        if meta.get("batch_unit"):
+            timeout = min(timeout, _batch_deadline - time.time())
+            if timeout <= 0:
+                raise WorkflowError("Batch deadline expired before inference")
         atomic_json(
             directory / "attempt.json",
             {
@@ -609,9 +640,7 @@ def run_review(repo, directory):
         )
         failure, output, code = None, "", None
         try:
-            response = run(
-                args, cwd=workspace, env=env, timeout=meta["config"]["review_timeout_seconds"], check=False
-            )
+            response = run(args, cwd=workspace, env=env, timeout=timeout, check=False)
             output, code = response.stdout, response.returncode
             failure = getattr(response, "failure_reason", None)
         except subprocess.TimeoutExpired as exc:
@@ -666,15 +695,25 @@ def run_review(repo, directory):
     return recover_review(repo, directory)
 
 
+def report_marker(meta):
+    unit = meta.get("batch_unit")
+    suffix = f":{unit['batch_sha256']}:{unit['unit']['id']}" if unit else ""
+    return f"<!-- agentic-review:{meta['head_sha']}:{meta['review_sha256']}{suffix} -->"
+
+
 def publication_body(directory):
     meta = verify_packet(directory)
     assessment = qualification(directory)
     body = (Path(directory) / "review.md").read_bytes().decode("utf-8")
+    if meta.get("schema_version") == review_batch.SCHEMA:
+        return review_batch.publication_body(directory)
     label = (
         "coverage-qualified static inspection"
         if assessment["qualified"]
         else "INCOMPLETE static inspection — not ready"
     )
+    if meta.get("batch_unit"):
+        label = f"batch unit {meta['batch_unit']['unit']['id']} — parent readiness requires aggregate qualification"
     header = (
         f"## Independent Copilot CLI review\n\nPR #{meta['pr']} · reviewed head `{meta['head_sha']}` "
         f"· base `{meta['base_sha']}`\n\nRequested model: `{meta['requested_model']}`. "
@@ -682,7 +721,7 @@ def publication_body(directory):
         "This is not human approval. The reviewer executed no tests. CI association and tested checkout "
         "are separately recorded in validation.json; unknown execution details remain unknown.\n\n"
     )
-    marker = f"<!-- agentic-review:{meta['head_sha']}:{meta['review_sha256']} -->"
+    marker = report_marker(meta)
     binding = f"<!-- agentic-coverage:v{1 if meta['schema_version'] < 3 else 2}:{value_digest(assessment)}:{meta.get('diagnostics_sha256', 'legacy')} -->"
     return header + body + "\n\n" + marker + "\n" + binding
 
@@ -700,6 +739,8 @@ def verified_published(repo, directory, number, head, base):
     ):
         raise WorkflowError("Review coverage record is stale or belongs to another PR")
     qualification(directory, require=True)
+    if meta.get("schema_version") == review_batch.SCHEMA:
+        review_batch.verify_unit_publications(repo, directory)
     expected = publication_body(directory)
     matching = [
         item
@@ -726,7 +767,9 @@ def verify_publication(repo, directory):
         )
     else:
         expected = publication_body(directory)
-    marker = f"<!-- agentic-review:{meta['head_sha']}:{meta['review_sha256']} -->"
+    if meta.get("schema_version") == review_batch.SCHEMA:
+        review_batch.verify_unit_publications(repo, directory, complete_only=False)
+    marker = report_marker(meta)
     matches = [
         item
         for item in repo.api(f"pulls/{meta['pr']}/reviews", paginate=True)
@@ -755,7 +798,9 @@ def publish(repo, directory):
     if len(body.encode("utf-8")) > 60000:
         raise WorkflowError("Review exceeds the publication budget; summarize separately with attribution")
     current_pr(repo, meta["pr"], meta["head_sha"], meta["base_sha"])
-    marker = f"<!-- agentic-review:{meta['head_sha']}:{meta['review_sha256']} -->"
+    marker = report_marker(meta)
+    if meta.get("schema_version") == review_batch.SCHEMA:
+        review_batch.publish_units(repo, directory)
     reviews = repo.api(f"pulls/{meta['pr']}/reviews", paginate=True)
     for existing in reviews:
         if marker in (existing.get("body") or ""):
@@ -787,9 +832,20 @@ def main():
     prep.add_argument("--expected-head")
     prep.add_argument("--output")
     prep.add_argument("--prior-review")
-    for name in ["run", "publish", "qualify", "verify-publication"]:
+    for name in [
+        "run",
+        "publish",
+        "qualify",
+        "verify-publication",
+        "batch-preview",
+        "batch-run",
+        "batch-resume",
+        "batch-recover",
+    ]:
         p = sub.add_parser(name)
         p.add_argument("directory")
+        if name == "batch-run":
+            review_batch.add_budget_arguments(p)
     args = parser.parse_args()
     try:
         repo = Repo()
@@ -804,6 +860,17 @@ def main():
                 args.output,
                 args.prior_review,
             )
+        elif args.command == "batch-preview":
+            result = review_batch.plan(args.directory)
+        elif args.command in {"batch-run", "batch-resume", "batch-recover"}:
+            if args.command == "batch-run":
+                review_batch.select(args.directory, review_batch.arguments_budget(args))
+            result = review_batch.execute(
+                repo,
+                args.directory,
+                resume=args.command == "batch-resume",
+                recover_only=args.command == "batch-recover",
+            )
         elif args.command == "run":
             result = review(repo, args.directory)
         elif args.command == "publish":
@@ -811,9 +878,15 @@ def main():
         elif args.command == "verify-publication":
             result = verify_publication(repo, args.directory)
         else:
+            meta = verify_packet(args.directory)
+            if repo.name != meta["repository"]:
+                raise WorkflowError("Review belongs to another repository")
+            current_pr(repo, meta["pr"], meta["head_sha"], meta["base_sha"])
             result = qualification(args.directory, require=True)
         print(json.dumps(result, indent=2) if isinstance(result, dict) else result)
-        if args.command == "run" and not coverage_ready(args.directory):
+        if args.command in {"run", "batch-run", "batch-resume", "batch-recover"} and not coverage_ready(
+            args.directory
+        ):
             return 2
         return 0
     except (WorkflowError, OSError, ValueError, subprocess.SubprocessError) as exc:

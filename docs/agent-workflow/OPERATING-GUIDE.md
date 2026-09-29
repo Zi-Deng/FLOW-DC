@@ -242,8 +242,12 @@ into public documentation only after checking them.
 
 Use the [coverage runbook](COVERAGE.md) for new reviews. The immutable packet exposes
 individual acceptance items, source hunks/context, relevant tests and prior findings.
-One request covers deterministic scopes plus a cross-boundary pass; scopes do not
-increase the request or credit budget. `task-review --prior-review DIRECTORY` validates
+By default, one request covers deterministic scopes plus a cross-boundary pass; scopes do not
+increase the request or credit budget. Explicit `task-review --batch` previews component
+and integration assignments; execution requires finite aggregate and per-unit bounds.
+See [batch controls](COVERAGE.md#explicit-bounded-batches-metadata-schema-4) for recovery,
+exact unit publication and aggregate readiness. No live trial is implied by selection.
+`task-review --prior-review DIRECTORY` validates
 repair ancestry and retains uncovered material. A changed head/base needs fresh evidence.
 
 A report with missing capability, malformed telemetry or unread required material is

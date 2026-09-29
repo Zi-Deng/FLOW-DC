@@ -18,6 +18,35 @@ import tasks
 
 
 class FinishTests(PipelineFixture):
+    def test_finish_uses_aggregate_and_every_exact_unit_publication(self):
+        from test_review_batch import BatchPipelineTests
+
+        limits = dict(requests=100, credits=100, seconds=600, unit_credits=1, unit_seconds=60)
+        before = len(self.reviews)
+        with patch.object(
+            review,
+            "review",
+            side_effect=lambda repo, directory, **kwargs: BatchPipelineTests.model(
+                self, repo, directory, **kwargs
+            ),
+        ):
+            pipeline.review_task(
+                self.repo,
+                12,
+                batch=True,
+                batch_limits=limits,
+                execute=True,
+                publish=True,
+                fresh=True,
+                approved_continuation=True,
+                continue_reason="Explicit synthetic batch test",
+            )
+        self.assess()
+        finish.prepare_finish(self.repo, 12, self.assessment_file)
+        self.reviews[before]["body"] += "altered unit"
+        with self.assertRaises(workflow.WorkflowError):
+            finish.prepare_finish(self.repo, 12, self.assessment_file)
+
     def test_finish_refuses_missing_coverage_diagnostics(self):
         state = tasks.TaskStore(self.repo).read("issue-12")
         (Path(state["designated_review"]["directory"]) / "diagnostics.json").unlink()
