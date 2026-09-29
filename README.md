@@ -166,6 +166,11 @@ python bin/SplitParquet.py \
 python bin/SplitParquet.py --config partition_config.json
 ```
 
+Partition host-column migration: `--add_host_column` now emits the derived value as
+`__flowdc_partition_host__`, preserving any original `host` column as row metadata.
+Consumers of the former derived `host` field must read the reserved name instead.
+Empty inputs emit one empty partition and print its path with the zero-row count.
+
 **Partitioning Methods:**
 
 | Method | Description |
@@ -405,6 +410,18 @@ decoded application bytes, not network wire bytes. Repeated rows receive separat
 payload credit; identical content counts once in unique-content bytes. Compatibility
 MB fields remain decimal displays. Resumed/offline elapsed time and throughput are
 null because the implementation does not reconstruct elapsed time across interruptions.
+Gradient resume also sets `gradient_summary` to null with
+`gradient_summary_scope="unavailable_across_resume"`; controller counters are not
+persisted across invocations. Offline reconciliation retains the previous summary and
+its scope. The benchmark adapter rejects schema-2 reports with unavailable elapsed
+time rather than treating them as measured zero-duration benchmark runs.
+
+Integrity-created class, staging and ancestor directories use `0700`; payloads,
+sidecars and exports use `0600` (subject to umask). The maintained entrypoint's
+output root itself retains ordinary umask-derived mode. Archive members use `0600`.
+The owner-only artifacts change the former umask-derived shared access;
+group readers or workers running as a different user need a separately arranged export
+and access policy. The downloader does not broaden existing permissions.
 
 The authoritative run result is `.flowdc/final.json`, written last. Final overview
 reports carry its expected SHA-256 and leave `run_complete` and
@@ -413,6 +430,11 @@ the archive describes the earlier local-files stage. `successful_downloads` coun
 verified local rows, so it alone does not establish archive/run completion. See the
 [protocol and compatibility specification](docs/research/OUTPUT-INTEGRITY.md) and
 [validation record](docs/research/OUTPUT-INTEGRITY-VALIDATION.md).
+
+The `create_tar()` helper rejects already finalized managed directories without
+changing their evidence. Use `--reconcile` to rebuild and verify the archive, reports
+and final record together. Attempt-journal storage failures abort before HTTP rather
+than retrying without a recorded attempt; repair storage before explicit resume.
 
 ## Input File Format
 

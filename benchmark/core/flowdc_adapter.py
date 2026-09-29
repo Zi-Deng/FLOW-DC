@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import math
 import shutil
 import sys
 import tempfile
@@ -207,8 +208,23 @@ class FlowDCAdapter:
         total_urls = summary.get("total_urls", 0)
         successful = summary.get("successful_downloads", 0)
         failed = summary.get("failed_downloads", 0)
-        elapsed = summary.get("elapsed_sec") or 0.0
+        elapsed = summary.get("elapsed_sec")
         downloaded_mb = summary.get("downloaded_mb", 0.0)
+        if overview.get("report_schema_version") == 2:
+            # The benchmark result schema requires measured elapsed time.
+            # Resume/reconcile reports deliberately have none; reject them
+            # rather than feed an invented zero into comparison/aggregation.
+            if type(elapsed) not in (int, float) or not math.isfinite(elapsed) or elapsed < 0:
+                raise ValueError(
+                    f"{overview_path}: schema-2 elapsed_sec must be a finite nonnegative "
+                    "measurement; resume/reconcile timing is unavailable"
+                )
+            payload_bytes = summary.get("verified_payload_bytes")
+            if type(payload_bytes) is not int or payload_bytes < 0:
+                raise ValueError(f"{overview_path}: schema-2 verified_payload_bytes must be a nonnegative integer")
+        else:
+            elapsed = elapsed or 0.0
+            payload_bytes = int(downloaded_mb * 1024 * 1024)
 
         # Calculate derived metrics
         success_rate = (successful / total_urls * 100) if total_urls > 0 else 0.0
@@ -230,9 +246,7 @@ class FlowDCAdapter:
             successful_downloads=successful,
             failed_downloads=failed,
             success_rate_percent=success_rate,
-            total_bytes_downloaded=(int(summary["verified_payload_bytes"])
-                                    if overview.get("report_schema_version") == 2
-                                    else int(downloaded_mb * 1024 * 1024)),
+            total_bytes_downloaded=payload_bytes,
             elapsed_seconds=elapsed,
             throughput_mbps=throughput_mbps,
             throughput_imgs_per_sec=throughput_imgs,

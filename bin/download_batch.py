@@ -1906,6 +1906,11 @@ async def download_one(
     try:
         directory = store.begin(key) if store is not None else None
     except (OSError, ValueError) as exc:
+        # Only a durable row rejection can become an ordinary failed outcome.
+        # A journal/storage failure must abort this invocation before HTTP; if
+        # swallowed here it can leave an unchanged budget and retry forever.
+        if store is None or not store.fs.exists(f".flowdc/rejections/{key}.json"):
+            raise
         return DownloadOutcome(key, url, False, None, class_name, None, str(exc))
     # Determine filename
     if store is not None:
@@ -2142,6 +2147,10 @@ def create_tar(output_folder: str, compress: bool = True) -> str:
         # Compatibility helper: a managed directory must use committed records,
         # never a recursive walk that includes private staging or unknown files.
         with integrity.RunStore(out) as store:
+            if store.fs.exists(".flowdc/final.json"):
+                final = store.fs.json(".flowdc/final.json")
+                integrity.require("completion_boundary" not in final,
+                                  "create_tar cannot modify a finalized managed run; use --reconcile")
             snapshot = store.reconcile()
             report = store.fs.json("overview.json") if store.fs.exists("overview.json") else {}
             return store.make_archive(snapshot, report, compress=compress)[0]
@@ -2412,7 +2421,7 @@ async def run_acquisition(cfg, *, manager_factory=HostControllerManager, report_
                     original_factory = report_factory
                     def report_factory(config, outcomes, elapsed):
                         report = original_factory(config, outcomes, elapsed)
-                        for field in ("controller_variant", "gradient_summary"):
+                        for field in ("controller_variant", "gradient_summary", "gradient_summary_scope"):
                             if field in previous:
                                 report[field] = previous[field]
                         return report

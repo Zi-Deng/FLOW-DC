@@ -1,5 +1,9 @@
 # Output integrity validation — issue #22
 
+The subsequent first-review repairs and their finding-by-finding evidence are in
+[the review repair record](OUTPUT-INTEGRITY-REVIEW-REPAIR.md). The dated handoffs below
+remain historical evidence for their recorded heads.
+
 ## Staging-budget repair after coordinator validation
 
 The [coordinator finding](https://github.com/Zi-Deng/FLOW-DC/pull/24#issuecomment-5882043580)

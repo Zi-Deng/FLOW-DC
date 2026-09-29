@@ -853,7 +853,7 @@ def generate_overview_report(
     df_total: int,
     outcomes: dict[str, base.DownloadOutcome],
     elapsed_sec: float,
-    gradient_summary: dict[str, Any],
+    gradient_summary: dict[str, Any] | None,
     tar_path: Optional[str] = None,
 ) -> dict[str, Any]:
     """Extend the shared overview schema with gradient settings and counters."""
@@ -864,6 +864,11 @@ def generate_overview_report(
     report["paarc_version"] = "2.0.0-gradient"
     report["controller_variant"] = "gradient"
     report["gradient_summary"] = gradient_summary
+    if cfg.resume:
+        # Controller state is not persisted across invocations. An empty or
+        # partial resume cannot provide counters for the original whole run.
+        report["gradient_summary"] = None
+        report["gradient_summary_scope"] = "unavailable_across_resume"
     for key in (
         "gradient_alpha", "gradient_threshold", "gradient_severe_threshold",
         "startup_gradient_threshold", "gradient_required_intervals",

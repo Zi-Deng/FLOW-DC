@@ -30,6 +30,12 @@ interrupted attempt directory counts as started work, with uncertain execution w
 necessary; it never becomes an invented zero-attempt/unattempted outcome. A rejection
 before an attempt, such as an unowned destination, is explicitly failed with zero
 intents. Only no-start evidence permits `unattempted`.
+If attempt-directory or intent publication fails without a durable row rejection,
+acquisition aborts before HTTP and leaves the final marker incomplete. There is no
+in-memory retry of an unchanged persisted budget. An interrupted attempt directory
+still consumes one attempt and reconciles as failed with uncertain execution;
+failure before that directory exists cannot have dispatched HTTP. Repair storage
+before explicitly resuming; failure to record evidence is never a complete run.
 
 ## Containment and publication
 
@@ -40,6 +46,15 @@ aliases, directory-prefix conflicts and reserved `.flowdc`, `overview.json`, and
 Labels and path components reject dot/dot-dot, absolute paths, encoded separators and
 unsafe components. Directory-descriptor traversal uses no-follow filesystem checks;
 symlinks cannot redirect publication. A same-content pre-existing file is still unowned.
+
+Directories created through the integrity layer (including new ancestors, class
+directories and staging) use `0700`; the maintained entrypoint's output root itself
+uses ordinary umask-derived mode. Staged and published files, sidecars and exports
+use `0600` (further restricted by umask). Archive members use `0600`.
+This owner-only artifact policy differs from the
+former umask-derived shared access. Existing ancestor permissions are unchanged.
+Same-user readers can consume the output; cross-user/group storage and workers need
+a separately arranged export/access policy. No automatic permission expansion occurs.
 
 Each run owns `.flowdc/owner.json`, bound to the output directory device/inode, a random
 run ID, original manifest/rows, effective configuration and runtime source SHA-256s.
@@ -58,7 +73,11 @@ Atomic JSON records may leave recognizable `.writing-*` tails; they are not pars
 completed records. A valid ready record can finish publication after interruption.
 Malformed evidence, changed components or conflicting destinations remain failures
 with files preserved. Recorded terminal local failures are not silently recovered into
-success. Ordinary transient HTTP failures retain retry eligibility.
+success without an already valid commit. A transient lookup error after commitment
+can produce a failed in-memory attempt and failure record; reconciliation independently
+reopens and verifies the committed components and may then mark the row verified.
+Attempt observations remain distinct from the final row disposition and are retained.
+Ordinary transient HTTP failures retain retry eligibility.
 
 This is logical commitment recoverable from process interruption on a local POSIX
 filesystem supporting hard links and advisory locks. It is not two-file atomic rename,
@@ -81,6 +100,14 @@ parent provenance, effective acquisition configuration, controller variant and r
 source hashes must match. Mismatch fails closed without deleting output. Thus resuming
 after a source/config change is intentionally rejected; offline inspection remains
 available. A malformed ownership record is not an invitation to overwrite or guess.
+
+Gradient controller counters are not persisted across invocations. Resume reports
+therefore set `gradient_summary=null` and
+`gradient_summary_scope="unavailable_across_resume"`, for both zero-work and partial
+resumes. They do not present the new controller set as whole-run measurements.
+Offline reconciliation carries forward a matching run's prior summary and scope;
+it does not make new controller observations. Earlier report versions remain in the
+owned export history.
 
 `--force`/`force_overwrite` and interactive overwrite consent retain their previous
 meaning for the selected output directory, after input and ownership checks. They
@@ -108,6 +135,9 @@ reopens archives and checks exact unique membership, regular-file types, row ide
 metadata, lengths and SHA-256s, including missing/extra/duplicate members, truncated tar
 terminators and corrupt gzip trailers. The maintained `create_tar` compatibility helper
 uses the same rules for owned directories; its historical unowned-folder mode remains.
+For an already finalized managed directory, the helper raises before reconciliation
+or archive publication, preserving the final record and report hash binding. Use the
+CLI `--reconcile` operation to revalidate and republish the entire result instead.
 
 Archive and report exports have their own staged inode ownership history. A foreign
 file is never replaced merely because its name/content matches. The final run record
@@ -130,9 +160,13 @@ with failures may retain verified partial artifacts and corresponding useful byt
 | `downloaded_mb`, `avg_speed_MBps` | Decimal display fields; never the source for scientific integer byte accounting. Resume/reconcile throughput and elapsed time are null. |
 
 The benchmark adapter uses schema-2 integer local payload bytes and labels completion
-metadata separately. Its schema-1 conversion remains historical. Experiment artifact
-validation supports both schemas, checks partition/parent IDs and validates new archive
-members. Source packaging and TaskVine sandbox staging include `flowdc_integrity.py`.
+metadata separately. Schema-2 reports missing valid integer bytes are rejected with
+the offending path and field. Reports with unavailable elapsed time (resume/reconcile)
+are also rejected, since the current benchmark result schema requires measured timing;
+no zero duration or derived throughput is invented. Its schema-1 conversion remains
+historical. Experiment artifact validation supports both schemas, checks partition/parent
+IDs and validates new archive members. Source packaging and TaskVine sandbox staging
+include `flowdc_integrity.py`.
 The existing experimental cloud upload path still requires compressed output; this
 increment does not add distributed gradient control or deploy a research profile.
 

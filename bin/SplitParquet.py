@@ -426,7 +426,8 @@ def main():
         raise ValueError("groups must be positive")
     if df.height == 0:
         os.makedirs(inputs.output_folder, exist_ok=True)
-        save_partition(df, 1, inputs.output_folder, inputs.output_format)
+        saved = save_partition(df, 1, inputs.output_folder, inputs.output_format)
+        print(f"Empty input: 0 rows; saved 1 empty partition: {saved}")
         return
     # Apply grouping method
     print(f"\nApplying {inputs.method} partitioning...")
