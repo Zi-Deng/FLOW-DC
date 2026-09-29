@@ -230,7 +230,7 @@ The historical runner has these limitations; use the known-truth contract for ne
 4. **Retained Outputs**: Every run has a new directory; collisions fail rather than delete evidence
 5. **Warmup Runs**: Excluded from historical aggregates, but their artifacts remain retained
 6. **Multiple Runs**: Historical averages do not implement the proposed paired independent-run study
-7. **Sequential Execution**: Tools run in fixed order; randomized blocked scheduling remains future work
+7. **Sequential Execution**: This historical runner uses fixed order; `study.py` supplies the separate seeded blocked schedule
 
 ## Extending the Suite
 
@@ -241,3 +241,55 @@ The historical runner has these limitations; use the known-truth contract for ne
    - `run()` async method returning `BenchmarkResult`
 2. Update `core/runner.py` to call the new adapter
 3. Add configuration options to YAML schema
+
+
+## Additional explicit engineering gates
+
+The same task-private research environment described above runs
+`shared_faults.py --output NEW_DIRECTORY` and `shared_restart.py --output NEW_DIRECTORY`.
+They use real loopback TCP and retained journals; the latter also kills and restarts
+an owned manager process. See [shared admission](../docs/research/SHARED-ADMISSION.md).
+They require socket/process capabilities and are separate from ordinary unit
+discovery; a blocked runtime is not a skipped passing integration.
+
+`topology_plan.py examples --output NEW_DIRECTORY` needs only Python and writes
+validated synthetic 3/4/6-VM inputs, conservative sizing and subset examples offline.
+It never contacts a provider or opens a production journal. Follow
+[bounded topology](../docs/BOUNDED-TOPOLOGY.md) and the
+[human checkpoint packet](../docs/PRODUCTION-CHECKPOINT.md) for actual input provenance,
+installation/migration and later live approval.
+
+## Optional pinned TaskVine environment and package
+
+The native gate needs Linux, socket/process capabilities, and an existing Conda
+installation. Use the upstream [CCTools Conda installation](https://cctools.readthedocs.io/en/latest/install/)
+with an isolated prefix and this profile's pinned runtime (do not `pip install ndcctools`):
+
+```bash
+mkdir -p .agentic-local/research-setup
+CONDA_PKGS_DIRS="$PWD/.agentic-local/conda-pkgs" conda create --prefix "$PWD/.agentic-local/research-env-7.17.2" --override-channels -c conda-forge --strict-channel-priority python=3.12 ndcctools=7.17.2 conda-pack=0.9.2 pip
+.agentic-local/research-env-7.17.2/bin/python -m pip install --report .agentic-local/research-setup/pip-install.json -r benchmark/requirements-taskvine.txt
+.agentic-local/research-env-7.17.2/bin/python -m pip check
+conda list --prefix "$PWD/.agentic-local/research-env-7.17.2" --explicit > .agentic-local/research-setup/conda-explicit.txt
+.agentic-local/research-env-7.17.2/bin/python -m pip freeze > .agentic-local/research-setup/pip-freeze.txt
+.agentic-local/research-env-7.17.2/bin/vine_worker --version
+.agentic-local/research-env-7.17.2/bin/python -B benchmark/package_environment.py --output .agentic-local/portable-001
+```
+
+Choose a fresh prefix/output and retain resolver/install logs. No sudo or edits to
+the shared/guest environment are required. This pins direct dependencies and records
+the actual resolved distribution/build provenance; it does not assert that a future
+resolver produces identical transitive packages. Stop if the required runtime is
+unavailable. The validated Linux build was `ndcctools-7.17.2-py312h24019d0_1`.
+
+The packaging entrypoint uses strict conda-pack validation (no ignored missing or
+editable files) and the pinned upstream Poncho launcher helper in a new overlay.
+It hashes source files before/after and writes only its output directory; it does
+not repair package metadata or alter the installed prefix. This small wrapper uses
+the pinned internal launcher helper, so a runtime update requires revalidation.
+[Upstream Poncho](https://cctools.readthedocs.io/en/latest/poncho/) describes the
+portable execution model. Packaging alone is not relocation or native integration:
+use its archive/hash with `taskvine_local.py` and retain the worker's dependency
+prefix/source checks. `package_environment.py` records the conda metadata hashes
+because the installed conda-pack module can report `0.0.0` despite its distribution
+version. Never publish raw provenance URLs without checking them for credentials.

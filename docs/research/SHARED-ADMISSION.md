@@ -7,9 +7,9 @@ The new `shared_control_file` downloader option names an owner-private descripto
 created by the manager. It contains a run-scoped credential; its contents must
 never be placed in public configs, command arguments or logs.
 
-This increment delivers the authority, HTTP hooks and a real-client validation
-entrypoint. It does **not** by itself deliver TaskVine artifact/replay reconciliation
-or the offline topology/accounting migration. Those remain required parts of D.
+The authority and HTTP hooks connect to the [maintained native TaskVine profile](DISTRIBUTED-WORKFLOW.md),
+returned-artifact reconciliation and [offline UUID topology/accounting code](../BOUNDED-TOPOLOGY.md).
+Real-client, native-worker and operational fixture gates remain separate evidence domains.
 
 ## Admission and observation
 
@@ -71,8 +71,10 @@ closure acknowledgements may drain it. Owner recovery requires every permit and
 client to have acknowledged closure, then increments the epoch and requires fresh
 credential enrollment. Old credentials cannot join the new epoch. There is no
 force-reset or timeout-based reclamation command. Unreachable clients can therefore
-leave recovery blocked; proof-based supervisor recovery must establish actual task
-quiescence before a later integration can reclaim that work.
+leave recovery blocked. Owned process-tree quiescence closes the client but releases
+only never-dispatched permits. Dispatched incomplete responses remain uncertain;
+only independent origin-drain evidence can settle them. The controlled worker-loss
+fixture records both proofs. Heartbeat expiry and client disconnect prove neither.
 
 Monotonic epochs are not reused across manager restarts. Restart conservatively
 reapplies each origin's largest recorded Retry-After duration on its new clock and
@@ -114,7 +116,7 @@ The real-client entrypoint starts one authority and 1, 2 or 4 independent mainta
 downloader processes against independently cataloged local JPEG/PNG objects:
 
 ```bash
-NO_ALBUMENTATIONS_UPDATE=1 WANDB_MODE=disabled .agentic-local/research-env/bin/python -B benchmark/shared_origin.py --workers 4 --case primary --method fixed-v1 --output benchmark/results/shared-four-001
+NO_ALBUMENTATIONS_UPDATE=1 WANDB_MODE=disabled .agentic-local/research-env-7.17.2/bin/python -B benchmark/shared_origin.py --workers 4 --case primary --method fixed-v1 --output benchmark/results/shared-four-001
 ```
 
 Use distinct output directories. Cases also include `reciprocal-redirect`,
@@ -140,3 +142,23 @@ V1 evidence only. Real executions through this entrypoint remain a required
 coordinator gate, and do not substitute for the separate real TaskVine 1/2/4-worker
 gate. No live deployment, allowance change or production journal migration is
 authorized by green local checks.
+
+
+The additional explicit transport-fault entrypoints use the same research dependencies
+(see [setup](../../benchmark/README.md)) and fresh owner-private output directories:
+
+```bash
+.agentic-local/research-env-7.17.2/bin/python -B benchmark/shared_faults.py --output benchmark/results/shared-faults-001
+.agentic-local/research-env-7.17.2/bin/python -B benchmark/shared_restart.py --output benchmark/results/shared-restart-001
+```
+
+`shared_faults.py` aborts actual TCP replies after durable acquire/incomplete
+completion, tests simultaneous permits, forged credentials/identity/row scope,
+idempotent reconnect, duplicate/reordered completion and Retry-After, then reopens
+a fenced ledger. `shared_restart.py` kills an actual child manager while an origin
+request is held, opens the same ledger in a new manager process, verifies admission
+is fenced, then acknowledges the actual completed response. It preserves the epoch
+and never automatically recycles outstanding work. Child processes are owned and
+reaped; the 180-second timeout has bounded cleanup. Failure records and private
+journals remain retained. These tests do not claim host-reboot recovery or complete
+TaskVine acquisition; ordinary dependency-light unit discovery does not execute them.

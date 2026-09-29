@@ -6,14 +6,28 @@ include `topology` binding manager/origin and an ordered worker UUID list; roles
 `manager`, `worker`, `worker-2`, `worker-3`, `worker-4`, `origin` as applicable.
 Accounts remain keyed by immutable VM UUID, never a mutable worker index.
 
-These shape examples deliberately contain placeholders and are not runnable live
-specifications. Fill them from verified existing allocation records, not guessed IDs:
+Generate runnable **offline fixture inputs** for all three shapes and non-prefix
+selection within a six-VM registry:
 
-| VMs | `topology.workers` | Required VM roles |
-| --- | --- | --- |
-| 3 | `["<existing-worker-uuid>"]` | manager, worker, origin |
-| 4 | `["<existing-worker-uuid>", "<new-worker-2-uuid>"]` | manager, worker, worker-2, origin |
-| 6 | `["<existing-worker-uuid>", "<new-worker-2-uuid>", "<new-worker-3-uuid>", "<new-worker-4-uuid>"]` | manager, worker, worker-2, worker-3, worker-4, origin |
+```bash
+python -B benchmark/topology_plan.py examples --output benchmark/results/topology-examples-001
+python -B benchmark/topology_plan.py plan --spec benchmark/results/topology-examples-001/6-vm-spec.json --window-seconds 1800 --output benchmark/results/topology-plan-001.json
+```
+
+The first command validates and writes 3/4/6-VM specifications, fixture access
+records, sizing plans, and 1/2/4-worker selections. UUIDs are deterministic synthetic
+values, the identity endpoint uses `.invalid`, and addresses use a documentation
+network. The fixture route attestation is **not a verified live route**. Do not
+register these inputs against a real journal. Neither command reads credentials,
+opens an accounting journal, installs a service or contacts a provider.
+
+For existing verified records, `plan --spec PATH --worker-id UUID` accepts repeated
+worker IDs and retains their canonical selection. It refuses invalid counts,
+duplicates and insufficient windows. Plans always report `activation_ready: false`,
+missing remaining allowance as null, and missing rates as null rather than zero.
+Configured limits cannot substitute for current per-UUID consumption. Use the
+[production checkpoint packet](PRODUCTION-CHECKPOINT.md) to fill the missing facts
+and describe the exact later installation, migration, trust and live-run steps.
 
 Keep the existing context and every existing VM/access entry exactly unchanged.
 Access schema 2 has one explicit registered interface per selected role. The first

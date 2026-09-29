@@ -1429,7 +1429,7 @@ def plan(args):
             "Resolve named prerequisites using a fresh complete inventory and verified per-VM rates with source, time and matching flavor.",
             "This validates a bounded specification only. No resource was activated, and guest/network readiness is not inferred.",
             "Activation is not guaranteed. Stopping guest services does not establish that billing stops; verify provider lifecycle/billing rules manually.",
-            "pilot lifecycle commands require separate explicit preparation and operational authorization; guest deployment and experiments are not implemented.",
+            "pilot lifecycle commands require explicit preparation and operational authorization; the separate flowdc_experiment.py route prepares bounded guest experiments offline before an authorized run.",
         ],
         data={
             "validated": not pending,

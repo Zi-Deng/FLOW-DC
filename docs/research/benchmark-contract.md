@@ -105,7 +105,7 @@ round. Old reports retain their old values and meaning. Historical native timing
 extension-derived success and resource estimates remain unsuitable as the new
 research boundary. `run_benchmark.py` and its help print this limitation.
 
-## Acceptance map at this checkpoint
+## Combined implementation acceptance map
 
 | Issue criterion | Implemented evidence | Still required |
 | --- | --- | --- |
@@ -114,10 +114,10 @@ research boundary. `run_benchmark.py` and its help print this limitation.
 | 3: methods/comparators | [Versioned methods](CONTROL-METHODS.md), same acquisition path, deterministic traces and five ablations; legacy defaults retained | Retained real HTTP trajectories on final head |
 | 4: origin/study harness | [Controlled origin and study tools](STUDY-HARNESS.md): explicit service model, seven scenarios, frozen order, retained recovery/calibration | Final-head reruns; clean C already passed all scenarios, calibration and in-flight TERM |
 | 5: pilot/freeze | Proposed plans/tuning catalog, run-level paired summaries/precision calculation, explicit freeze refusal | Actual advisor decisions and later scientific protocol/campaign |
-| 6: shared-origin authority | [Authenticated ledger and HTTP hooks](SHARED-ADMISSION.md); aggregate limits, idempotency, Retry-After, restart fencing and no fallback | Real concurrent-client gate; supervisor-proven quiescence and remaining distributed integration |
-| 7: distributed artifacts | Not implemented | Maintained staging and real TaskVine 1/2/4-worker integration |
-| 8: bounded topology | Not implemented; existing accounting untouched | Offline UUID-account migration and 3/4/6-VM fixtures |
-| 9: handoff | This contract, CLI help, regression evidence, prepared coordinator commands | All remaining implementation, final-head product/service gates, both CI jobs, independent review |
+| 6: shared-origin authority | [Authenticated ledger/HTTP hooks](SHARED-ADMISSION.md), real-client transport and process-restart entrypoints; aggregate limits, Retry-After, uncertainty and fencing | Final-head real-client, adversarial transport and TLS evidence |
+| 7: distributed artifacts | [Native TaskVine profile](DISTRIBUTED-WORKFLOW.md), complete staging, owned finite cohorts, independent row/return reconciliation, actual 1/2/4-worker development evidence | Final-head native matrix; retained upstream 7.17.2 FORSAKEN crash remains an explicit failed-acquisition case |
+| 8: bounded topology | [Offline 3/4/6-VM examples/plans](../BOUNDED-TOPOLOGY.md), UUID migration/replay/backup, 4→1→2 selection, per-VM mocked cleanup and fake-only systemd gates | Final-head operational gates; actual production migration/install/enrollment/live execution remain unperformed |
+| 9: handoff | Contracts, CLI/examples, [human checkpoint packet](../PRODUCTION-CHECKPOINT.md), regression evidence and prepared coordinator commands | Final committed-head product/integration/service gates, both CI jobs and independent review |
 
 `tests/test_benchmark_contract.py` is V1. Its constructed img2dataset-format
 artifacts are not real img2dataset execution. The coordinator established V2 on
@@ -153,5 +153,8 @@ native outcomes and `primary_attempts_match` in `smoke.json`; a process exit alo
 is insufficient. The coordinator-provisioned environment is task-local; package
 versions, hashes and acquisition reports are retained under `.agentic-local/research-setup`.
 Source rollback must retain all versioned evidence. No operational state was
-migrated or installed by this checkpoint. Resume the original managed Astra session
-for the remainder of A–D; PR #27 is the recorded draft.
+migrated or installed by this work. PR #27 is the recorded draft; milestone commits
+and development gates are not final-head review readiness. Steps 2–5 are software
+delivery. Advisor decisions, production installation/migration/enrollment and live
+verification are separate unperformed checkpoints. Future steps 6–7 are the frozen
+manuscript campaign and final paper/artifact reproduction, coauthor approval and submission.

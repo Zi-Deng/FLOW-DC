@@ -4,7 +4,8 @@ This is engineering software for milestones A–C of issue #26. Local V1 fixture
 test state/accounting; V2 requires the real localhost executions described below.
 There is no efficacy result, frozen scientific protocol or live cloud authorization
 in these files. Advisor approval has been reported, but the specific decisions are
-pending. Distributed admission and the offline topology ladder remain milestone D.
+pending. Distributed admission, native TaskVine and the offline topology ladder are described
+in [the milestone D contract](DISTRIBUTED-WORKFLOW.md).
 
 ## Origin contract
 
@@ -170,7 +171,7 @@ migration or live allowance change was executed by these tools during implementa
 
 | Acceptance | V1 evidence | Remaining gate |
 | --- | --- | --- |
-| 4: concurrent service/capacity accounting | Pure FIFO, capacity drop/recovery, independent origin state and event-replay fixtures | Retained localhost scenario runs and calibration |
-| 4: scheduling/recovery/cleanup | Seeded complete block tests, enforced order, collision/source refusal, distinct rerun IDs; real child-process TERM/descendant cleanup regression | Native interruption/cleanup with concurrent origins |
+| 4: concurrent service/capacity accounting | Pure FIFO, capacity drop/recovery, independent origin state and event-replay fixtures | Historical committed A–C scenario/calibration evidence retained; final-head replay required |
+| 4: scheduling/recovery/cleanup | Seeded complete block tests, enforced order, collision/source refusal, distinct rerun IDs; real child-process TERM/descendant cleanup regression | Historical committed interruption check retained; final-head replay required |
 | 5: plans/freeze/inference | Machine plans/catalog, namespace and hash tests; freeze refusal, t-quantile/paired CI and zero/censor/infeasible tests | Actual advisor decisions; later frozen scientific protocol/campaign |
-| 6–8: distributed authority/topology | Not delivered by these tools | Milestone D implementation and real TaskVine 1/2/4-worker evidence |
+| 6–8: distributed authority/topology | Separate shared-ledger, native staging/reconciliation and UUID migration/selection fixtures | Separate native 1/2/4-worker and operational gates; future production checkpoint |

@@ -147,7 +147,10 @@ python bin/download_batch_gradient.py --config files/config/spider_test_gradient
 - Preserves explicit overload handling for 429/408/5xx/connection errors
 - Emits gradient-specific overview counters (`gradient_hold_events`, `gradient_soft_backoffs`, `gradient_plateau_events`, `post_backoff_grace_events`)
 
-This gradient variant is currently only wired into the single-machine downloader path. It is not yet exposed through `ui_app.py` or the TaskVine orchestration scripts.
+This historical `gradient-legacy-v1` entrypoint remains a single-machine variant.
+The explicit `gradient-candidate-v1` method uses the maintained base acquisition
+path and the shared-origin TaskVine profile; see [the versioned contract](docs/research/CONTROL-METHODS.md).
+`ui_app.py` remains a simulation prototype, not a distributed execution frontend.
 
 ### SplitParquet.py
 
@@ -616,8 +619,8 @@ The [study harness](docs/research/STUDY-HARNESS.md) provides controlled-origin
 scenarios, retained engineering cells, calibration and provisional run-level
 precision tools. Machine-readable plans keep tuning and evaluation separate;
 scientific campaigns require an explicit frozen protocol with supplied advisor
-decisions. Distributed admission and offline topology support remain tracked in
-the issue #26 acceptance map. The explicit
+decisions. The issue #26 acceptance map links distributed admission, native execution
+and offline topology evidence. The explicit
 [shared-origin admission path](docs/research/SHARED-ADMISSION.md) adds authenticated
 manager permits through `--shared_control_file`; its private descriptor is generated
 by the manager and its contents must not be copied into public configs.
@@ -628,7 +631,7 @@ Run the focused regression checks with the project environment:
 python -m unittest discover -s tests -v
 ```
 
-These checks exercise both downloaders against a local HTTP server, retries, output preservation, archives/reports, benchmark integration, and controller scheduling. They do not contact dataset servers or submit TaskVine/cloud jobs. The cloud orchestrator translates PAARC settings using the standard TaskVine configuration builder; its upload commands require compressed `.tar.gz` output.
+These checks exercise both downloaders against a local HTTP server, retries, output preservation, archives/reports, benchmark integration, and controller scheduling. They do not contact dataset servers or submit TaskVine/cloud jobs. The separate legacy cloud submitter is unsupported by the research profile; these tests do not validate its staging or upload path.
 
 ## Citation
 
@@ -663,5 +666,8 @@ artifact contract and current limitations are documented in
 3/4/6-VM preparation and accounting migration are documented in
 [Bounded topology](docs/BOUNDED-TOPOLOGY.md). A versioned registry can select 1/2/4
 workers per run using explicit enrolled UUIDs while preserving every account.
-Production migration and live runs remain
-separate human checkpoints; these tools do not imply scientific protocol approval.
+Generate synthetic offline examples with `python -B benchmark/topology_plan.py examples
+--output benchmark/results/topology-examples-001`. See the
+[production checkpoint packet](docs/PRODUCTION-CHECKPOINT.md) for exact later
+installation/migration, trust enrollment and bounded live-run requirements. These
+tools do not imply scientific protocol approval.

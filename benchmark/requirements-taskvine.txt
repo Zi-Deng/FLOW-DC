@@ -1,0 +1,3 @@
+# Native ndcctools is installed from conda-forge, not PyPI; see README.md.
+-r requirements-research.txt
+pandas==2.3.3
