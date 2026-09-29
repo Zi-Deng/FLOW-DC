@@ -18,6 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from benchmark.core.flowdc_adapter import FlowDCAdapter, FlowDCConfig  # noqa: E402
+from benchmark.core.http_cases import CASES, Response, case_plan, policy_record  # noqa: E402
 from benchmark.core.img2dataset_adapter import Img2DatasetAdapter, Img2DatasetConfig  # noqa: E402
 from benchmark.core.lifecycle import run_verified  # noqa: E402
 from benchmark.core.provenance import environment_record  # noqa: E402
@@ -47,15 +48,14 @@ class FixtureOrigin:
     work. This origin provides independent byte and request truth for milestone A.
     """
 
-    def __init__(self, directory, payloads):
+    def __init__(self, directory, plan):
         self.lock = threading.Lock()
         self.events = []
-        self.payloads = {
-            "/left/same.jpg": payloads["JPEG"],
-            "/right/same.jpg": payloads["PNG"],
-            "/alias.png": payloads["JPEG"],
-            "/plain.png": payloads["PNG"],
-        }
+        self.idle = threading.Condition(self.lock)
+        self.active = 0
+        self.counts = Counter()
+        self.payloads = plan["objects"]
+        self.policies = plan["policies"]
         self.log = (directory / "origin.jsonl").open("xb")
         owner = self
 
@@ -66,18 +66,29 @@ class FixtureOrigin:
 
             def do_GET(self):
                 with owner.lock:
+                    owner.active += 1
                     request_id = 1 + sum(event["phase"] == "arrival" for event in owner.events)
-                    owner.event(request_id, "arrival", self.path)
+                    owner.counts[self.path] += 1
+                    ordinal = owner.counts[self.path]
+                    owner.event(request_id, "arrival", self.path, path_attempt=ordinal)
                 payload = owner.payloads.get(self.path)
-                status, sent, disconnected = (200 if payload is not None else 404), 0, False
+                sequence = owner.policies.get(self.path, [Response(404)])
+                policy = sequence[min(ordinal - 1, len(sequence) - 1)]
+                if policy.status != 200 or policy.empty:
+                    payload = b""
+                status, sent, disconnected = policy.status, 0, False
                 try:
                     self.send_response(status)
                     self.send_header("Content-Length", str(len(payload or b"")))
+                    if policy.retry_after is not None:
+                        self.send_header("Retry-After", policy.retry_after)
                     self.end_headers()
+                    time.sleep(policy.first_byte_delay)
                     if payload:
-                        self.wfile.write(payload)
+                        content = payload[: len(payload) // 2] if policy.truncate else payload
+                        self.wfile.write(content)
                         self.wfile.flush()
-                        sent = len(payload)
+                        sent = len(content)
                 except (BrokenPipeError, ConnectionResetError, TimeoutError):
                     disconnected = True
                     sent = None  # A partial write's exact byte count is unknown.
@@ -91,6 +102,8 @@ class FixtureOrigin:
                             body_bytes_written=sent,
                             disconnected=disconnected,
                         )
+                        owner.active -= 1
+                        owner.idle.notify_all()
 
             def log_message(self, *args):
                 pass
@@ -129,8 +142,19 @@ class FixtureOrigin:
     def base_url(self):
         return f"http://127.0.0.1:{self.server.server_port}"
 
+    def reset(self):
+        with self.idle:
+            require(self.idle.wait_for(lambda: self.active == 0, timeout=5), "origin did not quiesce")
+            self.counts.clear()
+            return len(self.events)
 
-def smoke(output):
+    def events_since(self, offset):
+        with self.idle:
+            require(self.idle.wait_for(lambda: self.active == 0, timeout=5), "origin did not quiesce")
+            return list(self.events[offset:])
+
+
+def smoke(output, case="primary"):
     output = output.absolute()
     require(not output.exists() and not output.is_symlink(), "output collision; evidence must be retained")
     # Do not silently pick a global executable from an unrelated environment.
@@ -138,32 +162,37 @@ def smoke(output):
     executable = Path(sys.executable).parent / "img2dataset"
     require(executable.is_file(), "img2dataset CLI must be installed beside this Python executable")
     payloads = image_payloads()
+    plan = case_plan(case, payloads)
     environment = environment_record(ROOT)
     environment["img2dataset_cli_sha256"] = digest(executable.read_bytes())
     output.mkdir(parents=True, exist_ok=False)
     (output / "environment.json").write_bytes(encode(environment))
+    (output / "scenario.json").write_bytes(encode(policy_record(plan)))
     originals = output / "origin-payloads"
     originals.mkdir()
     for format_name, raw in payloads.items():
         (originals / (format_name.lower() + ".bin")).write_bytes(raw)
     try:
-        origin = FixtureOrigin(output, payloads)
+        origin = FixtureOrigin(output, plan)
     except OSError as exc:
         (output / "failure.json").write_bytes(encode({"stage": "origin_bind", "error": str(exc)}))
         raise
     results = {}
     with origin:
-        urls = [origin.base_url + path for path in origin.payloads]
-        urls += [urls[0], urls[1], None, "", "not-an-http-url"]
+        urls = [origin.base_url + path for path in plan["paths"]] + [None, "", "not-an-http-url"]
         pl.DataFrame(
             {
                 "url": urls,
                 "label": [f"row-{i}" for i in range(len(urls))],
-                "nullable": [None, "", "alpha", "beta", None, "gamma", None, None, None],
+                "nullable": [None if i % 2 else f"value-{i}" for i in range(len(urls))],
             }
         ).write_parquet(output / "input.parquet")
         catalog = {
-            origin.base_url + path: {"bytes": len(raw), "sha256": digest(raw)}
+            origin.base_url + path: (
+                {"bytes": len(raw), "sha256": digest(raw)}
+                if path in plan["expected_success"] or case == "http-failure"
+                else None
+            )
             for path, raw in origin.payloads.items()
         }
         truth = Truth.load(output / "input.parquet", catalog)
@@ -179,12 +208,13 @@ def smoke(output):
                     "url",
                     None,
                     2,
-                    5,
+                    plan["request_timeout"],
                     True,
                     paarc_c_init=2,
                     paarc_c_min=1,
                     paarc_c_max=2,
                     research_profile=True,
+                    max_retry_attempts=plan["attempt_budget"],
                 )
                 adapter = FlowDCAdapter(ROOT)
                 adapter.generate_config(config, config_path)
@@ -196,8 +226,8 @@ def smoke(output):
                     str(native_dir),
                     "url",
                     2,
-                    timeout_sec=5,
-                    retries=0,
+                    timeout_sec=plan["request_timeout"],
+                    retries=plan["attempt_budget"] - 1,
                     max_shard_retry=0,
                     output_format="webdataset",
                     additional_columns=[c for c in truth.frame.columns if c != "url"] + list(PROVENANCE),
@@ -217,13 +247,14 @@ def smoke(output):
                     ]
                 )
                 config_digest = digest(encode(command))
-            start_event = len(origin.events)
+            start_event = origin.reset()
             provenance = {
                 "environment_sha256": digest(encode(environment)),
                 "config_sha256": config_digest,
                 "truth_sha256": digest(encode(truth.record)),
                 "prepared_manifest_sha256": digest(input_path.read_bytes()),
-                "attempt_budget_per_row": 1,
+                "attempt_budget_per_row": plan["attempt_budget"],
+                "scenario_sha256": digest(encode(policy_record(plan))),
                 "shard_retries": 0,
                 "timeout_semantics": "aiohttp native" if tool == "flowdc" else "urllib native",
                 "timeout_comparability": "outer deadline only; native per-request semantics differ",
@@ -235,11 +266,13 @@ def smoke(output):
                 lambda tool=tool, native_dir=native_dir: verify_native(tool, native_dir, truth.record),
                 cwd=ROOT,
                 provenance=provenance,
+                deadline=plan["process_deadline"],
             )
-            with origin.lock:
-                events = list(origin.events[start_event:])
+            events = origin.events_since(start_event)
             attempts = Counter(e["path"] for e in events if e["phase"] == "arrival")
-            expected_attempts = Counter(url.removeprefix(origin.base_url) for url in urls if url in catalog)
+            expected_attempts = Counter(
+                {path: plan["paths"].count(path) * plan["attempt_budget"] for path in plan["paths"]}
+            )
             request_record = {
                 "attempts_by_path": dict(attempts),
                 "total_attempts": sum(attempts.values()),
@@ -253,9 +286,27 @@ def smoke(output):
             if result["status"] in ("interrupted", "cleanup_failed"):
                 break
     (output / "smoke.json").write_bytes(encode(results))
-    return len(results) == 2 and all(
-        r["run"]["run_complete"] and r["origin_requests"]["primary_attempts_match"] for r in results.values()
-    )
+    checks = {}
+    expected_verified = sum(path in plan["expected_success"] for path in plan["paths"])
+    for tool, item in results.items():
+        run, work = item["run"], item["origin_requests"]
+        if case == "deadline":
+            checks[tool] = run["status"] == "timeout" and not run["run_complete"]
+        elif case == "empty":
+            checks[tool] = (
+                not run["run_complete"]
+                and run["useful_payload_bytes"] == 0
+                and work["primary_attempts_match"]
+            )
+        else:
+            checks[tool] = (
+                run["verified_rows"] == expected_verified
+                and run["original_rows"] == len(urls)
+                and work["primary_attempts_match"]
+                and (run["run_complete"] if case != "http-failure" else not run["run_complete"])
+            )
+    (output / "assessment.json").write_bytes(encode({"case": case, "checks": checks}))
+    return len(results) == 2 and all(checks.values())
 
 
 def main():
@@ -263,9 +314,12 @@ def main():
     parser.add_argument(
         "--output", type=Path, required=True, help="New retained evidence directory; collisions refused"
     )
+    parser.add_argument(
+        "--case", choices=CASES, default="primary", help="Predetermined engineering response case"
+    )
     args = parser.parse_args()
     try:
-        success = smoke(args.output)
+        success = smoke(args.output, args.case)
     except (OSError, ValueError, importlib.metadata.PackageNotFoundError) as exc:
         print(f"Known-truth integration unavailable/failed: {exc}", file=sys.stderr)
         return 2

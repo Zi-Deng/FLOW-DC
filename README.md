@@ -597,7 +597,8 @@ Benchmark source code, configurations, and manifests are versioned. Generated `b
 
 The new [known-truth benchmark contract](docs/research/benchmark-contract.md) provides
 a bounded localhost smoke command for original-byte and archive verification. Its
-real-executable validation remains pending at the first issue #26 checkpoint.
+real-executable primary fixture passed at the first issue #26 checkpoint; the
+expanded cases still require final-head validation.
 Historical benchmark reports retain a separate schema and cannot establish the new
 timing/output boundary. See [benchmark setup](benchmark/README.md) for the isolated
 research environment, retained artifacts, and outstanding manuscript milestones.

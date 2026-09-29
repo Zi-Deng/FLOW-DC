@@ -3,7 +3,8 @@
 A retained benchmark framework with two explicitly separate evidence contracts.
 `known_truth.py` prepares a bounded localhost comparison using the real executables,
 original bytes, per-row metadata and closed uncompressed archives. Its initial V2
-execution is still pending; see the [contract and acceptance map](../docs/research/benchmark-contract.md).
+execution passed on the first committed checkpoint; final-head validation remains
+required. See the [contract and acceptance map](../docs/research/benchmark-contract.md).
 `run_benchmark.py` and its HTML/comparison consumers retain the historical native-counter
 contract. Those timing/output boundaries do not establish a fair efficacy comparison.
 

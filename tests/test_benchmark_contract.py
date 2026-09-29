@@ -16,6 +16,7 @@ import psutil
 
 from benchmark.compare_results import load_report
 from benchmark.core.flowdc_adapter import FlowDCAdapter, FlowDCConfig
+from benchmark.core.http_cases import CASES, case_plan, policy_record
 from benchmark.core.img2dataset_adapter import Img2DatasetAdapter, Img2DatasetConfig
 from benchmark.core.lifecycle import run_verified
 from benchmark.core.metrics import BenchmarkResult, ResourceMetrics
@@ -25,6 +26,30 @@ from benchmark.core.verifier import archive_members, verify_native
 
 
 class BenchmarkRegressions(unittest.TestCase):
+    def test_response_cases_are_predetermined_and_bounded(self):
+        payloads = {"JPEG": b"jpeg-original", "PNG": b"png-original"}
+        for name in CASES:
+            with self.subTest(name=name):
+                plan = case_plan(name, payloads)
+                self.assertLessEqual(len(plan["paths"]) + 3, 256)
+                self.assertLessEqual(plan["process_deadline"], 180)
+                self.assertEqual(
+                    set(plan["paths"]),
+                    set(plan["objects"])
+                    if name != "http-failure"
+                    else set(plan["objects"]) - {"/alias.png", "/plain.png"},
+                )
+                self.assertEqual(json.loads(encode(policy_record(plan)))["case"], name)
+        retry = case_plan("retry", payloads)
+        self.assertEqual(retry["attempt_budget"], 2)
+        self.assertEqual([r.status for r in retry["policies"]["/retry429.jpg"]], [429, 200])
+        failure = case_plan("http-failure", payloads)
+        self.assertEqual(failure["attempt_budget"], 1)
+        self.assertTrue(failure["policies"]["/truncated.jpg"][0].truncate)
+        self.assertGreater(
+            failure["policies"]["/delayed.jpg"][0].first_byte_delay, failure["request_timeout"]
+        )
+
     def test_historical_reader_labels_old_reports_and_refuses_new_contract(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "report.json"

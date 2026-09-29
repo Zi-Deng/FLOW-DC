@@ -1,6 +1,6 @@
 # Known-truth benchmark contract and issue #26 checkpoint
 
-This implements the first portion of milestone A of
+This records milestone A of
 [issue #26's approved plan](https://github.com/Zi-Deng/FLOW-DC/issues/26#issuecomment-5884113901).
 It is incomplete engineering work, not evidence of performance superiority or
 completion of steps 2–5. The maintainer reports advisor approval; the specific
@@ -69,7 +69,7 @@ Null, blank, malformed, whitespace-bearing and credential-bearing URLs are commo
 skipped rows; they never disappear from the denominator. Eligible URLs must have
 predeclared catalog truth. A null catalog entry denotes no successful payload.
 Expected row payload is capped at 64 MiB and original row count at 256. This initial
-CLI generates nine rows, six eligible, using only loopback fixtures.
+CLI's default primary case generates nine rows, six eligible, using only loopback fixtures.
 
 ## Independent verification
 
@@ -85,8 +85,15 @@ Origin logs assign independent sequence IDs and origin-clock arrival/response
 timestamps. The primary smoke compares aggregate requests by path against its
 one-attempt budget. Duplicate URLs cannot be mapped to original row identities
 from native request logs; the record explicitly leaves that attribution unavailable.
-Configured retry budgets are not observations. Retry stress, interrupted transfers
-and origin service/admission scenarios remain open work, not inferred results.
+Configured retry budgets are not observations. `--case http-failure` adds 404,
+429/503 with Retry-After, truncated bodies and delayed first bytes; `empty` checks
+zero-byte responses; `retry` uses a predetermined failure-then-success sequence
+with two total attempts; `deadline` terminates each process group at its outer
+deadline. Policies and payload catalog are retained before either client launches.
+Each client's counters reset only after the previous origin work quiesces. The
+timeout cases check native semantics and recovery, not equal request deadlines.
+`assessment.json` checks partial/failure accounting without requiring those native
+runs to be successful. Capacity/service scenarios belong to milestone C.
 
 ## Historical compatibility
 
@@ -102,8 +109,8 @@ research boundary. `run_benchmark.py` and its help print this limitation.
 
 | Issue criterion | Implemented evidence | Still required |
 | --- | --- | --- |
-| 1: common truth | Independent schema, manifest guard, native artifact adapters; actual FLOW-DC publication verified offline; tampering fixtures | Real two-executable V2; broader HTTP failure/retry/interruption cases |
-| 2: timing/work/retention | Common launch-to-verified-index timer, process cleanup, raw precision, retention, source/environment records, aggregate origin logs | Real-origin attempt evidence; verified dependency resolution; resource collection if introduced |
+| 1: common truth | Independent schema/verifier, metadata guard, tampering tests; real primary fixture at `63ff9c7`; predetermined HTTP cases | Repeat real HTTP cases and primary on final head |
+| 2: timing/work/retention | Common launch-to-verified-index timer, process cleanup, raw precision, retention, source/environment records, aggregate origin logs | Final-head evidence; resource collection if introduced |
 | 3: methods/comparators | No change to legacy controller defaults | Entire milestone B, formulas/traces, shared acquisition selection, ablations |
 | 4: origin/study harness | Small concurrent success-fixture origin only | Capacity/service model, scenario families, blocked schedule, calibration, resume |
 | 5: pilot/freeze | Advisor decisions explicitly pending | Study/tuning/evaluation plans, paired summaries, precision calculation, freeze gate |
@@ -113,9 +120,14 @@ research boundary. `run_benchmark.py` and its help print this limitation.
 | 9: handoff | This contract, CLI help, regression evidence, prepared coordinator commands | All remaining implementation, final-head product/service gates, both CI jobs, independent review |
 
 `tests/test_benchmark_contract.py` is V1. Its constructed img2dataset-format
-artifacts are not real img2dataset execution. The socket-denied executor has not
-established V2 for either executable. The exact environment-specific commands,
-exit statuses and omitted checks are in the coordinator's prepared PR body.
+artifacts are not real img2dataset execution. The coordinator established V2 on
+committed `63ff9c7306408ac31f59e08c92ff85c3df31b7b2`: both real tools verified six
+payload rows, 2,157 original bytes, the nine-row denominator and six origin-observed
+requests. The coordinator also ran the four new HTTP cases successfully on a
+development tree; that evidence requires repetition on the final committed head.
+These are accounting and semantic checks, not efficacy evidence. The exact
+commands, exits, source/environment hashes, retained failures and omissions are
+indexed in the coordinator's private evidence and prepared PR body.
 
 ## Coordinator execution checkpoint
 
@@ -124,15 +136,19 @@ coordinator permissions and a task-local environment; do not widen the executor
 sandbox. The following is a bounded engineering check, not a campaign:
 
 ```bash
-/mnt/storage/github/FLOW-DC/.venv-agentic/bin/python -m venv .agentic-local/issue-26/coordinator-research
-.agentic-local/issue-26/coordinator-research/bin/python -m pip install --report .agentic-local/issue-26/coordinator-install.json -r benchmark/requirements-research.txt
-.agentic-local/issue-26/coordinator-research/bin/python -B benchmark/known_truth.py --output benchmark/results/issue-26-known-truth-001
+NO_ALBUMENTATIONS_UPDATE=1 WANDB_MODE=disabled .agentic-local/research-env/bin/python -B benchmark/known_truth.py --output benchmark/results/issue-26-primary-001
+NO_ALBUMENTATIONS_UPDATE=1 WANDB_MODE=disabled .agentic-local/research-env/bin/python -B benchmark/known_truth.py --case http-failure --output benchmark/results/issue-26-http-failure-001
+NO_ALBUMENTATIONS_UPDATE=1 WANDB_MODE=disabled .agentic-local/research-env/bin/python -B benchmark/known_truth.py --case empty --output benchmark/results/issue-26-empty-001
+NO_ALBUMENTATIONS_UPDATE=1 WANDB_MODE=disabled .agentic-local/research-env/bin/python -B benchmark/known_truth.py --case retry --output benchmark/results/issue-26-retry-001
+NO_ALBUMENTATIONS_UPDATE=1 WANDB_MODE=disabled .agentic-local/research-env/bin/python -B benchmark/known_truth.py --case deadline --output benchmark/results/issue-26-deadline-001
 make check PYTHON=/mnt/storage/github/FLOW-DC/.venv-agentic/bin/python RUFF=/mnt/storage/github/FLOW-DC/.venv-agentic/bin/ruff
 make check-clean PYTHON=/mnt/storage/github/FLOW-DC/.venv-agentic/bin/python
 ```
 
 Retain the first failed invocation before choosing a new output name. Check both
 native outcomes and `primary_attempts_match` in `smoke.json`; a process exit alone
-is insufficient. Source rollback must retain all versioned evidence. No operational
-state was migrated or installed by this checkpoint. Resume the original managed
-Astra session for the remainder of A–D after recording/publicizing the draft.
+is insufficient. The coordinator-provisioned environment is task-local; package
+versions, hashes and acquisition reports are retained under `.agentic-local/research-setup`.
+Source rollback must retain all versioned evidence. No operational state was
+migrated or installed by this checkpoint. Resume the original managed Astra session
+for the remainder of A–D; PR #27 is the recorded draft.
