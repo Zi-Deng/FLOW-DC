@@ -52,9 +52,9 @@ def budget(requests, credits, seconds, unit_credits, unit_seconds):
     return result
 
 
-def plan(directory, *, version=2):
+def plan(directory, *, version=3):
     """Deterministic scope partition with explicit linked navigation context."""
-    if type(version) is not int or version not in {1, 2}:
+    if type(version) is not int or version not in {1, 2, 3}:
         raise WorkflowError("Unsupported batch plan version")
     directory = Path(directory)
     meta = api().verify_packet(directory)
@@ -185,7 +185,7 @@ def material_for_report(packet, artifact, body):
     return result
 
 
-def inspection_suggestions(packet, items):
+def inspection_suggestions(packet, items, *, version=3):
     """Navigation only; original IDs/ranges and evidence requirements never change."""
     result = []
     for item in items:
@@ -208,6 +208,11 @@ def inspection_suggestions(packet, items):
             first = expanded
             while first > start and not lines[first - 2].strip():
                 first -= 1
+            if version >= 3:
+                if first > start:
+                    row["view_range"] = [start, first - 1]
+                else:
+                    row.pop("view_range")
             row["grep_blank_lines"] = [first, expanded]
             row["grep_pattern"] = r"^\s*$"
         result.append(row)
@@ -254,6 +259,7 @@ def prepare_unit(directory, batch, unit, reservation):
                 for item in coverage.read_json(packet / "required-material.json")["required"]
                 if item["id"] in required
             ],
+            version=batch["schema_version"],
         )
     atomic_json(packet / "assignment.json", assignment)
     meta = api().verify_packet(parent)
@@ -319,7 +325,9 @@ def unit_assessment(directory, batch, unit):
     ):
         raise WorkflowError("Unit inventory or dependency binding changed")
     if batch["schema_version"] >= 2 and assignment.get("inspection_suggestions") != inspection_suggestions(
-        target / "packet", [item for item in inventory if item["id"] in set(ids)]
+        target / "packet",
+        [item for item in inventory if item["id"] in set(ids)],
+        version=batch["schema_version"],
     ):
         raise WorkflowError("Unit inspection suggestions changed")
     state = state_for(directory, batch)

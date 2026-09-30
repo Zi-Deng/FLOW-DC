@@ -2,6 +2,7 @@
 
 import copy
 import json
+import re
 from unittest.mock import patch
 
 from review_fixtures import events
@@ -153,7 +154,13 @@ class BatchTests(GitFixture):
         self.assertEqual(items, before)
         self.assertEqual(hints[0]["view_range"], [94, 125])
         self.assertEqual(hints[1]["grep_blank_lines"], [126, 126])
+        self.assertEqual(hints[1]["view_range"], [125, 125])
         self.assertEqual(hints[2]["state"], "unavailable")
+        (packet / "separators.txt").write_text("one\fnext\u2028last\n")
+        separated = batch.inspection_suggestions(
+            packet, [{"id": "separators", "artifact": "separators.txt", "start_line": 2, "end_line": 3}]
+        )[0]
+        self.assertEqual(separated["view_range"], [2, 3])
         files = {"boundary.txt": text}
         chunks = text.splitlines(keepends=True)
         spans, _, reason = coverage.tool_observation(
@@ -182,6 +189,44 @@ class BatchTests(GitFixture):
         )
         self.assertEqual((spans[0]["start_line"], spans[0]["end_line"]), (126, 126))
         self.assertFalse(coverage.tool_observation("grep", {}, "", packet, files)[0])
+
+    def test_eof_suggestions_credit_nonblank_prefix_and_whitespace_tail(self):
+        packet = self.directory / "packet"
+        for tail in ("\n", "   \n", "\t\n\n"):
+            text = "prefix\n" + tail
+            (packet / "eof.txt").write_text(text)
+            lines = text.splitlines(keepends=True)
+            for start in (1, 2):
+                item = {"id": "eof", "artifact": "eof.txt", "start_line": start, "end_line": len(lines)}
+                hint = batch.inspection_suggestions(packet, [item])[0]
+                self.assertEqual(hint.get("view_range"), [1, 1] if start == 1 else None)
+                covered = set()
+                if "view_range" in hint:
+                    lo, hi = hint["view_range"]
+                    spans, _, _ = coverage.tool_observation(
+                        "view",
+                        {"path": "eof.txt", "view_range": [lo, hi]},
+                        "".join(lines[lo - 1 : hi]).removesuffix("\n"),
+                        packet,
+                        {"eof.txt": text},
+                    )
+                    for span in spans:
+                        covered.update(range(span["start_line"], span["end_line"] + 1))
+                matches = "\n".join(
+                    f"eof.txt:{n}:{line}"
+                    for n, line in enumerate(text.splitlines(), 1)
+                    if re.fullmatch(hint["grep_pattern"], line)
+                )
+                spans, _, _ = coverage.tool_observation(
+                    "grep",
+                    {"path": "eof.txt", "pattern": hint["grep_pattern"]},
+                    matches,
+                    packet,
+                    {"eof.txt": text},
+                )
+                for span in spans:
+                    covered.update(range(span["start_line"], span["end_line"] + 1))
+                self.assertTrue(set(range(start, len(lines) + 1)) <= covered)
 
     def test_missing_or_invalid_budgets_fail_before_inference(self):
         for key in self.limits:
@@ -390,6 +435,10 @@ class BatchTests(GitFixture):
         self.execute()
         prior = self.directory
         next_packet = review.prepare(self.repo, 31, 12, 1234, prior_review=prior)
+        required = coverage.read_json(next_packet / "packet/required-material.json")["required"]
+        obligated_reports = {item["artifact"] for item in required if item["kind"] == "finding"}
+        for target in self.calls:
+            self.assertIn(f"prior-unit-reports/{target.name}.txt", obligated_reports)
         for target in self.calls:
             self.assertEqual(
                 (next_packet / "packet/prior-unit-reports" / (target.name + ".txt")).read_bytes(),

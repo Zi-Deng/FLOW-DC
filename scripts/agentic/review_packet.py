@@ -467,6 +467,7 @@ def build(repo, packet, head, ancestor, head_index, base_index, context, cfg, pr
                     (packet / artifact).write_bytes(
                         (previous / "units" / unit["id"] / "review.md").read_bytes()
                     )
+                    add(artifact, "finding", f"prior-unit-report:{unit['id']}")
             findings = assessment["findings"]
         else:
             findings = None
@@ -525,14 +526,46 @@ def build(repo, packet, head, ancestor, head_index, base_index, context, cfg, pr
             ):
                 continue
             old_artifact = old.get("artifact")
+            carried = dict(old)
+            provenance = old.get("provenance")
+            if provenance is None:
+                # Legacy prior-source has no trustworthy commit label. Bind its
+                # exact snapshot digest without guessing an ancestor commit.
+                source_commit = (
+                    metadata["head_sha"]
+                    if old_artifact and old_artifact.startswith("source/")
+                    else metadata["merge_base_sha"]
+                    if old_artifact and old_artifact.startswith("base-source/")
+                    else None
+                )
+                provenance = {
+                    "schema_version": 1,
+                    "source_commit": source_commit,
+                    "snapshot_sha256": hashlib.sha256(
+                        (previous / "packet" / old_artifact).read_bytes()
+                    ).hexdigest()
+                    if old_artifact and not old.get("omitted")
+                    else None,
+                    "original_revision": old["revision"],
+                    "original_id": old["id"],
+                    "from_packet_head": metadata["head_sha"],
+                }
+            carried["provenance"] = provenance
+            carried["revision"] = (
+                "prior:" + provenance["source_commit"]
+                if provenance["source_commit"]
+                else "prior-snapshot:" + provenance["snapshot_sha256"]
+                if provenance["snapshot_sha256"]
+                else "prior-unavailable:" + provenance["from_packet_head"]
+            )
             if old.get("omitted"):
-                required.append(dict(old))
+                required.append(carried)
             else:
                 if old_artifact not in copied:
                     target = f"prior-source/{len(copied):06d}.txt"
                     (packet / target).write_bytes((previous / "packet" / old_artifact).read_bytes())
                     copied[old_artifact] = target
-                required.append({**old, "artifact": copied[old_artifact]})
+                required.append({**carried, "artifact": copied[old_artifact]})
     text_artifact(
         "cross-boundary.txt",
         "Cross-boundary static pass: assess config/CLI/schema consumers, callers, error and recovery paths, permissions, hosted/local/managed readiness, installer payload, test adequacy and contract criteria together.\n"
@@ -590,7 +623,7 @@ def build(repo, packet, head, ancestor, head_index, base_index, context, cfg, pr
         artifact = f"scopes/{scope['id']}.json"
         write_json(packet / artifact, {**scope, "material": [lookup[key] for key in scope["required_ids"]]})
         scope["artifact"] = artifact
-    write_json(packet / "required-material.json", {"schema_version": 1, "required": required})
+    write_json(packet / "required-material.json", {"schema_version": 2, "required": required})
     (packet / "inventory-sha256.txt").write_text(
         hashlib.sha256((packet / "required-material.json").read_bytes()).hexdigest() + "\n", encoding="utf-8"
     )
@@ -627,7 +660,7 @@ def build(repo, packet, head, ancestor, head_index, base_index, context, cfg, pr
             else ""
         )
         + "Use scopes.json and scopes/*.json to navigate every entry in required-material.json. Full diff.txt, source-index.json and base-source-index.json remain available.\n"
-        "Read each required range through view(path, view_range=[start,end]); grep only credits actual returned matching lines, glob only proves discovery.\n"
+        "Read each required range through view(path, view_range=[start,end]) using 1-based inclusive positions. If the end is blank, extend through a following nonblank line when available. At EOF, view only the nonblank prefix and use grep pattern ^\\s*$ with actual numbered matches for the blank tail; for all-blank ranges use grep alone. Never infer or reconstruct omitted output. Grep only credits actual returned matching lines, glob only proves discovery.\n"
         "Return compact JSON matching report-schema.json: copy inventory-sha256.txt into inventory_sha256, list only positively inspected IDs in reviewed, and group specific incomplete reasons in incomplete. Omitted IDs remain unread and block readiness; do not repeat an unread row for each ID. Explain general limits once in limitations. Do not assert budget exhaustion without a provider signal. Never infer execution from static inspection.\n",
         encoding="utf-8",
     )

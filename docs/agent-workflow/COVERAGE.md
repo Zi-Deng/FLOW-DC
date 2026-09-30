@@ -358,3 +358,38 @@ validation. The historical omitted-final-blank-line result remains unsupported.
 Whitespace is not stripped, missing text is not reconstructed, and suggestions do
 not establish inspection or understanding. Tests use synthetic returned output
 against real local packet text; live completion remains a separate review gate.
+
+### Repair provenance and EOF navigation follow-up
+
+Inventory version 2 labels carried unread snapshots `prior:<commit SHA>` when the
+source commit is known, with an exact snapshot SHA-256 and original ID. Legacy
+carried files lacking reliable commit provenance use `prior-snapshot:<SHA-256>`;
+no ancestor commit is guessed. Omitted material remains unavailable. Repeated
+repairs preserve that provenance and the original unread obligations. Current
+head/base source and tests retain separate requirements tied to their snapshot
+indexes. The new gate rejects mismatched current revision bindings or carried
+snapshot digests. Version-1 inventories and all historical assessments remain
+unchanged; no old inspection becomes current-head credit. Exact prior batch unit
+reports are also registered as required finding material in new repair packets.
+
+Batch plan version 3 narrows EOF view suggestions to the nonblank prefix, or omits
+view entirely for an all-blank range; numbered grep results cover the blank tail.
+Version-2 saved suggestions retain their old semantics for validation. Suggestions
+exist in version-2/3 batch assignments, not default single-request packets. Newly
+built START.txt and the invocation prompt give single-request reviewers the same
+blank-boundary procedure without generating assignment hints. Qualification was
+never impossible without hints: exact complete output, numbered view or numbered
+grep evidence can support blanks. No implied, missing or stripped output earns
+credit. Inventory, suggestions and observer all use Python splitlines semantics;
+Unicode/control separators are not silently converted to LF-only numbering.
+
+The pinned SDK source documented above (lines 11810–11889, source enum 1405–1417)
+defines experimental ephemeral `session.managed_settings_resolved` policy
+snapshots separately from action-enforcement events. Current historical payloads
+are unknown. New captures retain only fixed bounded counters under optional
+`telemetry.managed_settings`: root/ephemeral shape, known source, indeterminate
+policy and field presence. No settings, managed key names or arbitrary source
+strings are retained. This diagnostic-only change allows no new event: resolution,
+enforcement, malformed and delegated events still fail closed. Safe fresh payload
+shape evidence is needed before considering narrow compatibility support; no
+historical evidence is reinterpreted and no extra paid call is launched by repair.

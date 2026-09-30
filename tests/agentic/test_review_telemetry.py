@@ -241,6 +241,12 @@ class TelemetryTests(GitFixture):
             row = diag["telemetry"]["warnings"]["session"]
             self.assertEqual(row["count"], 1)
             self.assertEqual(row["message_string"], 0)
+            mixed = isinstance(data, dict) and data.get("warningType") == "policy"
+            self.assertEqual(row["categories"]["policy" if mixed else "missing_or_invalid"], 1)
+            self.assertEqual(row["url_string"], 0)
+            self.assertEqual(row["url_present"], int(mixed))
+            self.assertEqual(row["extra_fields"], int(mixed))
+            self.assertEqual(row["remediation_present"], 0)
             self.assertNotIn("secret", json.dumps(diag))
             telemetry.validate_summary(diag["telemetry"])
         for key, value in (("message", "secret"), ("count", True), ("url_string", 2)):
@@ -252,6 +258,27 @@ class TelemetryTests(GitFixture):
         bad["warnings"]["session"]["categories"]["private-category"] = 1
         with self.assertRaises(coverage.WorkflowError):
             telemetry.validate_summary(bad)
+
+    def test_managed_settings_diagnostics_never_grant_policy_credit(self):
+        terminal = {"type": "result", "exitCode": 0, "result": self.rows[-2]["data"]["content"]}
+        for data in (
+            {"source": "none", "failClosed": False},
+            {"source": "server", "failClosed": True, "settings": {"secret": "credential"}},
+            {"source": "secret-source", "managedKeys": ["secret-key"]},
+            None,
+        ):
+            event = {"type": "session.managed_settings_resolved", "ephemeral": True, "data": data}
+            result, diag = self.evaluate(stdout=[event, terminal])
+            self.assertFalse(result["qualified"])
+            self.assertIn("unsupported_stdout_event", diag["reasons"])
+            row = diag["telemetry"]["managed_settings"]["stdout"]
+            self.assertEqual(row["count"], 1)
+            self.assertNotIn("secret", json.dumps(diag))
+            self.assertNotIn("credential", json.dumps(diag))
+            telemetry.validate_summary(diag["telemetry"])
+        row["settings"] = "secret"
+        with self.assertRaises(coverage.WorkflowError):
+            telemetry.validate_summary(diag["telemetry"])
 
     def test_unknown_event_names_are_bounded_digests_and_never_qualify(self):
         events = [{"type": f"secret-type-{i}", "data": {"content": "private"}} for i in range(100)]

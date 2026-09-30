@@ -141,6 +141,65 @@ def validate_warnings(value):
             raise WorkflowError("Invalid warning counts")
 
 
+MANAGED_COUNTS = {
+    "count",
+    "root_ephemeral",
+    "data_object",
+    "known_source",
+    "source_none",
+    "indeterminate",
+    "settings_present",
+    "managed_keys_present",
+}
+
+
+def managed_settings_summary(events):
+    """Diagnostic-only projection of the pinned experimental policy snapshot.
+
+    No payload establishes benign policy here. Unsupported-event/isolation gates
+    remain unchanged, including for enforcement and indeterminate resolution.
+    """
+    row = dict.fromkeys(sorted(MANAGED_COUNTS), 0)
+    for event in events:
+        if event["type"] != "session.managed_settings_resolved":
+            continue
+        row["count"] += 1
+        row["root_ephemeral"] += event.get("ephemeral") is True and "agentId" not in event
+        data = event.get("data")
+        if not isinstance(data, dict):
+            continue
+        row["data_object"] += 1
+        source = data.get("source")
+        row["known_source"] += isinstance(source, str) and source in {
+            "none",
+            "server",
+            "device",
+            "client",
+            "policyHelper",
+            "mixed",
+        }
+        row["source_none"] += source == "none"
+        row["indeterminate"] += (
+            data.get("failClosed") is True or data.get("sandboxEnabledByUndeterminedPolicy") is True
+        )
+        row["settings_present"] += "settings" in data
+        row["managed_keys_present"] += "managedKeys" in data
+    return row
+
+
+def validate_managed_settings(value):
+    if not isinstance(value, dict) or set(value) != {"stdout", "session"}:
+        raise WorkflowError("Invalid managed settings summary")
+    for row in value.values():
+        if (
+            not isinstance(row, dict)
+            or set(row) != MANAGED_COUNTS
+            or any(type(n) is not int or not 0 <= n <= coverage.MAX_EVENTS for n in row.values())
+            or any(n > row["count"] for n in row.values())
+        ):
+            raise WorkflowError("Unsafe managed settings summary")
+
+
 def session_events(state, session_id):
     root = Path(state) / "session-state"
     if Path(state).is_symlink() or root.is_symlink() or not root.is_dir():
@@ -214,16 +273,22 @@ def capture(stdout, state, session_id, packet, workspace, **kwargs):
     # Optional additive diagnostics keep historical records and warning-free captures unchanged.
     if any(row["count"] for row in warnings.values()):
         diagnostics["telemetry"]["warnings"] = warnings
+    managed = {"stdout": managed_settings_summary(observed), "session": managed_settings_summary(events)}
+    if any(row["count"] for row in managed.values()):
+        diagnostics["telemetry"]["managed_settings"] = managed
     return report, diagnostics
 
 
 def validate_summary(value):
     if (
         not isinstance(value, dict)
-        or set(value) - {"warnings"} != {"source", "stdout_shapes", "session_shapes", "unknown_types"}
+        or set(value) - {"warnings", "managed_settings"}
+        != {"source", "stdout_shapes", "session_shapes", "unknown_types"}
         or value["source"] not in {"stdout", "session-state", "unavailable"}
     ):
         raise WorkflowError("Invalid telemetry summary")
+    if "managed_settings" in value:
+        validate_managed_settings(value["managed_settings"])
     if "warnings" in value:
         validate_warnings(value["warnings"])
     for name in ("stdout_shapes", "session_shapes"):

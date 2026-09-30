@@ -693,6 +693,34 @@ def assess(packet, body, diagnostics):
     inventory = read_json(packet / "required-material.json")
     required = inventory["required"]
     reasons = list(diagnostics["reasons"])
+    if inventory.get("schema_version") == 2:
+        indexes = {
+            revision: {row["path"]: row for row in read_json(packet / name)}
+            for revision, name in (("head", "source-index.json"), ("base", "base-source-index.json"))
+        }
+        for item in required:
+            if item.get("omitted"):
+                continue
+            revision, artifact = item["revision"], item.get("artifact")
+            if revision in indexes and item["kind"] in {"changed-source", "test", "prior-material"}:
+                expected = indexes[revision].get(item["path"], {}).get("snapshot")
+                if not expected or (
+                    artifact != expected
+                    and not (
+                        (artifact or "").startswith("empty/") and (packet / expected).read_bytes() == b""
+                    )
+                ):
+                    reasons.append("source_revision_binding_mismatch")
+            if revision.startswith("prior") or (artifact or "").startswith("prior-source/"):
+                provenance = item.get("provenance", {})
+                digest = hashlib.sha256((packet / artifact).read_bytes()).hexdigest() if artifact else None
+                expected_revision = (
+                    "prior:" + provenance["source_commit"]
+                    if provenance.get("source_commit")
+                    else "prior-snapshot:" + str(provenance.get("snapshot_sha256"))
+                )
+                if provenance.get("snapshot_sha256") != digest or revision != expected_revision:
+                    reasons.append("prior_snapshot_binding_mismatch")
     if diagnostics["exit_code"] != 0 or not all(diagnostics["capability"].values()):
         reasons.append("capability_or_execution_incomplete")
     if diagnostics["cli_version"] != CLI_VERSION:

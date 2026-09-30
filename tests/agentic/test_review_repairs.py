@@ -58,7 +58,7 @@ class RepairTests(GitFixture):
         return coverage.assess(self.packet, report, diagnostics), diagnostics
 
     def test_unnumbered_view_range_requires_exact_unambiguous_returned_text(self):
-        text = "first\r\n\r\n  \r\ncafé\u2028inside\r\nlast"
+        text = "first\r\n\r\n  \r\ncafé\u2028inside\fsection\r\nlast"
         chunks = text.splitlines(keepends=True)
         for selected in (None, [2, 5], [1, -1]):
             returned = text if selected is None or selected == [1, -1] else "".join(chunks[1:5])

@@ -340,6 +340,14 @@ class PacketTests(GitFixture):
         current = review.prepare(self.repo, 31, 12, 1234, prior_review=previous)
         now = coverage.read_json(current / "packet/required-material.json")["required"]
         self.assertTrue(any(item["id"] == unread["id"] for item in now))
+        carried = next(item for item in now if item["id"] == unread["id"])
+        self.assertTrue(carried["revision"].startswith("prior:"))
+        self.assertEqual(
+            carried["provenance"]["source_commit"], coverage.read_json(previous / "metadata.json")["head_sha"]
+        )
+        self.assertEqual(
+            carried["provenance"]["snapshot_sha256"], review.digest(current / "packet" / carried["artifact"])
+        )
         self.assertTrue((current / "packet/repair-delta.txt").is_file())
         self.assertEqual(
             len([i for i in now if i["kind"] == "policy"]),
@@ -349,6 +357,55 @@ class PacketTests(GitFixture):
         third = review.prepare(self.repo, 31, 12, 1234, prior_review=current)
         later = coverage.read_json(third / "packet/required-material.json")["required"]
         self.assertLessEqual(len(later), len(now) + 2)
+
+    def test_multi_repair_source_and_test_snapshots_keep_immutable_provenance(self):
+        self.commit_task()
+        (self.task_path / "tests").mkdir()
+        (self.task_path / "tests/test_code.py").write_text("def test_old():\n    assert True\n")
+        self.updated_head()
+        previous = review.prepare(self.repo, 31, 12, 1234)
+        original_head = self.head
+        original = coverage.read_json(previous / "packet/required-material.json")["required"]
+        unread = [
+            x["id"]
+            for x in original
+            if x["revision"] == "head" and x["path"] in {"code.py", "tests/test_code.py"}
+        ]
+        self.assertTrue(unread)
+        for generation in (1, 2):
+            store(self.repo, previous, omit=unread)
+            (self.task_path / "code.py").write_text("# moved\n" * generation + f"value = {generation + 4}\n")
+            (self.task_path / "tests/test_code.py").write_text(
+                "# moved\n" * generation + "def test_new():\n    assert 1\n"
+            )
+            self.updated_head()
+            current = review.prepare(self.repo, 31, 12, 1234, prior_review=previous)
+            packet = current / "packet"
+            required = coverage.read_json(packet / "required-material.json")["required"]
+            index = {x["path"]: x for x in coverage.read_json(packet / "source-index.json")}
+            for item in required:
+                if item["id"] in unread:
+                    self.assertEqual(item["revision"], "prior:" + original_head)
+                    self.assertEqual(
+                        item["provenance"]["snapshot_sha256"], review.digest(packet / item["artifact"])
+                    )
+                if item["revision"] == "head" and item["kind"] in {"changed-source", "test"}:
+                    self.assertEqual(item["artifact"], index[item["path"]]["snapshot"])
+            self.assertTrue(set(unread) <= {x["id"] for x in required})
+            # Even a synthetically well-formed report cannot qualify a false head binding.
+            bad = next(x for x in required if x["id"] in unread)
+            bad["revision"] = "head"
+            workflow.write_json(
+                packet / "required-material.json", {"schema_version": 2, "required": required}
+            )
+            raw = stream(packet)
+            body, diag = coverage.parse_events(raw, packet, packet, version="1.0.83")
+            self.assertIn("source_revision_binding_mismatch", coverage.assess(packet, body, diag)["reasons"])
+            bad["revision"] = "prior:" + original_head
+            workflow.write_json(
+                packet / "required-material.json", {"schema_version": 2, "required": required}
+            )
+            previous = current
 
     def test_invalid_prior_repository_ancestry_and_missing_coverage_are_refused(self):
         self.commit_task()
