@@ -310,3 +310,30 @@ tests without a path-manifest change. Synthetic tests cover budgeting, isolation
 recovery, report binding and publication. No live multi-invocation completion has been
 validated by those tests. A separate finite trial budget and explicit trust in the
 invocation code are required before applying unmerged batch policy to its own PR.
+
+### Session warning diagnostics (offline repair)
+
+The pinned [GitHub SDK WarningEvent/WarningData source](https://github.com/github/copilot-sdk/blob/4dc774c91aff609c338563aadc699d5c2dc596f7/nodejs/src/generated/session-events.ts#L2240-L2285)
+uses an open string `warningType`, a string `message`, optional string `url`, and
+optional `remediation`. The downloaded source SHA-256 is
+`8bc4ec9dea0577c5ae6f6244ce1e30b51fc5855a8ba15ccc109f22d3feba2cb6`.
+Its examples (`subscription`, `policy`, `mcp`) do not establish benign semantics.
+All `session.warning` events therefore still fail the existing unsupported-event
+gates in either stdout or session telemetry. No category is allowlisted for readiness.
+
+Future captures add an optional `telemetry.warnings` summary only when warnings
+occur. Separate stdout/session counters retain those three literal example labels;
+all other nonempty string categories become `other`, and absent/invalid categories
+become `missing_or_invalid`. Fixed counters describe field presence/types and extra
+fields. They do not certify schema validity or harmlessness. No warning messages,
+URLs, remediation contents, arbitrary category names or extra field names are saved.
+Existing stream/event/diagnostic bounds and isolation checks still apply. Historical
+summaries remain accepted without this optional field and are never rewritten.
+
+This is synthetic-test-backed diagnostic collection, not live compatibility or
+completion evidence. The earlier event-name digest identifies `session.warning`
+but cannot recover its historical category or payload. A coordinator-run diagnostic
+under finite approved execution bounds must gather fresh sanitized evidence before
+any further compatibility decision; `other` may still require source investigation.
+The original malformed report, unsupported-event failures and 0/211 aggregate stay
+incomplete. Fresh head/base review and independent validation remain required.

@@ -174,6 +174,85 @@ class TelemetryTests(GitFixture):
                 terminal = {"type": "result", "exitCode": 0, "result": self.rows[-2]["data"]["content"]}
                 self.assertFalse(self.evaluate(stdout=[event, terminal])[0]["qualified"])
 
+    def test_warning_diagnostics_distinguish_categories_without_retaining_payloads(self):
+        for category in ("subscription", "policy", "mcp", "private-category"):
+            warning = {
+                "type": "session.warning",
+                "data": {
+                    "warningType": category,
+                    "message": "private-message",
+                    "url": "https://private-url/credential",
+                    "remediation": {"private-key": "private-value"},
+                },
+            }
+            terminal = {"type": "result", "exitCode": 0, "result": self.rows[-2]["data"]["content"]}
+            for source in ("stdout", "session"):
+                with self.subTest(category=category, source=source):
+                    result, diag = (
+                        self.evaluate(stdout=[warning, terminal])
+                        if source == "stdout"
+                        else self.evaluate(self.rows[:1] + [warning] + self.rows[1:])
+                    )
+                    self.assertFalse(result["qualified"])
+                    row = diag["telemetry"]["warnings"][source]
+                    self.assertEqual(row["count"], 1)
+                    self.assertEqual(row["message_string"], 1)
+                    self.assertEqual(row["url_string"], 1)
+                    self.assertEqual(row["remediation_present"], 1)
+                    key = category if category != "private-category" else "other"
+                    self.assertEqual(row["categories"][key], 1)
+                    self.assertNotIn("private-", json.dumps(diag))
+                    telemetry.validate_summary(diag["telemetry"])
+
+    def test_warning_projection_is_fixed_size_and_never_weakens_isolation(self):
+        warnings = [
+            {"type": "session.warning", "data": {"warningType": f"private-{i}", "message": "secret"}}
+            for i in range(100)
+        ]
+        result, diag = self.evaluate(self.rows[:1] + warnings + self.rows[1:])
+        self.assertFalse(result["qualified"])
+        row = diag["telemetry"]["warnings"]["session"]
+        self.assertEqual(row["categories"]["other"], 100)
+        self.assertLess(len(json.dumps(diag["telemetry"]["warnings"])), 1000)
+        telemetry.validate_summary(diag["telemetry"])
+        self.assertNotIn("warnings", self.evaluate()[1]["telemetry"])
+        for field in ("agentId", "parentToolCallId", "mcpServerName"):
+            warning = copy.deepcopy(warnings[0])
+            if field == "agentId":
+                warning[field] = "private-child"
+            else:
+                warning["data"][field] = "private-child"
+            result, diag = self.evaluate(self.rows[:1] + [warning] + self.rows[1:])
+            self.assertFalse(result["qualified"])
+            self.assertIn("delegated_or_mcp_event", diag["reasons"])
+            self.assertNotIn("private-", json.dumps(diag))
+
+    def test_warning_shapes_and_summary_tampering_remain_fail_closed(self):
+        for data in (
+            None,
+            [],
+            {},
+            {"warningType": 42},
+            {"warningType": "policy", "message": [], "url": 7, "private-key": "secret"},
+        ):
+            warning = {"type": "session.warning", "data": data}
+            result, diag = self.evaluate(self.rows[:1] + [warning] + self.rows[1:])
+            self.assertFalse(result["qualified"])
+            row = diag["telemetry"]["warnings"]["session"]
+            self.assertEqual(row["count"], 1)
+            self.assertEqual(row["message_string"], 0)
+            self.assertNotIn("secret", json.dumps(diag))
+            telemetry.validate_summary(diag["telemetry"])
+        for key, value in (("message", "secret"), ("count", True), ("url_string", 2)):
+            bad = copy.deepcopy(diag["telemetry"])
+            bad["warnings"]["session"][key] = value
+            with self.assertRaises(coverage.WorkflowError):
+                telemetry.validate_summary(bad)
+        bad = copy.deepcopy(diag["telemetry"])
+        bad["warnings"]["session"]["categories"]["private-category"] = 1
+        with self.assertRaises(coverage.WorkflowError):
+            telemetry.validate_summary(bad)
+
     def test_unknown_event_names_are_bounded_digests_and_never_qualify(self):
         events = [{"type": f"secret-type-{i}", "data": {"content": "private"}} for i in range(100)]
         result, diag = self.evaluate(self.rows[:1] + events + self.rows[1:])

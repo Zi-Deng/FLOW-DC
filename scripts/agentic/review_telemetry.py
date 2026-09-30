@@ -77,6 +77,70 @@ def unknown_types(events):
     return result
 
 
+# Pinned SDK WarningData has an open string category, not a benign-category enum.
+# See COVERAGE.md for source provenance. These labels are diagnostic examples only.
+WARNING_CATEGORIES = {"subscription", "policy", "mcp", "other", "missing_or_invalid"}
+WARNING_COUNTS = {
+    "count",
+    "data_object",
+    "warning_type_string",
+    "message_string",
+    "url_present",
+    "url_string",
+    "remediation_present",
+    "extra_fields",
+}
+
+
+def warning_summary(events):
+    """Fixed-size shape/category counters; never retain messages, URLs or arbitrary labels.
+
+    This projection grants no support/credit: warnings still pass through the existing
+    unsupported-event gates. Remediation contents are deliberately not inspected.
+    """
+    row = dict.fromkeys(sorted(WARNING_COUNTS), 0)
+    row["categories"] = dict.fromkeys(sorted(WARNING_CATEGORIES), 0)
+    for event in events:
+        if event["type"] != "session.warning":
+            continue
+        row["count"] += 1
+        data = event.get("data")
+        category = "missing_or_invalid"
+        if isinstance(data, dict):
+            row["data_object"] += 1
+            value = data.get("warningType")
+            row["warning_type_string"] += isinstance(value, str)
+            if isinstance(value, str) and value:
+                category = value if value in {"subscription", "policy", "mcp"} else "other"
+            row["message_string"] += isinstance(data.get("message"), str)
+            row["url_present"] += "url" in data
+            row["url_string"] += isinstance(data.get("url"), str)
+            row["remediation_present"] += "remediation" in data
+            row["extra_fields"] += bool(set(data) - {"warningType", "message", "url", "remediation"})
+        row["categories"][category] += 1
+    return row
+
+
+def validate_warnings(value):
+    if not isinstance(value, dict) or set(value) != {"stdout", "session"}:
+        raise WorkflowError("Invalid warning summary")
+    for row in value.values():
+        if not isinstance(row, dict) or set(row) != WARNING_COUNTS | {"categories"}:
+            raise WorkflowError("Unsafe warning summary")
+        counts = {key: row[key] for key in WARNING_COUNTS}
+        categories = row["categories"]
+        if (
+            any(type(n) is not int or not 0 <= n <= coverage.MAX_EVENTS for n in counts.values())
+            or any(n > row["count"] for n in counts.values())
+            or not isinstance(categories, dict)
+            or set(categories) != WARNING_CATEGORIES
+            or any(type(n) is not int or not 0 <= n <= row["count"] for n in categories.values())
+            or sum(categories.values()) != row["count"]
+            or row["url_string"] > row["url_present"]
+        ):
+            raise WorkflowError("Invalid warning counts")
+
+
 def session_events(state, session_id):
     root = Path(state) / "session-state"
     if Path(state).is_symlink() or root.is_symlink() or not root.is_dir():
@@ -146,16 +210,22 @@ def capture(stdout, state, session_id, packet, workspace, **kwargs):
         "session_shapes": shapes(events),
         "unknown_types": {"stdout": unknown_types(observed), "session": unknown_types(events)},
     }
+    warnings = {"stdout": warning_summary(observed), "session": warning_summary(events)}
+    # Optional additive diagnostics keep historical records and warning-free captures unchanged.
+    if any(row["count"] for row in warnings.values()):
+        diagnostics["telemetry"]["warnings"] = warnings
     return report, diagnostics
 
 
 def validate_summary(value):
     if (
         not isinstance(value, dict)
-        or set(value) != {"source", "stdout_shapes", "session_shapes", "unknown_types"}
+        or set(value) - {"warnings"} != {"source", "stdout_shapes", "session_shapes", "unknown_types"}
         or value["source"] not in {"stdout", "session-state", "unavailable"}
     ):
         raise WorkflowError("Invalid telemetry summary")
+    if "warnings" in value:
+        validate_warnings(value["warnings"])
     for name in ("stdout_shapes", "session_shapes"):
         rows = value[name]
         if not isinstance(rows, dict) or set(rows) - KNOWN_TYPES - {"unknown"}:
