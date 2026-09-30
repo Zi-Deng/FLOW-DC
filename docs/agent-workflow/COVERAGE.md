@@ -337,3 +337,24 @@ under finite approved execution bounds must gather fresh sanitized evidence befo
 any further compatibility decision; `other` may still require source investigation.
 The original malformed report, unsupported-event failures and 0/211 aggregate stay
 incomplete. Fresh head/base review and independent validation remain required.
+
+### Assigned inspection navigation
+
+New batch plan version 2 expands test-map context to transitive closure, independent
+of mapping order. Saved version-1 plans retain their original single-pass semantics
+for validation; they are not silently upgraded or credited with extra inspection.
+
+New unit assignments include deterministic `inspection_suggestions` for each
+assigned readable inventory entry (including integration report obligations).
+`view_range` uses 1-based inclusive start/end positions, not start/count. If the
+required end is blank, the suggestion extends through the next nonblank line when
+available. At EOF it also suggests a blank-line grep pattern and the needed line
+interval. Only actual numbered `path:line:text` matches support those lines; a
+search request or empty result proves nothing. Read the other required context with
+view. Omitted material stays explicitly unavailable.
+
+These suggestions neither change the required inventory nor bypass exact-byte
+validation. The historical omitted-final-blank-line result remains unsupported.
+Whitespace is not stripped, missing text is not reconstructed, and suggestions do
+not establish inspection or understanding. Tests use synthetic returned output
+against real local packet text; live completion remains a separate review gate.

@@ -52,8 +52,10 @@ def budget(requests, credits, seconds, unit_credits, unit_seconds):
     return result
 
 
-def plan(directory):
+def plan(directory, *, version=2):
     """Deterministic scope partition with explicit linked navigation context."""
+    if type(version) is not int or version not in {1, 2}:
+        raise WorkflowError("Unsupported batch plan version")
     directory = Path(directory)
     meta = api().verify_packet(directory)
     if meta["schema_version"] not in {3, SCHEMA} or meta.get("batch_unit"):
@@ -75,9 +77,14 @@ def plan(directory):
         primary = [key for key in ids if key not in cross]
         if primary:
             paths = {lookup[key]["path"] for key in primary}
-            for mapping in coverage.read_json(packet / "test-map.json"):
-                if mapping["changed_path"] in paths or paths.intersection(mapping["candidates"]):
-                    paths.update([mapping["changed_path"], *mapping["candidates"]])
+            mappings = coverage.read_json(packet / "test-map.json")
+            while True:
+                previous = paths.copy()
+                for mapping in mappings:
+                    if mapping["changed_path"] in paths or paths.intersection(mapping["candidates"]):
+                        paths.update([mapping["changed_path"], *mapping["candidates"]])
+                if version == 1 or paths == previous:
+                    break
             links = {link for key in primary for link in lookup[key].get("links", [])}
             context = sorted(
                 key
@@ -106,7 +113,7 @@ def plan(directory):
         }
     ]
     return {
-        "schema_version": 1,
+        "schema_version": version,
         "binding": {key: meta[key] for key in BINDING},
         "files": meta["files"],
         "policy": meta["config"],
@@ -142,7 +149,7 @@ def load(directory):
     if meta["schema_version"] != SCHEMA or digest(saved) != meta.get("batch_sha256"):
         raise WorkflowError("Batch plan changed")
     limits = saved.get("budget", {})
-    if saved != {**plan(directory), "budget": budget(**limits)}:
+    if saved != {**plan(directory, version=saved.get("schema_version")), "budget": budget(**limits)}:
         raise WorkflowError("Batch binding, inventory, policy or membership changed")
     return saved
 
@@ -178,6 +185,35 @@ def material_for_report(packet, artifact, body):
     return result
 
 
+def inspection_suggestions(packet, items):
+    """Navigation only; original IDs/ranges and evidence requirements never change."""
+    result = []
+    for item in items:
+        row = {"id": item["id"]}
+        if item.get("omitted") or not item.get("artifact"):
+            result.append({**row, "state": "unavailable"})
+            continue
+        artifact = item["artifact"]
+        lines = (packet / artifact).read_bytes().decode("utf-8").splitlines()
+        start, end = item["start_line"], item["end_line"]
+        if not coverage.valid_range(start, end, len(lines)):
+            raise WorkflowError("Inspection suggestion requires a valid source range")
+        expanded = end
+        while expanded < len(lines) and not lines[expanded - 1].strip():
+            expanded += 1
+        row.update(path=artifact, view_range=[start, expanded])
+        if not lines[expanded - 1].strip():
+            # EOF has no following context anchor. Actual numbered grep results
+            # can establish blank lines; an unnumbered empty result cannot.
+            first = expanded
+            while first > start and not lines[first - 2].strip():
+                first -= 1
+            row["grep_blank_lines"] = [first, expanded]
+            row["grep_pattern"] = r"^\s*$"
+        result.append(row)
+    return result
+
+
 def prepare_unit(directory, batch, unit, reservation):
     parent = Path(directory)
     target = unit_path(parent, unit)
@@ -209,6 +245,16 @@ def prepare_unit(directory, batch, unit, reservation):
         "required_ids": unit["required_ids"] + [item["id"] for item in extra],
         "dependencies": dependencies,
     }
+    if batch["schema_version"] >= 2:
+        required = set(assignment["required_ids"])
+        assignment["inspection_suggestions"] = inspection_suggestions(
+            packet,
+            [
+                item
+                for item in coverage.read_json(packet / "required-material.json")["required"]
+                if item["id"] in required
+            ],
+        )
     atomic_json(packet / "assignment.json", assignment)
     meta = api().verify_packet(parent)
     child_meta = {
@@ -272,6 +318,10 @@ def unit_assessment(directory, batch, unit):
         or assignment["required_ids"] != ids
     ):
         raise WorkflowError("Unit inventory or dependency binding changed")
+    if batch["schema_version"] >= 2 and assignment.get("inspection_suggestions") != inspection_suggestions(
+        target / "packet", [item for item in inventory if item["id"] in set(ids)]
+    ):
+        raise WorkflowError("Unit inspection suggestions changed")
     state = state_for(directory, batch)
     reservation = (
         next((row for row in state["reservations"] if row["unit"] == unit["id"]), None) if state else None

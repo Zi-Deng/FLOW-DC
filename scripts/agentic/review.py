@@ -525,6 +525,12 @@ def run_review(repo, directory, *, _batch_authorized=False, _batch_deadline=None
     scope = (
         "This is one bounded batch unit. Read assignment.json and inspect every required_ids entry there, "
         "including source bodies and test context, not merely diff headers. "
+        "Use inspection_suggestions in assignment.json when present: view_range is a pair of 1-based inclusive "
+        "start/end line numbers, not a start/count pair. Suggested ranges include a following nonblank context "
+        "line where available. For EOF blank lines use grep with the suggested pattern and actual path:line:text "
+        "results; only returned matching lines count. Read remaining nonblank context with view. "
+        "Suggestions grant no credit: missing, truncated or ambiguous results remain incomplete; never strip "
+        "or reconstruct missing output. Required IDs and original ranges remain unchanged. "
         "The full parent inventory stays available as context; unassigned IDs may remain unread in this report. "
         "On repair runs read repair-delta.txt and prior-review.json as context for the assignment. "
         "For integration, inspect all exact component-reports inputs and cross-unit interactions, findings and test adequacy. "

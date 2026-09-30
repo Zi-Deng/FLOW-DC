@@ -106,6 +106,83 @@ class BatchTests(GitFixture):
         with self.assertRaisesRegex(workflow.WorkflowError, "integration obligation"):
             batch.plan(self.directory)
 
+    def test_test_map_context_reaches_order_independent_closure(self):
+        packet = self.directory / "packet"
+        inventory = coverage.read_json(packet / "required-material.json")["required"]
+        scope = coverage.read_json(packet / "scopes.json")["scopes"][0]
+        primary = set(scope["required_ids"])
+        path = next(item["path"] for item in inventory if item["id"] in primary)
+        primary_paths = {item["path"] for item in inventory if item["id"] in primary}
+        target = next(item for item in inventory if item["path"] not in primary_paths)
+        mappings = [
+            {"changed_path": "bridge", "candidates": [target["path"]]},
+            {"changed_path": path, "candidates": ["bridge"]},
+        ]
+        results = []
+        for rows in (mappings, list(reversed(mappings))):
+            atomic_json(packet / "test-map.json", rows)
+            meta = coverage.read_json(self.directory / "metadata.json")
+            meta["files"]["test-map.json"] = review.digest(packet / "test-map.json")
+            atomic_json(self.directory / "metadata.json", meta)
+            results.append(batch.plan(self.directory)["units"][0]["context_ids"])
+        self.assertEqual(results[0], results[1])
+        self.assertIn(target["id"], results[0])
+
+    def test_legacy_batch_plan_is_validated_without_new_navigation_semantics(self):
+        saved = {**batch.plan(self.directory, version=1), "budget": batch.budget(**self.limits)}
+        meta = coverage.read_json(self.directory / "metadata.json")
+        meta.update(schema_version=batch.SCHEMA, batch_sha256=batch.digest(saved))
+        atomic_json(self.directory / "batch.json", saved)
+        atomic_json(self.directory / "metadata.json", meta)
+        self.assertEqual(batch.load(self.directory), saved)
+        self.assertEqual(saved["schema_version"], 1)
+        with self.assertRaisesRegex(workflow.WorkflowError, "changed"):
+            batch.select(self.directory, self.limits)
+
+    def test_suggested_ranges_preserve_blank_boundary_evidence(self):
+        packet = self.directory / "packet"
+        text = "".join(f"line {n}\n" for n in range(1, 124)) + "\ncontext\n\n"
+        (packet / "boundary.txt").write_text(text)
+        items = [
+            {"id": "middle", "artifact": "boundary.txt", "start_line": 94, "end_line": 124},
+            {"id": "eof", "artifact": "boundary.txt", "start_line": 125, "end_line": 126},
+            {"id": "omitted", "artifact": None, "omitted": "unavailable"},
+        ]
+        before = copy.deepcopy(items)
+        hints = batch.inspection_suggestions(packet, items)
+        self.assertEqual(items, before)
+        self.assertEqual(hints[0]["view_range"], [94, 125])
+        self.assertEqual(hints[1]["grep_blank_lines"], [126, 126])
+        self.assertEqual(hints[2]["state"], "unavailable")
+        files = {"boundary.txt": text}
+        chunks = text.splitlines(keepends=True)
+        spans, _, reason = coverage.tool_observation(
+            "view",
+            {"path": "boundary.txt", "view_range": [94, 124]},
+            "".join(chunks[93:124])[:-1],
+            packet,
+            files,
+        )
+        self.assertFalse(spans)
+        self.assertEqual(reason, "ambiguous_or_out_of_range_view")
+        spans, _, _ = coverage.tool_observation(
+            "view",
+            {"path": "boundary.txt", "view_range": hints[0]["view_range"]},
+            "".join(chunks[93:125])[:-1],
+            packet,
+            files,
+        )
+        self.assertEqual((spans[0]["start_line"], spans[0]["end_line"]), (94, 125))
+        spans, _, _ = coverage.tool_observation(
+            "grep",
+            {"path": "boundary.txt", "pattern": "^$"},
+            "boundary.txt:126:",
+            packet,
+            files,
+        )
+        self.assertEqual((spans[0]["start_line"], spans[0]["end_line"]), (126, 126))
+        self.assertFalse(coverage.tool_observation("grep", {}, "", packet, files)[0])
+
     def test_missing_or_invalid_budgets_fail_before_inference(self):
         for key in self.limits:
             for value in (None, 0, -1, True, float("inf"), float("nan")):
@@ -346,6 +423,8 @@ class BatchTests(GitFixture):
                 "Do not add introductory prose, markdown fences, or text outside that object", prompt
             )
             self.assertIn("inspect every required_ids entry", prompt)
+            self.assertIn("1-based inclusive", prompt)
+            self.assertIn("inspection_suggestions", prompt)
             self.assertNotIn("inspect EVERY required-material.json entry", prompt)
             self.assertNotIn("then cover the full inventory", prompt)
             self.assertIn("--available-tools=view,grep,glob", args)
