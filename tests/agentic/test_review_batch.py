@@ -81,6 +81,31 @@ class BatchTests(GitFixture):
         self.execute(resume=True)
         self.assertEqual(len(self.calls), calls)
 
+    def test_single_file_packet_always_requires_cross_boundary_integration(self):
+        packet = self.directory / "packet"
+        self.assertEqual(len(coverage.read_json(packet / "changed-files.json")), 1)
+        inventory = coverage.read_json(packet / "required-material.json")
+        cross = {item["id"] for item in inventory["required"] if item["kind"] == "cross-boundary"}
+        self.assertTrue(cross)
+        self.assertEqual(set(batch.plan(self.directory)["units"][-1]["required_ids"]), cross)
+        # An externally reduced packet must not turn the mandatory integration
+        # obligation into a vacuous empty assignment, even if scopes partition it.
+        inventory["required"] = [item for item in inventory["required"] if item["id"] not in cross]
+        atomic_json(packet / "required-material.json", inventory)
+        scopes = coverage.read_json(packet / "scopes.json")
+        for scope in scopes["scopes"]:
+            scope["required_ids"] = [key for key in scope["required_ids"] if key not in cross]
+        scopes["scopes"] = [scope for scope in scopes["scopes"] if scope["required_ids"]]
+        atomic_json(packet / "scopes.json", scopes)
+        (packet / "inventory-sha256.txt").write_text(review.digest(packet / "required-material.json") + "\n")
+        meta = coverage.read_json(self.directory / "metadata.json")
+        meta["files"] = {
+            p.relative_to(packet).as_posix(): review.digest(p) for p in packet.rglob("*") if p.is_file()
+        }
+        atomic_json(self.directory / "metadata.json", meta)
+        with self.assertRaisesRegex(workflow.WorkflowError, "integration obligation"):
+            batch.plan(self.directory)
+
     def test_missing_or_invalid_budgets_fail_before_inference(self):
         for key in self.limits:
             for value in (None, 0, -1, True, float("inf"), float("nan")):
@@ -315,6 +340,14 @@ class BatchTests(GitFixture):
                 return subprocess.CompletedProcess(args, 0, HELP, "")
             if args[1] == "--version":
                 return subprocess.CompletedProcess(args, 0, "1.0.83", "")
+            prompt = args[args.index("--prompt") + 1]
+            self.assertIn("Return exactly one JSON object", prompt)
+            self.assertIn(
+                "Do not add introductory prose, markdown fences, or text outside that object", prompt
+            )
+            self.assertIn("inspect every required_ids entry", prompt)
+            self.assertNotIn("inspect EVERY required-material.json entry", prompt)
+            self.assertNotIn("then cover the full inventory", prompt)
             self.assertIn("--available-tools=view,grep,glob", args)
             self.assertIn("--allow-tool=view,grep,glob", args)
             self.assertIn("--no-custom-instructions", args)

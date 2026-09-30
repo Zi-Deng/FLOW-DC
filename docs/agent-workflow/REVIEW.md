@@ -104,8 +104,12 @@ Return compact schema-2 JSON matching `report-schema.json`: copy `inventory-sha2
 list positively inspected IDs in `reviewed`, group specific reasons in `incomplete`,
 and state general `limitations` once. Every unclaimed inventory ID remains unread and
 blocks readiness. The wrapper supplies original paths/ranges from the hash-bound
-inventory and correlates them with actual successful tool results. One complete outer
-`json` fence is accepted without changing saved bytes. A checkmark, percentage, listing
+inventory and correlates them with actual successful tool results. The invocation asks
+for one bare JSON object with no introductory prose or Markdown fences; capability and scope notes belong inside `limitations`. Batch prompts require
+the assigned IDs, while single-request prompts require the full inventory. These are
+prompt constraints, not a guarantee of model compliance. One complete outer
+`json` fence is still accepted without changing saved bytes; surrounding prose stays
+malformed and cannot be stripped to recover qualification. A checkmark, percentage, listing
 or diff header cannot replace source/test inspection. Observed reads do not prove
 understanding. Do not infer a provider timeout or exhausted budget from partial coverage.
 Historical assessments/publication bytes retain their original policy; current readiness

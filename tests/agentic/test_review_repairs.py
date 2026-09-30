@@ -165,6 +165,36 @@ class RepairTests(GitFixture):
         ):
             self.assertFalse(self.evaluate(invalid)[0]["qualified"])
 
+    def test_prose_prefixed_report_remains_exact_and_incomplete_after_recovery(self):
+        from review_fixtures import events, store
+
+        bare = events(self.packet)[-2]["data"]["content"]
+        body = "Capability and scope summary.\r\n\r\n```json\r\n" + bare + "\r\n```\r\n"
+        store(self.repo, self.directory, body)
+        result = review.qualification(self.directory)
+        self.assertIn("malformed_report_contract", result["reasons"])
+        self.assertEqual(result["inspected_count"], 0)
+        diagnostics = coverage.read_json(self.directory / "diagnostics.json")
+        self.assertTrue(all(diagnostics["capability"].values()))
+        retained = {
+            name: (self.directory / name).read_bytes()
+            for name in (
+                "review.md",
+                "review-capture.json",
+                "review-result.json",
+                "diagnostics.json",
+                "coverage.json",
+            )
+        }
+        with patch.object(review, "run", side_effect=AssertionError("no paid retry")):
+            review.recover_review(self.repo, self.directory)
+        for name, exact in retained.items():
+            self.assertEqual((self.directory / name).read_bytes(), exact)
+        self.assertEqual((self.directory / "review.md").read_bytes(), body.encode())
+        self.assertIn(body, review.publication_body(self.directory))
+        with self.assertRaises(coverage.WorkflowError):
+            review.qualification(self.directory, require=True)
+
     def test_assessment_read_failure_retains_exact_capture_and_recovers_without_provider(self):
         body, diagnostics = coverage.parse_events(
             stream(self.packet), self.packet, self.packet, version="1.0.83"
