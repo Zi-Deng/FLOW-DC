@@ -389,7 +389,18 @@ snapshots separately from action-enforcement events. Current historical payloads
 are unknown. New captures retain only fixed bounded counters under optional
 `telemetry.managed_settings`: root/ephemeral shape, known source, indeterminate
 policy and field presence. No settings, managed key names or arbitrary source
-strings are retained. This diagnostic-only change allows no new event: resolution,
-enforcement, malformed and delegated events still fail closed. Safe fresh payload
-shape evidence is needed before considering narrow compatibility support; no
-historical evidence is reinterpreted and no extra paid call is launched by repair.
+strings are retained. Future stdout captures accept only the complete root ephemeral
+no-policy shape: source `none`, empty managedKeys, false failClosed/deviceManaged/
+serverManaged, boolean bypassPermissionsDisabled, and absent or false optional
+clientManaged/policyHelperManaged/permissionsAllowIntersected/
+sandboxEnabledByUndeterminedPolicy. Settings must be absent. The envelope requires
+UUID-v4 identifiers (nullable parentId), a timezone-bearing ISO timestamp and only
+recognized keys. Both boolean bypassPermissionsDisabled values are accepted;
+true is restrictive. The pinned source enum explicitly defines `none` as no policy.
+Persisted session-log occurrences remain unsupported: the SDK documents this event
+as live-only. Enforcement, unknown, active/indeterminate policy, malformed and
+delegated events remain rejected. Existing bounded name-digest/shape diagnostics
+are retained even for this narrow stdout exception; they confer no inspection
+credit. Actual tool evidence and every other gate remain required. Validation is
+synthetic only; historical payloads stay unknown and historical diagnostics and
+qualification are unchanged. No paid call is launched by repair.

@@ -8,7 +8,9 @@ import json
 import os
 import re
 import stat
+from datetime import datetime
 from pathlib import Path
+from uuid import UUID
 
 import review_coverage as coverage
 from workflow import WorkflowError
@@ -221,6 +223,51 @@ def session_events(state, session_id):
     return events
 
 
+def unmanaged_stdout_event(event):
+    """Pinned SDK live-only no-policy snapshot; never tool or inspection evidence."""
+    if set(event) != {"type", "ephemeral", "id", "parentId", "timestamp", "data"}:
+        return False
+    if event["type"] != "session.managed_settings_resolved" or event["ephemeral"] is not True:
+        return False
+    try:
+        for key in ("id", "parentId"):
+            value = event[key]
+            if key == "parentId" and value is None:
+                continue
+            if not isinstance(value, str) or UUID(value).version != 4:
+                return False
+        if not isinstance(event["id"], str) or not isinstance(event["timestamp"], str):
+            return False
+        if datetime.fromisoformat(event["timestamp"]).tzinfo is None:
+            return False
+    except ValueError:
+        return False
+    data = event["data"]
+    required = {
+        "source",
+        "failClosed",
+        "managedKeys",
+        "deviceManaged",
+        "serverManaged",
+        "bypassPermissionsDisabled",
+    }
+    optional = {
+        "clientManaged",
+        "policyHelperManaged",
+        "permissionsAllowIntersected",
+        "sandboxEnabledByUndeterminedPolicy",
+    }
+    return (
+        isinstance(data, dict)
+        and required <= data.keys() <= required | optional
+        and data["source"] == "none"
+        and data["managedKeys"] == []
+        and isinstance(data["bypassPermissionsDisabled"], bool)
+        and all(data[key] is False for key in {"failClosed", "deviceManaged", "serverManaged"})
+        and all(data[key] is False for key in optional & data.keys())
+    )
+
+
 def capture(stdout, state, session_id, packet, workspace, **kwargs):
     reasons, observed, framing = set(), [], []
     try:
@@ -237,7 +284,7 @@ def capture(stdout, state, session_id, packet, workspace, **kwargs):
         restriction = coverage.event_restriction(event)
         if restriction:
             reasons.add(restriction)
-        if kind not in KNOWN_TYPES or kind == "session.error":
+        if (kind not in KNOWN_TYPES or kind == "session.error") and not unmanaged_stdout_event(event):
             reasons.add("unsupported_stdout_event")
         if not isinstance(data, dict):
             reasons.add("malformed_stdout_framing")

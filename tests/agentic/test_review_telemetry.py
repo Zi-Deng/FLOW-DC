@@ -259,6 +259,95 @@ class TelemetryTests(GitFixture):
         with self.assertRaises(coverage.WorkflowError):
             telemetry.validate_summary(bad)
 
+    def test_unmanaged_ephemeral_stdout_requires_exact_no_policy_shape(self):
+        event = {
+            "type": "session.managed_settings_resolved",
+            "ephemeral": True,
+            "id": self.session,
+            "parentId": None,
+            "timestamp": "2026-09-30T20:00:00Z",
+            "data": {
+                "source": "none",
+                "failClosed": False,
+                "managedKeys": [],
+                "deviceManaged": False,
+                "serverManaged": False,
+                "bypassPermissionsDisabled": False,
+            },
+        }
+        terminal = {"type": "result", "exitCode": 0, "result": self.rows[-2]["data"]["content"]}
+        optional = (
+            "clientManaged",
+            "policyHelperManaged",
+            "permissionsAllowIntersected",
+            "sandboxEnabledByUndeterminedPolicy",
+        )
+        for restrictive in (False, True):
+            good = copy.deepcopy(event)
+            good["data"]["bypassPermissionsDisabled"] = restrictive
+            if restrictive:
+                good["data"].update(dict.fromkeys(optional, False))
+                good["parentId"] = self.session
+            result, diag = self.evaluate(stdout=[good, terminal])
+            self.assertTrue(result["qualified"], diag["reasons"])
+            telemetry.validate_summary(diag["telemetry"])
+        variants = []
+        for key in event:
+            bad = copy.deepcopy(event)
+            del bad[key]
+            if key != "type":  # Missing discriminator is rejected by JSONL framing.
+                variants.append(bad)
+        for key in event["data"]:
+            bad = copy.deepcopy(event)
+            del bad["data"][key]
+            variants.append(bad)
+        for key, values in {
+            "source": ["server", "device", "client", "policyHelper", "mixed", "secret", None],
+            "failClosed": [True, 0, None],
+            "managedKeys": [["secret"], {}, None],
+            "deviceManaged": [True, 0],
+            "serverManaged": [True, "false"],
+            "bypassPermissionsDisabled": [0, 1, None, "false"],
+            "settings": [None, {}, {"secret": "credential"}],
+            "extra": ["secret"],
+            **{key: [True, 0, None] for key in optional},
+            "parentToolCallId": ["secret"],
+            "mcpServerName": ["secret"],
+        }.items():
+            for value in values:
+                bad = copy.deepcopy(event)
+                bad["data"][key] = value
+                variants.append(bad)
+        for key, value in (
+            ("agentId", None),
+            ("agentId", "secret"),
+            ("ephemeral", False),
+            ("ephemeral", 1),
+            ("extra", "secret"),
+            ("id", "secret"),
+            ("parentId", 1),
+            ("timestamp", "2026-02-30T20:00:00Z"),
+            ("data", []),
+            ("data", None),
+            ("type", "session.managed_settings_enforced"),
+        ):
+            bad = copy.deepcopy(event)
+            bad[key] = value
+            variants.append(bad)
+        for bad in variants:
+            with self.subTest(event=bad):
+                result, diag = self.evaluate(stdout=[bad, terminal])
+                self.assertFalse(result["qualified"])
+                self.assertNotIn("secret", json.dumps(diag))
+                self.assertNotIn("credential", json.dumps(diag))
+                telemetry.validate_summary(diag["telemetry"])
+        # Ephemeral bookkeeping is not documented as persisted tool evidence.
+        self.assertFalse(self.evaluate([self.rows[0], event] + self.rows[1:])[0]["qualified"])
+        no_tools = [row for row in self.rows if not row["type"].startswith("tool.")]
+        result, diag = self.evaluate(no_tools, stdout=[event, terminal])
+        self.assertFalse(result["qualified"])
+        self.assertEqual(diag["events"], [])
+
     def test_managed_settings_diagnostics_never_grant_policy_credit(self):
         terminal = {"type": "result", "exitCode": 0, "result": self.rows[-2]["data"]["content"]}
         for data in (
