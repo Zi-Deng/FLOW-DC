@@ -195,7 +195,7 @@ def source_ranges(path, text, hunks, revision):
     return ranges(selected)
 
 
-def build(repo, packet, head, ancestor, head_index, base_index, context, cfg, prior=None):
+def build(repo, packet, head, ancestor, head_index, base_index, context, cfg, prior=None, provider="copilot"):
     packet = Path(packet)
     required = []
 
@@ -616,6 +616,21 @@ def build(repo, packet, head, ancestor, head_index, base_index, context, cfg, pr
         "Return compact JSON matching report-schema.json: copy inventory-sha256.txt into inventory_sha256, list only positively inspected IDs in reviewed, and group specific incomplete reasons in incomplete. Omitted IDs remain unread and block readiness; do not repeat an unread row for each ID. Explain general limits once in limitations. Do not assert budget exhaustion without a provider signal. Never infer execution from static inspection.\n",
         encoding="utf-8",
     )
+    if provider == "claude-code":
+        start = packet / "START.txt"
+        text = (
+            start.read_text(encoding="utf-8")
+            .replace("First view ", "First Read ")
+            .replace("grep its token", "Grep its token")
+            .replace("glob capability", "Glob capability")
+            .replace(
+                "through view(path, view_range=[start,end])",
+                "through Read(file_path, offset=start, limit=end-start+1)",
+            )
+            .replace("grep only credits", "Grep (output_mode=content, -n=true) only credits")
+            .replace("glob only proves", "Glob only proves")
+        )
+        start.write_text(text, encoding="utf-8")
     # Count all source material, including immutable carried-forward material.
     source_bytes = sum(
         p.stat().st_size

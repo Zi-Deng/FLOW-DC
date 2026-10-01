@@ -1,4 +1,7 @@
-"""Conservative Copilot session-event adapter and required-material coverage gate.
+"""Frozen schema-3 Copilot assessment from main 72e23c4 (2026-10-01).
+
+Do not generalize this historical implementation or upgrade its policy.
+Conservative Copilot session-event adapter and required-material coverage gate.
 
 Only model-facing tool result content is evidence. Provider reasoning, environments,
 errors, arbitrary arguments and detailed/UI-only results are never persisted here.
@@ -13,9 +16,9 @@ import math
 import re
 from pathlib import Path, PurePosixPath
 
-from copilot_policy import CLI_VERSION
 from workflow import WorkflowError
 
+CLI_VERSION = "1.0.83"  # Frozen schema-3 pin; never follows current provider policy.
 SCHEMA = 2
 ADAPTER = "copilot-session-events-v2"
 MAX_EVENTS = 20000
@@ -252,9 +255,7 @@ def tool_observation(name, arguments, content, workspace, files):
     return spans, [], None if spans else "unrecognized_or_empty_tool_result"
 
 
-def parse_events(
-    raw, packet, workspace, *, exit_code=0, failure=None, version="unknown", usage=None, model="claude-opus-5"
-):
+def parse_events(raw, packet, workspace, *, exit_code=0, failure=None, version="unknown", usage=None):
     """Normalize public-shaped JSONL events; never persist the raw provider stream."""
     packet = Path(packet)
     files, reasons = {}, set()
@@ -326,10 +327,6 @@ def parse_events(
                 data = {}
             if not isinstance(data, dict):
                 raise ValueError("unsupported event data")
-            if kind in {"session.start", "session.model_change", "model.call_start", "model.call_finished"}:
-                for field in ("model", "selectedModel"):
-                    if field in data and data[field] != model:
-                        reasons.add("unexpected_model_identity")
             if data.get("parentToolCallId") or data.get("mcpServerName") or data.get("mcpToolName"):
                 reasons.add("delegated_or_mcp_event")
             if kind == "tool.execution_start":
@@ -453,10 +450,6 @@ def parse_events(
         reasons.add("unavailable_capability_artifact")
     if not all(canary.values()):
         reasons.add("capability_probe_incomplete")
-    if isinstance(usage, dict):
-        for field in ("modelUsage", "modelMetrics"):
-            if isinstance(usage.get(field), dict) and set(usage[field]) - {model}:
-                reasons.add("unexpected_usage_models")
     diagnostics = {
         "schema_version": SCHEMA,
         "adapter": ADAPTER,
@@ -466,7 +459,7 @@ def parse_events(
         "reasons": sorted(reasons),
         "capability": canary,
         "events": records,
-        "usage": sanitize_usage(usage, model),
+        "usage": sanitize_usage(usage),
         "telemetry": {
             "source": "stdout",
             "stdout_shapes": {},
@@ -524,7 +517,7 @@ USAGE_COUNTERS = {
 }
 
 
-def sanitize_usage(value, model="claude-opus-5"):
+def sanitize_usage(value):
     """Explicit numerical projection of CLI 1.0.83 usage and terminal usage."""
 
     def number(value):
@@ -552,12 +545,12 @@ def sanitize_usage(value, model="claude-opus-5"):
     if isinstance(value, dict):
         for field in ("modelUsage", "modelMetrics"):
             source = value.get(field)
-            if isinstance(source, dict) and isinstance(source.get(model), dict):
-                models[model] = counters(source[model])
+            if isinstance(source, dict) and isinstance(source.get("claude-opus-5"), dict):
+                models["claude-opus-5"] = counters(source["claude-opus-5"])
     return {"status": "observed" if result or models else "unknown", "counters": result, "models": models}
 
 
-def validate_diagnostics(diagnostics, packet, policy=None):
+def validate_diagnostics(diagnostics, packet):
     """Check persisted allowlist and ranges again at every qualification gate."""
     if (
         not isinstance(diagnostics, dict)
@@ -579,7 +572,7 @@ def validate_diagnostics(diagnostics, packet, policy=None):
     ):
         raise WorkflowError("Unsupported coverage diagnostics")
     if (
-        diagnostics["adapter"] != (policy["adapter"] if policy else ADAPTER)
+        diagnostics["adapter"] != ADAPTER
         or not isinstance(diagnostics["reasons"], list)
         or not isinstance(diagnostics["events"], list)
         or len(diagnostics["events"]) > MAX_TOOL_RECORDS
@@ -600,13 +593,9 @@ def validate_diagnostics(diagnostics, packet, policy=None):
         )
     ):
         raise WorkflowError("Invalid diagnostic fields")
-    if policy and policy["provider"] == "claude-code":
-        from claude_telemetry import validate_summary
-    else:
-        from review_telemetry import validate_summary
+    from review_telemetry_v2 import validate_summary
+
     validate_summary(diagnostics["telemetry"])
-    if policy and diagnostics["cli_version"] != policy["cli"]["version"]:
-        raise WorkflowError("Diagnostic CLI identity differs from the packet")
     ids = set()
     usage = diagnostics["usage"]
     if (
@@ -615,14 +604,13 @@ def validate_diagnostics(diagnostics, packet, policy=None):
         or usage["status"] not in {"observed", "unknown"}
         or not isinstance(usage["counters"], dict)
         or not isinstance(usage["models"], dict)
-        or set(usage["models"]) - {policy["model"] if policy else "claude-opus-5"}
+        or set(usage["models"]) - {"claude-opus-5"}
     ):
         raise WorkflowError("Invalid usage projection")
     for counters in [usage["counters"], *usage["models"].values()]:
         if (
             not isinstance(counters, dict)
-            or set(counters)
-            - (CLAUDE_USAGE_COUNTERS if policy and policy["provider"] == "claude-code" else USAGE_COUNTERS)
+            or set(counters) - USAGE_COUNTERS
             or any(type(v) not in {int, float} or not math.isfinite(v) or v < 0 for v in counters.values())
         ):
             raise WorkflowError("Unsafe usage projection")
@@ -695,31 +683,16 @@ def validate_diagnostics(diagnostics, packet, policy=None):
         raise WorkflowError("Capability assertions differ from observed probe evidence")
 
 
-CLAUDE_USAGE_COUNTERS = {
-    "model_steps_observed",
-    "assistant_input_tokens_observed",
-    "assistant_cache_read_input_tokens_observed",
-    "assistant_cache_creation_input_tokens_observed",
-    "estimated_usd",
-    "input_tokens",
-    "output_tokens",
-    "cache_read_input_tokens",
-    "cache_creation_input_tokens",
-    "duration_ms",
-    "num_turns",
-}
-
-
-def assess(packet, body, diagnostics, policy=None):
+def assess(packet, body, diagnostics):
     """Model claims are checked against required ranges and observed returned lines."""
     packet = Path(packet)
-    validate_diagnostics(diagnostics, packet, policy)
+    validate_diagnostics(diagnostics, packet)
     inventory = read_json(packet / "required-material.json")
     required = inventory["required"]
     reasons = list(diagnostics["reasons"])
     if diagnostics["exit_code"] != 0 or not all(diagnostics["capability"].values()):
         reasons.append("capability_or_execution_incomplete")
-    if diagnostics["cli_version"] != (policy["cli"]["version"] if policy else CLI_VERSION):
+    if diagnostics["cli_version"] != CLI_VERSION:
         reasons.append("unsupported_cli_version")
     claims = {}
     try:

@@ -15,7 +15,7 @@ import review_coverage as coverage  # noqa: E402
 
 HELP = (
     "--available-tools --no-custom-instructions --disable-builtin-mcps "
-    "--no-remote-export --no-ask-user --usage-output-file --max-ai-credits --output-format --session-id"
+    "--no-remote-export --no-ask-user --usage-output-file --max-ai-credits --output-format --session-id --effort"
 )
 
 

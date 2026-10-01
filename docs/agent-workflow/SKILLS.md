@@ -104,10 +104,11 @@ permissions. Do not claim that the environment marker isolates credentials or ma
 a malicious executor harmless. This is distinct from the independent reviewer's
 restricted model-tool surface.
 
-The Opus reviewer is a new Copilot process with a fresh snapshot and state directory
-for every round. Its selected model is `claude-opus-5`; the profile and invocation
-request only the literal tools `view`, `grep` and `glob`. These settings do not attest
-successful provider tool calls. It sees the public contract, source/diff, checks and rubric.
+The independent reviewer uses a fresh provider process, snapshot and state directory for
+every round. Schema-2 configuration defaults to Claude Code `claude-opus-5-5`, effort
+`medium`, with native `Read`, `Grep`, `Glob`; explicit Copilot uses `claude-opus-5` and
+`view`, `grep`, `glob`. [Provider selection, budgets and activation](PROVIDERS.md) must
+validate before inference. Configuration does not attest successful provider tool calls. It sees the public contract, source/diff, checks and rubric.
 It receives neither the Astra conversation nor private task memory. Read
 [REVIEW.md](REVIEW.md) for the exact isolation boundary and evidence limitations.
 

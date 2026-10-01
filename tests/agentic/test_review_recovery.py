@@ -8,7 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from review_fixtures import HELP, provider_response
-from test_workflow import SOURCE, GitFixture, git, review, workflow
+from test_workflow import SOURCE, GitFixture, git, review, review_cli, review_process, workflow
 
 
 class ReviewRecoveryTests(GitFixture):
@@ -57,8 +57,8 @@ class ReviewRecoveryTests(GitFixture):
         with (
             patch.dict(os.environ, {"COPILOT_GITHUB_TOKEN": "fake-test-token"}),
             patch.object(review, "run", side_effect=cli),
-            patch.object(review.shutil, "which", return_value="/fixture/copilot"),
-            patch.object(review.review_process, "capture", side_effect=cli),
+            patch.object(review_cli, "executable", return_value="/fixture/copilot"),
+            patch.object(review_process, "capture", side_effect=cli),
         ):
             return review.review(self.repo, directory)
 
@@ -95,9 +95,9 @@ class ReviewRecoveryTests(GitFixture):
 
         with (
             patch.dict(os.environ, {"COPILOT_GITHUB_TOKEN": "fake-test-token"}),
-            patch.object(review.shutil, "which", return_value=executable),
+            patch.object(review_cli, "executable", return_value=executable),
             patch.object(review, "run", side_effect=ordinary),
-            patch.object(review.review_process, "capture", side_effect=bounded) as capture,
+            patch.object(review_process, "capture", side_effect=bounded) as capture,
         ):
             report = review.review(self.repo, directory)
         capture.assert_called_once()
@@ -106,14 +106,51 @@ class ReviewRecoveryTests(GitFixture):
     def test_missing_provider_executable_stops_before_attempt(self):
         directory = self.packet()
         with (
-            patch.object(review.shutil, "which", return_value=None),
+            patch.object(review_cli, "executable", side_effect=workflow.WorkflowError("CLI is unavailable")),
             patch.object(review, "run", side_effect=AssertionError("No executable is available")),
-            patch.object(review.review_process, "capture") as capture,
+            patch.object(review_process, "capture") as capture,
         ):
             with self.assertRaisesRegex(workflow.WorkflowError, "CLI is unavailable"):
                 review.review(self.repo, directory)
         capture.assert_not_called()
         self.assertFalse((directory / "attempt.json").exists())
+
+    def test_explicit_copilot_model_and_effort_reach_bounded_invocation_unchanged(self):
+        self.commit_task()
+        directory = review.prepare(
+            self.repo,
+            31,
+            12,
+            1234,
+            review_provider="copilot",
+            review_model="claude-sonnet-5",
+            review_effort="high",
+        )
+        original = review.run
+
+        def ordinary(args, **kwargs):
+            if args[1:] == ["--help"]:
+                return subprocess.CompletedProcess(args, 0, HELP, "")
+            if args[1:] == ["--version"]:
+                return subprocess.CompletedProcess(args, 0, "1.0.83", "")
+            return original(args, **kwargs)
+
+        def capture(args, **kwargs):
+            self.assertEqual(args[args.index("--model") + 1], "claude-sonnet-5")
+            self.assertEqual(args[args.index("--effort") + 1], "high")
+            return subprocess.CompletedProcess(
+                args, 0, provider_response(args, kwargs, directory / "packet"), b""
+            )
+
+        with (
+            patch.dict(os.environ, {"COPILOT_GITHUB_TOKEN": "fake-test-token"}),
+            patch.object(review_cli, "executable", return_value="/fixture/copilot"),
+            patch.object(review, "run", side_effect=ordinary),
+            patch.object(review_process, "capture", side_effect=capture) as bounded,
+        ):
+            review.review(self.repo, directory)
+        bounded.assert_called_once()
+        self.assertTrue(review.coverage_ready(directory))
 
     def test_personal_home_and_provider_overrides_are_not_inherited(self):
         directory = self.packet()
@@ -147,7 +184,7 @@ class ReviewRecoveryTests(GitFixture):
         with (
             patch.object(review, "run", side_effect=AssertionError("No CLI call allowed during recovery")),
             patch.object(
-                review.review_process,
+                review_process,
                 "capture",
                 side_effect=AssertionError("No CLI call allowed during recovery"),
             ),
@@ -176,7 +213,7 @@ class ReviewRecoveryTests(GitFixture):
         self.assertEqual(capture["body"], self.model_report)
         with (
             patch.object(review, "run", side_effect=AssertionError("No provider retry")),
-            patch.object(review.review_process, "capture", side_effect=AssertionError("No provider retry")),
+            patch.object(review_process, "capture", side_effect=AssertionError("No provider retry")),
         ):
             report = review.review(self.repo, directory)
         self.assertEqual(report.read_bytes(), self.model_report.encode())
@@ -192,7 +229,7 @@ class ReviewRecoveryTests(GitFixture):
         with (
             patch.object(review, "run", side_effect=AssertionError("No CLI call allowed during recovery")),
             patch.object(
-                review.review_process,
+                review_process,
                 "capture",
                 side_effect=AssertionError("No CLI call allowed during recovery"),
             ),
@@ -254,8 +291,8 @@ class ReviewRecoveryTests(GitFixture):
         with (
             patch.dict(os.environ, {"COPILOT_GITHUB_TOKEN": "fake-test-token"}),
             patch.object(review, "run", side_effect=timeout),
-            patch.object(review.shutil, "which", return_value="/fixture/copilot"),
-            patch.object(review.review_process, "capture", side_effect=timeout),
+            patch.object(review_cli, "executable", return_value="/fixture/copilot"),
+            patch.object(review_process, "capture", side_effect=timeout),
         ):
             with self.assertRaisesRegex(workflow.WorkflowError, "no recoverable"):
                 review.review(self.repo, directory)

@@ -25,9 +25,13 @@ class ConfigurationTests(unittest.TestCase):
         self.assertEqual(config["managed_max_prompt_bytes"], 300_000)
 
     def test_schema_version_requires_the_supported_integer(self):
-        for value in [None, True, "1", 0, 2]:
+        for value in [None, True, "1", 0, 3, 4, 5]:
             with self.subTest(value=value), self.assertRaisesRegex(workflow.WorkflowError, "schema"):
                 self.config(schema_version=value)
+
+    def test_both_supported_schema_versions_are_integers(self):
+        for value in [1, 2]:
+            self.assertEqual(self.config(schema_version=value)["schema_version"], value)
 
     def test_explicit_null_or_positive_diff_cap_is_supported(self):
         for value in [None, 1, 300_000, 1_000_000]:

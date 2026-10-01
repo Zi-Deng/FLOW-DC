@@ -1,8 +1,10 @@
-# Independent Copilot review
+# Independent provider review
 
-The reviewer receives committed artifacts in a new Copilot CLI process, without the
-implementation conversation or private memory. It performs static inspection through
-literal `view`, `grep`, `glob`. The wrapper performs Git/GitHub operations outside the
+The reviewer receives committed artifacts in a fresh isolated provider process, without
+the implementation conversation or private memory. It performs static inspection through
+Claude native `Read`, `Grep`, `Glob` or explicit Copilot `view`, `grep`, `glob`.
+Read [provider selection and activation](PROVIDERS.md) before inference; Claude activation
+remains blocked by unverifiable remote managed controls and missing live evidence. The wrapper performs Git/GitHub operations outside the
 model process. Read [the coverage contract and migration runbook](COVERAGE.md) for the
 packet, adapter, evidence schema, recovery and all readiness gates.
 
@@ -10,7 +12,7 @@ packet, adapter, evidence schema, recovery and all readiness gates.
 
 Use `$agentic-review PR #456` from the clean trusted control checkout. The coordinator
 prepares the approved issue/plan and fixed head/base snapshot, invokes the configured
-`claude-opus-5` once and publishes a COMMENT review. Use `$agentic-repair` to resume
+provider/model/effort once and publishes a COMMENT review. Use `$agentic-repair` to resume
 the original Astra executor UUID for repairs. See [SKILLS.md](SKILLS.md).
 
 One attempted round is the default, including failed or incomplete attempts. A supported
@@ -47,7 +49,7 @@ human approval or resolve threads automatically.
 
 Snapshots map original paths to numbered inert `.txt` blobs. PR agent profiles, hooks,
 skills and configuration remain data. Active policy/profile come from the trusted
-clean default-branch checkout. The process has a temporary home, fresh Copilot/XDG
+clean default-branch checkout. The process has a temporary home, fresh provider/XDG
 state, disabled hooks/MCP, no inherited provider override, no prompt memory/resume,
 no permission to execute, edit or delegate and no broad `*` permission. Authentication
 is supplied separately in the token environment. Workspace hashes detect changes.
@@ -64,12 +66,14 @@ secret detector: inspect public source and comments for sensitive material.
 `max_diff_bytes` is unlimited when null/omitted; an explicit positive integer opts into
 a hard pre-packet cap. There is no silent diff truncation. Per-source-file limit is
 250000 bytes and the combined head/base/carried-source budget is 12000000 bytes.
-Scopes are navigation within one request, not additional paid rounds. Existing limits
-remain 900 seconds and 400 Copilot AI credits; in-flight provider requests can overshoot
-credits. Large reviews may still exhaust time/context/credits and remain incomplete.
+Scopes are navigation within one request, not additional paid rounds. Limits are
+900 seconds and, for Claude, $10 estimated reference cost with zero extra spending
+authorized; explicit Copilot retains 400 AI credits. These are different units. In-flight
+requests may overshoot estimates; unknown usage cannot authorize continuation. Large
+reviews may exhaust time/context/usage and remain incomplete.
 The separate managed executor prompt limit remains 300000 bytes.
 
-The pinned CLI is 1.0.83. Requested configuration, help and synthetic fixtures do not
+Pinned versions are native Claude Code 2.1.282 and optional Copilot 1.0.83. Requested configuration, help and synthetic fixtures do not
 prove live tool availability. Successful actual canary calls and supported events are
 necessary. An unknown layout yields a durable incomplete result and actionable reasons;
 it never triggers a broader permission workaround or automatic paid retry.
@@ -155,14 +159,23 @@ self-hosted runner is enabled.
 
 ## Model selection and repair
 
-Request exactly `claude-opus-5`, not `auto` or another Claude version/family. A model
-change needs deliberate policy/availability/budget review. Historical Sonnet/Fable
-adoption records retain their original meaning; neither those runs nor mocked tests
-prove Opus access or current capability. New packets freeze the trusted model/budget.
+Select provider/model/effort explicitly when overriding the local default. Precedence is
+per-call options, private saved selection, then trusted configuration; switching provider
+without a model selects that provider's default. Use `workflow.py review-selection` to
+inspect the effective selection and provenance, and `--save` from the clean control
+checkout to save it. Both local `prepare` and managed `task-review` accept
+`--review-provider`, `--review-model`, `--review-effort`. Unsupported aliases/combinations
+fail before inference. See [the complete provider procedure](PROVIDERS.md).
 
-This PR changes review machinery. Unmerged PR code/instructions do not become trusted
-review policy automatically. The maintainer's existing request permits a documented
-narrow literal-tool/capability diagnostic invocation if necessary, not arbitrary PR
-hooks/configuration or extra requests. Record live versus synthetic evidence honestly.
-Repair stays on the original branch and Astra UUID. New commits invalidate readiness;
-continuation authorization and the existing review allowance still apply.
+Historical Sonnet/Fable and Copilot adoption records retain their original meaning.
+New schema-5 packets freeze provider, exact model, effort, CLI identity, adapter, billing
+and budget. Changes require an explicit fresh packet and any existing continuation
+authority. Recovery uses the packet's original policy, never the current default.
+
+Issue #33 / PR #34 has an explicit, migration-only exemption from independent model PR
+review. No normal gate is bypassed and no model-reviewed SHA is asserted. At most two
+narrow capability diagnostics ($2 estimated reference cost and 300 seconds each) are
+authorized after all credential, billing and isolation prerequisites exist. They are not
+a PR review; no diagnostic has established native capability. See PROVIDERS.md for
+activation blockers and the separate human handoff. Other tasks retain normal review.
+Repair stays on the original branch and Astra UUID. New commits invalidate readiness.

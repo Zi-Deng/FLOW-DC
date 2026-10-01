@@ -176,3 +176,12 @@ inspection fail readiness. The low-level alternative also requires `--review-dir
 and the exact published coverage-qualified COMMENT. This gate verifies accounting,
 not understanding or human approval. Acceptance, findings and executable validation
 remain separate obligations. See [migration and recovery](COVERAGE.md).
+
+## Provider migration handoff
+
+Normal finish still requires a qualified current provider-bound packet, exact report
+publication and required CI. Legacy or partial records cannot establish readiness.
+Issue #33 / PR #34 alone has an approved independent model review exemption, so normal
+finish tooling remains inapplicable to that exceptional handoff. See
+[PROVIDERS.md](PROVIDERS.md) for incomplete activation evidence, exact-head human checks
+and the separate PR #32 sequence. No generic skip-review flag is implemented.

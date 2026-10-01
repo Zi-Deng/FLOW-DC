@@ -212,6 +212,16 @@ class CaptureTests(unittest.TestCase):
             self.assertEqual(result.failure_reason, "stream_limit_exceeded")
             self.assertLessEqual(len(result.stdout), 32)
             result = review_process.capture(
+                [sys.executable, "-c", "import os;os.write(2,b'private-stderr'*4096)"],
+                cwd=directory,
+                env=os.environ.copy(),
+                timeout=5,
+                limit=32,
+            )
+            self.assertEqual(result.failure_reason, "stream_limit_exceeded")
+            self.assertEqual(result.stderr, b"")
+            self.assertNotIn(b"private-stderr", result.stdout)
+            result = review_process.capture(
                 [sys.executable, "-c", "import time;time.sleep(5)"],
                 cwd=directory,
                 env=os.environ.copy(),

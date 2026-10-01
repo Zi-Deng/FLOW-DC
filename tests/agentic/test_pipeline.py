@@ -75,6 +75,39 @@ class PipelineFixture(GitFixture):
 
 
 class PipelineTests(PipelineFixture):
+    def test_prepared_selection_is_immutable_and_fresh_provider_packet_is_explicit(self):
+        result = pipeline.review_task(self.repo, 12, review_provider="claude-code")
+        directory = Path(result["directory"])
+        original = (directory / "metadata.json").read_bytes()
+        for overrides in (
+            {"review_provider": "copilot"},
+            {"review_provider": "claude-code", "review_effort": "high"},
+        ):
+            with self.subTest(overrides=overrides), self.assertRaisesRegex(workflow.WorkflowError, "--fresh"):
+                pipeline.review_task(self.repo, 12, **overrides)
+            self.assertEqual((directory / "metadata.json").read_bytes(), original)
+        fresh = pipeline.review_task(self.repo, 12, fresh=True, review_provider="copilot")
+        self.assertNotEqual(fresh["directory"], result["directory"])
+        self.assertEqual(fresh["review_policy"]["provider"], "copilot")
+
+    def test_attempted_recovery_uses_bound_policy_and_provider_change_needs_continuation(self):
+        import review_policy
+
+        with patch.object(review, "review", side_effect=self.model_double):
+            first = pipeline.review_task(self.repo, 12, execute=True)
+        review_policy.save_selection(
+            self.repo, workflow.configuration(self.root), review_provider="claude-code"
+        )
+        with patch.object(review, "review", side_effect=AssertionError("Recovery cannot infer again")):
+            recovered = pipeline.review_task(self.repo, 12, execute=True, publish=True)
+            self.assertEqual(recovered["directory"], first["directory"])
+            self.assertEqual(recovered["review_policy"]["provider"], "copilot")
+            with self.assertRaisesRegex(workflow.WorkflowError, "--fresh"):
+                pipeline.review_task(self.repo, 12, execute=True, review_provider="claude-code")
+            with self.assertRaisesRegex(workflow.WorkflowError, "continuation"):
+                pipeline.review_task(self.repo, 12, execute=True, fresh=True, review_provider="claude-code")
+        self.assertEqual(self.model_runs, 1)
+
     def test_partial_report_is_published_without_readiness_designation(self):
         with patch.object(
             review,

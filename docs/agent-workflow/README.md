@@ -1,6 +1,6 @@
 # Agentic development in FLOW-DC
 
-FLOW-DC uses an issue, an approved plan and an isolated worktree for each managed task. A dedicated OpenAI executor implements and repairs the change. A fresh GitHub Copilot session reviews the committed PR. The maintainer makes the merge decision.
+FLOW-DC uses an issue, an approved plan and an isolated worktree for each managed task. A dedicated OpenAI executor implements and repairs the change. A fresh isolated provider process reviews the committed PR after activation checks. The maintainer makes the merge decision.
 
 ```mermaid
 flowchart LR
@@ -38,8 +38,8 @@ Use a real issue number. The eight repository skills are installed under `.agent
 ## Project defaults
 
 - Executor and other nonreview roles: `gpt-6-astra`.
-- Reviewer: Copilot `claude-opus-5`, fresh session, static inspection only.
-- Review budget: one attempted round, 400 AI credits, 900 seconds. Extra rounds follow the [continuation policy](REVIEW.md#model-selection-and-repair).
+- Reviewer: Claude Code `claude-opus-5-5`, effort `medium`, fresh process, static inspection only. Activation is currently blocked; see [provider setup and status](PROVIDERS.md). Explicit Copilot remains available.
+- Review budget: one attempted round, 900 seconds; Claude $10 estimated reference cost with zero extra spending, or explicit Copilot 400 AI credits. Extra rounds follow the [continuation policy](REVIEW.md#model-selection-and-repair).
 - Review diff: unlimited by default; a positive `max_diff_bytes` opts into a cap.
 - Managed executor prompt: separate 300000-byte limit.
 - Required CI: `flowdc-tests` and `agentic-quality`.
