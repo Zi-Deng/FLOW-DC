@@ -285,12 +285,8 @@ def published_report(repo, state, round_record):
     ]
     if len(matching) > 1:
         raise WorkflowError("Multiple published reviews match this pipeline round")
-    if (
-        matching
-        and meta.get("schema_version") == review_batch.SCHEMA
-        and independent.coverage_ready(round_record["directory"])
-    ):
-        review_batch.verify_unit_publications(repo, round_record["directory"])
+    if matching and meta.get("schema_version") == review_batch.SCHEMA:
+        review_batch.verify_unit_publications(repo, round_record["directory"], complete_only=False)
     return matching[0] if matching else None
 
 

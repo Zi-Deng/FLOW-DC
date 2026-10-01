@@ -2,6 +2,7 @@
 
 import copy
 import json
+from unittest.mock import patch
 
 from test_workflow import GitFixture, git, review, workflow
 
@@ -29,6 +30,52 @@ class CoverageTests(GitFixture):
         self.assertEqual(diagnostics["capability"], {"view": True, "grep": True, "glob": True})
         self.assertEqual(result["inspected_count"], result["required_count"])
         self.assertTrue(all(row["evidence"] for row in result["material"]))
+
+    def test_invalid_generated_fixture_cannot_dispatch(self):
+        path = self.packet / "capability.json"
+        original = path.read_bytes()
+        metadata = self.directory / "metadata.json"
+        original_meta = metadata.read_bytes()
+        for value in (
+            [],
+            {},
+            {"artifact": "wrong", "token": "bad"},
+            {"artifact": "capability/fixture.txt", "token": 42},
+            {"artifact": "capability/fixture.txt", "token": "bad"},
+        ):
+            path.write_text(json.dumps(value))
+            meta = json.loads(original_meta)
+            meta["files"]["capability.json"] = review.digest(path)
+            metadata.write_text(json.dumps(meta))
+            with (
+                patch.object(review, "run") as provider,
+                self.assertRaisesRegex(workflow.WorkflowError, "Invalid generated"),
+            ):
+                review.run_review(self.repo, self.directory)
+            provider.assert_not_called()
+        path.unlink()
+        with patch.object(review, "run") as provider, self.assertRaises(workflow.WorkflowError):
+            review.run_review(self.repo, self.directory)
+        provider.assert_not_called()
+        path.write_bytes(original)
+        metadata.write_bytes(original_meta)
+
+    def test_view_request_diagnostics_are_bounded_and_do_not_grant_credit(self):
+        rows = events(self.packet)
+        for row in rows:
+            if row["type"] == "tool.execution_start" and row["data"]["toolName"] == "view":
+                row["data"]["arguments"]["view_range"] = [99, 1]
+        result, diag = self.evaluate(rows)
+        self.assertFalse(result["qualified"])
+        views = [e for e in diag["events"] if e["tool"] == "view"]
+        self.assertTrue(views)
+        self.assertTrue(all(e["view_request"] == {"state": "range", "range": [99, 1]} for e in views))
+        self.assertEqual(
+            coverage.view_request({"view_range": ["secret", 10**100]}), {"state": "invalid", "range": None}
+        )
+        views[0]["view_request"]["range"] = ["secret", 1]
+        with self.assertRaises(workflow.WorkflowError):
+            coverage.validate_diagnostics(diag, self.packet)
 
     def test_missing_grep_probe_invalidates_otherwise_complete_reads(self):
         rows = events(self.packet)
@@ -403,6 +450,28 @@ class PacketTests(GitFixture):
         for item in omitted:
             self.assertEqual(now[item["id"]]["omitted"], item["omitted"])
             self.assertIsNone(now[item["id"]].get("artifact"))
+
+    def test_base_snapshot_retains_prior_merge_base_when_file_leaves_diff(self):
+        self.commit_task()
+        previous = review.prepare(self.repo, 31, 12, 1234)
+        old = coverage.read_json(previous / "packet/required-material.json")["required"]
+        base_item = next(x for x in old if x["path"] == "code.py" and x["revision"] == "base")
+        store(self.repo, previous, omit=[base_item["id"]])
+        (self.task_path / "code.py").write_text(git(self.task_path, "show", self.base + ":code.py") + "\n")
+        (self.task_path / "other.py").write_text("value = 3\n")
+        self.updated_head()
+        current = review.prepare(self.repo, 31, 12, 1234, prior_review=previous)
+        item = next(
+            x
+            for x in coverage.read_json(current / "packet/required-material.json")["required"]
+            if x["id"] == base_item["id"]
+        )
+        self.assertEqual(item["revision"], "prior:" + self.base)
+        self.assertEqual(item["provenance"]["source_commit"], self.base)
+        self.assertEqual(
+            (current / "packet" / item["artifact"]).read_bytes(),
+            (previous / "packet" / base_item["artifact"]).read_bytes(),
+        )
 
     def test_multi_repair_source_and_test_snapshots_keep_immutable_provenance(self):
         self.commit_task()

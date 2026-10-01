@@ -411,3 +411,41 @@ Every invocation requires view content, a matching numbered grep line and glob
 discovery before review, even when no source range needs grep. Missing any probe
 invalidates the entire unit. Prompt guidance cannot guarantee model compliance;
 historical missing-probe results remain incomplete.
+
+### Batch plan version 4 and bounded request diagnostics
+
+New version-4 plans emit 24-hex integration component-report IDs, matching the
+published report schema. Saved versions 1–3 retain their original 64-hex report
+IDs when validating historical integration packets; runtime inventory membership
+validation did not enforce the schema's 24-hex pattern. The mismatch was a contract
+inconsistency, not evidence that every historical integration was rejected.
+Version-4 assignments also bind publication version 2: the unit status includes
+its own qualified/incomplete label as well as the separate parent readiness rule.
+Older publication bodies retain their exact labeling. Managed publication checks
+verify every available exact unit report even for incomplete aggregates.
+
+Metadata schema 4 explicitly uses the parent `review.md` for attributed aggregate
+JSON bookkeeping. It is not model output: version-aware qualification and
+publication route it through `review_batch`; exact model bytes live in each unit's
+`review.md`. The aggregate carries both review idempotence and batch markers.
+
+New view event diagnostics optionally retain only a bounded `view_request`:
+`state` is `absent`, `invalid`, or `range`; `range` is null or two signed 32-bit
+integers. Coordinates describe the supplied request, including reversed or
+out-of-bounds values; they never grant inspection credit. No extra path, arbitrary
+argument, provider message or secret is retained. Historical events lacking this
+field remain unchanged. The four latest rejected excerpt hashes can be reproduced
+from public packet bytes, but their historical request arguments remain unknown;
+matching excerpt bytes alone do not retroactively validate those ranges.
+
+Authenticated numeric-repository pagination is resolved against the original
+named repository's API identity. Only a matching positive repository ID and full
+name permit continuation to the same endpoint and query on the named origin.
+The transport never sends credentials to a numeric-link destination or follows a
+redirect. Wrong identities, changed endpoints, other origins and ambiguous/cyclic
+pagination remain errors. Offline transport fixtures exercise this behavior;
+there has been no live validation of this repair.
+
+Unknown event diagnostics allow 64 distinct name digests plus one fixed overflow
+counter, as the validator already requires. Explicit non-object stdout `data`,
+including falsy values, is malformed; absent optional data remains supported.

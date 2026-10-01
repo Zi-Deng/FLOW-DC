@@ -73,6 +73,9 @@ class BatchTests(GitFixture):
                 review.qualification(target, require=True)
         integration = self.calls[-1]
         required = coverage.read_json(integration / "packet/required-material.json")["required"]
+        schema = coverage.read_json(integration / "packet/report-schema.json")
+        for item in required:
+            self.assertRegex(item["id"], schema["properties"]["reviewed"]["items"]["pattern"])
         self.assertEqual(required[: len(inventory)], inventory)
         self.assertTrue(all(item["kind"] == "component-report" for item in required[len(inventory) :]))
         for target in self.calls[:-1]:
@@ -81,6 +84,22 @@ class BatchTests(GitFixture):
         calls = len(self.calls)
         self.execute(resume=True)
         self.assertEqual(len(self.calls), calls)
+
+    def test_legacy_report_ids_and_incomplete_unit_labels(self):
+        artifact = "sample.txt"
+        packet = self.directory / "packet"
+        (packet / artifact).write_text("report\n")
+        self.assertEqual(len(batch.material_for_report(packet, artifact, "report\n", version=3)[0]["id"]), 64)
+        self.assertEqual(len(batch.material_for_report(packet, artifact, "report\n", version=4)[0]["id"]), 24)
+        (packet / artifact).unlink()
+        self.omit = batch.plan(self.directory)["units"][0]["required_ids"]
+        with self.assertRaises(workflow.WorkflowError):
+            self.execute()
+        self.assertIn("INCOMPLETE static inspection", review.publication_body(self.calls[0]))
+        saved = (self.directory / "batch.json").read_bytes()
+        with self.assertRaisesRegex(workflow.WorkflowError, "budget changed"):
+            batch.select(self.directory, {**self.limits, "credits": 200})
+        self.assertEqual((self.directory / "batch.json").read_bytes(), saved)
 
     def test_single_file_packet_always_requires_cross_boundary_integration(self):
         packet = self.directory / "packet"
@@ -585,6 +604,10 @@ class BatchPipelineTests(PipelineFixture):
         result = pipeline.review_task(self.repo, 12, batch=True, publish=True)
         self.assertEqual(result["status"], "published-incomplete")
         self.assertIsNone(result["designated_review"])
+        unit_review = next(r for r in self.reviews if "batch unit" in r["body"])
+        unit_review["body"] += "tampered"
+        with self.assertRaises(workflow.WorkflowError):
+            pipeline.review_task(self.repo, 12, batch=True, publish=True)
         self.assertIn("INCOMPLETE", review.publication_body(Path(result["directory"])))
         with self.assertRaises(workflow.WorkflowError):
             review.qualification(result["directory"], require=True)

@@ -170,6 +170,20 @@ def view_text_matches(expected, returned):
     )
 
 
+def view_request(arguments):
+    """Bounded request coordinates only; no arbitrary arguments or paths."""
+    value = arguments.get("view_range")
+    if value is None:
+        return {"state": "absent", "range": None}
+    if (
+        isinstance(value, list)
+        and len(value) == 2
+        and all(type(n) is int and -(2**31) <= n < 2**31 for n in value)
+    ):
+        return {"state": "range", "range": value}
+    return {"state": "invalid", "range": None}
+
+
 def tool_observation(name, arguments, content, workspace, files):
     """Credit exact model-facing content against immutable packet text.
 
@@ -407,6 +421,7 @@ def parse_events(raw, packet, workspace, *, exit_code=0, failure=None, version="
                         "result_sha256": checksum(content) if isinstance(content, str) else None,
                         "spans": spans,
                         "paths": paths,
+                        **({"view_request": view_request(args)} if name == "view" else {}),
                     }
                 )
             elif kind == "assistant.message":
@@ -620,7 +635,7 @@ def validate_diagnostics(diagnostics, packet):
     if len(json.dumps(diagnostics["events"]).encode("utf-8")) > MAX_DIAGNOSTIC_BYTES + 2 * MAX_TOOL_RECORDS:
         raise WorkflowError("Diagnostic evidence exceeds its bound")
     for event in diagnostics["events"]:
-        if not isinstance(event, dict) or set(event) != {
+        if not isinstance(event, dict) or set(event) - {"view_request"} != {
             "id",
             "tool",
             "success",
@@ -640,6 +655,18 @@ def validate_diagnostics(diagnostics, packet):
             or not isinstance(event["paths"], list)
         ):
             raise WorkflowError("Invalid tool evidence identity")
+        if "view_request" in event:
+            request = event["view_request"]
+            if (
+                event["tool"] != "view"
+                or not isinstance(request, dict)
+                or set(request) != {"state", "range"}
+                or not isinstance(request["state"], str)
+                or request["state"] not in {"absent", "invalid", "range"}
+                or (request["state"] != "range" and request["range"] is not None)
+                or (request["state"] == "range" and view_request({"view_range": request["range"]}) != request)
+            ):
+                raise WorkflowError("Invalid bounded view request diagnostics")
         ids.add(event["id"])
         if (
             event["reason"] is not None

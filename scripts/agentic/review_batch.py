@@ -52,9 +52,9 @@ def budget(requests, credits, seconds, unit_credits, unit_seconds):
     return result
 
 
-def plan(directory, *, version=3):
+def plan(directory, *, version=4):
     """Deterministic scope partition with explicit linked navigation context."""
-    if type(version) is not int or version not in {1, 2, 3}:
+    if type(version) is not int or version not in {1, 2, 3, 4}:
         raise WorkflowError("Unsupported batch plan version")
     directory = Path(directory)
     meta = api().verify_packet(directory)
@@ -66,6 +66,7 @@ def plan(directory, *, version=3):
     if not inventory or len(lookup) != len(inventory):
         raise WorkflowError("Invalid parent inventory")
     scopes = coverage.read_json(packet / "scopes.json")["scopes"]
+    mappings = coverage.read_json(packet / "test-map.json")
     seen, components, integration = set(), [], []
     for scope in scopes:
         ids = scope["required_ids"]
@@ -77,7 +78,6 @@ def plan(directory, *, version=3):
         primary = [key for key in ids if key not in cross]
         if primary:
             paths = {lookup[key]["path"] for key in primary}
-            mappings = coverage.read_json(packet / "test-map.json")
             while True:
                 previous = paths.copy()
                 for mapping in mappings:
@@ -101,8 +101,12 @@ def plan(directory, *, version=3):
                     "links": sorted(links),
                 }
             )
-    if seen != lookup.keys() or not components or not integration:
-        raise WorkflowError("Parent scopes omit material or the integration obligation")
+    if seen != lookup.keys():
+        raise WorkflowError("Parent scopes omit material")
+    if not components:
+        raise WorkflowError("Parent scopes contain no component material")
+    if not integration:
+        raise WorkflowError("Parent scopes omit the integration obligation")
     units = components + [
         {
             "id": "integration",
@@ -163,7 +167,7 @@ def report_binding(directory):
     return {key: meta[key] for key in ("review_sha256", "diagnostics_sha256", "coverage_sha256")}
 
 
-def material_for_report(packet, artifact, body):
+def material_for_report(packet, artifact, body, *, version=4):
     """Integration reads exact report bytes, including every line of findings."""
     lines = body.splitlines(keepends=True)
     result = []
@@ -171,7 +175,9 @@ def material_for_report(packet, artifact, body):
         end = min(start + 120, len(lines))
         result.append(
             {
-                "id": digest([artifact, api().digest(packet / artifact), start + 1, end]),
+                "id": digest([artifact, api().digest(packet / artifact), start + 1, end])[
+                    : 24 if version >= 4 else 64
+                ],
                 "kind": "component-report",
                 "path": artifact,
                 "revision": "packet",
@@ -239,7 +245,9 @@ def prepare_unit(directory, batch, unit, reservation):
             body = (child / "review.md").read_bytes()
             artifact = f"component-reports/{component['id']}.txt"
             (packet / artifact).write_bytes(body)
-            extra.extend(material_for_report(packet, artifact, body.decode("utf-8")))
+            extra.extend(
+                material_for_report(packet, artifact, body.decode("utf-8"), version=batch["schema_version"])
+            )
         inventory = coverage.read_json(packet / "required-material.json")
         inventory["required"].extend(extra)
         atomic_json(packet / "required-material.json", inventory)
@@ -250,6 +258,8 @@ def prepare_unit(directory, batch, unit, reservation):
         "required_ids": unit["required_ids"] + [item["id"] for item in extra],
         "dependencies": dependencies,
     }
+    if batch["schema_version"] >= 4:
+        assignment["publication_version"] = 2
     if batch["schema_version"] >= 2:
         required = set(assignment["required_ids"])
         assignment["inspection_suggestions"] = inspection_suggestions(
@@ -314,12 +324,16 @@ def unit_assessment(directory, batch, unit):
                 raise WorkflowError("Integration report input changed")
             extras.extend(
                 material_for_report(
-                    target / "packet", artifact, (child / "review.md").read_bytes().decode("utf-8")
+                    target / "packet",
+                    artifact,
+                    (child / "review.md").read_bytes().decode("utf-8"),
+                    version=batch["schema_version"],
                 )
             )
     ids = unit["required_ids"] + [item["id"] for item in extras]
     if (
-        inventory != parent + extras
+        assignment.get("publication_version") != (2 if batch["schema_version"] >= 4 else None)
+        or inventory != parent + extras
         or assignment["dependencies"] != dependencies
         or assignment["required_ids"] != ids
     ):

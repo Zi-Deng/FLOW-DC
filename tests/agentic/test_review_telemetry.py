@@ -57,6 +57,18 @@ class TelemetryTests(GitFixture):
         self.assertNotIn("secret-looking-not-retained", json.dumps(diag))
         self.assertNotIn(self.session, json.dumps(diag))
 
+    def test_known_stdout_falsy_payloads_are_malformed(self):
+        for value in (None, [], "", 0, False):
+            with self.subTest(value=value):
+                result, diag = self.evaluate(
+                    stdout=[
+                        {"type": "session.start", "data": value},
+                        {"type": "result", "exitCode": 0, "result": self.rows[-2]["data"]["content"]},
+                    ]
+                )
+                self.assertFalse(result["qualified"])
+                self.assertIn("malformed_stdout_framing", diag["reasons"])
+
     def test_session_identity_ambiguity_symlink_and_missing_events_fail_closed(self):
         rows = copy.deepcopy(self.rows)
         rows[0]["data"]["sessionId"] = "wrong-session"

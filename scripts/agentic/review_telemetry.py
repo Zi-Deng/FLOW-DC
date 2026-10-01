@@ -68,7 +68,7 @@ MAX_UNKNOWN_TYPES = 64
 
 
 def unknown_types(events):
-    """Only bounded digests of unknown names, never arbitrary provider strings."""
+    """At most MAX_UNKNOWN_TYPES digests plus one fixed overflow counter."""
     result = {}
     for event in events:
         if event["type"] not in KNOWN_TYPES:
@@ -280,7 +280,7 @@ def capture(stdout, state, session_id, packet, workspace, **kwargs):
     else:
         framing = terminals
     for event in observed:
-        kind, data = event["type"], event.get("data") or {}
+        kind, data = event["type"], event.get("data", {})
         restriction = coverage.event_restriction(event)
         if restriction:
             reasons.add(restriction)

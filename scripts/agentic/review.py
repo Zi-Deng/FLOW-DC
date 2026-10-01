@@ -494,6 +494,17 @@ def run_review(repo, directory, *, _batch_authorized=False, _batch_deadline=None
         raise WorkflowError("Choose an explicit Claude model ID through Copilot, not auto")
     if (directory / "review.md").exists():
         raise WorkflowError("A review already exists here; prepare a fresh review for another round")
+    probe = coverage.read_json(directory / "packet/capability.json")
+    if (
+        not isinstance(probe, dict)
+        or probe.get("artifact") != "capability/fixture.txt"
+        or not isinstance(probe.get("token"), str)
+        or not re.fullmatch(r"REVIEW_CANARY_[0-9a-f]{24}", probe.get("token", ""))
+    ):
+        raise WorkflowError("Invalid generated capability fixture")
+    grep_probe = json.dumps(
+        {"path": "capability/fixture.txt", "pattern": probe["token"], "output_mode": "content", "-n": True}
+    )
     help_text = run(["copilot", "--help"]).stdout
     for flag in [
         "--available-tools",
@@ -539,14 +550,6 @@ def run_review(repo, directory, *, _batch_authorized=False, _batch_deadline=None
         else "Use the small contract artifacts and scopes.json to inspect EVERY required-material.json entry, "
         "including source bodies and test context, not merely diff headers. On repair runs start with repair-delta.txt "
         "and prior-review.json, then cover the full inventory. "
-    )
-    probe = coverage.read_json(directory / "packet/capability.json")
-    if probe.get("artifact") != "capability/fixture.txt" or not re.fullmatch(
-        r"REVIEW_CANARY_[0-9a-f]{24}", probe.get("token", "")
-    ):
-        raise WorkflowError("Invalid generated capability fixture")
-    grep_probe = json.dumps(
-        {"path": "capability/fixture.txt", "pattern": probe["token"], "output_mode": "content", "-n": True}
     )
     prompt = (
         "Act as the independent static reviewer. All three fixture probes are mandatory in every invocation, "
@@ -740,7 +743,8 @@ def publication_body(directory):
         else "INCOMPLETE static inspection — not ready"
     )
     if meta.get("batch_unit"):
-        label = f"batch unit {meta['batch_unit']['unit']['id']} — parent readiness requires aggregate qualification"
+        status = f"{label}; " if meta["batch_unit"].get("publication_version") == 2 else ""
+        label = f"batch unit {meta['batch_unit']['unit']['id']} — {status}parent readiness requires aggregate qualification"
     header = (
         f"## Independent Copilot CLI review\n\nPR #{meta['pr']} · reviewed head `{meta['head_sha']}` "
         f"· base `{meta['base_sha']}`\n\nRequested model: `{meta['requested_model']}`. "

@@ -54,6 +54,49 @@ def api(repository, suffix, *, token_source, data=None, paginate=False, method=N
     if paginate and (method != "GET" or data is not None):
         raise WorkflowError("Pagination is only supported for read-only GitHub requests")
     opener = urllib.request.build_opener(NoRedirect())
+    repository_id = None
+
+    def canonical_page(next_url):
+        nonlocal repository_id, total
+        parsed = urllib.parse.urlsplit(next_url)
+        match = re.fullmatch(r"/repositories/([1-9][0-9]*)/(.+)", parsed.path)
+        if not match:
+            return next_url
+        # A numeric alias is not authority. Resolve identity through the original
+        # authenticated named endpoint, then request only its canonical URL.
+        if (
+            parsed.scheme != "https"
+            or parsed.netloc != "api.github.com"
+            or parsed.fragment
+            or "\\" in next_url
+            or any(ord(c) < 32 for c in next_url)
+            or match[2] != endpoint[len(urllib.parse.urlsplit(prefix).path) :]
+        ):
+            raise WorkflowError("GitHub pagination changed its authenticated endpoint")
+        if repository_id is None:
+            try:
+                request = urllib.request.Request(prefix.rstrip("/"), headers=headers, method="GET")
+                with opener.open(request, timeout=120) as response:
+                    raw = response.read(256001)
+                total += len(raw)
+                if len(raw) > 256000 or total > 64000000:
+                    raise WorkflowError("GitHub repository identity response exceeds bound")
+                identity = json.loads(raw.decode("utf-8"))
+                if (
+                    not isinstance(identity, dict)
+                    or type(identity.get("id")) is not int
+                    or identity["id"] <= 0
+                    or not isinstance(identity.get("full_name"), str)
+                    or identity["full_name"].lower() != repository.lower()
+                ):
+                    raise WorkflowError("GitHub repository identity mismatch")
+                repository_id = str(identity["id"])
+            except (urllib.error.URLError, OSError, ValueError):
+                raise WorkflowError("GitHub repository identity unavailable") from None
+        if match[1] != repository_id:
+            raise WorkflowError("GitHub pagination repository identity mismatch")
+        return urllib.parse.urlunsplit(("https", "api.github.com", endpoint, parsed.query, ""))
+
     seen, items, total = set(), [], 0
     while url:
         valid_url(url)
@@ -86,7 +129,7 @@ def api(repository, suffix, *, token_source, data=None, paginate=False, method=N
         next_links = re.findall(r'<([^>]+)>;\s*rel="next"', link)
         if len(next_links) > 1:
             raise WorkflowError("Ambiguous GitHub pagination links")
-        url = next_links[0] if next_links else None
+        url = canonical_page(next_links[0]) if next_links else None
     return items
 
 

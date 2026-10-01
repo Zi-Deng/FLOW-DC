@@ -95,6 +95,64 @@ class TransportTests(unittest.TestCase):
                 self.assertNotIn("fixture-token", str(raised.exception))
                 self.assertEqual(opener.open.call_count, 1)
 
+    def test_numeric_pagination_requires_named_repository_identity(self):
+        numeric = "https://api.github.com/repositories/123/pulls/31/reviews?page=2"
+        for identity, accepted in (
+            ({"id": 123, "full_name": "example/project"}, True),
+            ({"id": 999, "full_name": "example/project"}, False),
+            ({"id": 123, "full_name": "other/project"}, False),
+        ):
+            opener = Mock()
+            opener.open.side_effect = [
+                Response([{"id": 1}], f'<{numeric}>; rel="next"'),
+                Response(identity),
+                Response([{"id": 2}]),
+            ]
+            with (
+                patch.object(github_transport.urllib.request, "build_opener", return_value=opener),
+                patch.dict(os.environ, {"GH_TOKEN": "fixture-token"}),
+            ):
+                if accepted:
+                    self.assertEqual(
+                        github_transport.api(
+                            "example/project",
+                            "pulls/31/reviews",
+                            paginate=True,
+                            token_source=lambda: "unused",
+                        ),
+                        [{"id": 1}, {"id": 2}],
+                    )
+                else:
+                    with self.assertRaises(workflow.WorkflowError):
+                        github_transport.api(
+                            "example/project",
+                            "pulls/31/reviews",
+                            paginate=True,
+                            token_source=lambda: "unused",
+                        )
+            urls = [call.args[0].full_url for call in opener.open.call_args_list]
+            self.assertTrue(
+                all(url.startswith("https://api.github.com/repos/example/project") for url in urls)
+            )
+            self.assertEqual(len(urls), 3 if accepted else 2)
+        for url in (
+            numeric.replace("api.github.com", "evil.invalid"),
+            numeric.replace("pulls/31", "pulls/32"),
+            numeric + "#fragment",
+            numeric.replace("/pulls/", "/%2e%2e/pulls/"),
+        ):
+            opener = Mock()
+            opener.open.return_value = Response([], f'<{url}>; rel="next"')
+            with (
+                patch.object(github_transport.urllib.request, "build_opener", return_value=opener),
+                patch.dict(os.environ, {"GH_TOKEN": "fixture-token"}),
+                self.assertRaises(workflow.WorkflowError),
+            ):
+                github_transport.api(
+                    "example/project", "pulls/31/reviews", paginate=True, token_source=lambda: "unused"
+                )
+            self.assertEqual(opener.open.call_count, 1)
+
     def test_paginated_check_runs_preserve_object_page_key(self):
         opener = Mock()
         opener.open.return_value = Response({"check_runs": [{"id": 1}]})
