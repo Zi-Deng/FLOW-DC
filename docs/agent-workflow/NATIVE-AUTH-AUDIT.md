@@ -27,6 +27,8 @@ still runs independently before any eligible invocation.
 | refusal fallback WM | 200117455–200117630 | `ce4b5ee4bc19898f27fda2c80f410425e7d81e321b8917055959a90b7914bc81` |
 | refusal retry Ya | 209691660–209691850 | `83c273b04c3880094e7996cf112ed5b7d7ebc877d09569f2ff028c2f08b71847` |
 | nonstreaming fallback gate | 203385940–203386310 | `3be8fe18a1ce701abf31a21adcfa62e4cc9d3d83e353dc120b8be1213c024dd4` |
+| OAuth profile-before-return ordering | 213413082–213415648 | `b2833f5c53c00b0a34280a455946a209e2b3decb8f49a2af135fc8dba888c2f7` |
+| native persist $Wn | 197172705–197173667 | `26bc8911254a69fed354b63cee6978b08d8a02a2039af12444fea993067c39b2` |
 
 The actual native reader requires accessToken and returns the native record. Its
 subscription reader uses that record, not a status-display fallback. With actual
@@ -54,21 +56,31 @@ No identity, remote-policy suppression or auth-retry-disable control was added.
 
 ## Setup activation blocker
 
-The auth command has some preAction exemptions, but the same preAction still arms
-DRo and invokes managed-policy handling before its browser handler. Native login
-stores the selected identity through ERe; vYn invokes i2t, which resets remote
-eligibility/cache state. The wrapper cannot inspect and reject a non-Max selection
-until native login returns. It has no verified before-effect barrier across those
-callbacks or late helper handling. A user intending to choose Max does not establish
-that barrier, nor does a post-login record check. The setup helper therefore refuses
-before creating state or authenticating. No private recovery prose or operator-owned
-metadata is promoted into proof of this native transition.
+The correctly selected personal-Max path has a concrete native ordering:
+startOAuthFlow awaits Bjn(access_token), maps the actual profile to subscriptionType,
+and returns that field through formatTokens before auth login calls ERe. ERe calls
+wYn (which clears prior dedicated auth), then $Wn persists the returned native
+subscriptionType, then vYn/i2t resets caches. Dyt is a cache/reset operation, not
+remote policy delivery. Helper arming and cache clearing alone do not prove a
+managed-policy effect. No bearer-plus-unknown-subscription interval has been
+established here for the correctly selected, profile-resolved Max path.
 
-No safe callback control has been established for this pinned version. Completing
-that verification, or obtaining a supported native barrier under the approved
-contract, is required before removing the gate. Do not manually import credentials,
-fabricate Max metadata, call authenticated doctor as a probe, disable administrator
-policy, or change the CLI pin as a workaround.
+The remaining strict-contract blocker is the **non-Max selection path**. Native
+`auth login --claudeai` provides no verified pre-return Max-only filter. ERe proceeds
+from persistence to g0t, subscription first-token-date retrieval and vYn/BJ bootstrap
+before returning control to the wrapper. The wrapper therefore cannot reject an
+unsupported actual account before those subsequent native authenticated operations.
+A post-login Max check can protect all review calls but cannot impose the approved
+pre-callback setup barrier. This is a missing native setup control, not a claim that
+correct Max metadata is fabricated or that cache reset itself executes a helper.
+
+The coordinator is reconciling a narrow choice about a human-controlled standard
+vendor login followed by strict Max registration before review. Until that choice
+and exact amendment are bound, setup remains refused. Do not point the operator to
+manual login as a workaround, import credentials, fabricate Max metadata, disable
+administrator policy, change pins, or silently relax the setup boundary. The
+specifically disclosed bounded native 401 behavior has been accepted separately;
+that acceptance does not authorize a different setup boundary or extra diagnostics.
 
 ## Deterministic evidence and its limits
 

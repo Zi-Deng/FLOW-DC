@@ -195,10 +195,13 @@ delegation or fetch tool is authorized. Workspace hashes are checked afterwards.
 This is CLI containment, not an OS sandbox against a compromised signed executable.
 
 On 2026-10-01, static inspection of signed native 2.1.282 confirmed these reader
-branches and the no-refresh return. However, login preAction arms `DRo` before
-browser authentication; `ERe -> vYn -> i2t` resets remote eligibility during login.
-The helper cannot yet establish that callbacks cannot observe an unintended
-managed identity before post-login Max validation. Setup therefore remains blocked.
+branches and the no-refresh return. The native OAuth flow resolves actual
+Max profile metadata before persistence; cache reset/helper arming alone does not
+prove a managed-policy effect. The unresolved boundary is an unintended non-Max
+selection: native login performs subsequent authenticated operations before the
+wrapper can reject it. No verified pre-return Max-only filter is available. Setup
+therefore remains blocked pending the coordinator's precise setup-boundary decision
+and contract reconciliation; ordinary login is not offered as a workaround.
 [The pinned-source audit](NATIVE-AUTH-AUDIT.md) records offsets, conditions and omissions.
 No authenticated doctor/status/login command or inference was used for this audit.
 A doctor probe is not a before-effect barrier: initialization precedes its handler.

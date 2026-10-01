@@ -93,11 +93,11 @@ def managed_controls():
 def native_setup_controls(binary):
     managed_controls()
     check_controls(binary, trusted_settings(review_policy.policy(review_policy.choices("claude-code"), {})))
-    # Signed 2.1.282 preAction arms DRo after its initial remote-policy fetch;
-    # ERe -> vYn -> i2t resets eligibility during login. A terminal operator's
-    # intended Max choice does not prove callbacks cannot observe another identity
-    # before the wrapper validates the completed native record. Do not execute
-    # login or invent an environment bypass until this transition is verified.
+    # The real OAuth flow resolves subscriptionType before ERe/$Wn persistence.
+    # Cache reset/helper arming does not prove an effect on the genuine Max path.
+    # However auth login has no verified pre-return Max-only filter: ERe performs
+    # subsequent authenticated operations before a wrapper can reject a non-Max
+    # selection. Keep the approved setup boundary until explicitly reconciled.
     raise WorkflowError(
         "Native login callback policy isolation remains unverified; setup is blocked before authentication"
     )
