@@ -467,6 +467,24 @@ class BatchTests(GitFixture):
             if args[1] == "--version":
                 return subprocess.CompletedProcess(args, 0, "1.0.83", "")
             prompt = args[args.index("--prompt") + 1]
+            probe = coverage.read_json(Path(kwargs["cwd"]) / "capability.json")
+            self.assertIn('view({"path": "capability/fixture.txt", "view_range": [1, 2]})', prompt)
+            self.assertIn(
+                "grep("
+                + json.dumps(
+                    {
+                        "path": "capability/fixture.txt",
+                        "pattern": probe["token"],
+                        "output_mode": "content",
+                        "-n": True,
+                    }
+                )
+                + ")",
+                prompt,
+            )
+            self.assertIn('glob({"pattern": "capability/*.txt"})', prompt)
+            self.assertIn("grep is required even if no source range needs it", prompt)
+            self.assertIn("invalidates the entire unit", prompt)
             self.assertIn("Return exactly one JSON object", prompt)
             self.assertIn(
                 "Do not add introductory prose, markdown fences, or text outside that object", prompt

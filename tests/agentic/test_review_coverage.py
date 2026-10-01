@@ -30,6 +30,32 @@ class CoverageTests(GitFixture):
         self.assertEqual(result["inspected_count"], result["required_count"])
         self.assertTrue(all(row["evidence"] for row in result["material"]))
 
+    def test_missing_grep_probe_invalidates_otherwise_complete_reads(self):
+        rows = events(self.packet)
+        grep_ids = {
+            r["data"]["toolCallId"]
+            for r in rows
+            if r["type"] == "tool.execution_start" and r["data"]["toolName"] == "grep"
+        }
+        rows = [r for r in rows if r.get("data", {}).get("toolCallId") not in grep_ids]
+        result, diag = self.evaluate(rows)
+        self.assertEqual(diag["capability"], {"view": True, "grep": False, "glob": True})
+        self.assertFalse(result["qualified"])
+        self.assertIn("capability_or_execution_incomplete", result["reasons"])
+
+    def test_missing_prior_binding_blob_records_incomplete_reason(self):
+        inventory = coverage.read_json(self.packet / "required-material.json")
+        item = next(x for x in inventory["required"] if x["kind"] == "changed-source")
+        item.update(
+            revision="prior-snapshot:missing",
+            artifact="prior-source/missing.txt",
+            provenance={"source_commit": None, "snapshot_sha256": "missing"},
+        )
+        (self.packet / "required-material.json").write_text(json.dumps(inventory))
+        result, _ = self.evaluate(events(self.packet, omit=[item["id"]]))
+        self.assertFalse(result["qualified"])
+        self.assertIn("prior_snapshot_binding_mismatch", result["reasons"])
+
     def test_bad_missing_truncated_unknown_and_uncorrelated_telemetry_fail_closed(self):
         original = events(self.packet)
         variants = []
@@ -357,6 +383,26 @@ class PacketTests(GitFixture):
         third = review.prepare(self.repo, 31, 12, 1234, prior_review=current)
         later = coverage.read_json(third / "packet/required-material.json")["required"]
         self.assertLessEqual(len(later), len(now) + 2)
+
+    def test_carried_omitted_source_has_no_current_packet_pointer(self):
+        self.commit_task()
+        (self.task_path / "code.py").write_text("x" * 17000 + "\n")
+        self.updated_head()
+        previous = review.prepare(self.repo, 31, 12, 1234)
+        old = coverage.read_json(previous / "packet/required-material.json")["required"]
+        omitted = [
+            x for x in old if x["path"] == "code.py" and x["kind"] == "changed-source" and x.get("omitted")
+        ]
+        self.assertTrue(omitted)
+        self.assertTrue(any(x.get("artifact") for x in omitted))
+        store(self.repo, previous)
+        (self.task_path / "code.py").write_text("value = 9\n")
+        self.updated_head()
+        current = review.prepare(self.repo, 31, 12, 1234, prior_review=previous)
+        now = {x["id"]: x for x in coverage.read_json(current / "packet/required-material.json")["required"]}
+        for item in omitted:
+            self.assertEqual(now[item["id"]]["omitted"], item["omitted"])
+            self.assertIsNone(now[item["id"]].get("artifact"))
 
     def test_multi_repair_source_and_test_snapshots_keep_immutable_provenance(self):
         self.commit_task()

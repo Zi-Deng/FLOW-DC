@@ -693,6 +693,15 @@ def assess(packet, body, diagnostics):
     inventory = read_json(packet / "required-material.json")
     required = inventory["required"]
     reasons = list(diagnostics["reasons"])
+
+    def binding_bytes(artifact):
+        if not isinstance(artifact, str):
+            return None
+        try:
+            return (packet / artifact).read_bytes()
+        except OSError:
+            return None
+
     if inventory.get("schema_version") == 2:
         indexes = {
             revision: {row["path"]: row for row in read_json(packet / name)}
@@ -706,20 +715,23 @@ def assess(packet, body, diagnostics):
                 expected = indexes[revision].get(item["path"], {}).get("snapshot")
                 if not expected or (
                     artifact != expected
-                    and not (
-                        (artifact or "").startswith("empty/") and (packet / expected).read_bytes() == b""
-                    )
+                    and not ((artifact or "").startswith("empty/") and binding_bytes(expected) == b"")
                 ):
                     reasons.append("source_revision_binding_mismatch")
             if revision.startswith("prior") or (artifact or "").startswith("prior-source/"):
                 provenance = item.get("provenance", {})
-                digest = hashlib.sha256((packet / artifact).read_bytes()).hexdigest() if artifact else None
+                blob = binding_bytes(artifact)
+                digest = hashlib.sha256(blob).hexdigest() if blob is not None else None
                 expected_revision = (
                     "prior:" + provenance["source_commit"]
                     if provenance.get("source_commit")
                     else "prior-snapshot:" + str(provenance.get("snapshot_sha256"))
                 )
-                if provenance.get("snapshot_sha256") != digest or revision != expected_revision:
+                if (
+                    digest is None
+                    or provenance.get("snapshot_sha256") != digest
+                    or revision != expected_revision
+                ):
                     reasons.append("prior_snapshot_binding_mismatch")
     if diagnostics["exit_code"] != 0 or not all(diagnostics["capability"].values()):
         reasons.append("capability_or_execution_incomplete")

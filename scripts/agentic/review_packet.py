@@ -529,8 +529,8 @@ def build(repo, packet, head, ancestor, head_index, base_index, context, cfg, pr
             carried = dict(old)
             provenance = old.get("provenance")
             if provenance is None:
-                # Legacy prior-source has no trustworthy commit label. Bind its
-                # exact snapshot digest without guessing an ancestor commit.
+                # Source/base-source inherit the validated prior packet commits.
+                # Legacy prior-source has only a trustworthy snapshot digest.
                 source_commit = (
                     metadata["head_sha"]
                     if old_artifact and old_artifact.startswith("source/")
@@ -559,6 +559,7 @@ def build(repo, packet, head, ancestor, head_index, base_index, context, cfg, pr
                 else "prior-unavailable:" + provenance["from_packet_head"]
             )
             if old.get("omitted"):
+                carried["artifact"] = None
                 required.append(carried)
             else:
                 if old_artifact not in copied:

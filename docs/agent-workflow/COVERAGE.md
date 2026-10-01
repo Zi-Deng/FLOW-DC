@@ -362,8 +362,9 @@ against real local packet text; live completion remains a separate review gate.
 ### Repair provenance and EOF navigation follow-up
 
 Inventory version 2 labels carried unread snapshots `prior:<commit SHA>` when the
-source commit is known, with an exact snapshot SHA-256 and original ID. Legacy
-carried files lacking reliable commit provenance use `prior-snapshot:<SHA-256>`;
+source commit is known, with an exact snapshot SHA-256 and original ID. Source/
+and base-source/ snapshots inherit the validated prior packet head/merge-base
+commit; legacy prior-source/ files lacking that commit provenance use `prior-snapshot:<SHA-256>`;
 no ancestor commit is guessed. Omitted material remains unavailable. Repeated
 repairs preserve that provenance and the original unread obligations. Current
 head/base source and tests retain separate requirements tied to their snapshot
@@ -404,3 +405,9 @@ are retained even for this narrow stdout exception; they confer no inspection
 credit. Actual tool evidence and every other gate remain required. Validation is
 synthetic only; historical payloads stay unknown and historical diagnostics and
 qualification are unchanged. No paid call is launched by repair.
+
+The trusted invocation prompt supplies all three exact generated fixture calls.
+Every invocation requires view content, a matching numbered grep line and glob
+discovery before review, even when no source range needs grep. Missing any probe
+invalidates the entire unit. Prompt guidance cannot guarantee model compliance;
+historical missing-probe results remain incomplete.
