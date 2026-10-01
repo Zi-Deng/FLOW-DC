@@ -57,6 +57,31 @@ class TelemetryTests(GitFixture):
         self.assertNotIn("secret-looking-not-retained", json.dumps(diag))
         self.assertNotIn(self.session, json.dumps(diag))
 
+    def test_null_bookkeeping_stdout_matches_coverage_compatibility(self):
+        terminal = {"type": "result", "exitCode": 0, "result": self.rows[-2]["data"]["content"]}
+        for kind in ("session.idle", "session.shutdown", "session.info", "assistant.turn_end"):
+            with self.subTest(kind=kind):
+                result, _ = self.evaluate(stdout=[{"type": kind, "data": None}, terminal])
+                self.assertTrue(result["qualified"])
+                for value in ([], "", 0, False):
+                    result, diag = self.evaluate(stdout=[{"type": kind, "data": value}, terminal])
+                    self.assertFalse(result["qualified"])
+                    self.assertIn("malformed_stdout_framing", diag["reasons"])
+        for kind in (
+            "session.start",
+            "tool.execution_start",
+            "tool.execution_complete",
+            "tool.execution_progress",
+            "tool.execution_partial_result",
+            "unknown.event",
+        ):
+            result, _ = self.evaluate(stdout=[{"type": kind, "data": None}, terminal])
+            self.assertFalse(result["qualified"])
+        result, _ = self.evaluate(
+            stdout=[{"type": "session.idle", "data": None, "agentId": "delegated"}, terminal]
+        )
+        self.assertFalse(result["qualified"])
+
     def test_known_stdout_falsy_payloads_are_malformed(self):
         for value in (None, [], "", 0, False):
             with self.subTest(value=value):

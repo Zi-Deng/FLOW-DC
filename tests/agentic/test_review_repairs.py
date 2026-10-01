@@ -165,6 +165,23 @@ class RepairTests(GitFixture):
         ):
             self.assertFalse(self.evaluate(invalid)[0]["qualified"])
 
+    def test_report_emission_announcement_before_bare_json_stays_malformed(self):
+        from review_fixtures import events, store
+
+        bare = events(self.packet)[-2]["data"]["content"]
+        body = (
+            "All five assigned ranges returned actual content; probes passed. Emitting the report.\n\n" + bare
+        )
+        store(self.repo, self.directory, body)
+        before = (self.directory / "review.md").read_bytes()
+        result = review.qualification(self.directory)
+        self.assertIn("malformed_report_contract", result["reasons"])
+        self.assertEqual(result["inspected_count"], 0)
+        with patch.object(review, "run", side_effect=AssertionError("no paid retry")):
+            review.recover_review(self.repo, self.directory)
+        self.assertEqual((self.directory / "review.md").read_bytes(), before)
+        self.assertEqual(before, body.encode())
+
     def test_prose_prefixed_report_remains_exact_and_incomplete_after_recovery(self):
         from review_fixtures import events, store
 

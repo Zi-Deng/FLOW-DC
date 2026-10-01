@@ -448,4 +448,17 @@ there has been no live validation of this repair.
 
 Unknown event diagnostics allow 64 distinct name digests plus one fixed overflow
 counter, as the validator already requires. Explicit non-object stdout `data`,
-including falsy values, is malformed; absent optional data remains supported.
+including falsy values, is malformed except null data on recognized bookkeeping
+and idle/shutdown events, matching existing coverage-parser compatibility.
+Session-start identity and all tool payloads are excluded from that exception;
+unknown/policy/delegated events still fail their existing gates. Absent optional
+data remains supported. The pinned SDK describes idle/shutdown object payloads;
+this narrow stdout compatibility rule is not a claim that its typed session schema
+declares null payloads valid.
+
+Trusted final-response guidance explicitly requires the final assistant message
+itself to be JSON-only, without an announcement that the report is being emitted.
+Progress messages do not excuse prose in the final message. This is only prompt
+mitigation: historical prose-prefixed reports remain malformed and exact, with
+zero coverage credit. The strict report parser and last-message selection are
+unchanged; no JSON substring is extracted to repair provider output.

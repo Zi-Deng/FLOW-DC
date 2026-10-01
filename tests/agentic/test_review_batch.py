@@ -504,6 +504,8 @@ class BatchTests(GitFixture):
             self.assertIn('glob({"pattern": "capability/*.txt"})', prompt)
             self.assertIn("grep is required even if no source range needs it", prompt)
             self.assertIn("invalidates the entire unit", prompt)
+            self.assertIn("The final assistant message itself must be JSON-only", prompt)
+            self.assertIn("Do not announce report emission", prompt)
             self.assertIn("Return exactly one JSON object", prompt)
             self.assertIn(
                 "Do not add introductory prose, markdown fences, or text outside that object", prompt

@@ -281,6 +281,15 @@ def capture(stdout, state, session_id, packet, workspace, **kwargs):
         framing = terminals
     for event in observed:
         kind, data = event["type"], event.get("data", {})
+        # Match the coverage parser's null bookkeeping compatibility, without
+        # defaulting malformed identity or tool payloads to empty objects.
+        if (
+            data is None
+            and kind in coverage.IGNORED_EVENTS | {"session.idle", "session.shutdown"}
+            and kind != "session.start"
+            and not kind.startswith("tool.")
+        ):
+            data = {}
         restriction = coverage.event_restriction(event)
         if restriction:
             reasons.add(restriction)
