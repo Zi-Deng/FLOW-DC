@@ -78,8 +78,18 @@ def verify(repo, entry, policy):
         "policy_digest"
     ) != digest(meta["review_policy"]):
         raise WorkflowError("Diagnostic purpose or policy changed")
-    if compatible(meta["review_policy"]) != compatible(policy):
-        raise WorkflowError("Diagnostic provider policy differs")
+    observed, current = compatible(meta["review_policy"]), compatible(policy)
+    if observed != current:
+        from claude_native_auth import capability_lineage
+
+        observed_auth, current_auth = (
+            observed.pop("authentication", None),
+            current.pop("authentication", None),
+        )
+        if observed != current or not capability_lineage(
+            observed_auth, current_auth, policy["budget"]["timeout_seconds"]
+        ):
+            raise WorkflowError("Diagnostic provider policy or authorized credential lineage differs")
     if meta["review_policy"]["budget"] != review_policy.budget("claude-code", {}, diagnostic=True):
         raise WorkflowError("Diagnostic limits differ from authorized migration limits")
     actual = {
@@ -105,17 +115,29 @@ def verify(repo, entry, policy):
 
 
 def require_activation(repo, policy):
+    from claude_native_auth import validate_binding
+
+    validate_binding(policy.get("authentication"))
     state = ledger(repo)
     verified = set()
+    observed = []
     for entry in state["attempts"]:
         if entry["status"] == "qualified":
             try:
                 verify(repo, entry, policy)
                 verified.add(PURPOSES[entry["number"] - 1])
+                meta = coverage.read_json(
+                    state_directory(repo) / f"attempt-{entry['number']}" / "metadata.json"
+                )
+                observed.append(meta["review_policy"].get("authentication"))
             except (WorkflowError, OSError, ValueError, KeyError):
                 continue
     if verified == set(PURPOSES):
-        return
+        return {
+            "observed_authentication": observed,
+            "current_authentication": policy["authentication"],
+            "current_generation_live_tested": all(item == policy["authentication"] for item in observed),
+        }
     raise WorkflowError(
         "Claude activation requires matching successful native capability/isolation diagnostics; synthetic fixtures do not qualify"
     )
@@ -127,8 +149,10 @@ def run(repo, cfg, **overrides):
     if selected["provider"] != "claude-code":
         raise WorkflowError("Migration diagnostic requires explicit Claude Code selection")
     selected["budget"] = review_policy.budget("claude-code", cfg, diagnostic=True)
+    from claude_native_auth import bind
     from review_claude import execute, preflight
 
+    selected = bind(selected)
     preflight(repo, selected)  # Missing credentials/receipt/controls never spend an attempt.
     root = state_directory(repo)
     private_directory(root)

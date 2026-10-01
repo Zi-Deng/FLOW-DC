@@ -8,14 +8,19 @@ from test_workflow import GitFixture, git, workflow
 
 # The shared fixture establishes the scripts import path.
 # isort: split
+import claude_native_auth
 import pipeline
 import review
 import tasks
+from claude_fixtures import AUTHENTICATION
 
 
 class PipelineFixture(GitFixture):
     def setUp(self):
         super().setUp()
+        binding = patch.object(claude_native_auth, "current_binding", return_value=AUTHENTICATION)
+        binding.start()
+        self.addCleanup(binding.stop)
         self.inline = []
         self.conversation = []
         self.commit_task()
@@ -117,6 +122,19 @@ class PipelineTests(PipelineFixture):
         fresh = pipeline.review_task(self.repo, 12, fresh=True, review_provider="copilot")
         self.assertNotEqual(fresh["directory"], result["directory"])
         self.assertEqual(fresh["review_policy"]["provider"], "copilot")
+
+    def test_prepared_generation_change_requires_fresh_without_mutating_packet(self):
+        first = pipeline.review_task(self.repo, 12, review_provider="claude-code")
+        metadata = Path(first["directory"]) / "metadata.json"
+        original = metadata.read_bytes()
+        binding = {**AUTHENTICATION, "generation_id": "33333333-3333-4333-8333-333333333333"}
+        with patch.object(claude_native_auth, "current_binding", return_value=binding):
+            with self.assertRaisesRegex(workflow.WorkflowError, "--fresh"):
+                pipeline.review_task(self.repo, 12, review_provider="claude-code")
+            self.assertEqual(metadata.read_bytes(), original)
+            fresh = pipeline.review_task(self.repo, 12, fresh=True, review_provider="claude-code")
+        self.assertEqual(fresh["review_policy"]["authentication"], binding)
+        self.assertNotEqual(first["directory"], fresh["directory"])
 
     def test_attempted_recovery_uses_bound_policy_and_provider_change_needs_continuation(self):
         import review_policy

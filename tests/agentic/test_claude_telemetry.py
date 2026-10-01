@@ -1,24 +1,30 @@
 """Positive/negative native stream evidence; fixtures cannot establish activation."""
 
+import contextlib
 import copy
 import json
 import os
 import subprocess
+import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
 from test_workflow import GitFixture, review, workflow
 
 # isort: split
+import claude_native_auth
 import claude_telemetry as telemetry
 import review_claude
 import review_coverage as coverage
-from claude_fixtures import native_events, native_stream
+from claude_fixtures import AUTHENTICATION, native_events, native_stream
 
 
 class ClaudeTelemetryTests(GitFixture):
     def setUp(self):
         super().setUp()
+        binding = patch.object(claude_native_auth, "current_binding", return_value=AUTHENTICATION)
+        binding.start()
+        self.addCleanup(binding.stop)
         self.commit_task()
         self.directory = review.prepare(self.repo, 31, 12, 1234, review_provider="claude-code")
         self.packet = self.directory / "packet"
@@ -167,15 +173,28 @@ class ClaudeTelemetryTests(GitFixture):
         homes = []
         token = "fake-subscription-test-token"
 
+        @contextlib.contextmanager
+        def fake_snapshot(policy):
+            # Invocation test double only. Real private snapshot/cleanup is tested separately.
+            with tempfile.TemporaryDirectory() as temporary:
+                env = review_claude.environment(Path(temporary))
+                (Path(env["CLAUDE_CONFIG_DIR"]) / ".credentials.json").write_text(
+                    json.dumps({"claudeAiOauth": {"accessToken": token}})
+                )
+                yield env, lambda: None
+
         def capture(args, **kwargs):
             self.assertEqual(args[0], "/verified/2.1.282/claude")
             self.assertEqual(kwargs["timeout"], 900)
             env = kwargs["env"]
-            self.assertEqual(env["CLAUDE_CODE_OAUTH_TOKEN"], token)
+            self.assertNotIn("CLAUDE_CODE_OAUTH_TOKEN", env)
+            credential = json.loads((Path(env["CLAUDE_CONFIG_DIR"]) / ".credentials.json").read_bytes())
+            self.assertEqual(credential["claudeAiOauth"]["accessToken"], token)
+            self.assertNotIn("refreshToken", credential["claudeAiOauth"])
             self.assertNotIn("ANTHROPIC_API_KEY", env)
             self.assertNotIn("CLAUDE_CODE_USE_BEDROCK", env)
             self.assertNotIn("HTTP_PROXY", env)
-            self.assertEqual(env["CLAUDE_CODE_MAX_RETRIES"], "0")
+            self.assertNotIn("CLAUDE_CODE_MAX_RETRIES", env)
             self.assertNotIn(token, json.dumps(args))
             self.assertIn("--safe-mode", args)
             self.assertIn("--restricted", args)
@@ -195,7 +214,8 @@ class ClaudeTelemetryTests(GitFixture):
                 os.environ,
                 {"ANTHROPIC_API_KEY": "hostile", "CLAUDE_CODE_USE_BEDROCK": "1", "HTTP_PROXY": "hostile"},
             ),
-            patch.object(review_claude, "preflight", return_value=("/verified/2.1.282/claude", token)),
+            patch.object(review_claude, "preflight", return_value="/verified/2.1.282/claude"),
+            patch.object(claude_native_auth, "snapshot", side_effect=fake_snapshot),
             patch.object(review_claude.review_cli, "executable", return_value="/verified/2.1.282/claude"),
             patch("review_diagnostics.require_activation"),
             patch.object(review_claude.review_process, "capture", side_effect=capture) as process,
@@ -210,8 +230,8 @@ class ClaudeTelemetryTests(GitFixture):
     def test_missing_prerequisites_prevent_inference(self):
         with (
             patch.object(
-                review_claude.claude_credentials,
-                "read",
+                review_claude,
+                "preflight",
                 side_effect=workflow.WorkflowError("Missing protected subscription receipt"),
             ),
             patch.object(review_claude.review_process, "capture") as process,
@@ -223,14 +243,12 @@ class ClaudeTelemetryTests(GitFixture):
         diag = json.loads((self.directory / "diagnostics.json").read_bytes())
         self.assertEqual(diag["adapter"], self.policy["adapter"])
 
-    def test_unverifiable_remote_managed_controls_block_even_with_subscription_token(self):
-        with (
-            patch.object(review_claude.claude_credentials, "read", return_value="fake-dedicated-token"),
-            patch.object(review_claude, "MANAGED_PATHS", ()),
-            patch.object(review_claude.review_process, "capture") as process,
-        ):
-            with self.assertRaisesRegex(workflow.WorkflowError, "remote managed controls"):
-                review_claude.preflight(self.repo, self.policy)
+    def test_legacy_token_policy_cannot_execute_or_be_relabelled(self):
+        legacy = dict(self.policy)
+        legacy.pop("authentication")
+        with patch.object(review_claude.review_process, "capture") as process:
+            with self.assertRaisesRegex(workflow.WorkflowError, "authentication binding"):
+                review_claude.preflight(self.repo, legacy)
         process.assert_not_called()
 
     def test_settings_cannot_enable_hooks_or_fallback(self):

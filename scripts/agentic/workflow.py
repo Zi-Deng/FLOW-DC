@@ -501,6 +501,10 @@ def main():
     credentials = sub.add_parser("claude-subscription-setup")
     credentials.add_argument("--replace", action="store_true")
     credentials.add_argument("--paid-usage-disabled", action="store_true")
+    native = sub.add_parser("claude-login-setup")
+    native.add_argument("--renew", action="store_true")
+    native.add_argument("--retain-capability", action="store_true")
+    native.add_argument("--paid-usage-disabled", action="store_true")
     diagnostic = sub.add_parser("diagnose-claude")
     review_policy.add_arguments(diagnostic)
     sub.add_parser("doctor")
@@ -532,6 +536,7 @@ def main():
             "review-selection",
             "register-reviewer",
             "claude-subscription-setup",
+            "claude-login-setup",
             "diagnose-claude",
         }:
             if args.command == "review-selection":
@@ -547,10 +552,15 @@ def main():
 
                 result = review_cli.register(repo, args.provider, args.binary, args.proof_directory)
             elif args.command == "claude-subscription-setup":
-                import claude_credentials
+                raise WorkflowError("The legacy setup-token route is blocked; use guarded native login setup")
+            elif args.command == "claude-login-setup":
+                import claude_native_auth
 
-                result = claude_credentials.setup(
-                    replace=args.replace, paid_usage_disabled=args.paid_usage_disabled
+                result = claude_native_auth.setup(
+                    repo,
+                    renew=args.renew,
+                    paid_usage_disabled=args.paid_usage_disabled,
+                    retain_capability=args.retain_capability,
                 )
             else:
                 import review_diagnostics

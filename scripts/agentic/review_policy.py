@@ -238,7 +238,14 @@ def validate_policy(value):
             "review_max_estimated_usd": limits.get("estimated_usd"),
         }
     )
-    if value != policy(selected, cfg):
+    expected = policy(selected, cfg)
+    if "authentication" in value:
+        import claude_native_auth
+
+        if selected["provider"] != "claude-code":
+            raise WorkflowError("Native authentication cannot bind a different provider")
+        expected["authentication"] = claude_native_auth.validate_binding(value["authentication"])
+    if value != expected:
         raise WorkflowError("Immutable review policy differs from supported provider bindings")
     return value
 
@@ -323,17 +330,26 @@ def status(repo, cfg, **overrides):
     except (WorkflowError, OSError, ValueError):
         blockers.append("verified_pinned_cli_unavailable")
     if result["policy"]["provider"] == "claude-code":
-        import claude_credentials
+        import claude_native_auth
         import review_diagnostics
         from review_claude import managed_controls
 
-        blockers.extend(claude_credentials.status())
+        native = claude_native_auth.status(result["policy"]["budget"]["timeout_seconds"])
+        result["native_authentication"] = native
+        blockers.extend(native["blockers"])
+        blockers.append("native_login_callback_policy_isolation_unverified")
         try:
             managed_controls()
         except (WorkflowError, OSError):
             blockers.append("managed_controls_require_verification")
         try:
-            review_diagnostics.require_activation(repo, result["policy"])
+            result["native_capability"] = review_diagnostics.require_activation(
+                repo,
+                {
+                    **result["policy"],
+                    **({"authentication": native["authentication"]} if "authentication" in native else {}),
+                },
+            )
         except (WorkflowError, OSError, ValueError, KeyError):
             blockers.append("matching_native_capability_diagnostic_unavailable")
     result["activation_blockers"] = blockers

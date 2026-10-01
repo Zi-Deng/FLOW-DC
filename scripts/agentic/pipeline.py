@@ -369,6 +369,9 @@ def review_task(
                 review_model=review_model,
                 review_effort=review_effort,
             )
+            from claude_native_auth import bind
+
+            selection["policy"] = bind(selection["policy"])
         if not legacy_recovery:
             binding["review_policy_digest"] = digest(selection["policy"])
             if (

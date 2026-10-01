@@ -166,6 +166,9 @@ def prepare(
     selection = review_policy.resolve(
         repo, cfg, review_provider=review_provider, review_model=review_model, review_effort=review_effort
     )
+    from claude_native_auth import bind
+
+    selection["policy"] = bind(selection["policy"])
     pr = repo.pr(number)
     head, base = sha(pr["head"]["sha"]), sha(pr["base"]["sha"])
     if expected_head and head != sha(expected_head):
@@ -399,6 +402,10 @@ def qualification(directory, *, require=False):
                 raise WorkflowError("Coverage or diagnostics changed or are missing")
     if require and result["schema_version"] != 5:
         raise WorkflowError("Legacy review policy cannot establish current coverage readiness")
+    if require and meta.get("review_policy", {}).get("provider") == "claude-code":
+        from claude_native_auth import validate_binding
+
+        validate_binding(meta["review_policy"].get("authentication"))
     if require and not assessment["qualified"]:
         raise WorkflowError(
             "Review coverage is incomplete; observed capability and every required material are necessary"
@@ -409,7 +416,13 @@ def qualification(directory, *, require=False):
 def coverage_ready(directory):
     """Current-policy readiness, distinct from an immutable historical assessment."""
     assessment = qualification(directory)
-    return verify_packet(directory).get("schema_version") == 5 and assessment["qualified"]
+    meta = verify_packet(directory)
+    if (
+        meta.get("review_policy", {}).get("provider") == "claude-code"
+        and "authentication" not in meta["review_policy"]
+    ):
+        return False
+    return meta.get("schema_version") == 5 and assessment["qualified"]
 
 
 def recover_review(repo, directory):
@@ -424,15 +437,20 @@ def recover_review(repo, directory):
         raise WorkflowError("Review packet belongs to another repository")
     current_pr(repo, meta["pr"], meta["head_sha"], meta["base_sha"])
     if not result_path.exists():
+        inputs = {key: value for key, value in meta.items() if key not in RESULT_FIELDS}
         capture = coverage.read_json(capture_path)
         if (
             meta.get("schema_version") not in {3, 5}
             or not isinstance(capture, dict)
-            or capture.get("input_digest") != value_digest(meta)
+            or capture.get("input_digest") != value_digest(inputs)
         ):
             raise WorkflowError("Pending review capture belongs to another packet")
         save_result(
-            directory, meta, capture.get("body"), capture.get("diagnostics"), capture.get(version_field(meta))
+            directory,
+            inputs,
+            capture.get("body"),
+            capture.get("diagnostics"),
+            capture.get(version_field(meta)),
         )
     result, assessment = stored_result(directory, meta)
     report = plain_path(directory / "review.md")

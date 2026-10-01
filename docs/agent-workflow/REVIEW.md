@@ -19,7 +19,9 @@ One attempted round is the default, including failed or incomplete attempts. A s
 critical P0/P1 finding permits a further round to verify its repair; record the public
 finding and concrete reason. Other extra rounds require explicit user continuation.
 P2/P3 findings, uncertain questions and incomplete coverage do not automatically permit
-another request. Never silently switch models, broaden permissions or retry inference.
+another request. Never silently switch models, broaden permissions or launch another
+wrapper inference attempt. The pinned native 401 boundary is disclosed in
+PROVIDERS.md; it grants no wrapper retry.
 
 ## Local procedure
 
@@ -52,7 +54,8 @@ skills and configuration remain data. Active policy/profile come from the truste
 clean default-branch checkout. The process has a temporary home, fresh provider/XDG
 state, disabled hooks/MCP, no inherited provider override, no prompt memory/resume,
 no permission to execute, edit or delegate and no broad `*` permission. Authentication
-is supplied separately in the token environment. Workspace hashes detect changes.
+is supplied separately: Copilot uses its isolated token environment; Claude requires
+a guarded access-only native snapshot (see PROVIDERS.md). Workspace hashes detect changes.
 These controls restrict model tools/config discovery; they are not an OS sandbox
 against a compromised CLI executable.
 

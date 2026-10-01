@@ -93,3 +93,12 @@ def native_stream(*args, **kwargs):
     return "\n".join(json.dumps(row, ensure_ascii=False) for row in native_events(*args, **kwargs)).encode(
         "utf-8"
     )
+
+
+# Synthetic binding for parser/lifecycle tests; not a native registration or live proof.
+AUTHENTICATION = {
+    "schema_version": 1,
+    "mode": "native-max-access-only-v1",
+    "registration_id": "11111111-1111-4111-8111-111111111111",
+    "generation_id": "22222222-2222-4222-8222-222222222222",
+}

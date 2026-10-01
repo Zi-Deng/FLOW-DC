@@ -8,14 +8,21 @@ from unittest.mock import patch
 from test_workflow import GitFixture, review, workflow
 
 # isort: split
+import claude_native_auth
 import review_coverage as coverage
 import review_coverage_v2 as frozen
 import review_policy as policy
-from claude_fixtures import native_events
+from claude_fixtures import AUTHENTICATION, native_events
 from review_fixtures import stream
 
 
 class ProviderPolicyTests(GitFixture):
+    def setUp(self):
+        super().setUp()
+        binding = patch.object(claude_native_auth, "current_binding", return_value=AUTHENTICATION)
+        binding.start()
+        self.addCleanup(binding.stop)
+
     def config(self, **fields):
         return {**workflow.configuration(self.root), **fields}
 
@@ -268,6 +275,42 @@ class ProviderPolicyTests(GitFixture):
         review.atomic_json(directory / "metadata.json", {**meta, "schema_version": 4})
         with self.assertRaisesRegex(workflow.WorkflowError, "reserved"):
             review.verify_packet(directory)
+
+    def test_frozen_schema_five_token_record_recovers_without_authentication_or_relabelling(self):
+        import claude_telemetry
+
+        self.commit_task()
+        directory = review.prepare(self.repo, 31, 12, 1234, review_provider="claude-code")
+        meta = review.verify_packet(directory)
+        meta["review_policy"].pop("authentication")
+        review.atomic_json(directory / "metadata.json", meta)
+        packet = directory / "packet"
+        rows = native_events(packet, packet, "legacy-fixture")
+        body, diagnostics = claude_telemetry.capture(
+            "\n".join(json.dumps(row) for row in rows),
+            packet,
+            packet,
+            meta["review_policy"],
+            "legacy-fixture",
+        )
+        review.save_result(directory, meta, body, diagnostics, "2.1.282")
+        review.recover_review(self.repo, directory)
+        original = {
+            name: (directory / name).read_bytes()
+            for name in ("review-result.json", "review-capture.json", "coverage.json", "review.md")
+        }
+        envelope = review.publication_body(directory)
+        (directory / "review-result.json").unlink()
+        with patch.object(
+            claude_native_auth, "current_binding", side_effect=AssertionError("No authentication on recovery")
+        ):
+            review.recover_review(self.repo, directory)
+            self.assertEqual(review.publication_body(directory), envelope)
+        self.assertEqual(original, {name: (directory / name).read_bytes() for name in original})
+        self.assertNotIn("authentication", review.verify_packet(directory)["review_policy"])
+        self.assertFalse(review.coverage_ready(directory))
+        with self.assertRaisesRegex(workflow.WorkflowError, "authentication binding"):
+            review.qualification(directory, require=True)
 
     def test_typed_budgets_reject_unbounded_and_paid_claude_policy(self):
         selected = policy.choices("claude-code")

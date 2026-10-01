@@ -15,7 +15,7 @@ and [Copilot model reference](https://docs.github.com/en/copilot/reference/copil
 unregistered models/providers, and incompatible effort combinations fail before inference.
 
 **Migration activation is incomplete.** Claude execution currently fails closed on
-unverified token-only remote managed policy. No successful native diagnostic is
+unverified native-login callback policy isolation. No successful native diagnostic is
 claimed. Neither a workstation login, binary inspection nor synthetic tests establish
 isolated tool capability or included-usage billing. The diagnostic entrypoint also
 refuses inference until this isolation blocker is resolved; it has no force option.
@@ -88,7 +88,7 @@ head/base and packet hashes. Results/captures bind that policy and preserve the 
 terminal report text. A changed provider, model, effort or budget requires explicit
 fresh preparation; an attempted round still requires the existing continuation
 permission. Recovery never runs inference, uses the packet's bound policy and does
-not adopt current defaults. No reviewer resume, retry or within-packet fallback exists.
+not adopt current defaults. No reviewer resume, new wrapper inference retry or within-packet fallback exists.
 
 ## Verify and register binaries
 
@@ -119,67 +119,96 @@ execution. No global keyring, ordinary CLI login or template-origin record is ch
 The [official signing procedure](https://code.claude.com/docs/en/setup#verify-the-manifest-signature)
 documents the release trust chain.
 
-## Dedicated subscription token and billing receipt
+## Dedicated native Max login and billing receipt
 
-The operator manually runs `claude setup-token` in their ordinary terminal and keeps
-the resulting dedicated subscription token out of chat, shell arguments and Git.
-After disabling paid usage credits/extra usage for the subscription, use the helper:
+The approved [native-login revision](https://github.com/Zi-Deng/FLOW-DC/issues/33#issuecomment-5938298025)
+replaces injected setup tokens. The ordinary Claude login/configuration must never
+be read, copied or modified. The old `claude-subscription-setup` command refuses;
+existing token/receipt files remain protected and unused, without migration or logout.
+
+The guarded terminal interface is:
 
 ```bash
-python3 scripts/agentic/workflow.py claude-subscription-setup --paid-usage-disabled
+python3 -B scripts/agentic/workflow.py claude-login-setup --paid-usage-disabled
+python3 -B scripts/agentic/workflow.py claude-login-setup --renew --paid-usage-disabled
 ```
 
-It accepts hidden terminal input and defaults to
-`~/.config/flowdc-agentic/claude-review-token`. The dedicated directory must be 0700;
-its token and adjacent receipt must be single-link, owner-owned regular files with
-mode 0600, outside Git checkouts and without symlink components. `--replace` is an
-explicit replacement; unsafe existing objects remain refused. Ordinary Claude login
-and configuration are untouched. API keys and alternative provider credentials are
-never sourced by this adapter.
+**These commands currently stop before authentication.** Native setup callback
+isolation remains unverified. There is no force option or manual credential-import
+route. Do not run the native login separately to bypass the helper's blocker.
 
-The receipt is a seven-day operator assertion that paid usage is disabled, bound to
-the dedicated token. It is not a cryptographic billing guarantee. Renew the assertion
-with hidden setup/explicit replacement after expiry or account/billing changes; a
-changed token invalidates the old receipt. Missing, expired, unsafe or inconsistent
-records block preflight. Credential material and its receipt remain outside artifacts.
+The implementation stages each explicit browser login under
+`~/.config/flowdc-agentic/claude-review-login/generations/<opaque-generation>/`, with
+separate private `home`, `config` and inert `workspace` directories. Each generation
+is retained; renewal does not overwrite or revoke older credentials. Parent paths
+are opened without following symlinks; Git ancestry, ownership, modes, file types,
+link counts, bounded strict JSON and an exclusive nonblocking registration lock are
+checked. Directories are 0700 and files 0600. Partial/failed setup cannot activate.
+OAuth URLs/codes stay in the operator terminal, never saved process output or chat.
+The actual native browser flow, its successful exit and genuine native credential
+and account records are necessary; a manually written Max field is not setup.
+
+The separate receipt asserts that paid usage credits/extra usage are disabled for
+that registration, generation and account. It expires within seven days and must
+be revalidated after account, credential or billing changes. It is owner-writable
+accounting, not a cryptographic billing guarantee. Account identifiers and private
+integrity digests remain in the guarded store. Only random registration/generation
+IDs enter packet policies/status. Missing, inconsistent or unsafe records block use.
+
+Before a call, the wrapper projects only native accessToken, expiresAt, scopes and
+genuine subscriptionType, plus minimal native account/org identity, into fresh
+HOME/config/XDG state. The refreshToken field is absent, not null or an empty-string
+sentinel. Persistent settings, history and caches are not copied. No ephemeral native
+changes are committed back. The snapshot is removed on return, exceptions and
+interruptions, while its registration lock remains held through invocation.
+
+Remaining access-token life must strictly exceed the full timeout +300 seconds of
+native refresh margin +60 seconds clock allowance: >1260 seconds for a default
+review, >660 seconds for a diagnostic. The check runs again immediately before
+launch, with a wall/monotonic clock comparison. Insufficient life requires explicit
+manual renewal; the wrapper does not refresh or relaunch. A changed generation
+requires fresh preparation. Attempted recovery/publication does not authenticate.
+Capability evidence is not silently carried across renewal. An explicit renewal
+with `--retain-capability` may retain prior observations only after verifying the
+same private account/registration lineage, unchanged auth mode/CLI/adapter and a
+current receipt. Status retains the originally observed generations and distinguishes
+the current preflight-validated generation from one live-diagnostic-tested. Without
+that flag, a new generation cannot reuse prior capability evidence. No renewal resets
+diagnostic allowance or relabels the generation actually observed by a diagnostic.
 
 ## Isolation and the unresolved native boundary
 
-Each call is designed to use fresh HOME, Claude config, XDG state and an inert packet
-workspace. Only fixed wrapper environment values and the dedicated OAuth token are
-passed. The command requests safe/restricted mode, native Read/Grep/Glob only,
-`dontAsk`, `--permission-prompts none`, empty settings discovery, explicit trusted
-settings, empty strict MCP, disabled skills/slash commands and no session persistence.
-The closed settings subset disables hooks, model switching, fallback models,
-auto-memory and automatic continuation at usage limits. Native environment controls
-also disable retries and fallback. No shell, edits, delegation or network-fetch tool
-is authorized. Workspace hashes are checked afterwards. This is CLI containment,
-not an OS sandbox against a compromised signed executable.
+Each invocation uses a fresh inert workspace and a fixed minimal environment.
+No injected token/FD, API/profile/cloud/endpoint override or ordinary login is
+inherited. Native `dF`/`gF` select the supplied actual claudeAiOauth access record;
+`ult` reads its actual subscriptionType. For genuine Max without competing auth,
+`MR` returns unsupported_subscription and the remote fetch returns without delivery.
+This is conditional native eligibility, not administrator-policy suppression.
+Endpoint-managed paths are checked separately with lstat; unreadable or present
+policy is refused, not ignored. `auth status` display fallback cannot prove this chain.
 
-Static inspection on 2026-10-01 of the pinned binary matched its required option and
-closed-settings declarations. Its native Read renderer uses a line number followed
-by a tab or colon; Grep content is matched against exact immutable source lines.
-These observations support conservative fixtures, not live coverage.
+The command requests safe/restricted mode, Read/Grep/Glob only, dontAsk, no permission
+prompts, empty settings discovery, explicit trusted settings, empty strict MCP,
+no slash commands and no persistence. Settings disable hooks, model switching,
+fallback models, auto-memory and usage-limit continuation. No shell, edits,
+delegation or fetch tool is authorized. Workspace hashes are checked afterwards.
+This is CLI containment, not an OS sandbox against a compromised signed executable.
 
-The same inspection identified the unresolved pre-inference boundary: native
-`auth status` reports environment tokens as `oauth_token` and does not include their
-subscription identity; the remote managed-settings eligibility branch includes an
-unknown subscription identity. Empty local HOME/config and a billing receipt do not
-prove remote policy is absent or harmless. Local managed policy paths are refused,
-and token-only remote policy is currently refused too. A post-call check cannot
-prevent hooks executing before the first response. Do not replace this blocker with
-an empty remote-policy override, a copied ordinary login, a guessed account class,
-a fabricated diagnostic receipt or broader permissions. Resolving it requires
-verified native control/effective-policy evidence within the approved contract.
-A proposed `claude doctor` probe does not resolve this boundary: the pinned native
-shared preAction initializes managed controls before dispatch, and the doctor handler
-samples a potentially asynchronous fetch outcome. No authenticated doctor call was
-made. A different authentication method requires a superseding approved contract;
-this implementation does not copy the ordinary login or fabricate subscription metadata.
-The [server-managed settings guide](https://code.claude.com/docs/en/server-managed-settings#verify-settings-delivery)
-documents fetch status reporting, which is not a before-effect isolation barrier.
-The [CLI reference](https://code.claude.com/docs/en/cli-reference) documents safe and
-restricted mode; it does not itself prove effective runtime isolation.
+On 2026-10-01, static inspection of signed native 2.1.282 confirmed these reader
+branches and the no-refresh return. However, login preAction arms `DRo` before
+browser authentication; `ERe -> vYn -> i2t` resets remote eligibility during login.
+The helper cannot yet establish that callbacks cannot observe an unintended
+managed identity before post-login Max validation. Setup therefore remains blocked.
+[The pinned-source audit](NATIVE-AUTH-AUDIT.md) records offsets, conditions and omissions.
+No authenticated doctor/status/login command or inference was used for this audit.
+A doctor probe is not a before-effect barrier: initialization precedes its handler.
+
+The [authentication guide](https://code.claude.com/docs/en/authentication) documents
+separate configuration directories. The minimal access-only snapshot is pinned
+implementation compatibility, not a portable credential-export API. The
+[server-managed settings guide](https://code.claude.com/docs/en/server-managed-settings)
+and [CLI reference](https://code.claude.com/docs/en/cli-reference) do not certify this
+wrapper's runtime isolation. Synthetic tests and source inspection are not live proof.
 
 ## Budgets, diagnostics and failures
 
@@ -190,6 +219,15 @@ native estimate ceiling; wrapper timeout/output caps remain enforced. In-flight 
 can overshoot a reported estimate. Unsupported usage, quota rejection, unknown native
 shapes, isolation uncertainty or failed tools produce incomplete evidence. Copilot's
 policy remains 400 AI credits and 900 seconds. Unknown usage grants no retry authority.
+
+Pinned native 2.1.282 may repeat an authentication-rejected request once with the
+same access credential after the first 401 inside one captured invocation. Absence
+of refresh material prevents refresh-token exchange. This disclosed boundary is
+not permission for a new wrapper call, successful-output replay, provider/auth/model
+substitution or another diagnostic slot. Do not promise first-401 immediate termination
+or exact API-call counts. No undocumented auth-retry-disable variable is used;
+`CLAUDE_CODE_MAX_RETRIES` was removed. Complete native retry/fallback qualification
+and controlled native error-path evidence remain activation requirements.
 
 After all prerequisites, at most two issue-33 diagnostics are authorized, each 300
 seconds and $2 estimated reference cost. They contain only a tiny canary packet and
@@ -233,7 +271,10 @@ Schema 1 publication retains its original bytes/envelope. Schema 2 uses the froz
 `review_telemetry_v2.py`. Historical assessment hashes/envelopes do not change and
 cannot qualify a current review. Schema 4 is reserved for PR #32 and explicitly
 unsupported here. Current packets/results/captures use schema 5; model reports remain
-schema 2. Dated research, adoption evidence and template provenance remain historical.
+schema 2. Schema-5 token-mode records without an authentication payload retain
+exact historical hashes, assessment and publication envelopes, but cannot execute
+or establish native readiness. New schema-5 Claude policies bind the versioned
+native auth mode and random registration/generation identifiers. Dated research, adoption evidence and template provenance remain historical.
 
 The hosted opt-in workflow explicitly selects and registers Copilot. It remains
 disabled unless separately enabled, and receives no Claude subscription token.

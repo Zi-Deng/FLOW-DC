@@ -6,7 +6,7 @@ import tempfile
 import uuid
 from pathlib import Path
 
-import claude_credentials
+import claude_native_auth
 import claude_telemetry
 import review_cli
 import review_policy
@@ -56,7 +56,6 @@ FIXED_ENV = {
     "DISABLE_TELEMETRY": "1",
     "DISABLE_ERROR_REPORTING": "1",
     "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
-    "CLAUDE_CODE_MAX_RETRIES": "0",
     "CLAUDE_CODE_NO_MODEL_FALLBACK": "1",
     "CLAUDE_CODE_DISABLE_REFUSAL_FALLBACK": "1",
     "CLAUDE_CODE_DISABLE_REFUSAL_RETRY": "1",
@@ -79,22 +78,28 @@ def trusted_settings(policy):
 
 
 def managed_controls():
-    # Do not load, print, override or bypass an administrator's settings. Any local
-    # policy requires separate verification before this adapter can run safely.
+    # lstat distinguishes absence from permission failure; exists() cannot do so.
+    # Endpoint policy is never disabled, overwritten or silently ignored.
     for path in MANAGED_PATHS:
-        if path.is_symlink() or path.exists():
-            raise WorkflowError(
-                "Managed Claude controls require verification; isolated review activation refused"
-            )
-    # Native 2.1.282's auth-status implementation omits subscriptionType for an
-    # environment oauth_token. Its remote-policy eligibility includes unknown
-    # subscription identity. Empty local settings therefore cannot establish
-    # absence of remote managed hooks before the first inference. There is no
-    # verified effective-policy inspection here: do not turn a post-call check or
-    # an operator billing assertion into permission to execute those hooks.
+        try:
+            path.lstat()
+        except FileNotFoundError:
+            continue
+        except OSError:
+            raise WorkflowError("Endpoint-managed Claude controls cannot be inspected") from None
+        raise WorkflowError("Managed Claude controls require verification; isolated execution refused")
+
+
+def native_setup_controls(binary):
+    managed_controls()
+    check_controls(binary, trusted_settings(review_policy.policy(review_policy.choices("claude-code"), {})))
+    # Signed 2.1.282 preAction arms DRo after its initial remote-policy fetch;
+    # ERe -> vYn -> i2t resets eligibility during login. A terminal operator's
+    # intended Max choice does not prove callbacks cannot observe another identity
+    # before the wrapper validates the completed native record. Do not execute
+    # login or invent an environment bypass until this transition is verified.
     raise WorkflowError(
-        "Pinned Claude token-only remote managed controls cannot be verified before inference; "
-        "activation refused (see docs/agent-workflow/PROVIDERS.md)"
+        "Native login callback policy isolation remains unverified; setup is blocked before authentication"
     )
 
 
@@ -129,13 +134,12 @@ def check_controls(binary, settings, policy=None):
 
 
 def preflight(repo, policy):
-    token = claude_credentials.read()
+    claude_native_auth.validate_binding(policy.get("authentication"))
     managed_controls()
     binary = review_cli.executable(repo, "claude-code")
     check_controls(binary, trusted_settings(policy), policy)
     with tempfile.TemporaryDirectory(prefix="agentic-claude-controls-") as temporary:
-        env = environment(Path(temporary), "")
-        env.pop("CLAUDE_CODE_OAUTH_TOKEN")
+        env = environment(Path(temporary))
         for flag in ("--version", "--help"):
             result = review_process.capture([binary, flag], cwd=temporary, env=env, timeout=30)
             try:
@@ -152,20 +156,19 @@ def preflight(repo, policy):
                 option not in output for option in FLAGS if option != "--permission-prompts"
             ):
                 raise WorkflowError("Pinned Claude help lacks required controls")
-    return binary, token
+    return binary
 
 
-def environment(home, token):
+def environment(home, *, config=None):
     env = {
         **FIXED_ENV,
         "HOME": str(home),
-        "CLAUDE_CONFIG_DIR": str(home / "claude"),
-        "CLAUDE_CODE_OAUTH_TOKEN": token,
+        "CLAUDE_CONFIG_DIR": str(config or home / "claude"),
     }
     for key in ("XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME"):
         env[key] = str(home / key.lower())
     for key in ("CLAUDE_CONFIG_DIR", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME"):
-        Path(env[key]).mkdir(mode=0o700)
+        Path(env[key]).mkdir(mode=0o700, exist_ok=True)
     return env
 
 
@@ -212,19 +215,20 @@ def execute(repo, directory, meta, *, diagnostic=False):
     from review_diagnostics import require_activation
 
     policy = meta["review_policy"]
-    binary, token = preflight(repo, policy)
+    binary = preflight(repo, policy)
     if not diagnostic:
         require_activation(repo, policy)
     session_id = str(uuid.uuid4())
-    with tempfile.TemporaryDirectory(prefix="agentic-claude-") as temporary:
+    with (
+        claude_native_auth.snapshot(policy) as (env, recheck_auth),
+        tempfile.TemporaryDirectory(prefix="agentic-claude-") as temporary,
+    ):
         root = Path(temporary)
-        home = root / "home"
-        home.mkdir(mode=0o700)
+        home = Path(env["HOME"])
         workspace = root / "workspace"
         import shutil
 
         shutil.copytree(Path(directory) / "packet", workspace)
-        env = environment(home, token)
         settings_path, mcp_path = root / "settings.json", root / "mcp.json"
         write_json(settings_path, trusted_settings(policy))
         write_json(mcp_path, {"mcpServers": {}})
@@ -258,6 +262,8 @@ def execute(repo, directory, meta, *, diagnostic=False):
                 "requests": 1,
             },
         )
+        managed_controls()
+        recheck_auth()
         response = review_process.capture(
             args, cwd=workspace, env=env, timeout=policy["budget"]["timeout_seconds"]
         )

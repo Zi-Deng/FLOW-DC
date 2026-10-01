@@ -5,14 +5,21 @@ from unittest.mock import patch
 from test_workflow import GitFixture, workflow
 
 # isort: split
+import claude_native_auth
 import claude_telemetry
 import review_claude
 import review_diagnostics as diagnostics
 import review_policy
-from claude_fixtures import native_stream
+from claude_fixtures import AUTHENTICATION, native_stream
 
 
 class DiagnosticTests(GitFixture):
+    def setUp(self):
+        super().setUp()
+        binding = patch.object(claude_native_auth, "current_binding", return_value=AUTHENTICATION)
+        binding.start()
+        self.addCleanup(binding.stop)
+
     def execute(self, repo, directory, meta, *, diagnostic):
         self.assertTrue(diagnostic)
         packet = directory / "packet"
@@ -39,16 +46,41 @@ class DiagnosticTests(GitFixture):
         ):
             self.assertEqual(self.run_diagnostic()["status"], "qualified")
             with self.assertRaises(workflow.WorkflowError):
-                diagnostics.require_activation(self.repo, diagnostics.DEFAULT_POLICY)
+                diagnostics.require_activation(
+                    self.repo, {**diagnostics.DEFAULT_POLICY, "authentication": AUTHENTICATION}
+                )
             self.assertEqual(self.run_diagnostic()["remaining_attempts"], 0)
             with self.assertRaisesRegex(workflow.WorkflowError, "Both authorized"):
                 self.run_diagnostic()
         self.assertEqual(execute.call_count, 2)
         policy = review_policy.policy(review_policy.choices("claude-code"), {})
+        policy["authentication"] = AUTHENTICATION
         diagnostics.require_activation(self.repo, policy)
         policy["adapter"] = "unverified-next-adapter"
         with self.assertRaises(workflow.WorkflowError):
             diagnostics.require_activation(self.repo, policy)
+
+    def test_explicit_lineage_retains_observed_generation_without_new_attempts(self):
+        with (
+            patch.object(review_claude, "preflight"),
+            patch.object(review_claude, "execute", side_effect=self.execute),
+        ):
+            self.run_diagnostic()
+            self.run_diagnostic()
+        root = diagnostics.state_directory(self.repo)
+        original = {p: p.read_bytes() for p in root.rglob("*") if p.is_file()}
+        current = {**AUTHENTICATION, "generation_id": "33333333-3333-4333-8333-333333333333"}
+        policy = {**diagnostics.DEFAULT_POLICY, "authentication": current}
+        with patch.object(claude_native_auth, "capability_lineage", return_value=False):
+            with self.assertRaises(workflow.WorkflowError):
+                diagnostics.require_activation(self.repo, policy)
+        with patch.object(claude_native_auth, "capability_lineage", return_value=True):
+            result = diagnostics.require_activation(self.repo, policy)
+        self.assertFalse(result["current_generation_live_tested"])
+        self.assertEqual(result["observed_authentication"], [AUTHENTICATION, AUTHENTICATION])
+        self.assertEqual(result["current_authentication"], current)
+        self.assertEqual(original, {p: p.read_bytes() for p in original})
+        self.assertEqual(len(diagnostics.ledger(self.repo)["attempts"]), 2)
 
     def test_missing_token_or_receipt_consumes_no_attempt(self):
         with (
@@ -69,7 +101,9 @@ class DiagnosticTests(GitFixture):
                 self.run_diagnostic()
         self.assertEqual(diagnostics.ledger(self.repo)["attempts"][0]["status"], "incomplete")
         with self.assertRaises(workflow.WorkflowError):
-            diagnostics.require_activation(self.repo, diagnostics.DEFAULT_POLICY)
+            diagnostics.require_activation(
+                self.repo, {**diagnostics.DEFAULT_POLICY, "authentication": AUTHENTICATION}
+            )
 
     def test_modified_exact_report_or_packet_invalidates_activation(self):
         with (
@@ -81,4 +115,6 @@ class DiagnosticTests(GitFixture):
         report = directory / "report.txt"
         report.write_bytes(report.read_bytes() + b"\n")
         with self.assertRaises(workflow.WorkflowError):
-            diagnostics.require_activation(self.repo, diagnostics.DEFAULT_POLICY)
+            diagnostics.require_activation(
+                self.repo, {**diagnostics.DEFAULT_POLICY, "authentication": AUTHENTICATION}
+            )
