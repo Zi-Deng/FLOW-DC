@@ -420,7 +420,7 @@ class ReviewTests(GitFixture):
         observed = []
 
         def fake(args, **kwargs):
-            if args[0] != "copilot":
+            if args[0] != "/fixture/copilot":
                 return original(args, **kwargs)
             if args[1] == "--help":
                 return subprocess.CompletedProcess(
@@ -454,6 +454,8 @@ class ReviewTests(GitFixture):
                 },
             ),
             patch.object(review, "run", side_effect=fake),
+            patch.object(review.shutil, "which", return_value="/fixture/copilot"),
+            patch.object(review.review_process, "capture", side_effect=fake),
             patch.object(
                 review,
                 "configuration",

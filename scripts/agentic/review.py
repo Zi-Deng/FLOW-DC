@@ -25,8 +25,7 @@ import review_telemetry
 from copilot_policy import CLI_VERSION
 from tasks import atomic_json, atomic_text, plain_path, private_directory
 from tasks import digest as value_digest
-from workflow import Repo, WorkflowError, configuration, positive, sha, write_json
-from workflow import run as system_run
+from workflow import Repo, WorkflowError, configuration, positive, run, sha, write_json
 
 TEXT_SUFFIXES = {
     ".py",
@@ -69,13 +68,6 @@ PRIVATE_PATHS = (
     "playground",
     "archives",
 )
-
-
-def run(args, **kwargs):
-    if args[0] == "copilot" and "--prompt" in args:
-        kwargs.pop("check", None)
-        return review_process.capture(args, **kwargs)
-    return system_run(args, **kwargs)
 
 
 def digest(path):
@@ -475,7 +467,11 @@ def run_review(repo, directory):
         raise WorkflowError("Choose an explicit Claude model ID through Copilot, not auto")
     if (directory / "review.md").exists():
         raise WorkflowError("A review already exists here; prepare a fresh review for another round")
-    help_text = run(["copilot", "--help"]).stdout
+    executable = shutil.which("copilot")
+    if executable is None:
+        raise WorkflowError("Pinned Copilot CLI is unavailable; review was not started")
+    executable = str(Path(executable).absolute())
+    help_text = run([executable, "--help"]).stdout
     for flag in [
         "--available-tools",
         "--no-custom-instructions",
@@ -489,7 +485,7 @@ def run_review(repo, directory):
     ]:
         if flag not in help_text:
             raise WorkflowError(f"Installed Copilot CLI lacks required capability: {flag}")
-    version = run(["copilot", "--version"]).stdout.strip()
+    version = run([executable, "--version"]).stdout.strip()
     if not version:
         raise WorkflowError("Copilot returned no version; review was not started")
     version = version.splitlines()[0]
@@ -568,7 +564,7 @@ def run_review(repo, directory):
             }
         )
         args = [
-            "copilot",
+            executable,
             "--session-id",
             session_id,
             "--agent",
@@ -609,8 +605,8 @@ def run_review(repo, directory):
         )
         failure, output, code = None, "", None
         try:
-            response = run(
-                args, cwd=workspace, env=env, timeout=meta["config"]["review_timeout_seconds"], check=False
+            response = review_process.capture(
+                args, cwd=workspace, env=env, timeout=meta["config"]["review_timeout_seconds"]
             )
             output, code = response.stdout, response.returncode
             failure = getattr(response, "failure_reason", None)

@@ -31,7 +31,7 @@ class ReviewRecoveryTests(GitFixture):
         original = review.run
 
         def cli(args, **kwargs):
-            if args[0] != "copilot":
+            if args[0] != "/fixture/copilot":
                 return original(args, **kwargs)
             if args[1] == "--help":
                 return subprocess.CompletedProcess(args, 0, HELP, "")
@@ -57,6 +57,8 @@ class ReviewRecoveryTests(GitFixture):
         with (
             patch.dict(os.environ, {"COPILOT_GITHUB_TOKEN": "fake-test-token"}),
             patch.object(review, "run", side_effect=cli),
+            patch.object(review.shutil, "which", return_value="/fixture/copilot"),
+            patch.object(review.review_process, "capture", side_effect=cli),
         ):
             return review.review(self.repo, directory)
 
@@ -67,6 +69,51 @@ class ReviewRecoveryTests(GitFixture):
             self.invoke(directory)
         self.assertEqual(self.model_calls, 0)
         self.assertFalse((directory / "review-result.json").exists())
+
+    def test_absolute_provider_executable_uses_bounded_capture_directly(self):
+        directory = self.packet()
+        executable = str(self.parent / "pinned cli/copilot")
+        original = review.run
+
+        def ordinary(args, **kwargs):
+            self.assertNotIn("--prompt", args, "Inference must not enter the ordinary command runner")
+            if args[1:] == ["--help"]:
+                self.assertEqual(args[0], executable)
+                return subprocess.CompletedProcess(args, 0, HELP, "")
+            if args[1:] == ["--version"]:
+                self.assertEqual(args[0], executable)
+                return subprocess.CompletedProcess(args, 0, "1.0.83", "")
+            return original(args, **kwargs)
+
+        def bounded(args, **kwargs):
+            self.assertEqual(args[0], executable)
+            self.assertEqual(kwargs["timeout"], 900)
+            self.assertNotIn("check", kwargs)
+            return subprocess.CompletedProcess(
+                args, 0, provider_response(args, kwargs, directory / "packet", self.model_report), b""
+            )
+
+        with (
+            patch.dict(os.environ, {"COPILOT_GITHUB_TOKEN": "fake-test-token"}),
+            patch.object(review.shutil, "which", return_value=executable),
+            patch.object(review, "run", side_effect=ordinary),
+            patch.object(review.review_process, "capture", side_effect=bounded) as capture,
+        ):
+            report = review.review(self.repo, directory)
+        capture.assert_called_once()
+        self.assertEqual(report.read_bytes(), self.model_report.encode())
+
+    def test_missing_provider_executable_stops_before_attempt(self):
+        directory = self.packet()
+        with (
+            patch.object(review.shutil, "which", return_value=None),
+            patch.object(review, "run", side_effect=AssertionError("No executable is available")),
+            patch.object(review.review_process, "capture") as capture,
+        ):
+            with self.assertRaisesRegex(workflow.WorkflowError, "CLI is unavailable"):
+                review.review(self.repo, directory)
+        capture.assert_not_called()
+        self.assertFalse((directory / "attempt.json").exists())
 
     def test_personal_home_and_provider_overrides_are_not_inherited(self):
         directory = self.packet()
@@ -97,7 +144,14 @@ class ReviewRecoveryTests(GitFixture):
                 self.invoke(directory)
         original_bytes = (directory / "review.md").read_bytes()
         self.assertIsNone(review.verify_packet(directory).get("review_sha256"))
-        with patch.object(review, "run", side_effect=AssertionError("No CLI call allowed during recovery")):
+        with (
+            patch.object(review, "run", side_effect=AssertionError("No CLI call allowed during recovery")),
+            patch.object(
+                review.review_process,
+                "capture",
+                side_effect=AssertionError("No CLI call allowed during recovery"),
+            ),
+        ):
             report = review.review(self.repo, directory)
             review.publish(self.repo, directory)
         self.assertEqual(self.model_calls, 1)
@@ -120,7 +174,10 @@ class ReviewRecoveryTests(GitFixture):
                 self.invoke(directory)
         capture = json.loads((directory / "review-capture.json").read_bytes())
         self.assertEqual(capture["body"], self.model_report)
-        with patch.object(review, "run", side_effect=AssertionError("No provider retry")):
+        with (
+            patch.object(review, "run", side_effect=AssertionError("No provider retry")),
+            patch.object(review.review_process, "capture", side_effect=AssertionError("No provider retry")),
+        ):
             report = review.review(self.repo, directory)
         self.assertEqual(report.read_bytes(), self.model_report.encode())
         self.assertEqual(self.model_calls, 1)
@@ -132,7 +189,14 @@ class ReviewRecoveryTests(GitFixture):
                 self.invoke(directory)
         self.assertFalse((directory / "review.md").exists())
         result = json.loads((directory / "review-result.json").read_text(encoding="utf-8"))
-        with patch.object(review, "run", side_effect=AssertionError("No CLI call allowed during recovery")):
+        with (
+            patch.object(review, "run", side_effect=AssertionError("No CLI call allowed during recovery")),
+            patch.object(
+                review.review_process,
+                "capture",
+                side_effect=AssertionError("No CLI call allowed during recovery"),
+            ),
+        ):
             report = review.review(self.repo, directory)
         self.assertEqual(report.read_text(encoding="utf-8"), result["body"])
         self.assertEqual(self.model_calls, 1)
@@ -176,7 +240,7 @@ class ReviewRecoveryTests(GitFixture):
         calls = []
 
         def timeout(args, **kwargs):
-            if args[0] != "copilot":
+            if args[0] != "/fixture/copilot":
                 return original(args, **kwargs)
             if args[1] == "--help":
                 return subprocess.CompletedProcess(args, 0, HELP, "")
@@ -190,6 +254,8 @@ class ReviewRecoveryTests(GitFixture):
         with (
             patch.dict(os.environ, {"COPILOT_GITHUB_TOKEN": "fake-test-token"}),
             patch.object(review, "run", side_effect=timeout),
+            patch.object(review.shutil, "which", return_value="/fixture/copilot"),
+            patch.object(review.review_process, "capture", side_effect=timeout),
         ):
             with self.assertRaisesRegex(workflow.WorkflowError, "no recoverable"):
                 review.review(self.repo, directory)
