@@ -30,6 +30,7 @@ def execute(repo, directory, meta):
     executable = review_cli.executable(repo, "copilot")
     help_text = run([executable, "--help"]).stdout
     for flag in [
+        "--model",
         "--available-tools",
         "--no-custom-instructions",
         "--disable-builtin-mcps",

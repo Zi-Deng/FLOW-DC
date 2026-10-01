@@ -116,7 +116,7 @@ Create the reviewed ruleset only if it does not already exist; use a deliberate 
 
 ## 5. Run a managed task
 
-Use the [skill contract](SKILLS.md), beginning with `$agentic-workflow`. The coordinator owns GitHub writes and the clean control checkout. The dedicated Astra executor owns implementation in the assigned worktree and retains one exact session UUID through continuation and repair. Each Opus review uses a fresh static snapshot and independent session.
+Use the [skill contract](SKILLS.md), beginning with `$agentic-workflow`. The coordinator owns GitHub writes and the clean control checkout. The dedicated Astra executor owns implementation in the assigned worktree and retains one exact session UUID through continuation and repair. Each provider-selected review uses a fresh static snapshot and independent session.
 
 The first post-installation pilot is a small, useful FLOW-DC maintainer quick reference. Its acceptance includes a native checkpoint, continuation of that same UUID, a draft PR, both CI checks, local Opus review, explicit feedback assessment and human finish preparation. If the review has no material findings, a no-edit feedback assessment can demonstrate continuation without inventing repairs. A successful model turn alone does not satisfy the whole pilot.
 

@@ -12,7 +12,7 @@ other validated efforts are passed explicitly. Model availability and included b
 remain account-specific activation requirements, not promises made by this table.
 See the [native effort table](https://code.claude.com/docs/en/model-config#adjust-effort-level)
 and [Copilot model reference](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-command-reference#supported-models). Aliases,
-unknown models/providers, and incompatible effort combinations fail before inference.
+unregistered models/providers, and incompatible effort combinations fail before inference.
 
 **Migration activation is incomplete.** Claude execution currently fails closed on
 unverified token-only remote managed policy. No successful native diagnostic is
@@ -39,6 +39,49 @@ before applying explicit model/effort fields. The saved selection is an owner-on
 `.agentic-local/review-selection.json` in the control checkout, not a credential.
 Status prints effective provider/model/effort, per-field provenance, CLI pin, adapter,
 billing mode, typed budgets and activation blockers. Preparation is not inference.
+
+### Adding an exact model without changing adapter code
+
+Schema-2 trusted `.agentic/config.json` can add `review_model_extensions` declarations.
+This is a deliberate configuration change, not automatic provider discovery or a
+fallback. Before adding one, the maintainer must verify primary provider documentation
+for the exact model/efforts and compatibility with the **pinned** CLI and current
+tool/telemetry adapter. An identifier that merely looks versioned is not evidence of
+support. Unsupported combinations stay refused; changing a CLI or telemetry protocol
+still requires an implementation change and its validation.
+
+Each declaration has exactly these fields:
+
+| Field | Required value |
+| --- | --- |
+| `provider` | `claude-code` or `copilot` |
+| `model` | Exact lowercase versioned provider identifier, at most 128 characters; no aliases, auto/default/latest segments, paths or context modifiers |
+| `efforts` | Nonempty unique list of the model's verified efforts, within the pinned CLI's supported controls; Copilot `default` omits its effort flag |
+| `cli_version` | `2.1.282` for Claude or `1.0.83` for Copilot |
+| `adapter` | `claude-stream-json-2.1.282-v1` or `copilot-session-events-v2`, matching the provider |
+| `evidence` | One to eight public HTTPS primary documentation URLs, without query strings or credentials; Claude documentation hosts for Claude, `docs.github.com` for Copilot |
+
+The list defaults to empty. Declarations cannot override built-in model entries or
+duplicate each other. They do not change provider-local defaults. Select a declared
+model through the same `--review-model` interface; explicitly supply an effort if
+the provider's default is not supported by that model. Saved selections do not grant
+compatibility: new preparations require the declaration to remain in trusted config.
+Status includes the merged catalog, `model_compatibility_sources` distinguishing
+`built-in` from `trusted-config-declaration`, and the selected extension's
+`model_compatibility` record. Every configured entry is validated before new selection,
+even when another model is selected.
+
+The complete selected declaration, including evidence references, is frozen into
+the execution policy and its packet/round digest. Changing it requires fresh
+preparation; recovery of an attempted packet uses the bound declaration even after
+today's configuration or saved selection changes. Existing built-in policies retain
+their original fields and hashes. The wrapper validates declaration structure and
+pin/adapter/effort consistency; **it does not fetch URLs or verify the maintainer's
+compatibility claim**. This has the same trust boundary as other trusted repository
+policy, not a provider-signed capability attestation. A declaration never establishes
+account entitlement, included billing, live tool capability, or permission for an
+additional inference. Native flag/settings checks, exact observed identity, actual
+tool canaries, usage/isolation gates and continuation authorization still apply.
 
 Schema-5 packets freeze the resolved policy and its provenance with contract artifacts,
 head/base and packet hashes. Results/captures bind that policy and preserve the exact

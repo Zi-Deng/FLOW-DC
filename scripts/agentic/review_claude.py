@@ -98,10 +98,14 @@ def managed_controls():
     )
 
 
-def check_controls(binary, settings):
-    if settings.get("model") not in review_policy.MODELS["claude-code"] or settings != trusted_settings(
-        {"model": settings.get("model")}
-    ):
+def check_controls(binary, settings, policy=None):
+    if policy is not None:
+        review_policy.validate_policy(policy)
+        if policy["provider"] != "claude-code" or settings != trusted_settings(policy):
+            raise WorkflowError("Trusted Claude settings differ from the approved isolation policy")
+    elif settings.get("model") not in review_policy.MODELS["claude-code"]:
+        raise WorkflowError("Claude settings require bound exact-model compatibility")
+    if settings != trusted_settings({"model": settings.get("model")}):
         raise WorkflowError("Trusted Claude settings differ from the approved isolation policy")
     data = Path(binary).read_bytes()
     # The signed binary binds this pinned supported-schema subset. The native
@@ -128,7 +132,7 @@ def preflight(repo, policy):
     token = claude_credentials.read()
     managed_controls()
     binary = review_cli.executable(repo, "claude-code")
-    check_controls(binary, trusted_settings(policy))
+    check_controls(binary, trusted_settings(policy), policy)
     with tempfile.TemporaryDirectory(prefix="agentic-claude-controls-") as temporary:
         env = environment(Path(temporary), "")
         env.pop("CLAUDE_CODE_OAUTH_TOKEN")

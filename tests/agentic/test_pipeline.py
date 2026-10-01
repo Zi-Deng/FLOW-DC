@@ -75,6 +75,34 @@ class PipelineFixture(GitFixture):
 
 
 class PipelineTests(PipelineFixture):
+    def test_prepared_model_compatibility_change_requires_fresh_packet(self):
+        entry = {
+            "provider": "copilot",
+            "model": "gpt-fixture-99",
+            "efforts": ["default"],
+            "cli_version": "1.0.83",
+            "adapter": "copilot-session-events-v2",
+            "evidence": [
+                "https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-command-reference"
+            ],
+        }
+        cfg = workflow.configuration(self.root)
+        cfg["review_model_extensions"] = [entry]
+        workflow.write_json(self.root / ".agentic/config.json", cfg)
+        git(self.root, "commit", "-am", "declare fixture model compatibility")
+        first = pipeline.review_task(self.repo, 12, review_model=entry["model"])
+        packet = Path(first["directory"]) / "metadata.json"
+        original = packet.read_bytes()
+        entry["efforts"].append("high")
+        workflow.write_json(self.root / ".agentic/config.json", cfg)
+        git(self.root, "commit", "-am", "extend fixture model compatibility")
+        with self.assertRaisesRegex(workflow.WorkflowError, "--fresh"):
+            pipeline.review_task(self.repo, 12, review_model=entry["model"])
+        self.assertEqual(packet.read_bytes(), original)
+        fresh = pipeline.review_task(self.repo, 12, review_model=entry["model"], fresh=True)
+        self.assertNotEqual(fresh["directory"], first["directory"])
+        self.assertEqual(self.model_runs, 0)
+
     def test_prepared_selection_is_immutable_and_fresh_provider_packet_is_explicit(self):
         result = pipeline.review_task(self.repo, 12, review_provider="claude-code")
         directory = Path(result["directory"])
@@ -106,6 +134,21 @@ class PipelineTests(PipelineFixture):
                 pipeline.review_task(self.repo, 12, execute=True, review_provider="claude-code")
             with self.assertRaisesRegex(workflow.WorkflowError, "continuation"):
                 pipeline.review_task(self.repo, 12, execute=True, fresh=True, review_provider="claude-code")
+        self.assertEqual(self.model_runs, 1)
+
+    def test_attempted_recovery_does_not_resolve_obsolete_saved_selection(self):
+        import review_policy
+
+        with patch.object(review, "review", side_effect=self.model_double):
+            first = pipeline.review_task(self.repo, 12, execute=True)
+        with (
+            patch.object(review_policy, "resolve", side_effect=workflow.WorkflowError("Obsolete selection")),
+            patch.object(review, "review", side_effect=AssertionError("Recovery cannot infer")),
+        ):
+            recovered = pipeline.review_task(self.repo, 12, execute=True, publish=True)
+            self.assertEqual(recovered["review_policy"], first["review_policy"])
+            with self.assertRaisesRegex(workflow.WorkflowError, "Obsolete selection"):
+                pipeline.review_task(self.repo, 12, fresh=True)
         self.assertEqual(self.model_runs, 1)
 
     def test_partial_report_is_published_without_readiness_designation(self):

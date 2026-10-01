@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import copy
 import os
+import re
 import stat
+from urllib.parse import urlsplit
 
 from copilot_policy import CLI_ARCHIVE_SHA256, CLI_VERSION
 from tasks import atomic_json, plain_path, private_directory
@@ -61,13 +63,103 @@ PROVIDERS = {
 }
 
 
-def choices(provider, model=None, effort=None):
+def model_extensions(cfg):
+    """Validate trusted compatibility declarations, never discover/fetch models.
+
+    These declarations require operator verification against primary evidence.
+    URL syntax checks cannot establish that evidence's truth or account entitlement.
+    Records travel with packets so later configuration cannot reinterpret recovery.
+    """
+    entries = cfg.get("review_model_extensions", [])
+    if not isinstance(entries, list) or len(entries) > 64:
+        raise WorkflowError("Invalid review model compatibility declarations")
+    if entries and cfg.get("schema_version", 2) != 2:
+        raise WorkflowError("Model compatibility extensions require configuration schema 2")
+    result = {}
+    for entry in entries:
+        if not isinstance(entry, dict) or set(entry) != {
+            "provider",
+            "model",
+            "efforts",
+            "cli_version",
+            "adapter",
+            "evidence",
+        }:
+            raise WorkflowError("Incomplete model compatibility declaration")
+        provider, model = entry["provider"], entry["model"]
+        if not isinstance(provider, str) or provider not in PROVIDERS:
+            raise WorkflowError("Unsupported model compatibility provider")
+        spec = PROVIDERS[provider]
+        if (
+            not isinstance(model, str)
+            or len(model) > 128
+            or not re.fullmatch(r"[a-z][a-z0-9]*(?:[-.][a-z0-9]+)+", model)
+            or not re.search(r"\d", model)
+            or {"auto", "default", "latest"}.intersection(re.split(r"[-.]", model))
+            or (provider == "claude-code" and not model.startswith("claude-"))
+            or model in MODELS[provider]
+            or (provider, model) in result
+        ):
+            raise WorkflowError("Model extension must name a unique exact model, not an alias or override")
+        efforts = entry["efforts"]
+        allowed = (
+            CLAUDE_EFFORTS
+            if provider == "claude-code"
+            else ["default", "none", "minimal", "low", "medium", "high", "xhigh", "max"]
+        )
+        if (
+            not isinstance(efforts, list)
+            or not efforts
+            or any(not isinstance(item, str) or item not in allowed for item in efforts)
+            or len(set(efforts)) != len(efforts)
+            or entry["cli_version"] != spec["cli"]["version"]
+            or entry["adapter"] != spec["adapter"]
+        ):
+            raise WorkflowError("Model extension is incompatible with pinned CLI/adapter/effort controls")
+        evidence = entry["evidence"]
+        if not isinstance(evidence, list) or not 1 <= len(evidence) <= 8:
+            raise WorkflowError("Model compatibility requires primary-source evidence references")
+        for reference in evidence:
+            if not isinstance(reference, str) or len(reference) > 512 or not reference.isascii():
+                raise WorkflowError("Invalid model compatibility evidence reference")
+            try:
+                url = urlsplit(reference)
+            except ValueError:
+                raise WorkflowError("Invalid model compatibility evidence reference") from None
+            domains = (
+                {"code.claude.com", "platform.claude.com"}
+                if provider == "claude-code"
+                else {"docs.github.com"}
+            )
+            if (
+                url.scheme != "https"
+                or url.netloc not in domains
+                or not url.path.startswith("/")
+                or url.query
+                or any(char.isspace() or ord(char) < 32 for char in reference)
+            ):
+                raise WorkflowError(
+                    "Model compatibility evidence must reference public primary documentation"
+                )
+        result[provider, model] = copy.deepcopy(entry)
+    return result
+
+
+def model_catalog(cfg):
+    catalog = copy.deepcopy(MODELS)
+    for (provider, model), entry in model_extensions(cfg).items():
+        catalog[provider][model] = entry["efforts"]
+    return catalog
+
+
+def choices(provider, model=None, effort=None, *, cfg=None):
     if not isinstance(provider, str) or provider not in PROVIDERS:
         raise WorkflowError("Unsupported review provider")
     spec = PROVIDERS[provider]
     model = spec["model"] if model is None else model
     effort = spec["effort"] if effort is None else effort
-    if not isinstance(model, str) or model not in MODELS[provider] or effort not in MODELS[provider][model]:
+    catalog = model_catalog(cfg or {})[provider]
+    if not isinstance(model, str) or model not in catalog or effort not in catalog[model]:
         raise WorkflowError("Unsupported exact review model/provider/effort combination")
     return {"provider": provider, "model": model, "effort": effort}
 
@@ -104,9 +196,9 @@ def budget(provider, cfg, *, diagnostic=False):
 
 
 def policy(selection, cfg, *, diagnostic=False):
-    selected = choices(**selection)
+    selected = choices(**selection, cfg=cfg)
     spec = PROVIDERS[selected["provider"]]
-    return {
+    value = {
         "schema_version": 1,
         **selected,
         "cli": copy.deepcopy(spec["cli"]),
@@ -114,6 +206,10 @@ def policy(selection, cfg, *, diagnostic=False):
         "billing_mode": spec["billing_mode"],
         "budget": budget(selected["provider"], cfg, diagnostic=diagnostic),
     }
+    extension = model_extensions(cfg).get((selected["provider"], selected["model"]))
+    if extension is not None:
+        value["model_compatibility"] = extension
+    return value
 
 
 def validate_policy(value):
@@ -122,7 +218,10 @@ def validate_policy(value):
     if type(value.get("schema_version")) is not int or value["schema_version"] != 1:
         raise WorkflowError("Unsupported review policy version")
     selected = {key: value.get(key) for key in ("provider", "model", "effort")}
-    selected = choices(**selected)
+    cfg = {}
+    if "model_compatibility" in value:
+        cfg["review_model_extensions"] = [value["model_compatibility"]]
+    selected = choices(**selected, cfg=cfg)
     limits = value.get("budget")
     if not isinstance(limits, dict):
         raise WorkflowError("Missing provider-specific budget")
@@ -132,21 +231,24 @@ def validate_policy(value):
         type(limits.get("extra_spend_authorized_usd")) is not int or limits["extra_spend_authorized_usd"] != 0
     ):
         raise WorkflowError("Claude extra spending is not authorized")
-    cfg = {
-        "review_timeout_seconds": limits.get("timeout_seconds"),
-        "review_max_ai_credits": limits.get("ai_credits"),
-        "review_max_estimated_usd": limits.get("estimated_usd"),
-    }
+    cfg.update(
+        {
+            "review_timeout_seconds": limits.get("timeout_seconds"),
+            "review_max_ai_credits": limits.get("ai_credits"),
+            "review_max_estimated_usd": limits.get("estimated_usd"),
+        }
+    )
     if value != policy(selected, cfg):
         raise WorkflowError("Immutable review policy differs from supported provider bindings")
     return value
 
 
 def defaults(cfg):
+    model_extensions(cfg)
     if cfg["schema_version"] == 1:
         return choices("copilot", cfg["copilot_model"], "default")
     return choices(
-        cfg.get("review_provider", "claude-code"), cfg.get("review_model"), cfg.get("review_effort")
+        cfg.get("review_provider", "claude-code"), cfg.get("review_model"), cfg.get("review_effort"), cfg=cfg
     )
 
 
@@ -154,7 +256,7 @@ def selection_path(repo):
     return plain_path(repo.main / ".agentic-local/review-selection.json")
 
 
-def read_selection(repo):
+def read_selection(repo, cfg=None):
     path = selection_path(repo)
     if not path.exists():
         return None
@@ -175,7 +277,7 @@ def read_selection(repo):
     if (
         not isinstance(selected, dict)
         or set(selected) != {"provider", "model", "effort"}
-        or selected != choices(**selected)
+        or selected != choices(**selected, cfg=cfg)
     ):
         raise WorkflowError("Invalid saved review selection")
     return selected
@@ -184,7 +286,7 @@ def read_selection(repo):
 def resolve(repo, cfg, *, review_provider=None, review_model=None, review_effort=None, saved=True):
     selected = defaults(cfg)
     sources = dict.fromkeys(selected, "trusted-default")
-    stored = read_selection(repo) if saved else None
+    stored = read_selection(repo, cfg) if saved else None
     if stored:
         selected, sources = stored, dict.fromkeys(selected, "saved-selection")
     if review_provider is not None:
@@ -235,7 +337,11 @@ def status(repo, cfg, **overrides):
         except (WorkflowError, OSError, ValueError, KeyError):
             blockers.append("matching_native_capability_diagnostic_unavailable")
     result["activation_blockers"] = blockers
-    result["supported_models"] = copy.deepcopy(MODELS[result["policy"]["provider"]])
+    result["supported_models"] = model_catalog(cfg)[result["policy"]["provider"]]
+    result["model_compatibility_sources"] = {
+        model: "built-in" if model in MODELS[result["policy"]["provider"]] else "trusted-config-declaration"
+        for model in result["supported_models"]
+    }
     result["note"] = (
         "Selection is not activation or evidence of included billing, isolation, capability or review readiness."
     )

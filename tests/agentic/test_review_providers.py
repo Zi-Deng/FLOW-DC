@@ -2,6 +2,7 @@
 
 import copy
 import json
+import subprocess
 from unittest.mock import patch
 
 from test_workflow import GitFixture, review, workflow
@@ -10,12 +11,177 @@ from test_workflow import GitFixture, review, workflow
 import review_coverage as coverage
 import review_coverage_v2 as frozen
 import review_policy as policy
+from claude_fixtures import native_events
 from review_fixtures import stream
 
 
 class ProviderPolicyTests(GitFixture):
     def config(self, **fields):
         return {**workflow.configuration(self.root), **fields}
+
+    def extension(self, provider="claude-code"):
+        # Deliberately fictional IDs: these fixtures test the trusted declaration
+        # boundary, not actual provider support or entitlement for a future model.
+        return {
+            "provider": provider,
+            "model": "claude-fixture-99" if provider == "claude-code" else "gpt-fixture-99",
+            "efforts": ["medium"] if provider == "claude-code" else ["default", "high"],
+            "cli_version": "2.1.282" if provider == "claude-code" else "1.0.83",
+            "adapter": "claude-stream-json-2.1.282-v1"
+            if provider == "claude-code"
+            else "copilot-session-events-v2",
+            "evidence": [
+                "https://code.claude.com/docs/en/model-config"
+                if provider == "claude-code"
+                else "https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-command-reference"
+            ],
+        }
+
+    def test_configured_exact_models_bind_compatibility_and_survive_config_removal(self):
+        for provider in ("claude-code", "copilot"):
+            entry = self.extension(provider)
+            cfg = self.config(review_model_extensions=[entry])
+            selected = policy.save_selection(
+                self.repo, cfg, review_provider=provider, review_model=entry["model"]
+            )["policy"]
+            self.assertEqual(selected["model_compatibility"], entry)
+            self.assertEqual(policy.resolve(self.repo, cfg)["policy"], selected)
+            self.assertEqual(policy.validate_policy(copy.deepcopy(selected)), selected)
+            # Saved choices are not authority to invent model compatibility.
+            with self.assertRaises(workflow.WorkflowError):
+                policy.resolve(self.repo, self.config())
+            # Detached recovery validates the frozen declaration, not today's config.
+            changed = copy.deepcopy(selected)
+            changed["model_compatibility"]["cli_version"] = "future-version"
+            with self.assertRaises(workflow.WorkflowError):
+                policy.validate_policy(changed)
+            policy.selection_path(self.repo).unlink()
+
+    def test_model_extension_rejects_aliases_conflicts_and_unverified_contracts(self):
+        entry = self.extension()
+        bad = [
+            {**entry, "model": model}
+            for model in ("opus", "claude-auto-99", "claude-latest-99", "claude-fixture-99[1m]", "--model-99")
+        ]
+        bad += [
+            {**entry, "cli_version": "2.1.283"},
+            {**entry, "adapter": "unknown-telemetry"},
+            {**entry, "efforts": ["default"]},
+            {**entry, "efforts": ["medium", "medium"]},
+            {**entry, "evidence": []},
+            {**entry, "evidence": ["https://example.invalid/model"]},
+            {**entry, "evidence": ["https://code.claude.com/docs/en/model-config?token=private"]},
+            {**entry, "model": "claude-opus-5-5"},
+        ]
+        for item in bad:
+            with self.subTest(item=item), self.assertRaises(workflow.WorkflowError):
+                policy.resolve(self.repo, self.config(review_model_extensions=[item]), saved=False)
+        with self.assertRaises(workflow.WorkflowError):
+            policy.resolve(self.repo, self.config(review_model_extensions=[entry, entry]), saved=False)
+        with self.assertRaises(workflow.WorkflowError):
+            policy.resolve(self.repo, self.config(schema_version=1, review_model_extensions=[entry]))
+        with self.assertRaises(workflow.WorkflowError):
+            policy.resolve(
+                self.repo,
+                self.config(review_model_extensions=[entry]),
+                review_provider="claude-code",
+                review_model=entry["model"],
+                review_effort="max",
+            )
+
+    def test_configured_native_model_requires_bound_settings_and_exact_observed_identity(self):
+        import claude_telemetry
+        import review_claude
+
+        self.commit_task()
+        entry = self.extension()
+        cfg = self.config(review_model_extensions=[entry])
+        path = self.root / ".agentic/config.json"
+        workflow.write_json(path, cfg)
+        directory = review.prepare(
+            self.repo, 31, 12, 1234, review_provider="claude-code", review_model=entry["model"]
+        )
+        meta = review.verify_packet(directory)
+        selected = meta["review_policy"]
+        settings = review_claude.trusted_settings(selected)
+        with self.assertRaisesRegex(workflow.WorkflowError, "bound exact-model"):
+            review_claude.check_controls("/not-opened", settings)
+        # All preflight controls are still required for a declared model. This
+        # deliberately invalid binary cannot pass by supplying a declaration.
+        binary = self.parent / "invalid-native"
+        binary.write_bytes(b"missing-native-controls")
+        with self.assertRaisesRegex(workflow.WorkflowError, "required isolation control"):
+            review_claude.check_controls(binary, settings, selected)
+        packet = directory / "packet"
+        rows = native_events(packet, packet, "fixture", model=entry["model"])
+        raw = "\n".join(json.dumps(row) for row in rows)
+        report, diagnostics = claude_telemetry.capture(raw, packet, packet, selected, "fixture")
+        self.assertTrue(coverage.assess(packet, report, diagnostics, policy=selected)["qualified"])
+        review.save_result(directory, meta, report, diagnostics, "2.1.282")
+        original = (directory / "review-result.json").read_bytes()
+        (directory / "review-result.json").unlink()
+        workflow.write_json(path, self.config(review_model_extensions=[]))
+        with patch.object(review_claude, "execute", side_effect=AssertionError("No inference on recovery")):
+            review.recover_review(self.repo, directory)
+        self.assertEqual((directory / "review-result.json").read_bytes(), original)
+        rows[0]["model"] = "claude-opus-5-5"
+        raw = "\n".join(json.dumps(row) for row in rows)
+        report, diagnostics = claude_telemetry.capture(raw, packet, packet, selected, "fixture")
+        self.assertFalse(coverage.assess(packet, report, diagnostics, policy=selected)["qualified"])
+
+    def test_configured_copilot_model_reaches_native_command_without_substitution(self):
+        import review_cli
+        import review_process
+        from review_fixtures import HELP, provider_response
+
+        self.commit_task()
+        entry = self.extension("copilot")
+        cfg = self.config(review_model_extensions=[entry])
+        workflow.write_json(self.root / ".agentic/config.json", cfg)
+        with patch.object(review_cli, "executable", return_value="/fixture/copilot"):
+            status = policy.status(self.repo, cfg, review_provider="copilot", review_model=entry["model"])
+        self.assertEqual(status["model_compatibility_sources"][entry["model"]], "trusted-config-declaration")
+        self.assertEqual(status["model_compatibility_sources"]["claude-opus-5"], "built-in")
+        directory = review.prepare(
+            self.repo,
+            31,
+            12,
+            1234,
+            review_provider="copilot",
+            review_model=entry["model"],
+            review_effort="high",
+        )
+        ordinary = review.run
+
+        def native_info(args, **kwargs):
+            if args[1:] in (["--help"], ["--version"]):
+                return subprocess.CompletedProcess(args, 0, HELP if args[1] == "--help" else "1.0.83", "")
+            return ordinary(args, **kwargs)
+
+        def capture(args, **kwargs):
+            self.assertEqual(args[args.index("--model") + 1], entry["model"])
+            self.assertEqual(args[args.index("--effort") + 1], "high")
+            stdout = provider_response(args, kwargs, directory / "packet")
+            state = kwargs["env"]["COPILOT_HOME"]
+            session = args[args.index("--session-id") + 1]
+            from pathlib import Path
+
+            event_file = Path(state) / "session-state" / session / "events.jsonl"
+            rows = [json.loads(line) for line in event_file.read_text().splitlines()]
+            rows[0]["data"]["selectedModel"] = entry["model"]
+            event_file.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+            return subprocess.CompletedProcess(args, 0, stdout, b"")
+
+        with (
+            patch.dict("os.environ", {"COPILOT_GITHUB_TOKEN": "test-only-token"}),
+            patch.object(review_cli, "executable", return_value="/fixture/copilot"),
+            patch.object(review, "run", side_effect=native_info),
+            patch.object(review_process, "capture", side_effect=capture) as bounded,
+        ):
+            review.review(self.repo, directory)
+        bounded.assert_called_once()
+        self.assertEqual(review.verify_packet(directory)["requested_model"], entry["model"])
+        self.assertTrue(review.coverage_ready(directory))
 
     def test_schema_two_defaults_to_claude_but_schema_one_keeps_copilot(self):
         cfg = self.config(schema_version=2)

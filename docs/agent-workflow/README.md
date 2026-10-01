@@ -8,7 +8,7 @@ flowchart LR
     P --> W[Isolated worktree]
     W --> E[Astra executor]
     E --> C[Draft PR and CI]
-    C --> R[Fresh Opus review]
+    C --> R[Fresh selected-model review]
     R --> A[Evidence and findings assessment]
     A --> H[Human finish command]
     R -->|Authorized repair, same executor UUID| E

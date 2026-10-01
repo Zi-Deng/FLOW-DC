@@ -341,13 +341,6 @@ def review_task(
     with store.locked(f"issue-{number}") as state:
         contract = verify_contract(repo, state)
         pr = current_task_pr(repo, state)
-        selection = review_policy.resolve(
-            repo,
-            configuration(repo.root),
-            review_provider=review_provider,
-            review_model=review_model,
-            review_effort=review_effort,
-        )
         rounds = state.setdefault("review_rounds", [])
         binding = {
             "head_sha": pr["head"]["sha"],
@@ -367,7 +360,15 @@ def review_task(
         ):
             # Recovery and publication are bound to the attempted packet, even if
             # the operator subsequently changes the default or saved selection.
-            selection["policy"] = review_policy.validate_policy(previous["review_policy"])
+            selection = {"policy": review_policy.validate_policy(previous["review_policy"])}
+        elif not legacy_recovery:
+            selection = review_policy.resolve(
+                repo,
+                configuration(repo.root),
+                review_provider=review_provider,
+                review_model=review_model,
+                review_effort=review_effort,
+            )
         if not legacy_recovery:
             binding["review_policy_digest"] = digest(selection["policy"])
             if (

@@ -21,7 +21,7 @@ skills do not appear, restart the session. See [OpenAI's skills documentation](h
 | Plan an existing issue | `$agentic-plan Issue #123` | Proposed plan comment, then recorded human approval |
 | Prepare the workspace | `$agentic-prepare Issue #123` | Registered sibling worktree and branch |
 | Implement an approved task | `$agentic-implement Issue #123` | Dedicated Astra executor, coherent commits, checks and draft PR |
-| Review the current PR | `$agentic-review PR #456` | Fresh Opus COMMENT review bound to the current head/base |
+| Review the current PR | `$agentic-review PR #456` | Fresh selected-model COMMENT review bound to the current head/base |
 | Address review findings | `$agentic-repair PR #456` | Same Astra session, repairs and public dispositions |
 | Prepare to merge | `$agentic-finish PR #456` | Evidence assessment and exact human-run finishing command |
 
@@ -42,7 +42,7 @@ flowchart TD
   A -->|Yes| W[Prepare sibling worktree]
   W --> I[Start dedicated Astra executor]
   I --> D[Commit, publish draft PR and check evidence]
-  D --> R[Fresh isolated Opus review]
+  D --> R[Fresh isolated selected-model review]
   R --> F{Supported material findings?}
   F -->|Yes| X[Resume original Astra UUID and publish dispositions]
   X --> D
@@ -85,10 +85,12 @@ change the active model of an arbitrary host conversation; use Astra for coordin
 and the explicit managed launcher for implementation. Cheaper-model changes require
 a separate deliberate policy decision.
 
-The managed launcher and review coordinator explicitly enforce the selected Astra/Opus
-policy. A deliberate model change must update those policy guards and their validation
-along with configuration and role guidance; editing a model ID alone is insufficient
-for the managed path.
+The managed launcher enforces Astra implementation; the review coordinator binds
+the selected provider/model/effort policy to each packet and round. Supported reviewer
+changes use explicit flags, saved selection or trusted configuration. New exact models
+need verified compatibility declarations as described in [PROVIDERS.md](PROVIDERS.md);
+changing CLI controls or telemetry protocols still requires adapter implementation
+and validation. A selection never bypasses activation or continuation requirements.
 
 The managed executor implements the approved scope, runs checks, prepares commits and
 returns publication text. The coordinator checks actual Git state and performs GitHub
