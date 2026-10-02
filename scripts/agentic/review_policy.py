@@ -244,7 +244,9 @@ def validate_policy(value):
 
         if selected["provider"] != "claude-code":
             raise WorkflowError("Native authentication cannot bind a different provider")
-        expected["authentication"] = claude_native_auth.validate_binding(value["authentication"])
+        expected["authentication"] = claude_native_auth.validate_binding(
+            value["authentication"], current=False
+        )
     if value != expected:
         raise WorkflowError("Immutable review policy differs from supported provider bindings")
     return value
@@ -337,7 +339,6 @@ def status(repo, cfg, **overrides):
         native = claude_native_auth.status(result["policy"]["budget"]["timeout_seconds"])
         result["native_authentication"] = native
         blockers.extend(native["blockers"])
-        blockers.append("native_login_callback_policy_isolation_unverified")
         try:
             managed_controls()
         except (WorkflowError, OSError):

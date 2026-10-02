@@ -54,7 +54,7 @@ not establish that every fallback pivot or settings-precedence path is covered.
 CLAUDE_CODE_MAX_RETRIES was removed: it cannot promise first-401 termination.
 No identity, remote-policy suppression or auth-retry-disable control was added.
 
-## Setup activation blocker
+## Historical setup activation blocker — 2026-10-01
 
 The correctly selected personal-Max path has a concrete native ordering:
 startOAuthFlow awaits Bjn(access_token), maps the actual profile to subscriptionType,
@@ -91,3 +91,53 @@ A fake native child tests the guarded setup lifecycle. It is not a real login an
 does not qualify the callback path. Parser and transport tests preserve exact
 terminal text and frozen token-mode history. All actual capability diagnostics
 remain blocked and the existing two-attempt allowance is unchanged.
+
+## Interactive setup qualification — 2026-10-02
+
+The approved revision-3 contract replaces the historical pre-callback setup barrier
+above with human-controlled standard dedicated native login and strict post-return
+Max registration. It does not change reviewer isolation. The exact setup argv is
+`<verified absolute binary> --safe-mode --restricted --setting-sources '' auth login --claudeai`.
+No `--bare`, provider override or callback-disable switch is added. Endpoint policy
+is inspected before launch and again after native return before registration.
+
+The root `auth` / `login` declaration dispatches `authLogin` in chunk-hrk5qt0f.
+Its `--claudeai` option selects subscription login. The native safe-mode option
+explicitly preserves normal authentication and administrator policy. Early
+`OBn` parses setting sources and restricted mode, excludes discovered settings,
+and sets the restriction state; this is not a Max-only auth filter. The human
+browser flow still performs normal vendor OAuth/profile/bootstrap callbacks.
+Unknown or non-Max returned records are rejected before any subsequent wrapper
+status, diagnostic or review call. No native authenticated subcommand was run to
+produce this static qualification.
+
+| Additional pinned source boundary | Bytes | SHA-256 |
+| --- | --- | --- |
+| auth/login dispatch | 210790998–210791664 | `f4e77eb4b7e24d9b12e9cba2ce8cb7717d1ddd00132e0874d7cfa831209e8243` |
+| safe-mode option semantics | 210761500–210762500 | `8d346c9850a36454af018fed037980cf4441e5b036fa9cfb58bc4d05355148e5` |
+| early settings/restricted parsing | 205960089–205961400 | `9c1473feb91f37805ea5b2e1b81b09a24501c9950c2ff88cd9eb26cd62b0f549` |
+| authLogin handler | 217319974–217323800 | `22c4dc9c6366ec957a127d75030ab7ace24bd60787b6043f04f5fdfcce74ddd5` |
+
+The runtime setup qualification checks these ranges and full pinned binary digest
+after independent signed-manifest verification. Exact bytes bind this audit; hash
+matches alone do not prove understanding, live identity or reviewer capability.
+Authentication payload schema 2 binds `human-interactive-native-v1` setup provenance.
+Revision-2 bindings/completion records remain frozen and inactive, with exact
+recovery/publication semantics. Test children exercise actual post-return refusal,
+endpoint changes, failed/interrupted setup preservation and no subsequent call.
+They are synthetic lifecycle evidence, not a human login or live diagnostic.
+
+A further offline controlled execution on 2026-10-02 used the exact pinned source
+functions `dF`, `ult`, `MR`/eligibility, `da`, `pF` and the unchanged-token exhaustion
+branch. Dependencies were explicitly stubbed with a fresh first-party native
+access-only record, no profile/API/FD/token override, no remote child or SDK token
+callback. The checks observed native Max selection and remote ineligibility,
+Team/Enterprise/null negative controls, no refresh before lock/network, and preserved
+Max eligibility after 401 cache invalidation. The actual exhaustion branch allowed
+its first unchanged-token transition and rejected its second; it is not a measurement
+of HTTP requests or a replay of successful model output. No native CLI, credentials,
+network or model was used. The private reproducible harness and sanitized receipt
+are `qualify-native-auth-source.py` and `native-auth-source-v3-evidence.json` in the
+issue handoff. These checks narrow the earlier controlled-error-path omission;
+they do not certify all dependency transitions or whole-process reviewer isolation.
+Live diagnostics and effective reviewer controls remain separate activation evidence.

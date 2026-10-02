@@ -277,12 +277,27 @@ class ProviderPolicyTests(GitFixture):
             review.verify_packet(directory)
 
     def test_frozen_schema_five_token_record_recovers_without_authentication_or_relabelling(self):
+        self.frozen_authentication_recovery(None)
+
+    def test_frozen_native_revision_two_recovers_exactly_without_current_authentication(self):
+        self.frozen_authentication_recovery(
+            {
+                "schema_version": 1,
+                "mode": "native-max-access-only-v1",
+                "registration_id": "11111111-1111-4111-8111-111111111111",
+                "generation_id": "22222222-2222-4222-8222-222222222222",
+            }
+        )
+
+    def frozen_authentication_recovery(self, authentication):
         import claude_telemetry
 
         self.commit_task()
         directory = review.prepare(self.repo, 31, 12, 1234, review_provider="claude-code")
         meta = review.verify_packet(directory)
         meta["review_policy"].pop("authentication")
+        if authentication is not None:
+            meta["review_policy"]["authentication"] = authentication
         review.atomic_json(directory / "metadata.json", meta)
         packet = directory / "packet"
         rows = native_events(packet, packet, "legacy-fixture")
@@ -307,9 +322,11 @@ class ProviderPolicyTests(GitFixture):
             review.recover_review(self.repo, directory)
             self.assertEqual(review.publication_body(directory), envelope)
         self.assertEqual(original, {name: (directory / name).read_bytes() for name in original})
-        self.assertNotIn("authentication", review.verify_packet(directory)["review_policy"])
+        self.assertEqual(
+            review.verify_packet(directory)["review_policy"].get("authentication"), authentication
+        )
         self.assertFalse(review.coverage_ready(directory))
-        with self.assertRaisesRegex(workflow.WorkflowError, "authentication binding"):
+        with self.assertRaisesRegex(workflow.WorkflowError, "authentication binding|setup provenance"):
             review.qualification(directory, require=True)
 
     def test_typed_budgets_reject_unbounded_and_paid_claude_policy(self):

@@ -14,11 +14,11 @@ See the [native effort table](https://code.claude.com/docs/en/model-config#adjus
 and [Copilot model reference](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-command-reference#supported-models). Aliases,
 unregistered models/providers, and incompatible effort combinations fail before inference.
 
-**Migration activation is incomplete.** Claude execution currently fails closed on
-unverified native-login callback policy isolation. No successful native diagnostic is
-claimed. Neither a workstation login, binary inspection nor synthetic tests establish
-isolated tool capability or included-usage billing. The diagnostic entrypoint also
-refuses inference until this isolation blocker is resolved; it has no force option.
+**Migration activation is incomplete.** Human-terminal setup is available under the
+approved interactive-login boundary. Reviewer calls still require actual dedicated
+Max credentials, a current billing receipt, verified reviewer controls and both
+successful native diagnostics. Neither a workstation login, binary inspection nor
+synthetic tests establish isolated tool capability or included-usage billing.
 
 ## Inspect or deliberately select
 
@@ -121,7 +121,7 @@ documents the release trust chain.
 
 ## Dedicated native Max login and billing receipt
 
-The approved [native-login revision](https://github.com/Zi-Deng/FLOW-DC/issues/33#issuecomment-5938298025)
+The approved [interactive-setup revision](https://github.com/Zi-Deng/FLOW-DC/issues/33#issuecomment-5959064895)
 replaces injected setup tokens. The ordinary Claude login/configuration must never
 be read, copied or modified. The old `claude-subscription-setup` command refuses;
 existing token/receipt files remain protected and unused, without migration or logout.
@@ -133,9 +133,24 @@ python3 -B scripts/agentic/workflow.py claude-login-setup --paid-usage-disabled
 python3 -B scripts/agentic/workflow.py claude-login-setup --renew --paid-usage-disabled
 ```
 
-**These commands currently stop before authentication.** Native setup callback
-isolation remains unverified. There is no force option or manual credential-import
-route. Do not run the native login separately to bypass the helper's blocker.
+Run setup yourself in a private real terminal; agents must not run browser login
+in a tool terminal or capture its output. Setup uses the verified absolute native
+binary with `--safe-mode --restricted --setting-sources '' auth login --claudeai`.
+The flags exclude ordinary customization/settings discovery; they do not suppress
+normal vendor login-time callbacks or enforce a pre-return Max-only filter. Those
+callbacks are explicitly accepted for human setup and renewal only. Select your
+personal Max account. After native return, the helper checks genuine Max metadata,
+account, full lifetime, billing assertion and endpoint controls before registration.
+Non-Max, failed or interrupted setup remains inactive and private, without retry,
+revocation or automatic cleanup. Reviewer tool restrictions and remote-policy
+ineligibility are separate requirements, unchanged by this setup boundary.
+
+Until this PR merges, the control checkout does not contain the new helper. After
+checking the exact committed candidate source and its validation, the coordinator
+provides its absolute `scripts/agentic/workflow.py` path for the human to run from
+the clean control checkout. This uses the control's verified CLI registration and
+the candidate's implementation without changing main or importing ordinary auth.
+The same candidate command with `--help` is safe to inspect without authentication.
 
 The implementation stages each explicit browser login under
 `~/.config/flowdc-agentic/claude-review-login/generations/<opaque-generation>/`, with
@@ -176,7 +191,7 @@ the current preflight-validated generation from one live-diagnostic-tested. With
 that flag, a new generation cannot reuse prior capability evidence. No renewal resets
 diagnostic allowance or relabels the generation actually observed by a diagnostic.
 
-## Isolation and the unresolved native boundary
+## Reviewer isolation and the separate setup boundary
 
 Each invocation uses a fresh inert workspace and a fixed minimal environment.
 No injected token/FD, API/profile/cloud/endpoint override or ordinary login is
@@ -197,11 +212,11 @@ This is CLI containment, not an OS sandbox against a compromised signed executab
 On 2026-10-01, static inspection of signed native 2.1.282 confirmed these reader
 branches and the no-refresh return. The native OAuth flow resolves actual
 Max profile metadata before persistence; cache reset/helper arming alone does not
-prove a managed-policy effect. The unresolved boundary is an unintended non-Max
-selection: native login performs subsequent authenticated operations before the
-wrapper can reject it. No verified pre-return Max-only filter is available. Setup
-therefore remains blocked pending the coordinator's precise setup-boundary decision
-and contract reconciliation; ordinary login is not offered as a workaround.
+prove a managed-policy effect. On 2026-10-02, the maintainer accepted standard
+human-controlled dedicated login callbacks, including callbacks before rejection
+of a non-Max selection. Post-return rejection cannot undo those native effects.
+No pre-return Max-only filter is claimed. This acceptance does not allow ordinary
+login import, reviewer policy bypass, API fallback or agent-run authentication.
 [The pinned-source audit](NATIVE-AUTH-AUDIT.md) records offsets, conditions and omissions.
 No authenticated doctor/status/login command or inference was used for this audit.
 A doctor probe is not a before-effect barrier: initialization precedes its handler.
@@ -268,6 +283,16 @@ concatenation, report synthesis or inference repair is performed. Partial findin
 remain publishable as incomplete, while all ordinary readiness gates remain strict.
 
 ## Historical records, hosted operation and this migration
+
+Interactive setup uses authentication payload schema 2 with
+`setup_provenance: human-interactive-native-v1` and a version-2 setup completion
+record. The access-only auth mode is unchanged. Frozen authentication schema 1 and
+old token-mode packets retain their original hashes, reports and publication bytes
+for recovery, but cannot execute, retain activation through lineage, or establish
+current readiness. A provenance/generation change requires explicit fresh packet
+preparation; no old blocked store is silently upgraded or replaced. No setup or
+renewal creates a new diagnostic allowance.
+
 
 Schema 1 publication retains its original bytes/envelope. Schema 2 uses the frozen
 `review_coverage_v1.py`; schema 3 uses `review_coverage_v2.py` and

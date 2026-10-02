@@ -90,17 +90,36 @@ def managed_controls():
         raise WorkflowError("Managed Claude controls require verification; isolated execution refused")
 
 
+def native_setup_command(binary):
+    # These native flags exclude ordinary customization/settings discovery. They
+    # do not intercept auth login's normal vendor callbacks or filter Max early.
+    return [binary, "--safe-mode", "--restricted", "--setting-sources", "", "auth", "login", "--claudeai"]
+
+
 def native_setup_controls(binary):
+    """Qualify human setup independently of print-mode reviewer settings.
+
+    Exact signed identity is verified by review_cli before this local byte check.
+    The pinned dispatch calls authLogin, and its normal OAuth/profile/bootstrap
+    callbacks are accepted only for human setup. See NATIVE-AUTH-AUDIT.md.
+    """
+    import hashlib
+
     managed_controls()
-    check_controls(binary, trusted_settings(review_policy.policy(review_policy.choices("claude-code"), {})))
-    # The real OAuth flow resolves subscriptionType before ERe/$Wn persistence.
-    # Cache reset/helper arming does not prove an effect on the genuine Max path.
-    # However auth login has no verified pre-return Max-only filter: ERe performs
-    # subsequent authenticated operations before a wrapper can reject a non-Max
-    # selection. Keep the approved setup boundary until explicitly reconciled.
-    raise WorkflowError(
-        "Native login callback policy isolation remains unverified; setup is blocked before authentication"
+    data = Path(binary).read_bytes()
+    if hashlib.sha256(data).hexdigest() != review_policy.PROVIDERS["claude-code"]["cli"]["binary_sha256"]:
+        raise WorkflowError("Native setup dispatch differs from the audited pinned binary")
+    # Reproducible source ranges: auth command dispatch, safe-mode declaration,
+    # early settings/restricted parsing, and actual authLogin handler. Matching
+    # bytes bind the audit; they are not a live isolation or Max identity proof.
+    ranges = (
+        (210790998, 210791664, "f4e77eb4b7e24d9b12e9cba2ce8cb7717d1ddd00132e0874d7cfa831209e8243"),
+        (210761500, 210762500, "8d346c9850a36454af018fed037980cf4441e5b036fa9cfb58bc4d05355148e5"),
+        (205960089, 205961400, "9c1473feb91f37805ea5b2e1b81b09a24501c9950c2ff88cd9eb26cd62b0f549"),
+        (217319974, 217323800, "22c4dc9c6366ec957a127d75030ab7ace24bd60787b6043f04f5fdfcce74ddd5"),
     )
+    if any(hashlib.sha256(data[start:end]).hexdigest() != expected for start, end, expected in ranges):
+        raise WorkflowError("Native setup source qualification differs from the pinned audit")
 
 
 def check_controls(binary, settings, policy=None):

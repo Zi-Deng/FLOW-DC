@@ -173,7 +173,7 @@ class NativeAuthTests(unittest.TestCase):
             }
             storage.write("registration.json", registration)
             storage.write(
-                "setup-attempt.json", {"schema_version": 1, "authentication": binding, "status": "completed"}
+                "setup-attempt.json", {"schema_version": 2, "authentication": binding, "status": "completed"}
             )
             storage.write("receipt.json", receipt)
         return binding
@@ -289,7 +289,7 @@ class NativeAuthTests(unittest.TestCase):
                 pass
         self.assertFalse((base / "target").exists())
 
-    def test_endpoint_permission_error_and_setup_callback_block_before_auth(self):
+    def test_endpoint_permission_error_blocks_setup_before_auth(self):
         from unittest.mock import Mock
 
         import review_claude
@@ -304,14 +304,151 @@ class NativeAuthTests(unittest.TestCase):
             patch.object(auth.sys.stdout, "isatty", return_value=True),
             patch.object(auth.sys.stderr, "isatty", return_value=True),
             patch("review_cli.executable", return_value="/verified/claude"),
-            patch.object(review_claude, "managed_controls"),
-            patch.object(review_claude, "check_controls"),
+            patch.object(
+                review_claude, "managed_controls", side_effect=workflow.WorkflowError("Endpoint policy")
+            ),
             patch.object(auth.subprocess, "run") as child,
         ):
-            with self.assertRaisesRegex(workflow.WorkflowError, "callback policy isolation"):
+            with self.assertRaisesRegex(workflow.WorkflowError, "Endpoint policy"):
                 auth.setup(None, root=self.root, paid_usage_disabled=True)
         child.assert_not_called()
         self.assertFalse(self.root.exists())
+
+    def test_old_setup_provenance_is_recovery_only(self):
+        legacy = {
+            "schema_version": 1,
+            "mode": "native-max-access-only-v1",
+            "registration_id": "11111111-1111-4111-8111-111111111111",
+            "generation_id": "22222222-2222-4222-8222-222222222222",
+        }
+        with self.assertRaises(workflow.WorkflowError):
+            auth.validate_binding(legacy)
+        self.assertEqual(auth.validate_binding(legacy, current=False), legacy)
+        from review_policy import validate_policy
+
+        self.assertEqual(validate_policy(self.policy(legacy))["authentication"], legacy)
+        with patch.object(auth, "store") as private:
+            with self.assertRaises(workflow.WorkflowError):
+                with auth.snapshot(self.policy(legacy)):
+                    pass
+            with self.assertRaises(workflow.WorkflowError):
+                auth.capability_lineage(legacy, auth.new_binding(), 900)
+        private.assert_not_called()
+
+    def test_post_return_endpoint_change_prevents_registration(self):
+        import subprocess
+
+        calls = []
+
+        def native_login(args, **kwargs):
+            calls.append("native")
+            config = Path(kwargs["env"]["CLAUDE_CONFIG_DIR"])
+            for name, data in ((".credentials.json", self.credentials), (".claude.json", self.config)):
+                path = config / name
+                path.write_text(json.dumps(data))
+                path.chmod(0o600)
+            return subprocess.CompletedProcess(args, 0)
+
+        def endpoint():
+            if calls:
+                raise workflow.WorkflowError("Endpoint policy changed")
+
+        with (
+            patch.object(auth.sys.stdin, "isatty", return_value=True),
+            patch.object(auth.sys.stdout, "isatty", return_value=True),
+            patch.object(auth.sys.stderr, "isatty", return_value=True),
+            patch("review_cli.executable", return_value="/verified/claude"),
+            patch("review_claude.native_setup_controls"),
+            patch("review_claude.managed_controls", side_effect=endpoint),
+            patch.object(auth.subprocess, "run", side_effect=native_login) as child,
+        ):
+            with self.assertRaisesRegex(workflow.WorkflowError, "Endpoint policy changed"):
+                auth.setup(None, root=self.root, paid_usage_disabled=True)
+        self.assertEqual(child.call_count, 1)
+        self.assertFalse((self.root / "registration.json").exists())
+        self.assertEqual(json.loads((self.root / "setup-attempt.json").read_text())["status"], "started")
+
+    def test_nonmax_failed_and_interrupted_setup_stay_inactive_without_retry(self):
+        import subprocess
+
+        for outcome in ("pro", "team", "enterprise", "console", "unknown", "missing", "exit", "interrupt"):
+            with self.subTest(outcome=outcome):
+                root = self.root / outcome
+
+                def native_login(args, *, outcome=outcome, **kwargs):
+                    config = Path(kwargs["env"]["CLAUDE_CONFIG_DIR"])
+                    credentials = copy.deepcopy(self.credentials)
+                    if outcome == "missing":
+                        credentials["claudeAiOauth"].pop("subscriptionType")
+                    elif outcome not in {"exit", "interrupt"}:
+                        credentials["claudeAiOauth"]["subscriptionType"] = outcome
+                    for name, data in ((".credentials.json", credentials), (".claude.json", self.config)):
+                        path = config / name
+                        path.write_text(json.dumps(data))
+                        path.chmod(0o600)
+                    if outcome == "interrupt":
+                        raise KeyboardInterrupt
+                    return subprocess.CompletedProcess(args, 1 if outcome == "exit" else 0)
+
+                with (
+                    patch.object(auth.sys.stdin, "isatty", return_value=True),
+                    patch.object(auth.sys.stdout, "isatty", return_value=True),
+                    patch.object(auth.sys.stderr, "isatty", return_value=True),
+                    patch("review_cli.executable", return_value="/verified/claude"),
+                    patch("review_claude.native_setup_controls"),
+                    patch.object(auth.subprocess, "run", side_effect=native_login) as child,
+                    patch("review_process.capture") as inference,
+                ):
+                    with self.assertRaises(workflow.WorkflowError) as failure:
+                        auth.setup(None, root=root, paid_usage_disabled=True)
+                    self.assertNotIn("fixture-access", str(failure.exception))
+                    self.assertNotIn("fixture-refresh", str(failure.exception))
+                    self.assertEqual(child.call_count, 1)
+                    inference.assert_not_called()
+                self.assertFalse((root / "registration.json").exists())
+                self.assertFalse((root / "receipt.json").exists())
+                self.assertEqual(json.loads((root / "setup-attempt.json").read_text())["status"], "started")
+                self.assertTrue(list(root.rglob(".credentials.json")))
+                with self.assertRaises(workflow.WorkflowError):
+                    auth.current_binding(root=root)
+
+    def test_revision_two_store_is_not_upgraded_in_place(self):
+        binding = self.register_fixture()
+        legacy = {key: value for key, value in binding.items() if key != "setup_provenance"}
+        legacy["schema_version"] = 1
+        with auth.store(self.root) as storage:
+            for name in ("registration.json", "receipt.json", "setup-attempt.json"):
+                record = storage.read(name)
+                record["authentication"] = legacy
+                if name == "setup-attempt.json":
+                    record["schema_version"] = 1
+                storage.write(name, record, replace=True)
+        before = {p: p.read_bytes() for p in self.root.rglob("*") if p.is_file()}
+        with self.assertRaises(workflow.WorkflowError):
+            auth.current_binding(root=self.root)
+        self.assertEqual(before, {p: p.read_bytes() for p in before})
+
+    def test_setup_dispatch_refuses_name_only_or_modified_binary(self):
+        import review_claude
+
+        binary = Path(self.temp.name) / "claude"
+        binary.write_text("2.1.282 auth login --claudeai --safe-mode --restricted --setting-sources")
+        with patch.object(review_claude, "managed_controls"):
+            with self.assertRaisesRegex(workflow.WorkflowError, "audited pinned binary"):
+                review_claude.native_setup_controls(binary)
+        self.assertEqual(
+            review_claude.native_setup_command("/verified/claude"),
+            [
+                "/verified/claude",
+                "--safe-mode",
+                "--restricted",
+                "--setting-sources",
+                "",
+                "auth",
+                "login",
+                "--claudeai",
+            ],
+        )
 
     def test_guarded_manual_setup_and_renewal_keep_generations_and_never_import_login(self):
         import subprocess

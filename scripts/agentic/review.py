@@ -417,11 +417,13 @@ def coverage_ready(directory):
     """Current-policy readiness, distinct from an immutable historical assessment."""
     assessment = qualification(directory)
     meta = verify_packet(directory)
-    if (
-        meta.get("review_policy", {}).get("provider") == "claude-code"
-        and "authentication" not in meta["review_policy"]
-    ):
-        return False
+    if meta.get("review_policy", {}).get("provider") == "claude-code":
+        from claude_native_auth import validate_binding
+
+        try:
+            validate_binding(meta["review_policy"].get("authentication"))
+        except WorkflowError:
+            return False
     return meta.get("schema_version") == 5 and assessment["qualified"]
 
 

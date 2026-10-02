@@ -1,6 +1,6 @@
 """Guarded native Max registration and access-only invocation snapshots.
 
-Native setup is deliberately gated on verified callback isolation. Owner-writable
+Human setup permits normal vendor login callbacks; review does not. Owner-writable
 provenance is accounting, not server attestation or a cryptographic billing proof.
 No caller may import the ordinary login or manufacture a registration from it.
 """
@@ -26,6 +26,7 @@ from review_coverage_v2 import strict_json
 from workflow import WorkflowError
 
 MODE = "native-max-access-only-v1"
+SETUP_PROVENANCE = "human-interactive-native-v1"
 MAX_BYTES = 131072
 RECEIPT_SECONDS = 7 * 86400
 REFRESH_MARGIN = 300
@@ -39,22 +40,31 @@ def default_root():
 
 def new_binding(registration_id=None):
     return {
-        "schema_version": 1,
+        "schema_version": 2,
+        "setup_provenance": SETUP_PROVENANCE,
         "mode": MODE,
         "registration_id": registration_id or str(uuid.uuid4()),
         "generation_id": str(uuid.uuid4()),
     }
 
 
-def validate_binding(value):
+def validate_binding(value, *, current=True):
+    # Schema 1 is frozen revision-2 provenance, accepted only for exact historical
+    # policy/recovery. It never authorizes setup, snapshots, lineage or readiness.
+    fields = {"schema_version", "mode", "registration_id", "generation_id"}
+    if not isinstance(value, dict):
+        raise WorkflowError("Missing native authentication binding; prepare a fresh packet")
+    version = value.get("schema_version")
     if (
-        not isinstance(value, dict)
-        or set(value) != {"schema_version", "mode", "registration_id", "generation_id"}
-        or type(value["schema_version"]) is not int
-        or value["schema_version"] != 1
-        or value["mode"] != MODE
+        type(version) is not int
+        or version not in ({2} if current else {1, 2})
+        or set(value) != (fields | {"setup_provenance"} if version == 2 else fields)
+        or value.get("mode") != MODE
+        or version == 2
+        and value.get("setup_provenance") != SETUP_PROVENANCE
     ):
-        raise WorkflowError("Missing or incompatible native authentication binding; prepare a fresh packet")
+        raise WorkflowError("Incompatible native setup provenance; new guarded human setup required")
+
     for field in ("registration_id", "generation_id"):
         try:
             parsed = uuid.UUID(value[field])
@@ -345,7 +355,7 @@ def _load(storage, timeout, *, now=None, renewal=False):
     registration = storage.read("registration.json")
     completion = storage.read("setup-attempt.json")
     if type(completion.get("schema_version")) is not int or completion != {
-        "schema_version": 1,
+        "schema_version": 2,
         "authentication": registration.get("authentication"),
         "status": "completed",
     }:
@@ -529,7 +539,7 @@ def setup(repo, *, root=None, renew=False, paid_usage_disabled=False, retain_cap
         binding = new_binding(previous["authentication"]["registration_id"] if previous else None)
         storage.write(
             "setup-attempt.json",
-            {"schema_version": 1, "authentication": binding, "status": "started"},
+            {"schema_version": 2, "authentication": binding, "status": "started"},
             replace=renew,
         )
         generation = storage.root / "generations" / binding["generation_id"]
@@ -538,7 +548,7 @@ def setup(repo, *, root=None, renew=False, paid_usage_disabled=False, retain_cap
             os.close(fd)
         env = review_claude.environment(generation / "home", config=generation / "config")
         # Terminal streams intentionally inherited: OAuth URLs/codes are never captured.
-        args = [binary, "--safe-mode", "--restricted", "--setting-sources", "", "auth", "login", "--claudeai"]
+        args = review_claude.native_setup_command(binary)
         storage.check_location()
         if review_cli.executable(repo, "claude-code") != binary:
             raise WorkflowError("Native login executable changed before launch")
@@ -553,6 +563,10 @@ def setup(repo, *, root=None, renew=False, paid_usage_disabled=False, retain_cap
             ) from None
         if result.returncode:
             raise WorkflowError("Native login failed; private partial state retained")
+        # Native login may have delivered normal vendor policy before returning.
+        # Recheck endpoint policy and guarded paths before any activation writes.
+        review_claude.managed_controls()
+        storage.check_location()
         prefix = "generations/" + binding["generation_id"] + "/config/"
         files = {
             prefix + name: _digest(storage.raw(prefix + name))
@@ -588,15 +602,24 @@ def setup(repo, *, root=None, renew=False, paid_usage_disabled=False, retain_cap
             "recorded_at": now,
             "expires_at": now + RECEIPT_SECONDS,
         }
+        # Re-read the exact files used for validation, closing the split hash/read
+        # window before a successful registration can be exposed.
+        if any(_digest(storage.raw(name)) != checksum for name, checksum in files.items()):
+            raise WorkflowError("Native credential files changed during setup validation")
+        review_claude.managed_controls()
+        storage.check_location()
         storage.write("registration.json", registration, replace=renew)
         storage.write("receipt.json", receipt, replace=renew)
         storage.write(
             "setup-attempt.json",
-            {"schema_version": 1, "authentication": binding, "status": "completed"},
+            {"schema_version": 2, "authentication": binding, "status": "completed"},
             replace=True,
         )
         return {
             "authentication": binding,
+            "native_login_callbacks_permitted": True,
+            "post_return_max_validated": True,
+            "endpoint_controls_checked": True,
             "receipt_valid_days": 7,
             "operator_assertion_not_billing_guarantee": True,
             "live_diagnostics_established": False,
