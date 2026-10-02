@@ -3,10 +3,11 @@
 The reviewer receives committed artifacts in a fresh isolated provider process, without
 the implementation conversation or private memory. It performs static inspection through
 Claude native `Read`, `Grep`, `Glob` or explicit Copilot `view`, `grep`, `glob`.
-Read [provider selection and activation](PROVIDERS.md) before inference; Claude activation
-remains blocked by unverifiable remote managed controls and missing live evidence. The wrapper performs Git/GitHub operations outside the
-model process. Read [the coverage contract and migration runbook](COVERAGE.md) for the
-packet, adapter, evidence schema, recovery and all readiness gates.
+Read [provider selection and activation](PROVIDERS.md) before inference. Claude requires
+verified isolation controls, guarded native Max authentication with a current receipt
+and sufficient credential lifetime, and both successful live capability/isolation
+diagnostics. The wrapper performs Git/GitHub operations outside the model process.
+Read [the coverage contract and migration runbook](COVERAGE.md) for the packet, adapter, evidence schema, recovery and all readiness gates.
 
 ## Managed skill procedure
 
@@ -182,3 +183,14 @@ authorized after all credential, billing and isolation prerequisites exist. They
 a PR review; no diagnostic has established native capability. See PROVIDERS.md for
 activation blockers and the separate human handoff. Other tasks retain normal review.
 Repair stays on the original branch and Astra UUID. New commits invalidate readiness.
+
+## Migration status — 2026-10-02
+
+For issue #33, the coordinator verified guarded native Max login and preflight. The
+first live diagnostic nevertheless remained incomplete; successful authentication
+and preflight do not establish tool capability or coverage readiness. Its attempt
+still counts against the two-attempt allowance, leaving one slot while both distinct
+successful purposes remain required. The original report and sanitized evidence
+are preserved. The repaired adapter requires fresh matching live evidence; any
+additional recovery allowance requires an explicitly approved, bound amendment.
+No such allowance is implemented, and this status does not waive any normal gate.
