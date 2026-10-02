@@ -58,7 +58,7 @@ Each declaration has exactly these fields:
 | `model` | Exact lowercase versioned provider identifier, at most 128 characters; no aliases, auto/default/latest segments, paths or context modifiers |
 | `efforts` | Nonempty unique list of the model's verified efforts, within the pinned CLI's supported controls; Copilot `default` omits its effort flag |
 | `cli_version` | `2.1.282` for Claude or `1.0.83` for Copilot |
-| `adapter` | `claude-stream-json-2.1.282-v1` or `copilot-session-events-v2`, matching the provider |
+| `adapter` | `claude-stream-json-2.1.282-v2` or `copilot-session-events-v2`, matching the provider |
 | `evidence` | One to eight public HTTPS primary documentation URLs, without query strings or credentials; Claude documentation hosts for Claude, `docs.github.com` for Copilot |
 
 The list defaults to empty. Declarations cannot override built-in model entries or
@@ -256,11 +256,11 @@ still counts. No automatic retry or reset exists.
 python3 scripts/agentic/workflow.py diagnose-claude --review-provider claude-code
 ```
 
-This command is presently blocked by the isolation finding above. When that finding
-is resolved, normal activation additionally requires a matching successful diagnostic
-with exact native model/session identity, tools, terminal text, numerical accounting
-and unchanged packet/report evidence. Attempt 1 inspects actual Read/Grep/Glob results
-and harmless ordinary authentication source. Attempt 2 additionally requires a
+This command requires the guarded native setup, current receipt, sufficient lifetime,
+and verified isolation described above. Normal activation additionally requires both
+matching successful diagnostics with exact native model/session identity, tools,
+terminal text, numerical accounting and unchanged packet/report evidence. Attempt 1
+inspects actual Read/Grep/Glob results and harmless ordinary authentication source. Attempt 2 additionally requires a
 correlated native permission refusal for an existing wrapper-owned file outside the
 restricted workspace. A missing-file error or assistant assertion is insufficient.
 The two purposes are distinct and neither is retried. Both must pass for CLI/adapter
@@ -282,7 +282,22 @@ The terminal text is saved exactly even when partial; no substring extraction,
 concatenation, report synthesis or inference repair is performed. Partial findings
 remain publishable as incomplete, while all ordinary readiness gates remain strict.
 
+The v2 Claude stream adapter uses diagnostic schema 3. Its Read parser recognizes
+the pinned renderer's numbered final empty segment after a trailing newline, without
+crediting that segment as source. LF/CRLF and tab-aware separators are supported;
+ambiguous native/inventory line numbering and extra reminder/truncation text remain
+incomplete. A precisely shaped `system/status/requesting` event is accepted; compact,
+null/unknown status, hook, retry and fallback events remain unsupported. Subtypes,
+unknown agent names and rejected system payloads are retained only as bounded hash
+counts. `claude-code-guide` is a known built-in declaration, never permission to use
+Agent or delegated tools. See [the pinned source audit](NATIVE-TELEMETRY-AUDIT.md).
+
 ## Historical records, hosted operation and this migration
+
+The original `claude-stream-json-2.1.282-v1` adapter and diagnostic schema 2 retain
+frozen parsing/validation for exact recovery and publication. They cannot execute or
+establish current readiness. Adapter changes require fresh preparation and matching
+live capability evidence; they never upgrade a failed diagnostic or reset its ledger.
 
 Interactive setup uses authentication payload schema 2 with
 `setup_provenance: human-interactive-native-v1` and a version-2 setup completion

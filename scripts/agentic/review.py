@@ -405,6 +405,7 @@ def qualification(directory, *, require=False):
     if require and meta.get("review_policy", {}).get("provider") == "claude-code":
         from claude_native_auth import validate_binding
 
+        review_policy.require_current_adapter(meta["review_policy"])
         validate_binding(meta["review_policy"].get("authentication"))
     if require and not assessment["qualified"]:
         raise WorkflowError(
@@ -421,6 +422,7 @@ def coverage_ready(directory):
         from claude_native_auth import validate_binding
 
         try:
+            review_policy.require_current_adapter(meta["review_policy"])
             validate_binding(meta["review_policy"].get("authentication"))
         except WorkflowError:
             return False

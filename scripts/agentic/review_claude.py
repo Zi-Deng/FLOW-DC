@@ -153,6 +153,9 @@ def check_controls(binary, settings, policy=None):
 
 
 def preflight(repo, policy):
+    from review_policy import require_current_adapter
+
+    require_current_adapter(policy)
     claude_native_auth.validate_binding(policy.get("authentication"))
     managed_controls()
     binary = review_cli.executable(repo, "claude-code")
@@ -256,7 +259,9 @@ def execute(repo, directory, meta, *, diagnostic=False):
             "First use Read on capability/fixture.txt, Grep with output_mode content and -n true for its unique token, and Glob for capability/*.txt. "
             "Then Read START.txt, review-policy.txt and required-material.json; inspect every required range, including source and tests. "
             "Read report-schema.json and inventory-sha256.txt. Return one report-schema.json object with exact inventory digest, "
-            "findings, reviewed IDs, incomplete groups and limitations. Never infer inspection from listings or percentages. "
+            "findings, reviewed IDs, incomplete groups and limitations. Return only the complete JSON object, "
+            "without prose, Markdown fences or other surrounding text. Copy IDs exactly from required-material.json. "
+            "Never infer inspection from listings or percentages. "
             "No delegation, commands, edits or network tools. Do not claim approval or test execution. "
             "Keep the complete report under 50000 UTF-8 bytes. CI association and actual checkout are separate evidence."
         )

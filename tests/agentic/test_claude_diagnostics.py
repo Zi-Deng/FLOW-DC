@@ -118,3 +118,23 @@ class DiagnosticTests(GitFixture):
             diagnostics.require_activation(
                 self.repo, {**diagnostics.DEFAULT_POLICY, "authentication": AUTHENTICATION}
             )
+
+    def test_packet_inventory_ids_obey_the_supplied_report_schema(self):
+        import json
+        import re
+
+        def inspect(repo, directory, meta, *, diagnostic):
+            packet = directory / "packet"
+            schema = json.loads((packet / "report-schema.json").read_text())
+            pattern = schema["properties"]["reviewed"]["items"]["pattern"]
+            required = json.loads((packet / "required-material.json").read_text())["required"]
+            self.assertEqual(len({item["id"] for item in required}), len(required))
+            for item in required:
+                self.assertIsNotNone(re.fullmatch(pattern, item["id"]))
+            return self.execute(repo, directory, meta, diagnostic=diagnostic)
+
+        with (
+            patch.object(review_claude, "preflight"),
+            patch.object(review_claude, "execute", side_effect=inspect),
+        ):
+            self.run_diagnostic()

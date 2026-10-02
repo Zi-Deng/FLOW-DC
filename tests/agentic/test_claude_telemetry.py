@@ -356,3 +356,178 @@ class ClaudeTelemetryTests(GitFixture):
         )
         self.assertEqual(diag["telemetry"]["controlled_refusals"], 0)
         self.assertIn("controlled_refusal_not_observed", diag["reasons"])
+
+    def test_native_full_read_accepts_eof_marker_without_coverage_for_it(self):
+        files = {"example.txt": "first\r\n\tcafé\r\n"}
+        for separator in ("\t", ":"):
+            content = f"1{separator}first\n2{separator}\tcafé\n3{separator}"
+            spans, _, reason = telemetry.observation(
+                "Read", {"file_path": "example.txt"}, content, self.packet, files
+            )
+            self.assertIsNone(reason)
+            self.assertEqual([(s["start_line"], s["end_line"]) for s in spans], [(1, 2)])
+        for args, content in [
+            ({"limit": 2}, "1\tfirst\n2\t\tcafé\n3\t"),
+            ({}, "1\tfirst\n2\t\tcafé\n3\twrong"),
+            ({}, "1\tfirst\n2\t\tcafé\n3\t\n3\t"),
+            ({}, "1\tfirst\n2\t\tcafé\n4\t"),
+        ]:
+            self.assertFalse(
+                telemetry.observation(
+                    "Read", {"file_path": "example.txt", **args}, content, self.packet, files
+                )[0]
+            )
+        self.assertFalse(
+            telemetry.observation("Read", {"file_path": "example.txt"}, "3\t", self.packet, files)[0]
+        )
+        self.assertFalse(
+            telemetry.observation(
+                "Read", {"file_path": "example.txt"}, "1\tfirst\n2\t", self.packet, {"example.txt": "first"}
+            )[0]
+        )
+
+    def test_pinned_request_start_status_and_guide_declaration(self):
+        self.rows[0]["agents"] = ["claude-code-guide"]
+        status = {
+            "type": "system",
+            "subtype": "status",
+            "status": "requesting",
+            "session_id": "fixture-session",
+            "uuid": "12345678-1234-4234-8234-123456789012",
+        }
+        rows = self.rows[:1] + [status] + self.rows[1:]
+        self.assertTrue(self.evaluate(rows)[0]["qualified"])
+        for fields in [
+            {"status": None},
+            {"status": "compacting"},
+            {"compact_result": "success"},
+            {"compact_error": "private-secret"},
+            {"retry": True},
+            {"subtype": "hook_started"},
+            {"model": "other"},
+        ]:
+            with self.subTest(fields=fields):
+                changed = copy.deepcopy(rows)
+                changed[1].update(fields)
+                result, diag, _ = self.evaluate(changed)
+                self.assertFalse(result["qualified"])
+                self.assertNotIn("private-secret", json.dumps(diag))
+                self.assertTrue(diag["telemetry"]["system_payloads"])
+
+    def test_v1_capture_recovery_remains_exact_and_cannot_become_ready(self):
+        import claude_telemetry_v1
+        import review_policy
+
+        legacy_policy = copy.deepcopy(self.policy)
+        legacy_policy["adapter"] = "claude-stream-json-2.1.282-v1"
+        review_policy.validate_policy(legacy_policy)
+        rows = copy.deepcopy(self.rows)
+        rows[0]["agents"] = ["claude-code-guide"]
+        rows[2]["message"]["content"][0]["content"] += "\n3\t"
+        raw = "\n".join(json.dumps(row) for row in rows)
+        expected = claude_telemetry_v1.capture(
+            raw, self.packet, self.packet, legacy_policy, "fixture-session"
+        )
+        self.assertEqual(
+            telemetry.capture(raw, self.packet, self.packet, legacy_policy, "fixture-session"), expected
+        )
+        self.assertIn("native_read_differs_from_source", expected[1]["reasons"])
+        self.assertIn("customization_or_mcp_loaded", expected[1]["reasons"])
+        self.assertEqual(expected[1]["schema_version"], 2)
+        self.assertNotIn("system_subtypes", expected[1]["telemetry"])
+        meta = review.verify_packet(self.directory)
+        meta["review_policy"] = legacy_policy
+        review.atomic_json(self.directory / "metadata.json", meta)
+        review.save_result(self.directory, meta, *expected, "2.1.282")
+        review.recover_review(self.repo, self.directory)
+        names = ("review-result.json", "review-capture.json", "coverage.json", "review.md")
+        original = {name: (self.directory / name).read_bytes() for name in names}
+        envelope = review.publication_body(self.directory)
+        (self.directory / "review-result.json").unlink()
+        with patch.object(
+            claude_native_auth, "current_binding", side_effect=AssertionError("No authentication on recovery")
+        ):
+            review.recover_review(self.repo, self.directory)
+        self.assertEqual(original, {name: (self.directory / name).read_bytes() for name in names})
+        self.assertEqual(envelope, review.publication_body(self.directory))
+        self.assertFalse(review.coverage_ready(self.directory))
+        with self.assertRaisesRegex(workflow.WorkflowError, "recovery-only"):
+            review.qualification(self.directory, require=True)
+        with patch.object(review_claude.review_cli, "executable") as binary:
+            with self.assertRaisesRegex(workflow.WorkflowError, "recovery-only"):
+                review_claude.preflight(self.repo, legacy_policy)
+            binary.assert_not_called()
+
+    def test_unknown_system_and_agent_details_are_bounded_hashes(self):
+        self.rows[0]["agents"] = ["secret-agent-name"]
+        unknown = [
+            {
+                "type": "system",
+                "subtype": f"secret-subtype-{n}",
+                "session_id": "fixture-session",
+                "content": "secret-payload",
+            }
+            for n in range(70)
+        ]
+        _, diag, _ = self.evaluate(self.rows[:1] + unknown + self.rows[1:])
+        rendered = json.dumps(diag)
+        for secret in ("secret-agent-name", "secret-subtype-", "secret-payload"):
+            self.assertNotIn(secret, rendered)
+        telemetry.validate_summary(diag["telemetry"])
+        for field in ("system_subtypes", "system_payloads"):
+            self.assertLessEqual(len(diag["telemetry"][field]), 65)
+            self.assertIn("overflow", diag["telemetry"][field])
+        changed = copy.deepcopy(diag["telemetry"])
+        changed["system_payloads"] = {"raw-secret": 1}
+        with self.assertRaises(workflow.WorkflowError):
+            telemetry.validate_summary(changed)
+
+    def test_guide_declaration_does_not_allow_delegated_execution(self):
+        self.rows[0]["agents"] = ["claude-code-guide"]
+        self.rows[1]["message"]["content"][0]["name"] = "Agent"
+        self.assertFalse(self.evaluate(self.rows)[0]["qualified"])
+        self.rows[1]["message"]["content"][0]["name"] = "Read"
+        self.rows[1]["parent_tool_use_id"] = "delegation"
+        self.assertFalse(self.evaluate(self.rows)[0]["qualified"])
+
+    def test_source_extracted_renderer_fixtures(self):
+        fixture = json.loads((Path(__file__).parent / "fixtures/claude-read-2.1.282.json").read_text())
+        for item in fixture["cases"]:
+            with self.subTest(item=item):
+                spans, _, _ = telemetry.observation(
+                    "Read",
+                    {"file_path": "example.txt"},
+                    item["rendering"],
+                    self.packet,
+                    {"example.txt": item["text"]},
+                )
+                covered = [n for span in spans for n in range(span["start_line"], span["end_line"] + 1)]
+                self.assertEqual(covered, item["covered"])
+
+    def test_source_extracted_status_shapes_preserve_compaction_refusal(self):
+        fixture = json.loads((Path(__file__).parent / "fixtures/claude-status-2.1.282.json").read_text())
+        for item in fixture["cases"]:
+            with self.subTest(item=item):
+                self.assertEqual(telemetry.request_start(item["event"]), item["accepted"])
+                rows = self.rows[:1] + [item["event"]] + self.rows[1:]
+                self.assertEqual(self.evaluate(rows)[0]["qualified"], item["accepted"])
+
+    def test_previously_qualified_v1_adapter_cannot_establish_current_readiness(self):
+        legacy_policy = copy.deepcopy(self.policy)
+        legacy_policy["adapter"] = "claude-stream-json-2.1.282-v1"
+        meta = review.verify_packet(self.directory)
+        meta["review_policy"] = legacy_policy
+        review.atomic_json(self.directory / "metadata.json", meta)
+        body, diagnostics = telemetry.capture(
+            "\n".join(json.dumps(row) for row in self.rows),
+            self.packet,
+            self.packet,
+            legacy_policy,
+            "fixture-session",
+        )
+        review.save_result(self.directory, meta, body, diagnostics, "2.1.282")
+        review.recover_review(self.repo, self.directory)
+        self.assertTrue(review.qualification(self.directory)["qualified"])
+        self.assertFalse(review.coverage_ready(self.directory))
+        with self.assertRaisesRegex(workflow.WorkflowError, "recovery-only"):
+            review.qualification(self.directory, require=True)

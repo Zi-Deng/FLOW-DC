@@ -34,7 +34,7 @@ class ProviderPolicyTests(GitFixture):
             "model": "claude-fixture-99" if provider == "claude-code" else "gpt-fixture-99",
             "efforts": ["medium"] if provider == "claude-code" else ["default", "high"],
             "cli_version": "2.1.282" if provider == "claude-code" else "1.0.83",
-            "adapter": "claude-stream-json-2.1.282-v1"
+            "adapter": "claude-stream-json-2.1.282-v2"
             if provider == "claude-code"
             else "copilot-session-events-v2",
             "evidence": [
@@ -398,3 +398,17 @@ class ProviderPolicyTests(GitFixture):
             self.assertFalse(review.coverage_ready(directory))
         self.assertEqual((directory / "review.md").read_bytes(), body.encode())
         self.assertEqual(json.loads((directory / "review-result.json").read_bytes()), journal)
+
+    def test_legacy_adapter_model_declaration_is_frozen_not_a_new_selection(self):
+        extension = self.extension()
+        extension["adapter"] = "claude-stream-json-2.1.282-v1"
+        selected = policy.policy(policy.choices("claude-code"), {})
+        selected.update(model=extension["model"], adapter=extension["adapter"], model_compatibility=extension)
+        original = copy.deepcopy(selected)
+        self.assertEqual(policy.validate_policy(selected), original)
+        self.assertEqual(selected, original)
+        with self.assertRaises(workflow.WorkflowError):
+            policy.model_extensions(self.config(review_model_extensions=[extension]))
+        selected["model_compatibility"] = "malformed"
+        with self.assertRaises(workflow.WorkflowError):
+            policy.validate_policy(selected)

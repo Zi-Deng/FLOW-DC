@@ -11,7 +11,6 @@ import math
 import re
 from pathlib import Path
 
-import claude_telemetry_v1 as legacy
 import review_coverage as coverage
 from workflow import WorkflowError
 
@@ -19,48 +18,35 @@ TOOLS = {"Read": "view", "Grep": "grep", "Glob": "glob"}
 KINDS = {"system", "assistant", "user", "result", "rate_limit_event"}
 # Pinned built-in declarations are not delegation permission. Agent is absent
 # from the tool list and actual delegated messages remain forbidden.
-BUILTIN_AGENTS = {*legacy.BUILTIN_AGENTS, "claude-code-guide"}
-ADAPTER = "claude-stream-json-2.1.282-v2"
-LEGACY_ADAPTER = "claude-stream-json-2.1.282-v1"
+BUILTIN_AGENTS = {"Explore", "Plan", "general-purpose", "statusline-setup"}
 
 
 def validate_summary(value):
-    extra = {"system_subtypes", "system_payloads", "unknown_agents"}
-    if not isinstance(value, dict) or not extra <= value.keys():
-        raise WorkflowError("Invalid Claude v2 telemetry summary")
-    legacy.validate_summary({key: item for key, item in value.items() if key not in extra})
-    for key in extra:
-        counts = value[key]
-        if (
-            not isinstance(counts, dict)
-            or len(counts) > 65
-            or any(
-                not isinstance(name, str)
-                or (name != "overflow" and not re.fullmatch(r"[a-f0-9]{64}", name))
-                or type(count) is not int
-                or not 0 < count <= coverage.MAX_EVENTS
-                for name, count in counts.items()
-            )
-        ):
-            raise WorkflowError("Unsafe Claude v2 telemetry counts")
-
-
-def count_hash(counts, value):
-    # Never retain arbitrary provider subtype, agent name or payload strings.
-    key = coverage.checksum(json.dumps(value, sort_keys=True, ensure_ascii=False))
-    if key not in counts and len(counts) >= 64:
-        key = "overflow"
-    counts[key] = min(counts.get(key, 0) + 1, coverage.MAX_EVENTS)
-
-
-def request_start(event):
-    return (
-        set(event) == {"type", "subtype", "status", "session_id", "uuid"}
-        and event.get("subtype") == "status"
-        and event.get("status") == "requesting"
-        and isinstance(event.get("uuid"), str)
-        and re.fullmatch(r"[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}", event["uuid"]) is not None
-    )
+    if not isinstance(value, dict) or set(value) != {
+        "types",
+        "unknown_types",
+        "terminal_count",
+        "init_count",
+        "model_verified",
+        "session_verified",
+        "controlled_refusals",
+    }:
+        raise WorkflowError("Invalid Claude telemetry summary")
+    for key in ("types", "unknown_types"):
+        if not isinstance(value[key], dict) or len(value[key]) > 65:
+            raise WorkflowError("Unbounded Claude telemetry summary")
+        for name, count in value[key].items():
+            if not isinstance(name, str) or type(count) is not int or not 0 < count <= coverage.MAX_EVENTS:
+                raise WorkflowError("Unsafe Claude telemetry count")
+            if (key == "types" and name not in KINDS) or (
+                key == "unknown_types" and name != "overflow" and not re.fullmatch(r"[a-f0-9]{64}", name)
+            ):
+                raise WorkflowError("Unsafe Claude telemetry name")
+    if any(
+        type(value[key]) is not int or not 0 <= value[key] <= coverage.MAX_EVENTS
+        for key in ("terminal_count", "init_count", "controlled_refusals")
+    ) or any(type(value[key]) is not bool for key in ("model_verified", "session_verified")):
+        raise WorkflowError("Invalid Claude identity summary")
 
 
 def numerical(value):
@@ -114,30 +100,20 @@ def observation(tool, args, content, workspace, files):
         if path is None:
             return [], [], "unsafe_or_unknown_path"
         source = files[path].splitlines()
-        # Lcn splits only LF; h2n removes one terminal CR. Refuse text whose
-        # native numbering differs from the inventory's splitlines convention.
-        native = [line.removesuffix("\r") for line in files[path].split("\n")]
-        eof = bool(files[path]) and files[path].endswith("\n")
-        if (native[:-1] if eof else native) != source:
-            return [], [], "unsupported_native_line_boundaries"
         start = args.get("offset", 1)
-        limit = args.get("limit", len(native))
+        limit = args.get("limit", len(source))
         if type(start) is not int or type(limit) is not int or start < 1 or limit < 1:
             return [], [], "unsupported_range"
-        end = min(start + limit - 1, len(native))
-        numbers, seen = [], set()
-        for line in content.split("\n"):
+        end = min(start + limit - 1, len(source))
+        numbers = []
+        for line in content.splitlines():
             match = re.fullmatch(r"([1-9][0-9]*)(?:\t|:)(.*)", line)
             if not match:
                 return [], [], "unsupported_native_read_rendering"
             number = int(match[1])
-            if not start <= number <= end or number in seen or match[2] != native[number - 1]:
+            if not start <= number <= end or number in numbers or match[2] != source[number - 1]:
                 return [], [], "native_read_differs_from_source"
-            seen.add(number)
-            if number <= len(source):
-                numbers.append(number)
-            elif not eof:
-                return [], [], "native_read_differs_from_source"
+            numbers.append(number)
         spans = [
             {"artifact": path, "start_line": a, "end_line": b, "sha256": coverage.line_digest(source, a, b)}
             for a, b in coverage.ranges(numbers)
@@ -151,19 +127,6 @@ def observation(tool, args, content, workspace, files):
 
 
 def capture(raw, packet, workspace, policy, session_id, *, exit_code=0, failure=None, refusal_path=None):
-    if policy["adapter"] == LEGACY_ADAPTER:
-        return legacy.capture(
-            raw,
-            packet,
-            workspace,
-            policy,
-            session_id,
-            exit_code=exit_code,
-            failure=failure,
-            refusal_path=refusal_path,
-        )
-    if policy["adapter"] != ADAPTER:
-        raise WorkflowError("Unsupported Claude stream adapter")
     files, reasons = {}, set()
     for path in Path(packet).rglob("*"):
         if path.is_file() and not path.is_symlink():
@@ -176,9 +139,6 @@ def capture(raw, packet, workspace, policy, session_id, *, exit_code=0, failure=
     if exit_code != 0:
         reasons.add("provider_exit_failure")
     summary = {
-        "system_subtypes": {},
-        "system_payloads": {},
-        "unknown_agents": {},
         "types": {},
         "unknown_types": {},
         "terminal_count": 0,
@@ -231,11 +191,8 @@ def capture(raw, packet, workspace, policy, session_id, *, exit_code=0, failure=
             if event.get("parent_tool_use_id") is not None or event.get("agent_id") or event.get("agentId"):
                 reasons.add("delegated_or_mcp_event")
             if kind == "system":
-                count_hash(summary["system_subtypes"], event.get("subtype"))
                 if event.get("subtype") != "init":
-                    if not request_start(event) or not summary["init_count"]:
-                        reasons.add("unsupported_system_event")
-                        count_hash(summary["system_payloads"], event)
+                    reasons.add("unsupported_system_event")
                     continue
                 summary["init_count"] += 1
                 if event.get("model") != policy["model"]:
@@ -247,10 +204,6 @@ def capture(raw, packet, workspace, policy, session_id, *, exit_code=0, failure=
                 ):
                     reasons.add("unexpected_tools")
                 agents = event.get("agents", [])
-                if isinstance(agents, list):
-                    for agent in agents[: coverage.MAX_EVENTS]:
-                        if not isinstance(agent, str) or agent not in BUILTIN_AGENTS:
-                            count_hash(summary["unknown_agents"], agent)
                 if (
                     event.get("mcp_servers") != []
                     or event.get("plugins", []) != []
@@ -432,7 +385,7 @@ def capture(raw, packet, workspace, policy, session_id, *, exit_code=0, failure=
     # Missing step counters mean unknown. Native num_turns is not exact API-call
     # accounting; output tokens come only from terminal usage, never placeholders.
     diagnostics = {
-        "schema_version": 3,
+        "schema_version": 2,
         "adapter": policy["adapter"],
         "cli_version": policy["cli"]["version"],
         "exit_code": exit_code,

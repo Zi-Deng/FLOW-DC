@@ -8,6 +8,7 @@ import shutil
 
 import review_coverage as coverage
 import review_policy
+from review_packet import stable_id
 from tasks import atomic_json, atomic_text, digest, plain_path, private_directory
 from workflow import WorkflowError
 
@@ -117,6 +118,7 @@ def verify(repo, entry, policy):
 def require_activation(repo, policy):
     from claude_native_auth import validate_binding
 
+    review_policy.require_current_adapter(policy)
     validate_binding(policy.get("authentication"))
     state = ledger(repo)
     verified = set()
@@ -196,7 +198,7 @@ def run(repo, cfg, **overrides):
                 "schema_version": 2,
                 "required": [
                     {
-                        "id": "native-capability",
+                        "id": stable_id("diagnostic", "capability/fixture.txt", 1, 2),
                         "kind": "diagnostic",
                         "path": "capability/fixture.txt",
                         "revision": "diagnostic",
@@ -205,7 +207,7 @@ def run(repo, cfg, **overrides):
                         "end_line": 2,
                     },
                     {
-                        "id": "ordinary-authentication-source",
+                        "id": stable_id("diagnostic", "authentication-source.txt", 1, 4),
                         "kind": "source",
                         "path": "authentication-source.txt",
                         "revision": "diagnostic",

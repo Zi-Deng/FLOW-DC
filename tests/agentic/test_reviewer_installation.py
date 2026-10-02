@@ -150,6 +150,7 @@ class ReviewerInstallationTests(unittest.TestCase):
             "review_cli",
             "claude_credentials",
             "claude_telemetry",
+            "claude_telemetry_v1",
             "review_diagnostics",
             "review_coverage_v1",
             "review_coverage_v2",

@@ -575,7 +575,8 @@ def validate_diagnostics(diagnostics, packet, policy=None):
             "telemetry",
         }
         or type(diagnostics["schema_version"]) is not int
-        or diagnostics["schema_version"] != SCHEMA
+        or diagnostics["schema_version"]
+        != (3 if policy and policy.get("adapter") == "claude-stream-json-2.1.282-v2" else SCHEMA)
     ):
         raise WorkflowError("Unsupported coverage diagnostics")
     if (
@@ -601,7 +602,10 @@ def validate_diagnostics(diagnostics, packet, policy=None):
     ):
         raise WorkflowError("Invalid diagnostic fields")
     if policy and policy["provider"] == "claude-code":
-        from claude_telemetry import validate_summary
+        if policy["adapter"] == "claude-stream-json-2.1.282-v1":
+            from claude_telemetry_v1 import validate_summary
+        else:
+            from claude_telemetry import validate_summary
     else:
         from review_telemetry import validate_summary
     validate_summary(diagnostics["telemetry"])

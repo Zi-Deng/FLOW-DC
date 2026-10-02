@@ -57,7 +57,7 @@ PROVIDERS = {
             "manifest_sha256": "041abb14aba47e7dd31f8ba83d8102e54b6350d099382cb1def7ab10add415ed",
             "signing_fingerprint": "31DDDE24DDFAB679F42D7BD2BAA929FF1A7ECACE",
         },
-        "adapter": "claude-stream-json-2.1.282-v1",
+        "adapter": "claude-stream-json-2.1.282-v2",
         "billing_mode": "included-max-subscription-only",
     },
 }
@@ -218,9 +218,18 @@ def validate_policy(value):
     if type(value.get("schema_version")) is not int or value["schema_version"] != 1:
         raise WorkflowError("Unsupported review policy version")
     selected = {key: value.get(key) for key in ("provider", "model", "effort")}
+    legacy_claude = (
+        value.get("provider") == "claude-code" and value.get("adapter") == "claude-stream-json-2.1.282-v1"
+    )
     cfg = {}
     if "model_compatibility" in value:
-        cfg["review_model_extensions"] = [value["model_compatibility"]]
+        cfg["review_model_extensions"] = [copy.deepcopy(value["model_compatibility"])]
+        if (
+            legacy_claude
+            and isinstance(cfg["review_model_extensions"][0], dict)
+            and cfg["review_model_extensions"][0].get("adapter") == value["adapter"]
+        ):
+            cfg["review_model_extensions"][0]["adapter"] = PROVIDERS["claude-code"]["adapter"]
     selected = choices(**selected, cfg=cfg)
     limits = value.get("budget")
     if not isinstance(limits, dict):
@@ -239,6 +248,10 @@ def validate_policy(value):
         }
     )
     expected = policy(selected, cfg)
+    if legacy_claude:
+        expected["adapter"] = value["adapter"]
+        if "model_compatibility" in expected:
+            expected["model_compatibility"]["adapter"] = value["adapter"]
     if "authentication" in value:
         import claude_native_auth
 
@@ -363,3 +376,9 @@ def status(repo, cfg, **overrides):
         "Selection is not activation or evidence of included billing, isolation, capability or review readiness."
     )
     return result
+
+
+def require_current_adapter(value):
+    validate_policy(value)
+    if value["adapter"] != PROVIDERS[value["provider"]]["adapter"]:
+        raise WorkflowError("Historical review adapter is recovery-only; prepare a fresh packet")
