@@ -24,32 +24,43 @@ FILENAME = "recovery-ledger.json"
 REV4_ADAPTER = "claude-stream-json-2.1.282-v2"
 
 
-def authorization(repo):
+def authorization(repo, *, historical=False, contract=CONTRACT, contract_digest=CONTRACT_DIGEST):
+    """Execution uses current approval; frozen reads may use one exact historical receipt."""
     path = plain_path(repo.main / ".agentic-local/tasks/issue-33.json")
     state = coverage.read_json(path)
-    if not isinstance(state, dict):
-        raise WorkflowError("Invalid issue 33 approval record")
-    approval = state.get("approval")
     if (
-        repo.name != "Zi-Deng/FLOW-DC"
+        not isinstance(state, dict)
+        or repo.name != "Zi-Deng/FLOW-DC"
         or state.get("repository") != repo.name
         or state.get("key") != "issue-33"
         or type(state.get("schema_version")) is not int
         or state.get("schema_version") != 1
-        or not isinstance(approval, dict)
-        or type(approval.get("issue")) is not int
+        or digest(contract) != contract_digest
+    ):
+        raise WorkflowError("Invalid issue 33 approval record")
+    candidates = [state.get("approval")]
+    if historical:
+        history = state.get("approval_history", [])
+        if not isinstance(history, list) or any(not isinstance(item, dict) for item in history):
+            raise WorkflowError("Invalid historical approval records")
+        candidates += history
+    matches = [item for item in candidates if isinstance(item, dict) and item.get("contract") == contract]
+    if len(matches) != 1:
+        raise WorkflowError("Recovery requires one exact recorded approval; missing or ambiguous history")
+    approval = matches[0]
+    if (
+        type(approval.get("issue")) is not int
         or type(approval.get("plan_comment")) is not int
         or approval.get("issue") != 33
-        or approval.get("plan_comment") != CONTRACT["plan_comment"]
-        or digest(approval.get("contract")) != CONTRACT_DIGEST
-        or digest(CONTRACT) != CONTRACT_DIGEST
+        or approval.get("plan_comment") != contract["plan_comment"]
+        or digest(approval.get("contract")) != contract_digest
         or not isinstance(approval.get("source"), str)
         or not approval["source"].strip()
         or not isinstance(approval.get("recorded_at"), str)
         or not approval["recorded_at"].strip()
     ):
-        raise WorkflowError("Issue 33 recovery requires the exact recorded revision-4 approval")
-    return {"contract": CONTRACT, "contract_digest": CONTRACT_DIGEST, "approval_digest": digest(approval)}
+        raise WorkflowError("Recovery requires the exact recorded approval source and contract")
+    return {"contract": contract, "contract_digest": contract_digest, "approval_digest": digest(approval)}
 
 
 def historical(repo):
@@ -98,25 +109,37 @@ def validate_policy(policy):
         )
 
 
-def match_policy(observed, current):
-    """Only explicit verified same-account credential lineage may differ."""
+def match_recorded_policy(observed, current):
+    """Compare durable bindings without credentials; this does not authorize lineage."""
     import claude_native_auth
 
-    review_policy.validate_policy(current)
-    claude_native_auth.validate_binding(current.get("authentication"))
+    for policy in (observed, current):
+        review_policy.validate_policy(policy)
+        claude_native_auth.validate_binding(policy.get("authentication"))
     left = {k: v for k, v in observed.items() if k not in {"budget", "authentication"}}
     right = {k: v for k, v in current.items() if k not in {"budget", "authentication"}}
-    if left != right or not claude_native_auth.capability_lineage(
+    left_auth = {k: v for k, v in observed["authentication"].items() if k != "generation_id"}
+    right_auth = {k: v for k, v in current["authentication"].items() if k != "generation_id"}
+    if left != right or left_auth != right_auth:
+        raise WorkflowError("Recorded recovery policy or registration changed")
+
+
+def match_policy(observed, current):
+    """Execution/activation additionally require explicit verified renewal lineage."""
+    import claude_native_auth
+
+    match_recorded_policy(observed, current)
+    if not claude_native_auth.capability_lineage(
         observed.get("authentication"), current.get("authentication"), current["budget"]["timeout_seconds"]
     ):
         raise WorkflowError("Recovery policy or verified authentication lineage changed")
 
 
-def grant(repo, policy):
+def grant(repo, policy, *, historical_authority=False):
     validate_policy(policy)
     return {
         "schema_version": 1,
-        "authorization": authorization(repo),
+        "authorization": authorization(repo, historical=historical_authority),
         "historical": historical(repo),
         "policy": copy.deepcopy(policy),
         "slots": [{"number": n, "purpose": p} for n, p in SEQUENCE.items()],
@@ -125,7 +148,7 @@ def grant(repo, policy):
     }
 
 
-def load(repo):
+def load(repo, *, later_attempts=False):
     import review_diagnostics as diagnostics
 
     root = diagnostics.state_directory(repo)
@@ -144,7 +167,7 @@ def load(repo):
     if (
         not isinstance(saved, dict)
         or type(saved.get("schema_version")) is not int
-        or saved != grant(repo, saved.get("policy", {}))
+        or digest(saved) != digest(grant(repo, saved.get("policy", {}), historical_authority=True))
         or value["grant_digest"] != digest(saved)
     ):
         raise WorkflowError("Recovery approval, policy or historical snapshot changed")
@@ -169,7 +192,7 @@ def load(repo):
             raise WorkflowError("Invalid prospective diagnostic identity or purpose")
         meta = coverage.read_json(plain_path(root / f"attempt-{number}" / "metadata.json"))
         validate_policy(meta["review_policy"])
-        match_policy(saved["policy"], meta["review_policy"])
+        match_recorded_policy(saved["policy"], meta["review_policy"])
         if entry["policy_digest"] != digest(meta["review_policy"]) or meta.get("recovery") != {
             "grant_digest": value["grant_digest"],
             "number": number,
@@ -177,7 +200,9 @@ def load(repo):
         }:
             raise WorkflowError("Prospective packet policy or grant binding changed")
     present = {p.name for p in root.glob("attempt-*")}
-    if present != {f"attempt-{n}" for n in range(1, len(attempts) + 1)}:
+    expected = {f"attempt-{n}" for n in range(1, len(attempts) + 1)}
+    allowed = expected | {"attempt-3", "attempt-4"} if later_attempts else expected
+    if not expected <= present <= allowed:
         raise WorkflowError("Conflicting or partial diagnostic migration/attempt state")
     if len(attempts) == 3:
         if attempts[1]["status"] != "qualified":
@@ -211,6 +236,11 @@ def prepare(repo, cfg, *, apply=False, preview_digest=None):
     import review_diagnostics as diagnostics
 
     repo.assert_main()
+    # V5 is a separate grant/file; historical v4 callers retain their own policy.
+    if review_policy.PROVIDERS["claude-code"]["adapter"] == "claude-stream-json-2.1.282-v3":
+        import diagnostic_recovery_v5
+
+        return diagnostic_recovery_v5.prepare(repo, cfg, apply=apply, preview_digest=preview_digest)
     selected = review_policy.resolve(repo, cfg, review_provider="claude-code")["policy"]
     selected["budget"] = review_policy.budget("claude-code", {}, diagnostic=True)
     if selected["adapter"] != REV4_ADAPTER:

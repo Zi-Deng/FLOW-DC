@@ -228,3 +228,25 @@ further recovery requires actual separate approval and exact binding before new
 allowance code or calls. See [the source audit](NATIVE-TELEMETRY-AUDIT.md) for the
 conditional native behavior and evidence limits. Final-head checks and both successful
 current live purposes remain required; the migration-only PR-review exception persists.
+
+
+## Approved revision-5 recovery — 2026-10-03 UTC
+
+The maintainer's explicit standing override approves the complete revision-5 plan
+and supersedes its preserved draft-state wording. The exact current contract is
+`5c8c8c8bc87c2cd02229ea1c0f74b98a9748542fa770fc93178234d73501c45f`.
+A separate prospective ledger preserves both failed trials and the stopped v4 grant.
+Counted slot 3 is v3 tools/source; slot 4 is isolation-refusal only if slot 3 qualifies.
+Each remains 300 seconds/$2 reference/zero extra actual spending, four total counted
+attempts and no fifth. Failure/interruption stops this sequence. No repeat permission
+question for this approved continuation is needed; explicit grant application and
+separate coordinator invocation still follow final-source checks and required CI.
+See [the exact operating sequence](PROVIDERS.md#issue-33-revision-5-prospective-recovery).
+
+Frozen grant reads use the exact matching historical approval receipt after approval
+supersession. Missing, edited or ambiguous history fails; it cannot authorize a new
+call or current readiness. All required successful live evidence and final-head CI
+remain independent obligations. The coordinator's full gate passed at `8516570`;
+CI associated with that head tested merge checkout
+`1034f122420a21ba85b01089ee556f74f52b7490`. Those receipts
+do not validate later ledger changes or qualify a capability diagnostic.

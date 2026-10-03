@@ -251,13 +251,13 @@ or exact API-call counts. No undocumented auth-retry-disable variable is used;
 `CLAUDE_CODE_MAX_RETRIES` was removed. Complete native retry/fallback qualification
 and controlled native error-path evidence remain activation requirements.
 
-Issue 33's original allowance and separately approved revision-4 recovery sequence
-are historical accounting. **The recovery sequence stopped after incomplete slot 2;
-there is no remaining executable allowance.** Slot 3 was never invoked. The current
-v3 adapter cannot apply or execute the old v2 grant. Neither a software fix nor
-credential renewal creates another call. Each counted diagnostic was bounded to
-300 seconds/$2 estimated reference cost, with zero extra actual spending authorized.
-The tiny canary packets are not PR reviews. Failed/interrupted calls stay counted.
+Issue 33's original and revision-4 ledgers remain historical accounting. Revision 4
+stopped after incomplete slot 2; its unused slot 3 cannot execute. The separately
+approved revision-5 grant below authorizes prospective slot 3 for v3 tools/source,
+then slot 4 for isolation only after slot 3 qualifies. It requires explicit preview
+and application; neither publication, software repair nor renewal runs a call.
+Each diagnostic is bounded to 300 seconds/$2 reference estimate, zero extra actual
+spending. Failures/interruption count, and any future failure stops this new sequence.
 
 Both distinct purposes must succeed under the current exact CLI/adapter/model/effort
 and compatible authentication provenance. The tools-and-source purpose inspects
@@ -290,15 +290,66 @@ The schema-2 `recovery-ledger.json` and its version-1 grant remain bound to the
 original v2 policy, approval, original ledger text and attempt-1 hashes. Both trials'
 exact packet/report/capture/assessment bytes remain unchanged and incomplete. The
 current code reads the stopped grant using frozen v2 policy semantics, without
-credentials or inference. `claude-diagnostic-recovery` refuses new application under
-v3 before authentication. No operator command here grants another diagnostic.
+credentials or inference. `claude-diagnostic-recovery` cannot reuse this old grant for v3. Frozen reads select
+the exact matching revision-4 approval snapshot from current approval or its history,
+refusing missing, edited or ambiguous history. Frozen loads compare stored registration
+and generation bindings without reading current credentials; that comparison cannot
+authorize renewal lineage. Invocation and activation separately verify current lineage.
+New execution requires current authority.
 
-Any further recovery needs a concrete separately approved and exactly bound amendment
-before allowance implementation or calls. A private proposal does not change the
-stopped ledger. Verified same-account lineage may preserve observed generations only
-under its existing rules; it never rewrites historical evidence or creates allowance.
-Local records remain owner-writable accounting, not cryptographic attestations or
-billing guarantees.
+### Issue 33 revision-5 prospective recovery
+
+The maintainer's recorded standing override and approval bind
+[plan comment 5964179523](https://github.com/Zi-Deng/FLOW-DC/issues/33#issuecomment-5964179523)
+and contract `5c8c8c8bc87c2cd02229ea1c0f74b98a9748542fa770fc93178234d73501c45f`.
+Its explicit authority update supersedes the preserved proposal-state wording. No
+repeat approval of this same continuation is pending. Standing authorization does
+not turn an incomplete trial into success or automatically extend this finite grant.
+
+After final-source checks and required CI, the coordinator previews/applies from the
+clean control checkout. Before merge, invoke `workflow.py` through the absolute
+issue-33 worktree path while retaining that control working directory:
+
+```bash
+python3 -B /absolute/issue-33-worktree/scripts/agentic/workflow.py claude-diagnostic-recovery
+python3 -B /absolute/issue-33-worktree/scripts/agentic/workflow.py claude-diagnostic-recovery \
+  --apply --preview-digest EXACT_DIGEST_FROM_PREVIEW
+```
+
+This locally validates current approval and the native authentication binding; it makes
+no inference. Full invocation prerequisites are checked again before each call.
+Application requires an unchanged preview digest. A separate schema-3
+`recovery-v5-ledger.json` contains a version-2 grant bound to current exact approval,
+contract, v3 CLI/model/effort/auth/budget policy, both historical ledger texts and all
+trial-1/2 hashes. Both original ledgers/grants and failed trials stay byte-identical;
+no old purpose, count, status or report is rewritten. Partial/conflicting state and
+missing/tampered evidence are refused. Historical approval can validate a frozen
+read but never a fresh application, invocation or activation.
+
+The new grant explicitly assigns counted slot 3 to native-tools-and-source and
+counted slot 4 to isolation-refusal **only if slot 3 qualifies**. The old unused
+slot-3 purpose remains in its stopped historical grant. Each new packet binds the
+new grant digest, counted slot and purpose. Total ceilings are four counted attempts,
+1200 seconds/$8 reference estimate including both old failures; prospective ceilings
+are 600 seconds/$4. Zero extra actual spending remains authorized. No fifth attempt,
+automatic call, report repair/replay, reset, provider/model/auth fallback or widened
+permission follows from this grant. Any future failure/interruption stops it;
+idempotent application does not reset an attempted slot.
+
+The coordinator invokes the diagnostic command once for slot 3, inspects its exact
+qualified evidence, then explicitly invokes it once for slot 4 only after success:
+
+```bash
+python3 -B /absolute/issue-33-worktree/scripts/agentic/workflow.py diagnose-claude --review-provider claude-code
+```
+
+Before each call recheck the durable ledger, guarded Max registration, current
+account-bound disabled-paid-usage receipt, token lifetime and endpoint/remote
+isolation. Renewal remains human-only and never creates allowance. Both successful
+purposes must match current policy; observed generations remain unchanged with only
+explicit verified same-account lineage permitted. Owner-writable receipts are
+accounting, not cryptographic attestations or billing guarantees. The implementation
+and synthetic ledger tests do not establish either successful live purpose.
 
 Native stream parsing requires correlated successful model-facing Read/Grep/Glob
 results and one successful terminal result. UI metadata, assistant fragments,

@@ -156,3 +156,16 @@ capture validation, assessments, exact report bytes and publication dispatch ret
 their original versions. The stopped revision-4 grant is read against its original
 v2 policy, never recomputed as a v3 grant. Both failed trials remain incomplete and
 cannot supply current activation; a repair creates no new diagnostic allowance.
+
+
+## Subsequent revision-5 authorization — 2026-10-03 UTC
+
+The preceding v3 audit describes the stopped pre-amendment state. The maintainer
+subsequently approved revision 5 under an explicit standing override, now bound to
+contract `5c8c8c8bc87c2cd02229ea1c0f74b98a9748542fa770fc93178234d73501c45f`.
+The new prospective ledger authorizes counted slots 3 (tools/source) and 4 (isolation
+only after 3 qualifies), without changing either failed trial, old grant or frozen
+parser. A future failure stops that finite sequence; no fifth call. This authority
+and software implementation do not establish live capability or reconstruct missing
+trial payloads. See [the provider procedure](PROVIDERS.md) for explicit application,
+current prerequisites and coordinator-owned execution.

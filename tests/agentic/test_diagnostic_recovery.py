@@ -380,7 +380,7 @@ class RecoveryTests(GitFixture):
                     self.run_diagnostic()
                 execute.assert_not_called()
             with patch.object(claude_native_auth, "bind") as bind:
-                with self.assertRaisesRegex(workflow.WorkflowError, "recovery-only"):
+                with self.assertRaisesRegex(workflow.WorkflowError, "approval"):
                     self.apply()
                 bind.assert_not_called()
             policy = review_policy.policy(review_policy.choices("claude-code"), {})
