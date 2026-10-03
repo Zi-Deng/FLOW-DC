@@ -281,8 +281,9 @@ establish activation after required validation and explicit coordinator grant ap
 The same signed native 2.1.282 binary has SHA-256
 `3afe8535c0cc33f0e24f7b25dab7a1727b8b592196f8496a8bc302ba2161eed3`.
 `tests/agentic/fixtures/claude-refusal-2.1.282-v5.json` records 32 source ranges/hashes
-and synthetic outputs; its `.mjs` companion executes exact extracted functions with
-explicit local dependency stubs. It never executes native auth/CLI/plugins/network.
+and synthetic outputs; its `.mjs` companion executes exact extracted functions and
+selected branches with explicit local dependency stubs and rejecting fixture guards.
+It never executes native auth/CLI/plugins/network.
 These fixtures are conditional source evidence, not reconstruction of trial5 or live
 capability. Trial5's retained key/subtype hashes do not recover its unretained values.
 
@@ -297,9 +298,9 @@ outside fresh native state; it does not claim all outside paths are refused.
 
 x0t preserves direct deny; u$o, Q6, mZ and aZ preserve it and stamp pre-ask. An ASK
 converted under dontAsk instead has type `mode`, and is not restricted-fence proof.
-The fixture runs exact direct-deny functions and an explicitly labeled dontAsk
-early-return prefix; resolver, context, rules, policy, availability and other native
-runtime dependencies are synthetic stubs. It does not execute the whole engine.
+The fixture runs exact direct-deny functions, the selected u$o evaluation prefix
+and terminal return, and an explicitly labeled dontAsk early-return prefix. Resolver,
+context, rules, policy, availability and other native runtime dependencies are synthetic stubs. It does not execute the whole engine.
 
 et (210064319) collects non-allow through Gn, emits a permission_denied advisory for
 deny plus RMr(pre-ask); Ve/J queue/drain (210061567) and Le add session/UUID. lle
@@ -345,3 +346,20 @@ $Pn (202145280) repairs supplied offset/limit/length only and returns null witho
 repair. This is read-only source reasoning for the sole-file_path contract. The main
 pure fixture deliberately stubs inputSchema.parse as identity; neither the native
 schema engine nor actual historical slot5 input was executed or reconstructed.
+
+
+### Offline fixture portability repair — 2026-10-03 UTC
+
+At implementation head `5ffc548`, Node 22.23.3 rejected the full extracted u$o
+function at an unexecuted classifier branch's `using Rr` declaration. Local Node
+24.21.0 accepted it. The original harness and CI failure remain in private evidence.
+The repaired fixture retains the entire original function as JSON source data with
+its unchanged range hash `d18af403c90f39a41d6db3e2f5a823d1d5d0988b35e59ea05c27580d6bced6ce`.
+It executes the exact evaluation prefix and terminal return for direct deny only;
+a clearly labeled fixture guard rejects allow/ask results before that return. The
+omitted native allow/ask/classifier branches are source-audited, not parsed or executed.
+The separate exact dontAsk prefix still tests synthetic ASK conversion. No native
+function or reviewer behavior is patched, and no dependency or CI policy changes.
+Tests bind both selected prefixes and the return to the retained full source, exercise
+the guard's rejection, and compare all golden outputs including the negative cases.
+This conditional branch evidence does not execute the complete native permission engine.

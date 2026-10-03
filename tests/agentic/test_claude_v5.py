@@ -219,6 +219,16 @@ class ClaudeV5Tests(GitFixture):
         if node is None:
             self.skipTest("Node unavailable; source fixture execution remains an explicit local check")
         output = json.loads(subprocess.check_output([node, str(FIXTURE_PATH.with_suffix(".mjs"))]))
+        for key in (
+            "positive",
+            "mode",
+            "outsideBlock",
+            "delegated",
+            "unresolved",
+            "terminal_report_exact",
+            "queue_drained",
+        ):
+            self.assertEqual(output[key], FIXTURE[key], key)
         self.assertEqual(output["positive"], FIXTURE["positive"])
         f = output["positive"]
         self.assertEqual(
@@ -232,6 +242,25 @@ class ClaudeV5Tests(GitFixture):
             ],
         )
         self.assertEqual(f["advisory"]["message"], f["result"]["message"]["content"][0]["content"])
+
+    def test_portable_fixture_preserves_native_source_and_selected_branch_boundaries(self):
+        original = FIXTURE["permission_modes_source"]
+        digest = "d18af403c90f39a41d6db3e2f5a823d1d5d0988b35e59ea05c27580d6bced6ce"
+        self.assertEqual(hashlib.sha256(original["source"].encode()).hexdigest(), digest)
+        self.assertEqual(original["sha256"], digest)
+        self.assertTrue(original["source"].startswith(original["direct_prefix"]))
+        self.assertTrue(original["source"].endswith(original["direct_return"]))
+        native_remainder = original["source"][len(original["direct_prefix"]) :]
+        self.assertTrue(native_remainder.startswith('if(_e.behavior==="allow")'))
+        harness = FIXTURE_PATH.with_suffix(".mjs").read_text()
+        selected = harness.split("// BEGIN selected direct-denial branch\n", 1)[1].split(
+            "\n// END selected direct-denial branch", 1
+        )[0]
+        self.assertEqual(
+            selected, original["direct_prefix"] + original["fixture_guard"] + original["direct_return"]
+        )
+        dont_ask_literal = harness.split("const dontAskPrefix=", 1)[1].split(";\n", 1)[0]
+        self.assertTrue(original["source"].startswith(json.loads(dont_ask_literal)))
 
     def test_canary_location_type_modes_links_and_native_exempt_roots(self):
         with tempfile.TemporaryDirectory() as temporary, tempfile.TemporaryDirectory() as auth:
