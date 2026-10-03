@@ -40,6 +40,8 @@ def artifact_windows(packet, artifact):
     """LF-based renderer windows, preserving CRLF and final unterminated bytes."""
     raw = review_projection.safe_bytes(packet, artifact)
     raw.decode("utf-8", errors="strict")
+    raw_sha256 = sha(raw)
+    artifact_key = None
     parts = raw.split(b"\n")
     lines = [part + b"\n" for part in parts[:-1]]
     if parts[-1]:
@@ -51,7 +53,7 @@ def artifact_windows(packet, artifact):
         rows.append(
             {
                 "artifact": artifact,
-                "sha256": sha(raw),
+                "sha256": raw_sha256,
                 "start_byte": start,
                 "end_byte": end,
                 "range_sha256": sha(raw[start:end]),
@@ -66,10 +68,12 @@ def artifact_windows(packet, artifact):
             start += size
             size, count = 0, 0
         if len(line) > PAGE_BYTES:
+            if artifact_key is None:
+                artifact_key = sha(artifact.encode())[:24]
             rendered = review_projection.render(line.decode("utf-8"), start)
             chunks = [json.loads(row) for row in rendered.splitlines()]
             for index, body in enumerate(pages(chunks)):
-                name = f"navigation/long-lines/{sha(artifact.encode())[:24]}-{number}-{index}.jsonl"
+                name = f"navigation/long-lines/{artifact_key}-{number}-{index}.jsonl"
                 copies[name] = body
                 last = json.loads(body.splitlines()[-1])[1]
                 window(
@@ -90,6 +94,22 @@ def artifact_windows(packet, artifact):
 
 def windows(packet, artifact):
     return artifact_windows(Path(packet), artifact)[0]
+
+
+def packet_files(root, *, originals_only=False):
+    """Walk once; generated navigation is read separately during validation."""
+    root = Path(root)
+    for parent, directories, names in root.walk(follow_symlinks=False):
+        relative = parent.relative_to(root)
+        prefix = "" if parent == root else relative.as_posix() + "/"
+        if originals_only and parent == root:
+            directories[:] = [name for name in directories if name != "navigation"]
+        for name in names:
+            if originals_only and parent == root and name in {"navigation", "assignment.json"}:
+                continue
+            path = parent / name
+            if path.is_file():
+                yield prefix + name, path
 
 
 def render(packet, unit, report_limit):
@@ -128,18 +148,12 @@ def render(packet, unit, report_limit):
         "required", [{**row, "inspection_suggestions": suggestions.get(row["id"])} for row in selected]
     )
     preferred = unit.get("navigation_ids", [])
-    related_ids = preferred + [key for key in unit["context_ids"] if key not in set(preferred)]
+    preferred_ids = set(preferred)
+    related_ids = preferred + [key for key in unit["context_ids"] if key not in preferred_ids]
     context = tree("related", [lookup[key] for key in related_ids])
     catalog = []
-    originals = sorted(
-        p
-        for p in packet.rglob("*")
-        if p.is_file()
-        and p.relative_to(packet).parts[0] != "navigation"
-        and p.relative_to(packet).as_posix() != "assignment.json"
-    )
-    for index, path in enumerate(originals):
-        name = path.relative_to(packet).as_posix()
+    originals = sorted((path, name) for name, path in packet_files(packet, originals_only=True))
+    for index, (path, name) in enumerate(originals):
         rows, copies = artifact_windows(packet, name)
         for target, body in copies.items():
             save(target, body)
@@ -191,9 +205,8 @@ def validate(packet, unit, report_limit, binding):
             "files": {k: sha(v) for k, v in files.items()},
         }
         actual = {
-            p.relative_to(packet).as_posix(): p.read_bytes()
-            for p in (Path(packet) / "navigation").rglob("*")
-            if p.is_file()
+            "navigation/" + name: path.read_bytes()
+            for name, path in packet_files(Path(packet) / "navigation")
         }
         if binding != expected or actual != files:
             raise WorkflowError("Navigation or original context bytes changed")

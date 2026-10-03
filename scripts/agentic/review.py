@@ -344,8 +344,15 @@ def verify_packet(directory):
         if metadata.get("requested_model") != metadata["review_policy"]["model"]:
             raise WorkflowError("Packet model differs from immutable review policy")
     packet = directory / "packet"
-    actual = {str(p.relative_to(packet)): digest(p) for p in packet.rglob("*") if p.is_file()}
-    if any(p.is_symlink() for p in packet.rglob("*")) or actual != metadata["files"]:
+    actual, has_symlink = {}, False
+    for parent, directories, names in packet.walk(follow_symlinks=False):
+        prefix = "" if parent == packet else parent.relative_to(packet).as_posix() + "/"
+        has_symlink |= any((parent / name).is_symlink() for name in directories + names)
+        for name in names:
+            path = parent / name
+            if path.is_file():
+                actual[prefix + name] = digest(path)
+    if has_symlink or actual != metadata["files"]:
         raise WorkflowError("Review packet changed after preparation")
     return metadata
 
