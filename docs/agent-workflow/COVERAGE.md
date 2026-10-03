@@ -237,3 +237,12 @@ packets/journals inspectable under their original semantics; do not rewrite prov
 hashes, historical review claims or PR #27's limitations. The migration-only review
 exception for issue #33 is documented in [PROVIDERS.md](PROVIDERS.md); it introduces no
 generic bypass and establishes no normal finish readiness. PR #32 remains separate.
+
+
+Revision 8 freezes Claude v5/schema7 and its refusal helper. Current v6/schema8
+adds exact optional direct caller provenance and bounded predicate diagnostics,
+without changing exact returned-line matching or report bytes. Both diagnostic
+purposes bind the fixed directory/glob Grep command; successful transport with no
+matching source spans cannot satisfy Grep capability. Trials 4 and 6 retain only
+historical qualification, and trial 7 remains incomplete. See the
+[revision-8 grant and evidence boundary](PROVIDERS.md#issue-33-revision-8-prospective-recovery).

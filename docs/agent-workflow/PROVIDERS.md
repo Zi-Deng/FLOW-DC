@@ -58,7 +58,7 @@ Each declaration has exactly these fields:
 | `model` | Exact lowercase versioned provider identifier, at most 128 characters; no aliases, auto/default/latest segments, paths or context modifiers |
 | `efforts` | Nonempty unique list of the model's verified efforts, within the pinned CLI's supported controls; Copilot `default` omits its effort flag |
 | `cli_version` | `2.1.282` for Claude or `1.0.83` for Copilot |
-| `adapter` | `claude-stream-json-2.1.282-v5` or `copilot-session-events-v2`, matching the provider |
+| `adapter` | `claude-stream-json-2.1.282-v6` or `copilot-session-events-v2`, matching the provider |
 | `evidence` | One to eight public HTTPS primary documentation URLs, without query strings or credentials; Claude documentation hosts for Claude, `docs.github.com` for Copilot |
 
 The list defaults to empty. Declarations cannot override built-in model entries or
@@ -266,7 +266,7 @@ and controlled native error-path evidence remain activation requirements.
 Issue 33's five historical trials retain their original statuses: incomplete,
 incomplete, incomplete, qualified under v4, incomplete. All four ledgers and old
 grants are frozen history; the revision-6 grant stopped after slot 5. Its executable
-allowance is zero. The [revision-7 sequence below](#issue-33-revision-7-prospective-recovery)
+allowance is zero. The [revision-8 sequence below](#issue-33-revision-8-prospective-recovery)
 requires current final checks/CI and explicit coordinator preview/application.
 Publication, software changes and renewal never run or authorize an automatic call.
 
@@ -312,7 +312,7 @@ New execution requires current authority.
 
 **Historical, stopped after incomplete trial 3 on 2026-10-03 UTC.** The sequence
 below records that grant's original meaning; its unused isolation slot 4 cannot run.
-Use the revision-7 procedure below for the current binding.
+Use the revision-8 procedure below for the current binding.
 
 The maintainer's recorded standing override and approval bind
 [plan comment 5964179523](https://github.com/Zi-Deng/FLOW-DC/issues/33#issuecomment-5964179523)
@@ -369,7 +369,7 @@ and synthetic ledger tests do not establish either successful live purpose.
 ### Issue 33 revision-6 recovery — historical, stopped after slot 5
 
 The following records the original finite authorization. Its tools trial qualified
-and isolation trial failed; it grants no further executable allowance. Use revision 7
+and isolation trial failed; it grants no further executable allowance. Use revision 8
 for current preparation and execution after its required gates.
 
 The standing authorization is exactly bound to
@@ -418,7 +418,7 @@ The terminal text is saved exactly even when partial; no substring extraction,
 concatenation, report synthesis or inference repair is performed. Partial findings
 remain publishable as incomplete, while all ordinary readiness gates remain strict.
 
-The current v5 Claude stream adapter uses diagnostic schema 7 (schema 4 remains reserved). Its Read parser recognizes
+The current v6 Claude stream adapter uses diagnostic schema 8 (schema 4 remains reserved). Its Read parser recognizes
 the pinned renderer's numbered final empty segment after a trailing newline, without
 crediting that segment as source. LF/CRLF and tab-aware separators are supported;
 ambiguous native/inventory line numbering and extra reminder/truncation text remain
@@ -498,6 +498,8 @@ owner-writable private records are not tamper-proof attestations.
 
 ### Issue 33 revision-7 prospective recovery
 
+Historical procedure, superseded by revision 8 below. Its grant stopped after trial 7; it authorizes no slot 8.
+
 [Plan comment 5965161662](https://github.com/Zi-Deng/FLOW-DC/issues/33#issuecomment-5965161662)
 is bound to contract `8c342fdbb9093d5b310bfe10854910dbf1e66e66527ac1a2514b7a90d615589b`
 under existing standing authorization. No repeated user permission is pending.
@@ -546,3 +548,57 @@ New final-head checks/CI and actual current live evidence remain required. No mo
 PR review is requested under the migration-only exception; no generic gate bypass
 or model-reviewed SHA is invented. Human merge and the separate PR32 original-UUID
 reconciliation/review remain unchanged.
+
+### Issue 33 revision-8 prospective recovery
+
+[Plan comment 5965755308](https://github.com/Zi-Deng/FLOW-DC/issues/33#issuecomment-5965755308)
+binds contract `dd3a54615f7db9cd099b083df98c33ca3a525552a5a591d20e7dc68b6977191e`.
+The stopped revision-7 grant has zero executable allowance. Trials 1–7 remain
+incomplete/incomplete/incomplete/qualified/incomplete/qualified/incomplete, with
+all five original ledgers, approvals, policies, observed generations and report bytes
+preserved. Trial 7 lacks qualifying Grep spans and has an unidentified refusal-call
+predicate mismatch. Its raw input/envelope/output were not retained; source inspection
+and report assertions cannot reconstruct them or change its status.
+
+Current v6 uses diagnostic schema 8. V1–v5 recovery remains frozen at schemas
+2/3/5/6/7, including the original v5 refusal helper. Packet/result/capture5 and
+report2 are unchanged; schema4 remains reserved. Historical v4/v5 success cannot
+activate v6. The sole optional tool-use annotation is exact `caller:{"type":"direct"}`;
+unknown/null/extended/server callers and delegation remain incomplete. Main-session
+agent identifiers must be absent, and a parent identifier may only be absent or null.
+A direct annotation does not prove a tool result, source read or isolation. All native
+restricted advisory/error/terminal correlations and no-exposure checks still apply.
+
+Both new purposes require exactly one capability Grep with this complete input:
+
+```json
+{"pattern":"CLAUDE_NATIVE_CANARY","path":".","glob":"capability/fixture.txt","output_mode":"content","-n":true,"head_limit":10}
+```
+
+The schema-1 `diagnostic_tool_contract` containing this `grep_canary` is bound into
+the new grant, packet, capture input digest and assessment. A directory search plus
+the fixture glob yields the supported path:line:text rendering conditionally; a
+single-file line:text result is still unsupported. Prompts do not guarantee obedience.
+Wrong/missing/extra input, missing exact returned lines or duplicate calls stay
+incomplete, without retry. Fixed call/Grep predicates, bounded shapes and hashes
+make future failures distinguishable without retaining raw provider inputs.
+
+After reviewed implementation, full final-head checks and required CI, the coordinator
+uses the same explicit preview/apply commands shown above. The distinct schema-7
+`recovery-v8-ledger.json` contains a version-6 grant, with exact current approval,
+policy/tool contract and bounded snapshots of all seven trials/five ledgers.
+Slot 8 is fresh v6 tools/source; slot 9 is isolation only after 8 qualifies. Each
+is at most 300 seconds/$2 provider reference estimate/zero extra actual spending;
+nine total attempts have ceilings 2700 seconds/$18, with prospective ceilings
+600 seconds/$4. Failure/interruption counts and stops. No tenth call, reset, replay,
+substitution, permission widening or automatic invocation is authorized. Preview,
+apply and each invocation are separate coordinator actions. Human-only renewal,
+receipt/lifetime/endpoint/remote checks and verified same-account lineage remain
+unchanged; renewal creates no allowance or relabeling.
+
+The 961-test gate at `0ed402a` and CI associated with that head (actual merge checkout
+`dfb54803d4c363393b317e12cc9cef241b9539b0`) are historical after this change. Repeat
+final-head checks/CI and obtain both current live purposes before activation. Pure
+Node fixtures establish conditional source behavior only. The migration-only model
+PR-review exception, strict ordinary gates, human merge and separate PR32 original-UUID
+reconciliation remain unchanged.

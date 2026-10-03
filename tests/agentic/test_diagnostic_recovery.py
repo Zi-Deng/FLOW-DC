@@ -78,12 +78,28 @@ class RecoveryTests(GitFixture):
         )
         body = "legacy partial\r\n" if meta["review_policy"]["adapter"].endswith("v1") else None
         parser = claude_telemetry_v1 if meta["review_policy"]["adapter"].endswith("v1") else claude_telemetry
+        raw = native_stream(packet, packet, "fixture", body=body)
+        extra = {}
+        if meta["review_policy"]["adapter"] == "claude-stream-json-2.1.282-v6":
+            import diagnostic_tool_contract
+
+            rows = [json.loads(line) for line in raw.splitlines()]
+            for row in rows:
+                for block in row.get("message", {}).get("content", []):
+                    if block.get("name") == "Grep":
+                        block["input"] = copy.deepcopy(diagnostic_tool_contract.GREP)
+            raw = "\n".join(json.dumps(row) for row in rows)
+            extra = {
+                "diagnostic_purpose": "native-tools-and-source",
+                "diagnostic_tool_contract": meta["diagnostic_tool_contract"],
+            }
         body, diag = parser.capture(
-            native_stream(packet, packet, "fixture", body=body),
+            raw,
             packet,
             packet,
             meta["review_policy"],
             "fixture",
+            **extra,
         )
         if meta["diagnostic_purpose"] == "isolation-refusal":
             diag["telemetry"]["controlled_refusals"] = 1

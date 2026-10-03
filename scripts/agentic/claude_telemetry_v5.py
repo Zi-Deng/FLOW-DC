@@ -11,13 +11,11 @@ import math
 import re
 from pathlib import Path
 
-import claude_refusal_v6 as claude_refusal
+import claude_refusal
 import claude_telemetry_v1 as legacy
 import claude_telemetry_v2 as previous
 import claude_telemetry_v3 as frozen_v3
 import claude_telemetry_v4 as frozen_v4
-import claude_telemetry_v5 as frozen_v5
-import diagnostic_tool_contract as tool_contract
 import review_coverage as coverage
 from workflow import WorkflowError
 
@@ -26,7 +24,7 @@ KINDS = {"system", "assistant", "user", "result", "rate_limit_event"}
 # Pinned built-in declarations are not delegation permission. Agent is absent
 # from the tool list and actual delegated messages remain forbidden.
 BUILTIN_AGENTS = {*legacy.BUILTIN_AGENTS, "claude-code-guide"}
-ADAPTER = "claude-stream-json-2.1.282-v6"
+ADAPTER = "claude-stream-json-2.1.282-v5"
 LEGACY_ADAPTER = "claude-stream-json-2.1.282-v1"
 
 
@@ -46,26 +44,6 @@ CONTROL_FIELDS = {
 } | {"system.commands", "system.status", "system.keys"}
 NUMERIC_FIELDS = {"system.estimated_tokens", "system.estimated_tokens_delta"}
 CONTROL_FIELDS |= NUMERIC_FIELDS | {"refusal." + key for key in claude_refusal.OBSERVATIONS}
-GREP_PREDICATES = {
-    "mode",
-    "line_numbers",
-    "path",
-    "glob",
-    "head_limit",
-    "input",
-    "rendered_lines",
-    "path_line_text",
-    "line_text",
-    "empty_result",
-}
-PREDICATE_FIELDS = {"call." + key for key in claude_refusal.CALL_PREDICATES} | {
-    "grep." + key for key in GREP_PREDICATES
-}
-CONTROL_FIELDS |= (
-    PREDICATE_FIELDS
-    | {"call." + key for key in claude_refusal.CALL_FIELDS}
-    | {"grep.input_shape", "call.block"}
-)
 MAX_THINKING_ESTIMATE = 9007199254740991
 NUMERIC_VALIDITY = {"missing", "wrong_type", "out_of_range", "valid"}
 FIELD_TYPES = {"missing", "null", "boolean", "number", "string", "array", "object"}
@@ -73,7 +51,7 @@ FIELD_TYPES = {"missing", "null", "boolean", "number", "string", "array", "objec
 
 def validate_summary(value):
     if not isinstance(value, dict) or "control_fields" not in value:
-        raise WorkflowError("Invalid Claude v6 control summary")
+        raise WorkflowError("Invalid Claude v5 control summary")
     previous.validate_summary({k: v for k, v in value.items() if k != "control_fields"})
     fields = value["control_fields"]
     if not isinstance(fields, dict) or set(fields) - CONTROL_FIELDS:
@@ -95,7 +73,6 @@ def validate_summary(value):
                 != (
                     {"present", "type", "length", "value_hashes", "name_hashes", "count"}
                     | ({"numeric_validity"} if field_name in NUMERIC_FIELDS else set())
-                    | ({"predicate"} if field_name in PREDICATE_FIELDS else set())
                 )
                 or (
                     field_name in NUMERIC_FIELDS
@@ -104,7 +81,6 @@ def validate_summary(value):
                         or item["numeric_validity"] not in NUMERIC_VALIDITY
                     )
                 )
-                or (field_name in PREDICATE_FIELDS and type(item.get("predicate")) is not bool)
                 or type(item["present"]) is not bool
                 or not isinstance(item["type"], str)
                 or item["type"] not in FIELD_TYPES
@@ -162,8 +138,6 @@ def observe_control(summary, field, event, key):
         "value_hashes": {},
         "name_hashes": {},
     }
-    if field in PREDICATE_FIELDS:
-        item["predicate"] = value is True
     if field in NUMERIC_FIELDS:
         item["numeric_validity"] = (
             "missing"
@@ -174,25 +148,6 @@ def observe_control(summary, field, event, key):
             if thinking_number(value)
             else "out_of_range"
         )
-    if field.startswith(("call.", "grep.", "refusal.")):
-        # No nested provider dump or unbounded hash input. The stream itself is bounded;
-        # values beyond these conservative wrapper limits contribute shape only.
-        def safe(v, depth=0, key=None):
-            if depth > 3:
-                return False
-            if isinstance(v, str):
-                return claude_refusal.bounded(v, 256 if key in {"id", "tool_use_id"} else 4096) or v == ""
-            if isinstance(v, dict):
-                return len(v) <= 64 and all(
-                    safe(k, depth + 1) and safe(item, depth + 1, k) for k, item in v.items()
-                )
-            if isinstance(v, list):
-                return len(v) <= 64 and all(safe(x, depth + 1) for x in v)
-            return v is None or type(v) in {bool, int, float}
-
-        limit = 256 if field in {"call.id", "refusal.tool_use_id"} else 4096
-        if not safe(value) or (isinstance(value, str) and len(value.encode("utf-8")) > limit):
-            value = None
     values = value if isinstance(value, list) else [value] if present else []
     for entry in values[:64]:
         count_hash(item["value_hashes"], entry)
@@ -356,20 +311,7 @@ def capture(
     failure=None,
     refusal_path=None,
     diagnostic_purpose=None,
-    diagnostic_tool_contract=None,
 ):
-    if policy["adapter"] == frozen_v5.ADAPTER:
-        return frozen_v5.capture(
-            raw,
-            packet,
-            workspace,
-            policy,
-            session_id,
-            exit_code=exit_code,
-            failure=failure,
-            refusal_path=refusal_path,
-            diagnostic_purpose=diagnostic_purpose,
-        )
     if policy["adapter"] in {LEGACY_ADAPTER, previous.ADAPTER, frozen_v3.ADAPTER, frozen_v4.ADAPTER}:
         frozen = {
             LEGACY_ADAPTER: legacy,
@@ -389,10 +331,7 @@ def capture(
         )
     if policy["adapter"] != ADAPTER:
         raise WorkflowError("Unsupported Claude stream adapter")
-    if diagnostic_purpose is not None:
-        tool_contract.validate(diagnostic_tool_contract)
     files, reasons = {}, set()
-    grep_calls = 0
     for path in Path(packet).rglob("*"):
         if path.is_file() and not path.is_symlink():
             try:
@@ -475,9 +414,7 @@ def capture(
             if event.get("session_id") != session_id:
                 summary["session_verified"] = False
                 reasons.add("unexpected_session_identity")
-            if event.get("parent_tool_use_id") is not None or any(
-                k in event for k in claude_refusal.DELEGATION
-            ):
+            if event.get("parent_tool_use_id") is not None or event.get("agent_id") or event.get("agentId"):
                 reasons.add("delegated_or_mcp_event")
             if kind == "system":
                 count_hash(summary["system_subtypes"], event.get("subtype"))
@@ -544,35 +481,6 @@ def capture(
                 valid_initialization = summary["init_count"] == 1 and not reasons
             elif kind == "assistant":
                 message = event.get("message")
-                invalid_call = False
-                if isinstance(message, dict) and isinstance(message.get("content"), list):
-                    for candidate in message["content"]:
-                        if not isinstance(candidate, dict):
-                            observe_control(summary, "call.block", {"block": candidate}, "block")
-                            reasons.add("tool_call_envelope")
-                            invalid_call = True
-                        if isinstance(candidate, dict) and candidate.get("type") not in {
-                            "text",
-                            "thinking",
-                            "redacted_thinking",
-                        }:
-                            predicates = claude_refusal.call_predicates(
-                                event,
-                                candidate,
-                                session_id,
-                                valid_initialization and summary["init_count"] == 1,
-                                summary["terminal_count"] != 0,
-                            )
-                            claude_refusal.observe_call(
-                                lambda field, obj, key: observe_control(summary, field, obj, key),
-                                event,
-                                candidate,
-                                predicates,
-                            )
-                            for name, valid in predicates.items():
-                                if not valid:
-                                    reasons.add("tool_call_" + name)
-                                    invalid_call = True
                 if (
                     not isinstance(message, dict)
                     or message.get("model") != policy["model"]
@@ -581,18 +489,8 @@ def capture(
                     reasons.add("unexpected_model_or_assistant_error")
                     continue
                 summary["model_verified"] = True
-                fingerprint = (
-                    None
-                    if invalid_call
-                    else coverage.checksum(json.dumps(message, sort_keys=True, ensure_ascii=False))
-                )
+                fingerprint = coverage.checksum(json.dumps(message, sort_keys=True, ensure_ascii=False))
                 if fingerprint in assistant_envelopes:
-                    if (
-                        diagnostic_purpose is not None
-                        and isinstance(message.get("content"), list)
-                        and any(isinstance(b, dict) and b.get("name") == "Grep" for b in message["content"])
-                    ):
-                        reasons.add("diagnostic_grep_duplicate_call")
                     if refusal.enabled and any(
                         isinstance(b, dict) and b.get("id") == refusal.identifier
                         for b in message.get("content", [])
@@ -600,8 +498,7 @@ def capture(
                     ):
                         refusal.fail("controlled_refusal_duplicate_call")
                     continue
-                if fingerprint is not None:
-                    assistant_envelopes.add(fingerprint)
+                assistant_envelopes.add(fingerprint)
                 identifier, step = message.get("id"), message.get("usage")
                 input_fields = ("input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")
                 if (
@@ -633,37 +530,7 @@ def capture(
                         valid_initialization and summary["init_count"] == 1,
                         summary["terminal_count"] != 0,
                     )
-                    predicates = claude_refusal.call_predicates(
-                        event,
-                        block,
-                        session_id,
-                        valid_initialization and summary["init_count"] == 1,
-                        summary["terminal_count"] != 0,
-                    )
-                    for name, valid in predicates.items():
-                        if not valid:
-                            reasons.add("tool_call_" + name)
                     identifier, tool, args = block.get("id"), block.get("name"), block.get("input")
-                    if tool == "Grep":
-                        observe_control(summary, "grep.input_shape", block, "input")
-                        grep_args = args if isinstance(args, dict) else {}
-                        checks = {
-                            "mode": grep_args.get("output_mode") == "content",
-                            "line_numbers": grep_args.get("-n") is True,
-                            "path": grep_args.get("path") == ".",
-                            "glob": grep_args.get("glob") == "capability/fixture.txt",
-                            "head_limit": type(grep_args.get("head_limit")) is int
-                            and grep_args["head_limit"] == 10,
-                            "input": tool_contract.exact(args, tool_contract.GREP),
-                        }
-                        for key, value in checks.items():
-                            observe_control(summary, "grep." + key, {"predicate": value}, "predicate")
-                        if diagnostic_purpose is not None:
-                            grep_calls += 1
-                            if not checks["input"]:
-                                reasons.add("diagnostic_grep_input_mismatch")
-                    if not all(predicates.values()):
-                        continue
                     if not isinstance(identifier, str) or identifier in seen or not isinstance(args, dict):
                         raise ValueError
                     seen.add(identifier)
@@ -699,21 +566,6 @@ def capture(
                     spans, paths, reason = [], [], "tool_failed_or_unsupported_content"
                     if success:
                         spans, paths, reason = observation(tool, args, content, workspace, files)
-                    if tool == "Grep":
-                        rendering = {
-                            "path_line_text": isinstance(content, str)
-                            and re.search(r"(?m)^[^\n:]+:[1-9][0-9]*:", content) is not None,
-                            "line_text": isinstance(content, str)
-                            and re.search(r"(?m)^[1-9][0-9]*:", content) is not None,
-                            "empty_result": content == "",
-                        }
-                        for key, value in rendering.items():
-                            observe_control(summary, "grep." + key, {"predicate": value}, "predicate")
-                        observe_control(
-                            summary, "grep.rendered_lines", {"predicate": bool(spans)}, "predicate"
-                        )
-                        if diagnostic_purpose is not None and success and not spans:
-                            reasons.add("grep_no_qualifying_lines")
                     if not success:
                         reasons.add("tool_execution_failed")
                     if reason not in {None, "unrecognized_or_empty_tool_result"}:
@@ -770,8 +622,6 @@ def capture(
                     reasons.add("subscription_quota_exhausted")
         except (ValueError, TypeError, KeyError, IndexError):
             reasons.add("malformed_or_uncorrelated_event")
-    if diagnostic_purpose is not None and grep_calls != 1:
-        reasons.add("diagnostic_grep_call_count")
     if refusal.complete():
         summary["controlled_refusals"] = 1
         reasons.add("controlled_refusal_diagnostic_only")
@@ -792,7 +642,7 @@ def capture(
     # Missing step counters mean unknown. Native num_turns is not exact API-call
     # accounting; output tokens come only from terminal usage, never placeholders.
     diagnostics = {
-        "schema_version": 8,
+        "schema_version": 7,
         "adapter": policy["adapter"],
         "cli_version": policy["cli"]["version"],
         "exit_code": exit_code,

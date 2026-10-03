@@ -1,0 +1,118 @@
+{
+  "binary_sha256": "3afe8535c0cc33f0e24f7b25dab7a1727b8b592196f8496a8bc302ba2161eed3",
+  "ranges": [
+    {
+      "label": "Oze",
+      "start": 202240773,
+      "end": 202242475,
+      "source": "function Oze(e,n,r,s){switch(e.name){case at:{try{if(n===null||typeof n!==\"object\")return n;let g=n,h=uEe(g.offset);if(typeof g.offset===\"string\"&&typeof h===\"number\")return{...g,offset:h}}catch(g){u(Error(`normalizeToolInput Read.offset coercion failed: ${g}`))}return n}case Pu:{let g=rS(r);pg(g);let h=Zj(r);return Hze(s),h!==null?{...n,plan:h,planFilePath:g}:n}case Vs.name:{let g=Vs.inputSchema.parse(n),{command:h,timeout:b,description:w}=g,M=ne(),F=lX(h,H()===\"windows\"?[M,wC(M)]:[M]).command;if(F=F.replaceAll(\"\\\\\\\\;\",\"\\\\;\"),/^echo\\s+[\"']?[^|&;><]*[\"']?$/i.test(F.trim()))i(\"tengu_bash_tool_simple_echo\",{});let B=\"run_in_background\"in g?g.run_in_background:void 0;return{command:F,description:w,...b!==void 0&&{timeout:b},...w!==void 0&&{description:w},...B!==void 0&&{run_in_background:B},...\"dangerouslyDisableSandbox\"in g&&g.dangerouslyDisableSandbox!==void 0&&{dangerouslyDisableSandbox:g.dangerouslyDisableSandbox},...!1,...!1,...\"allowed_domains\"in g&&g.allowed_domains!==void 0&&{allowed_domains:g.allowed_domains}}}case zv.name:{let h={...n};if(\"old_str\"in h){if(!(\"old_string\"in h))h.old_string=h.old_str;delete h.old_str}if(\"new_str\"in h){if(!(\"new_string\"in h))h.new_string=h.new_str;delete h.new_str}let b=zv.inputSchema.parse(h),w={file_path:b.file_path,edits:[{old_string:b.old_string,new_string:b.new_string,replace_all:b.replace_all}]},{file_path:M,edits:F}=eMn(w);return{replace_all:F[0].replace_all,file_path:M,old_string:F[0].old_string,new_string:F[0].new_string,...!1}}case Rw.name:{let g=Rw.inputSchema.safeParse(n);if(!g.success)return n;let h=mnt(g.data.file_path);return{file_path:g.data.file_path,content:h?g.data.content:gnt(g.data.content),...!1}}default:return n}}",
+      "sha256": "4c5d11a6fa976e300e1a04152f2406b9ff0317700dfa49bf01d79c382fa671ad"
+    },
+    {
+      "label": "bX",
+      "start": 202254883,
+      "end": 202255096,
+      "source": "function bX(e,n,{logRepairs:r=!0}={}){let s=UAn(n,e.inputSchema,e.inputJSONSchema,e.streamedInputRepairExemptKeys?.()),g=kke(s,{logRepairs:r});if(e.name===Id&&typeof s.script===\"string\")g.script=s.script;return g}",
+      "sha256": "ef69a6109eb572e887170a001ca341e0735bc6a4b68172251f821810ce94a371"
+    },
+    {
+      "label": "UAn",
+      "start": 202255096,
+      "end": 202256085,
+      "source": "function UAn(e,n,r,s){let g=e,h=(w,M)=>{let F=g[w];if(typeof F!==\"string\"||s?.has(w))return;let B=dt(F,!1),G;switch(M){case\"array\":G=Array.isArray(B);break;case\"object\":G=B!==null&&typeof B===\"object\"&&!Array.isArray(B);break;case\"boolean\":G=typeof B===\"boolean\";break;case\"integer\":case\"number\":G=typeof B===\"number\"&&Number.isFinite(B)&&String(B)===F&&(M===\"number\"||Number.isInteger(B));break;case\"any\":G=typeof B===\"boolean\"||Array.isArray(B)||B!==null&&typeof B===\"object\"||typeof B===\"number\"&&Number.isFinite(B)&&String(B)===F;break;case\"compound\":G=Array.isArray(B)||B!==null&&typeof B===\"object\";break}if(G){if(g===e)g={...e};g[w]=B}},b=n._zod?.def;if(b?.type===\"object\"&&b.shape)for(let[w,M]of Object.entries(b.shape)){let F=WAn(M._zod.def);if(Xst(F))h(w,F);else if(F===\"unknown\"||F===\"any\")h(w,\"compound\")}if(r?.properties){let w=r.$defs??r.definitions;for(let[M,F]of Object.entries(r.properties)){let B=yke(F,w);if(Xst(B))h(M,B);else if(B===void 0&&jAn(F))h(M,\"any\")}}return g}",
+      "sha256": "c75cf05acb71781a2a81758742abd0dd6ca1d1b52cffc9c967dda65a1b49a01c"
+    },
+    {
+      "label": "kke",
+      "start": 202257399,
+      "end": 202257754,
+      "source": "function kke(e,{logRepairs:n=!0}={}){let r={repairedStrings:0,windowsPathSkips:0,controlEscapeSkips:0},s=_ke(e,r);if(n&&(r.repairedStrings>0||r.windowsPathSkips>0||r.controlEscapeSkips>0))i(\"tengu_repair_double_escaped_unicode\",{repaired_strings:r.repairedStrings,windows_path_skips:r.windowsPathSkips,control_escape_skips:r.controlEscapeSkips});return s}",
+      "sha256": "764df72089d6384e74c0cc6f43d9c7dbf0cbdca4873ff409edb11cf1125a562e"
+    },
+    {
+      "label": "_ke",
+      "start": 202257754,
+      "end": 202258408,
+      "source": "function _ke(e,n){if(typeof e===\"string\"){if(!e.includes(\"\\\\u\"))return e;if(!Qst.test(e))return e;if(zAn.test(e))return n.windowsPathSkips++,e;let r=!1,s=e.replace(GAn,(g,h,b,w,M)=>{let F=M;while(F>0&&e[F-1]===\"\\\\\")F--;if(M-F&1)return g;if(h!==void 0)return String.fromCharCode(parseInt(h,16),parseInt(b,16));let B=parseInt(w,16);if(B>=55296&&B<=57343)return g;if(B<=31||B>=127&&B<=159)return r=!0,g;return String.fromCharCode(B)});if(s!==e)n.repairedStrings++;if(r)n.controlEscapeSkips++;return s}if(Array.isArray(e))return e.map((r)=>_ke(r,n));if(e!==null&&typeof e===\"object\"){let r={};for(let[s,g]of Object.entries(e))r[s]=_ke(g,n);return r}return e}",
+      "sha256": "ddf607dea87057dee731ac8f37dfc8201b7198a3ae7442d251e1df0f3ea7b82c"
+    },
+    {
+      "label": "Read name",
+      "start": 196604286,
+      "end": 196604295,
+      "source": "at=\"Read\"",
+      "sha256": "2e132f632b5ba4ee218b05bdfe262abbbdbd28890d76489ab0b0dc1b1f6d0cc3"
+    },
+    {
+      "label": "ExitPlanMode name",
+      "start": 197482663,
+      "end": 197482680,
+      "source": "Pu=\"ExitPlanMode\"",
+      "sha256": "4532b519bbe3cf8379a8be3c7ff31bc3028624b9d8cc228e4d87ed5b7563a87b"
+    },
+    {
+      "label": "Bash name",
+      "start": 196264626,
+      "end": 196264635,
+      "source": "ze=\"Bash\"",
+      "sha256": "3186485eab7741e7dd6617454bbced609c8f6df2f989997f29742d08117fee8c"
+    },
+    {
+      "label": "Edit name",
+      "start": 196264640,
+      "end": 196264649,
+      "source": "Ct=\"Edit\"",
+      "sha256": "76fdc1f8038660d5ce0d79e8dabb2aafc61ad4eef446ded58d467d1e5b32c01f"
+    },
+    {
+      "label": "Write name",
+      "start": 196265286,
+      "end": 196265296,
+      "source": "wn=\"Write\"",
+      "sha256": "82e7226b550cf15a16491a9d9b0c5e0659553cc35836b0712f2a92dbed5b0e97"
+    },
+    {
+      "label": "Workflow name",
+      "start": 200661552,
+      "end": 200661565,
+      "source": "Id=\"Workflow\"",
+      "sha256": "f94e9ab9e3e75ff250ced9c08509870a816117ce0512b2185f29bc91b1baf7c0"
+    },
+    {
+      "label": "Grep name",
+      "start": 196982767,
+      "end": 196982776,
+      "source": "zr=\"Grep\"",
+      "sha256": "edc5350848fff6f695722ddabf8959d1ae903deb4e6264eb18fe4162afd7a1fe"
+    },
+    {
+      "label": "Bash dispatch",
+      "start": 204991713,
+      "end": 204991728,
+      "source": "Vs=Dt({name:ze,",
+      "sha256": "9fa9324616cbc3111277d9c59342211f91bccba1347233c116d4581b07a73c2c"
+    },
+    {
+      "label": "Edit dispatch",
+      "start": 204833735,
+      "end": 204833750,
+      "source": "zv=Dt({name:Ct,",
+      "sha256": "520799de270a6540051a060029d23d6841f0b56d7bb6a6269a49b9403e32f2fd"
+    },
+    {
+      "label": "Write dispatch",
+      "start": 201967040,
+      "end": 201967055,
+      "source": "Rw=Dt({name:wn,",
+      "sha256": "72850dae06dd57234142cdbc3649b6fad8d461fff804cf2e2387f767191f609a"
+    },
+    {
+      "label": "normal response block normalization",
+      "start": 205072880,
+      "end": 205075422,
+      "sha256": "e5a00cb3c57f623e2b30cb62a7552059d2b618d6335e1df9d6dbb9011a97cbb4",
+      "source": "function ntt(e,n,r,s,g){if(!e)return[];return e.flatMap((h)=>{switch(h.type){case\"tool_use\":{if(typeof h.input!==\"string\"&&!Sw(h.input))throw Error(\"Tool use input must be a string or object\");let b=Cq(h.name);if(b!==void 0)i(\"tengu_content_block_healed\",{blockType:_(\"tool_use\"),action:_(\"name_truncated\"),nameUtf16Length:h.name.length,request_id:be(s?.requestId)??_(\"unknown\"),messageID:be(s?.messageId)??_(\"unknown\")}),t(`tool_use name is over the API's ${mC}-character limit for requests; kept its first ${mC} characters`,{level:\"warn\"});let w=b??h.name,M;if(typeof h.input===\"string\"){let F=dt(h.input,!1);if(F===null&&h.input.trim()!==\"null\"&&h.input.length>0){let G=bn(n,w);i(\"tengu_tool_input_json_parse_fail\",{toolName:G?Fn(w):gTe(w),isMcp:G?.isMcp??w.startsWith(\"mcp__\"),inputLen:h.input.length,request_id:s?.requestId==null?_(\"unknown\"):be(s.requestId),messageID:s?.messageId==null?_(\"unknown\"):be(s.messageId)}),M={[mNt]:{raw:re(h.input,2048),len:h.input.length}}}else M=F??{}}else M=h.input;if(typeof M===\"object\"&&M!==null&&!a$e(M)){let F=bn(n,w);if(F)try{let B=bX(F,M);M=B,M=Oze(F,B,r,g)}catch(B){let G=`requestId=${s?.requestId??\"unknown\"}, messageId=${s?.messageId??\"unknown\"}`;if(B instanceof Error&&B.name===\"ZodError\"){let ge=B instanceof TC?L(B.issues.map((_e)=>_e.code)).join(\",\"):\"unknown\";t(`Error normalizing tool input (tool=${Ed(F)}, ${G}): issues=${ge} errorChars=${B.message.length}`,{level:\"error\"})}else u(Error(`Error normalizing tool input (${G}): ${B}`))}}return{...h,name:w,input:M}}case\"text\":if(typeof h.text!==\"string\")return i(\"tengu_content_block_healed\",{blockType:_(\"text\"),action:_(\"dropped\"),missingText:!0,request_id:be(s?.requestId)??_(\"unknown\"),messageID:be(s?.messageId)??_(\"unknown\")}),[];if(h.text.trim().length===0)i(\"tengu_model_whitespace_response\",{length:h.text.length,request_id:s?.requestId==null?_(\"unknown\"):be(s.requestId),messageID:s?.messageId==null?_(\"unknown\"):be(s.messageId)});return h;case\"thinking\":{let b=typeof h.thinking===\"string\",w=typeof h.signature===\"string\";if(b&&w)return h;return i(\"tengu_content_block_healed\",{blockType:_(\"thinking\"),action:_(\"healed\"),missingThinking:!b,missingSignature:!w,request_id:be(s?.requestId)??_(\"unknown\"),messageID:be(s?.messageId)??_(\"unknown\")}),{...h,thinking:b?h.thinking:\"\",signature:w?h.signature:\"\"}}case\"code_execution_tool_result\":case\"mcp_tool_use\":case\"mcp_tool_result\":case\"container_upload\":return h;case\"server_tool_use\":if(typeof h.input===\"string\")return{...h,input:dt(h.input,!1)??{}};return h;default:return h}})}"
+    }
+  ],
+  "limits": "Exact Oze/bX/UAn/kke/_ke/ntt pure bodies, fully typed fixed Grep command. Registry and Zod shape/parse are explicit local stubs; enum name constants use recorded pinned mappings. Fixed strings lack Unicode escapes, so _ke returns before regex branches. No full schema engine, rg, native CLI, authentication, network or live capability claim."
+}

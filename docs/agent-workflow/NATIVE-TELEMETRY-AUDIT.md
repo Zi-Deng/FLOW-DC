@@ -363,3 +363,37 @@ function or reviewer behavior is patched, and no dependency or CI policy changes
 Tests bind both selected prefixes and the return to the retained full source, exercise
 the guard's rejection, and compare all golden outputs including the negative cases.
 This conditional branch evidence does not execute the complete native permission engine.
+
+
+## Revision 8 prospective transport and Grep audit — 2026-10-03 UTC
+
+The pinned binary digest remains unchanged. `claude-transport-2.1.282-v6`
+fixtures preserve the exact selected stream-start/delta statements, full
+normalization/split/visibility/projection functions and selected main assistant
+branches, with source offsets and hashes. Synthetic absent/direct/unsupported
+caller inputs survive those branches; the wrapper accepts only absent or exact
+direct caller. Desktop/plugin direct literals alone do not establish ordinary
+model tool transport. Explicit-null agent identifiers remain unsupported. This
+conditional result cannot identify any unretained trial7 payload or prove live isolation.
+
+The separate Grep fixture executes exact rg-result/path/pagination/render bodies
+with synthetic rg JSON and the selected content display branch. Directory results
+include path:line:text; single-file results may contain only line:text, which the
+shared parser still refuses. The fixed diagnostic command uses the workspace
+directory, fixture-only glob, content mode, explicit line numbers and head_limit10.
+No actual rg or native tool is executed. The additional normalization fixture
+executes exact `ntt`, `bX`, `UAn`, `kke`, `_ke` and `Oze` bodies on that fully typed
+command. Registry lookup and schema descriptors/parse are declared local stubs;
+this is not a Zod/registry/full-engine test. Pinned Read/ExitPlanMode/Bash/Edit/Write
+name mappings show that Grep reaches `Oze`'s unchanged-input default. The fixed
+strings contain no Unicode escapes, so `_ke` returns before its regex branches.
+The source schema/argv ranges are retained for static inspection. No future
+captured arguments are canonically rewritten to pass the contract.
+
+All fixtures run on Node22 and24 without native authentication, policy, plugins,
+CLI or inference. V5 telemetry and the original `claude_refusal.py` remain byte-identical;
+new v6 uses a separate helper. Predicate observations are fixed closed names with
+boolean outcomes and bounded shape/hash data (eight shapes, 64 hashes and capped
+overflow); no raw path/session/caller/input/reason survives. The selected annotation
+never replaces the complete restricted Read/advisory/error/terminal chain, actual
+Read/Grep/Glob evidence, empty catalogs, model/session, usage or exact report checks.

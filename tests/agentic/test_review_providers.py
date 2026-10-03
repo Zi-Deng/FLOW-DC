@@ -34,7 +34,7 @@ class ProviderPolicyTests(GitFixture):
             "model": "claude-fixture-99" if provider == "claude-code" else "gpt-fixture-99",
             "efforts": ["medium"] if provider == "claude-code" else ["default", "high"],
             "cli_version": "2.1.282" if provider == "claude-code" else "1.0.83",
-            "adapter": "claude-stream-json-2.1.282-v5"
+            "adapter": "claude-stream-json-2.1.282-v6"
             if provider == "claude-code"
             else "copilot-session-events-v2",
             "evidence": [

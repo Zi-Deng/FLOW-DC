@@ -352,6 +352,7 @@ class ClaudeTelemetryTests(GitFixture):
             "fixture-session",
             refusal_path=outside,
             diagnostic_purpose="isolation-refusal",
+            diagnostic_tool_contract=__import__("diagnostic_tool_contract").contract(),
         )
         self.assertEqual(diag["telemetry"]["controlled_refusals"], 0)
         self.assertFalse(coverage.assess(self.packet, body, diag, policy=self.policy)["qualified"])
@@ -365,6 +366,7 @@ class ClaudeTelemetryTests(GitFixture):
             "fixture-session",
             refusal_path=outside,
             diagnostic_purpose="isolation-refusal",
+            diagnostic_tool_contract=__import__("diagnostic_tool_contract").contract(),
         )
         self.assertEqual(diag["telemetry"]["controlled_refusals"], 0)
         self.assertIn("controlled_refusal_not_observed", diag["reasons"])

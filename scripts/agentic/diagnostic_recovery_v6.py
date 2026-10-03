@@ -182,7 +182,7 @@ def load(repo, *, later_attempts=False):
             raise WorkflowError("Revision-6 packet policy or grant binding changed")
     present = {p.name for p in root.glob("attempt-*")}
     expected = {f"attempt-{n}" for n in range(1, len(attempts) + 1)}
-    allowed = expected | {"attempt-6", "attempt-7"} if later_attempts else expected
+    allowed = expected | {"attempt-6", "attempt-7", "attempt-8", "attempt-9"} if later_attempts else expected
     if not expected <= present <= allowed:
         raise WorkflowError("Conflicting or partial revision-6 attempt state")
     if len(attempts) == 5:

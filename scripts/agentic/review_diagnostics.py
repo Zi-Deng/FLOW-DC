@@ -7,6 +7,7 @@ import copy
 import fcntl
 import shutil
 
+import diagnostic_tool_contract as tool_contract
 import review_coverage as coverage
 import review_policy
 from review_packet import stable_id
@@ -24,6 +25,7 @@ PURPOSES = ("native-tools-and-source", "isolation-refusal")
 
 
 def assess_diagnostic(packet, body, diagnostics, meta):
+    tool_contract.validate_meta(meta)
     purpose = meta.get("diagnostic_purpose")
     if purpose not in PURPOSES:
         raise WorkflowError("Unknown diagnostic purpose")
@@ -40,7 +42,10 @@ def assess_diagnostic(packet, body, diagnostics, meta):
     elif refusal:
         projected["reasons"].append("required_controlled_refusal_missing")
     result = coverage.assess(packet, body, projected, policy=meta["review_policy"])
-    return {**result, "diagnostic_purpose": purpose, "not_a_pr_review": True}
+    result = {**result, "diagnostic_purpose": purpose, "not_a_pr_review": True}
+    if meta["review_policy"]["adapter"] == tool_contract.ADAPTER:
+        result["diagnostic_tool_contract"] = copy.deepcopy(meta["diagnostic_tool_contract"])
+    return result
 
 
 def state_directory(repo):
@@ -89,9 +94,11 @@ def ledger(repo):
     import diagnostic_recovery_v5
     import diagnostic_recovery_v6
     import diagnostic_recovery_v7
+    import diagnostic_recovery_v8
 
     return (
-        diagnostic_recovery_v7.load(repo)
+        diagnostic_recovery_v8.load(repo)
+        or diagnostic_recovery_v7.load(repo)
         or diagnostic_recovery_v6.load(repo)
         or diagnostic_recovery_v5.load(repo)
         or diagnostic_recovery.load(repo)
@@ -104,10 +111,11 @@ def ledger_path(repo, state):
     from diagnostic_recovery_v5 import FILENAME as V5_FILENAME
     from diagnostic_recovery_v6 import FILENAME as V6_FILENAME
     from diagnostic_recovery_v7 import FILENAME as V7_FILENAME
+    from diagnostic_recovery_v8 import FILENAME as V8_FILENAME
 
     return (
         state_directory(repo)
-        / {1: "ledger.json", 2: FILENAME, 3: V5_FILENAME, 5: V6_FILENAME, 6: V7_FILENAME}[
+        / {1: "ledger.json", 2: FILENAME, 3: V5_FILENAME, 5: V6_FILENAME, 6: V7_FILENAME, 7: V8_FILENAME}[
             state["schema_version"]
         ]
     )
@@ -118,17 +126,25 @@ def recovery_module(state):
     import diagnostic_recovery_v5
     import diagnostic_recovery_v6
     import diagnostic_recovery_v7
+    import diagnostic_recovery_v8
 
     return {
         2: diagnostic_recovery,
         3: diagnostic_recovery_v5,
         5: diagnostic_recovery_v6,
         6: diagnostic_recovery_v7,
+        7: diagnostic_recovery_v8,
     }.get(state["schema_version"])
 
 
 def execution_authority(repo, state, policy):
     module = recovery_module(state)
+    if policy["adapter"] == tool_contract.ADAPTER:
+        if state["schema_version"] != 7:
+            raise WorkflowError(
+                "Current v6 diagnostics require the exact revision-8 grant before authentication"
+            )
+        tool_contract.validate(state["grant"].get("diagnostic_tool_contract"))
     if policy["adapter"] == "claude-stream-json-2.1.282-v5" and state["schema_version"] != 6:
         raise WorkflowError("Current v5 diagnostics require the exact revision-7 grant before authentication")
     if policy["adapter"] == "claude-stream-json-2.1.282-v4" and state["schema_version"] != 5:
@@ -155,6 +171,7 @@ def verify(repo, entry, policy, *, recovery=None, require_qualified=True, strict
     directory = plain_path(state_directory(repo) / f"attempt-{entry['number']}")
     validate_files(directory)
     meta = coverage.read_json(directory / "metadata.json")
+    tool_contract.validate_meta(meta)
     review_policy.validate_policy(meta["review_policy"])
     expected_purpose = entry["purpose"] if recovery else PURPOSES[entry["number"] - 1]
     if meta.get("diagnostic_purpose") != expected_purpose or entry.get("policy_digest") != digest(
@@ -226,13 +243,13 @@ def require_activation(repo, policy):
     state = ledger(repo)
     verified = set()
     observed = []
-    recovery = state if state["schema_version"] in {2, 3, 5, 6} else None
+    recovery = state if state["schema_version"] in {2, 3, 5, 6, 7} else None
     execution_authority(repo, state, policy)
     if recovery:
         from diagnostic_recovery import match_policy
 
         match_policy(state["grant"]["policy"], policy)
-    start = {1: 0, 2: 1, 3: 2, 5: 3, 6: 5}[state["schema_version"]]
+    start = {1: 0, 2: 1, 3: 2, 5: 3, 6: 5, 7: 7}[state["schema_version"]]
     for entry in state["attempts"][start:]:
         if entry["status"] == "qualified":
             try:
@@ -268,8 +285,14 @@ def run(repo, cfg, **overrides):
     with locked(repo):
         state = ledger(repo)
         module = execution_authority(repo, state, selected)
+        if state["schema_version"] == 7:
+            # Exhaustion/failed first purpose must stop before reading credentials.
+            if len(state["attempts"]) >= 9:
+                raise WorkflowError("All nine counted attempts exhausted; no tenth call")
+            if len(state["attempts"]) == 8 and state["attempts"][-1]["status"] != "qualified":
+                raise WorkflowError("Revision-8 recovery stops after future failure or interruption")
         selected = bind(selected)
-        recovery = state if state["schema_version"] in {2, 3, 5, 6} else None
+        recovery = state if state["schema_version"] in {2, 3, 5, 6, 7} else None
         if recovery:
             number, purpose = module.next_slot(repo, state, selected)
             maximum = state["grant"]["max_total_attempts"]
@@ -298,7 +321,13 @@ def run(repo, cfg, **overrides):
         )
         atomic_text(
             packet / "START.txt",
-            "Diagnostic only: Read capability/fixture.txt, Grep its token with content and line numbers, Glob capability/*.txt. Report only observed evidence. No PR source is present.\n",
+            "Diagnostic only: Read capability/fixture.txt, "
+            + (
+                tool_contract.instruction()
+                if selected["adapter"] == tool_contract.ADAPTER
+                else "Grep its token with content and line numbers. "
+            )
+            + "Glob capability/*.txt. Report only observed evidence. No PR source is present.\n",
         )
         atomic_text(
             packet / "review-policy.txt",
@@ -346,6 +375,8 @@ def run(repo, cfg, **overrides):
                 if p.is_file()
             },
         }
+        if selected["adapter"] == tool_contract.ADAPTER:
+            meta["diagnostic_tool_contract"] = tool_contract.contract()
         if recovery:
             meta["recovery"] = {"grant_digest": state["grant_digest"], "number": number, "purpose": purpose}
         atomic_json(directory / "metadata.json", meta)

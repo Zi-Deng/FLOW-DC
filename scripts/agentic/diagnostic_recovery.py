@@ -202,7 +202,7 @@ def load(repo, *, later_attempts=False):
     present = {p.name for p in root.glob("attempt-*")}
     expected = {f"attempt-{n}" for n in range(1, len(attempts) + 1)}
     allowed = (
-        expected | {"attempt-3", "attempt-4", "attempt-5", "attempt-6", "attempt-7"}
+        expected | {"attempt-3", "attempt-4", "attempt-5", "attempt-6", "attempt-7", "attempt-8", "attempt-9"}
         if later_attempts
         else expected
     )
@@ -240,6 +240,10 @@ def prepare(repo, cfg, *, apply=False, preview_digest=None):
     import review_diagnostics as diagnostics
 
     repo.assert_main()
+    if review_policy.PROVIDERS["claude-code"]["adapter"] == "claude-stream-json-2.1.282-v6":
+        import diagnostic_recovery_v8
+
+        return diagnostic_recovery_v8.prepare(repo, cfg, apply=apply, preview_digest=preview_digest)
     if review_policy.PROVIDERS["claude-code"]["adapter"] == "claude-stream-json-2.1.282-v5":
         import diagnostic_recovery_v7
 

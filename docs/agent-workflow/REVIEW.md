@@ -289,7 +289,7 @@ advisory, error result and singleton terminal denial in order. A message substri
 dontAsk denial or absence of exposure cannot replace positive correlation. Ordinary
 reviews remain incomplete on all denials. No report synthesis or replay occurs.
 
-Use the [current revision-7 sequence](PROVIDERS.md#issue-33-revision-7-prospective-recovery):
+Historical revision-7 sequence (now stopped): [revision 7](PROVIDERS.md#issue-33-revision-7-prospective-recovery):
 final-head checks/CI, explicit coordinator grant application, slot6 current tools/source,
 then slot7 isolation only if6 qualifies. Seven total including history; each300s/$2
 reference/zero extra spending; total2100s/$14, prospective600s/$4, failure-stop/no8.
@@ -297,3 +297,17 @@ The old grant is stopped. No repeated approval question or automatic call follow
 Prior927 tests and CI associated with6f865849 (actual checkout3a043320) are historical
 for changed source. Both current live purposes remain necessary. Migration-only model
 PR-review exemption, strict normal gates, human merge and untouched PR32 still apply.
+
+## Revision-8 call provenance and deterministic Grep — 2026-10-03 UTC
+
+Use the [current revision-8 sequence](PROVIDERS.md#issue-33-revision-8-prospective-recovery).
+V5 telemetry and its helper remain frozen for schema7 recovery; current v6 uses
+schema8. Exact optional direct-caller metadata is accepted only with all existing
+identity, tool, input, result and terminal evidence. Unknown/delegated metadata is
+refused. Fixed bounded call predicates identify which checks fail without raw logs.
+Both new diagnostic packets bind the exact directory/glob/content/line-number/
+head-limit Grep command. Unsupported rendering still earns no source spans.
+Seven historical trials and five ledgers retain their original bytes and status;
+trial7 remains incomplete on both refusal and Grep evidence. After final gates/CI,
+coordinator-only explicit grant application permits slot8 tools/source and then9
+isolation if8 qualifies, failure-stop/no10. No software repair or renewal runs inference.

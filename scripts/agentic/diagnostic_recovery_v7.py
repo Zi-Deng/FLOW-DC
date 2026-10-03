@@ -134,7 +134,7 @@ def grant(repo, policy, *, historical_authority=False):
     }
 
 
-def load(repo):
+def load(repo, *, later_attempts=False):
     import review_diagnostics as diagnostics
 
     root = diagnostics.state_directory(repo)
@@ -189,7 +189,10 @@ def load(repo):
             "purpose": SEQUENCE[number],
         }:
             raise WorkflowError("Revision-7 packet policy or grant binding changed")
-    if {p.name for p in root.glob("attempt-*")} != {f"attempt-{n}" for n in range(1, len(attempts) + 1)}:
+    expected = {f"attempt-{n}" for n in range(1, len(attempts) + 1)}
+    actual = {p.name for p in root.glob("attempt-*")}
+    allowed = expected | {"attempt-8", "attempt-9"} if later_attempts else expected
+    if not expected <= actual <= allowed:
         raise WorkflowError("Conflicting or partial revision-7 attempt state")
     if len(attempts) == 7:
         if attempts[5]["status"] != "qualified":
