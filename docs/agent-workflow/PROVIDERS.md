@@ -58,7 +58,7 @@ Each declaration has exactly these fields:
 | `model` | Exact lowercase versioned provider identifier, at most 128 characters; no aliases, auto/default/latest segments, paths or context modifiers |
 | `efforts` | Nonempty unique list of the model's verified efforts, within the pinned CLI's supported controls; Copilot `default` omits its effort flag |
 | `cli_version` | `2.1.282` for Claude or `1.0.83` for Copilot |
-| `adapter` | `claude-stream-json-2.1.282-v3` or `copilot-session-events-v2`, matching the provider |
+| `adapter` | `claude-stream-json-2.1.282-v4` or `copilot-session-events-v2`, matching the provider |
 | `evidence` | One to eight public HTTPS primary documentation URLs, without query strings or credentials; Claude documentation hosts for Claude, `docs.github.com` for Copilot |
 
 The list defaults to empty. Declarations cannot override built-in model entries or
@@ -206,7 +206,19 @@ The command requests safe/restricted mode, Read/Grep/Glob only, dontAsk, no perm
 prompts, empty settings discovery, explicit trusted settings, empty strict MCP,
 no slash commands and no persistence. Settings explicitly require
 `disableBundledSkills: true` as well as disabling hooks, model switching, fallback
-models, auto-memory and usage-limit continuation. The bundled-skills setting alone
+models, auto-memory and usage-limit continuation. The effective trusted settings also
+set exactly nine `enabledPlugins` entries to boolean `false`: `sec-default@builtin`,
+`agents-md@builtin`, `telemetry@builtin`, `plugin-authoring@builtin`, `tips@builtin`,
+`mermaid@builtin`, `responsive-mode@builtin`, `diff@builtin`, `claude-test@builtin`.
+Missing, extra, extended or nonboolean entries are refused. The pinned registrar's
+exact names and bytes are checked. Safe mode and hook-disable settings alone retain
+built-in hook modules; the enabled selector must exclude them before skills, settings,
+metadata and hook/module loading. Flag settings remain effective with empty settings
+discovery, but administrator policy takes precedence. `sec-default` is policy-only:
+its flag entry cannot override policy. Existing endpoint-policy refusal and genuine
+Max remote ineligibility remain mandatory; Team/managed paths cannot qualify.
+No plugin, including `agents-md`, is allowed in initialization metadata. These are
+conditional source controls, not live absence evidence. The bundled-skills setting alone
 does not prove an empty catalog: native exceptions exist. Required empty initial
 skills/plugins/MCP/slash-command metadata and empty command updates remain separate
 validation requirements; unexpected metadata blocks qualification. No shell, edits,
@@ -251,13 +263,14 @@ or exact API-call counts. No undocumented auth-retry-disable variable is used;
 `CLAUDE_CODE_MAX_RETRIES` was removed. Complete native retry/fallback qualification
 and controlled native error-path evidence remain activation requirements.
 
-Issue 33's original and revision-4 ledgers remain historical accounting. Revision 4
-stopped after incomplete slot 2; its unused slot 3 cannot execute. The separately
-approved revision-5 grant below authorizes prospective slot 3 for v3 tools/source,
-then slot 4 for isolation only after slot 3 qualifies. It requires explicit preview
-and application; neither publication, software repair nor renewal runs a call.
-Each diagnostic is bounded to 300 seconds/$2 reference estimate, zero extra actual
-spending. Failures/interruption count, and any future failure stops this new sequence.
+Issue 33's original, revision-4 and revision-5 ledgers remain historical accounting.
+All three trials are incomplete; both recovery grants stopped. Their unused isolation
+slots cannot execute. The exactly bound revision-6 grant below permits prospective
+slot 4 for v4 tools/source, then slot 5 for isolation only after slot 4 qualifies.
+It requires final checks/CI and explicit coordinator preview/application. Neither
+publication, software repair nor renewal runs a call. Each diagnostic is bounded to
+300 seconds/$2 reference estimate, zero extra actual spending. Failures/interruption
+count, and any future failure stops the new sequence.
 
 Both distinct purposes must succeed under the current exact CLI/adapter/model/effort
 and compatible authentication provenance. The tools-and-source purpose inspects
@@ -298,6 +311,10 @@ authorize renewal lineage. Invocation and activation separately verify current l
 New execution requires current authority.
 
 ### Issue 33 revision-5 prospective recovery
+
+**Historical, stopped after incomplete trial 3 on 2026-10-03 UTC.** The sequence
+below records that grant's original meaning; its unused isolation slot 4 cannot run.
+Use the revision-6 procedure below for the current binding.
 
 The maintainer's recorded standing override and approval bind
 [plan comment 5964179523](https://github.com/Zi-Deng/FLOW-DC/issues/33#issuecomment-5964179523)
@@ -351,6 +368,40 @@ explicit verified same-account lineage permitted. Owner-writable receipts are
 accounting, not cryptographic attestations or billing guarantees. The implementation
 and synthetic ledger tests do not establish either successful live purpose.
 
+### Issue 33 revision-6 prospective recovery
+
+The standing authorization is exactly bound to
+[plan comment 5964751600](https://github.com/Zi-Deng/FLOW-DC/issues/33#issuecomment-5964751600)
+and contract `993afb1688760fb95a966b8526a61bfcc50d5d518de974b9698aebda9f20062e`.
+No repeat user approval is pending. After reviewed implementation, final local checks
+and required CI, the coordinator uses the same `claude-diagnostic-recovery` preview
+and `--apply --preview-digest` commands above from the clean control checkout with
+the exact issue-worktree script. This never invokes inference. A separate schema-5
+`recovery-v6-ledger.json` holds a version-3 grant; schema 4 remains reserved.
+
+The grant binds exact current authority, v4 policy, all three historical ledger texts,
+all three failed-trial evidence hashes and contiguous identities. Historical reads
+use original approval receipts and frozen v1/v2/v3 semantics without credential reads.
+History has bounded file counts and byte sizes. Partial/conflicting state, edited
+limits/purposes/policies and stale authority fail before new authentication/inference.
+Original ledgers, grants, observed generations, reports and assessments remain exact;
+old unused purposes are never rewritten. Owner-writable records are not attestations.
+
+Prospective counted slot 4 is fresh v4 native-tools-and-source. Slot 5 is
+isolation-refusal only after slot 4 qualifies. Each new packet binds the grant digest,
+counted number and purpose. Five total attempts include failures 1/2/3; total ceilings
+are 1500 seconds/$10 reference estimate, prospective ceilings 600 seconds/$4, each
+call 300 seconds/$2 and zero extra actual spending. Any failure/interruption stops
+this grant. There is no sixth call, automatic retry, reset, substitution, permission
+widening or report repair/replay. Idempotent application creates no new allowance.
+
+The coordinator invokes `diagnose-claude --review-provider claude-code` separately
+for each purpose only after current native setup/receipt/lifetime/endpoint/remote
+prerequisites pass. Both purposes must qualify under the current exact policy;
+verified same-account renewal retains original observed generations and never grants
+calls. All three existing trials remain incomplete. Offline fixtures and this ledger
+implementation do not establish either required live success.
+
 Native stream parsing requires correlated successful model-facing Read/Grep/Glob
 results and one successful terminal result. UI metadata, assistant fragments,
 structured-output channels, listings and empty/failed results do not establish source
@@ -365,14 +416,14 @@ The terminal text is saved exactly even when partial; no substring extraction,
 concatenation, report synthesis or inference repair is performed. Partial findings
 remain publishable as incomplete, while all ordinary readiness gates remain strict.
 
-The v3 Claude stream adapter uses diagnostic schema 5 (schema 4 remains reserved). Its Read parser recognizes
+The current v4 Claude stream adapter uses diagnostic schema 6 (schema 4 remains reserved). Its Read parser recognizes
 the pinned renderer's numbered final empty segment after a trailing newline, without
 crediting that segment as source. LF/CRLF and tab-aware separators are supported;
 ambiguous native/inventory line numbering and extra reminder/truncation text remain
 incomplete. A precisely shaped `system/status/requesting` event is accepted; compact,
 null/unknown status, hook, retry and fallback events remain unsupported. Subtypes,
 unknown agent names and rejected system payloads are retained only as bounded hash
-counts. V3 additionally accepts only an exact `commands_changed` envelope with an
+counts. V4 retains v3 acceptance of only an exact `commands_changed` envelope with an
 empty commands array, matching session, valid UUID and correct event order. Nonempty
 built-in/custom catalogs, extra fields and missing/null catalogs remain incomplete.
 Required initialization fields must be present; optional terminal commands and
@@ -381,9 +432,22 @@ presence/type/length observations with hashed names/values make failures inspect
 without retaining raw provider strings. `claude-code-guide` is a known built-in declaration, never permission to use
 Agent or delegated tools. See [the pinned source audit](NATIVE-TELEMETRY-AUDIT.md).
 
+V4 also accepts only an exact six-field `thinking_tokens` system envelope:
+`type`, `subtype`, `estimated_tokens`, `estimated_tokens_delta`, `session_id`, `uuid`.
+It must occur after exactly one initialization and before the terminal result, with
+matching session and valid UUID. Both estimates must be finite JSON numbers, never
+booleans, in [0, 9007199254740991], with delta no greater than total. Zero, fractional
+values and block/request resets are supported; global monotonicity is not required.
+The upper bound is conservative wrapper validation, not a native guarantee. Missing,
+extra, delegated and malformed fields remain incomplete. Fixed numeric-validity and
+presence/type observations use the existing eight-shape/64-hash caps and bounded
+counters; no raw thinking or payload values survive. These estimates cannot replace
+terminal usage, source evidence or model identity, and are not exact tokens/API calls
+or spending. Exact terminal report bytes and accounting semantics are unchanged.
+
 ## Historical records, hosted operation and this migration
 
-The original v1 adapter/diagnostic schema 2 and v2 adapter/diagnostic schema 3
+The original v1/schema 2, v2/schema 3 and v3/schema 5 Claude adapters
 retain byte-identical frozen parsers and their original validation for exact
 recovery and publication. They cannot execute or
 establish current readiness. Adapter changes require fresh preparation and matching

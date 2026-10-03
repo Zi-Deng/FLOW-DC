@@ -169,3 +169,108 @@ parser. A future failure stops that finite sequence; no fifth call. This authori
 and software implementation do not establish live capability or reconstruct missing
 trial payloads. See [the provider procedure](PROVIDERS.md) for explicit application,
 current prerequisites and coordinator-owned execution.
+
+## V4 implementation audit — 2026-10-03 UTC
+
+The signed 2.1.282 artifact remains SHA-256
+`3afe8535c0cc33f0e24f7b25dab7a1727b8b592196f8496a8bc302ba2161eed3`. The offline audit reads that
+binary without executing it. Extracted pure selectors, producers and emitters run with synthetic
+local inputs and dependency stubs; no native auth, CLI, actual plugin module, network or inference
+runs. The committed fixture `tests/agentic/fixtures/claude-controls-2.1.282-v4.json` records all 22
+exact byte ranges/hashes, synthetic outputs and provenance. The local extraction runner and stubbed
+JavaScript remain in the ignored issue handoff. They provide conditional source evidence, not live
+capability.
+
+### Plugin controls and limits
+
+The complete `_ye` registrar registers nine names: sec-default, agents-md, telemetry,
+plugin-authoring, tips, mermaid, responsive-mode, diff and claude-test. Some registrations depend on
+entrypoint and rollout branches. The closed wrapper map must include all nine exact `name@builtin`
+keys with boolean false, rather than guessing which feature gates will enable a plugin today.
+
+`enabledPlugins` is a supported settings record with boolean values (194743792); `bd` is the literal
+builtin (195426846). `lNt` (194876053) retains flagSettings and policySettings even with empty
+discovered sources; `EVn` merges the explicit flag document then policy. `Ke`/`Vn` reads the merged
+settings (195252858). `nae` (195494886) first checks actual availability, then reads the exact
+source key from merged settings, except policy-only/trusted-only special branches. An explicit false
+puts an available ordinary built-in into the disabled list. Missing values use the plugin default.
+No invented disable-all-plugins flag is involved.
+
+Downstream chain: `SBe` (204807885) combines enabled/disabled builtin rows through `K6o`, demotes
+dependency-invalid plugins and filters `.enabled` before returning enabled plugins. `K6o` preserves
+disabled builtin rows; its re-enable branch concerns admitted session/synced copies, not builtin
+rows. `Ysn` (195495566) uses `nae().enabled` for builtin skills. `SBe` passes only its filtered
+enabled list into plugin settings/cache selection; metadata initialization `RYe` receives that list
+through existing initialization plumbing. `tY` (203019780) takes `Qi(...).enabled`, then `Ppo`,
+`bpo`, and `vpo` before `Spr`/`vJn`/`BSt` loads module hooks. Those filters cannot resurrect a
+disabled plugin. Classic hooks also iterate the filtered/ordered enabled list.
+
+Crucial exception: `Ppo` (203019583) says safe mode retains builtins. `vpo` (203018090) skips
+ordinary hooksDisabled/allDisabled tests for builtin sources. Therefore `disableAllHooks` and safe
+mode alone are insufficient; keep them and add earlier explicit builtin selection controls. The
+agents-md module declares session.start, prompt.context, agent.spawn and tool.call hooks
+(225456332). Its registration `MT` records metadata/scan definitions; active modules are selected
+and loaded later. It cannot be treated as harmless init metadata or accepted merely because model
+tools are read-only. Disabling its active module excludes its prompt-context/instruction-file
+modification route; the separate existing core memory/settings restrictions remain required.
+
+`sec-default` is explicitly policy-only. Its `isAvailable` is
+`nN().outermost.includes(sec-default@builtin)` (225561952); `nN` uses `ido` (199665677),
+managed-policy presence/prepend entries and Team/Enterprise status. It may remain active despite
+flag-level false if policy seats it. Negative synthetic managed and Team cases prove the limitation.
+Preserve existing fail-closed endpoint-managed-settings checks and genuine Max remote ineligibility;
+never edit/suppress administrator settings. On the permitted no-managed-policy/Max branch it is
+unavailable. The other eight registered definitions have no policy-only/trusted-only override fields
+in this pinned source. A changed pin/registrar or unknown active plugin must block.
+
+The fixture uses all ordinary plugins available/default-on to avoid relying on rollout defaults.
+Baseline yields active agents-md despite hook-disable flags; exact false entries yield no enabled
+plugins, module selection, skill contributions or metadata entries. Explicit agents-md re-enable
+yields that plugin again. Managed/Team policy cases retain sec-default and must be refused. This
+demonstrates conditional native selection logic, not that a future live process will be empty.
+
+`syncClaudeAiPlugins:false` is supported but does not govern builtin registration. Native sync
+discovery `V6o` (204807519) also requires `oMe` (199403251), which requires userSettings in play. Do
+not add it as a substitute or claim an unverified flag-setting effect; fresh state/excluded user
+settings and existing remote/auth controls remain. No ordinary login/config was inspected.
+
+### Thinking estimate framing
+
+Producer transport at 205082987 forwards numeric `estimated_tokens` as a thinking_progress delta;
+otherwise `Emr` (205079197) estimates `ceil(text.length/4)`. Signature events forward a
+length-derived estimate. `kKr` (216953272) accumulates deltas, resets the estimate at each
+content-block start, and can increase it at signature completion. The alternate pure `ya`
+(210058327) confirms zero/fractional explicit deltas and signature growth. Native numeric guards are
+not a guarantee of finite/nonnegative/bounded values: the wrapper must refuse unsupported values.
+
+`recordApiMetricsEvent` (222284577) emits only system/type, thinking_tokens/subtype,
+estimated_tokens, estimated_tokens_delta, on the two supported progress/signature branches. `Le`
+(210060785) adds session_id and uuid. The fixture preserves the exact emitter body, binding it to a
+synthetic metrics receiver and stubbing only the event sink/feature gate. No thinking content is
+retained. Outputs include zero, fractional deltas, signature growth and a subsequent block reset:
+(0,0), (2.5,2.5), (5.5,3), (10,4.5), (1,1).
+
+Implemented strict v4 parser: exact six fields, matching session, valid UUID, after the valid init
+and before terminal. Values must be JSON numbers excluding booleans, finite and within [0,
+9007199254740991], delta <= total; zero/fractional values are supported. The upper bound is a
+conservative wrapper cap, not a source claim. No global monotonic check because native resets.
+Reject unknown/extra/delegated fields, preinit/postterminal events, invalid identity,
+strings/null/negative/nonfinite/overflow. Retain only capped fixed numeric shape/validity
+observations and existing hash-only unknown data; no raw provider strings/thinking. These estimates
+must never replace result usage/cost/quota counters or earn source coverage.
+
+### Preservation and evidence limits
+
+Base regressions failed at `6ebd5825458afa91ae487c4aef745bf4f611878c` before repair:
+the builtin false map was absent and the exact source-shaped thinking events were
+unsupported. V4 now uses diagnostic schema 6. The entire original v3 parser is
+preserved byte-identically as `claude_telemetry_v3.py`; schema-5 diagnostic recovery
+still selects it. V1/v2 remain unchanged. Packet/result/capture schema 5 and report
+schema 2 are unchanged, and schema 4 remains reserved.
+
+Trial 3 stays incomplete. Its retained plugin-name hash matches the public literal
+`agents-md`; the two subtype hashes match `thinking_tokens`. Actual numerical values
+and other unretained details are unknown. No source fixture reconstructs them or
+changes any trial assessment. All three failed-trial evidence sets and original/stopped
+ledgers remain exact. Only fresh v4 live tools/source and isolation purposes can
+establish activation after required validation and explicit coordinator grant application.

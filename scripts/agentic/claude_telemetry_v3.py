@@ -13,7 +13,6 @@ from pathlib import Path
 
 import claude_telemetry_v1 as legacy
 import claude_telemetry_v2 as previous
-import claude_telemetry_v3 as frozen_v3
 import review_coverage as coverage
 from workflow import WorkflowError
 
@@ -22,7 +21,7 @@ KINDS = {"system", "assistant", "user", "result", "rate_limit_event"}
 # Pinned built-in declarations are not delegation permission. Agent is absent
 # from the tool list and actual delegated messages remain forbidden.
 BUILTIN_AGENTS = {*legacy.BUILTIN_AGENTS, "claude-code-guide"}
-ADAPTER = "claude-stream-json-2.1.282-v4"
+ADAPTER = "claude-stream-json-2.1.282-v3"
 LEGACY_ADAPTER = "claude-stream-json-2.1.282-v1"
 
 
@@ -40,21 +39,17 @@ CONTROL_FIELDS = {
         "mcp_server_errors",
     )
 } | {"system.commands", "system.status", "system.keys"}
-NUMERIC_FIELDS = {"system.estimated_tokens", "system.estimated_tokens_delta"}
-CONTROL_FIELDS |= NUMERIC_FIELDS
-MAX_THINKING_ESTIMATE = 9007199254740991
-NUMERIC_VALIDITY = {"missing", "wrong_type", "out_of_range", "valid"}
 FIELD_TYPES = {"missing", "null", "boolean", "number", "string", "array", "object"}
 
 
 def validate_summary(value):
     if not isinstance(value, dict) or "control_fields" not in value:
-        raise WorkflowError("Invalid Claude v4 control summary")
+        raise WorkflowError("Invalid Claude v3 control summary")
     previous.validate_summary({k: v for k, v in value.items() if k != "control_fields"})
     fields = value["control_fields"]
     if not isinstance(fields, dict) or set(fields) - CONTROL_FIELDS:
         raise WorkflowError("Unsafe control field names")
-    for field_name, field in fields.items():
+    for field in fields.values():
         if (
             not isinstance(field, dict)
             or set(field) != {"observations", "overflow"}
@@ -67,18 +62,7 @@ def validate_summary(value):
         for item in field["observations"]:
             if (
                 not isinstance(item, dict)
-                or set(item)
-                != (
-                    {"present", "type", "length", "value_hashes", "name_hashes", "count"}
-                    | ({"numeric_validity"} if field_name in NUMERIC_FIELDS else set())
-                )
-                or (
-                    field_name in NUMERIC_FIELDS
-                    and (
-                        not isinstance(item.get("numeric_validity"), str)
-                        or item["numeric_validity"] not in NUMERIC_VALIDITY
-                    )
-                )
+                or set(item) != {"present", "type", "length", "value_hashes", "name_hashes", "count"}
                 or type(item["present"]) is not bool
                 or not isinstance(item["type"], str)
                 or item["type"] not in FIELD_TYPES
@@ -136,16 +120,6 @@ def observe_control(summary, field, event, key):
         "value_hashes": {},
         "name_hashes": {},
     }
-    if field in NUMERIC_FIELDS:
-        item["numeric_validity"] = (
-            "missing"
-            if not present
-            else "wrong_type"
-            if type(value) not in {int, float}
-            else "valid"
-            if thinking_number(value)
-            else "out_of_range"
-        )
     values = value if isinstance(value, list) else [value] if present else []
     for entry in values[:64]:
         count_hash(item["value_hashes"], entry)
@@ -163,24 +137,6 @@ def observe_control(summary, field, event, key):
         target["observations"].append({**item, "count": 1})
     else:
         target["overflow"] = min(target["overflow"] + 1, coverage.MAX_EVENTS)
-
-
-def thinking_number(value):
-    # Bound before isfinite so hostile huge JSON integers cannot overflow it.
-    return type(value) in {int, float} and 0 <= value <= MAX_THINKING_ESTIMATE and math.isfinite(value)
-
-
-def thinking_tokens(event):
-    return (
-        set(event) == {"type", "subtype", "estimated_tokens", "estimated_tokens_delta", "session_id", "uuid"}
-        and event.get("type") == "system"
-        and event.get("subtype") == "thinking_tokens"
-        and thinking_number(event.get("estimated_tokens"))
-        and thinking_number(event.get("estimated_tokens_delta"))
-        and event["estimated_tokens_delta"] <= event["estimated_tokens"]
-        and isinstance(event.get("uuid"), str)
-        and re.fullmatch(r"[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}", event["uuid"]) is not None
-    )
 
 
 def empty_catalog(event):
@@ -299,10 +255,8 @@ def observation(tool, args, content, workspace, files):
 
 
 def capture(raw, packet, workspace, policy, session_id, *, exit_code=0, failure=None, refusal_path=None):
-    if policy["adapter"] in {LEGACY_ADAPTER, previous.ADAPTER, frozen_v3.ADAPTER}:
-        frozen = {LEGACY_ADAPTER: legacy, previous.ADAPTER: previous, frozen_v3.ADAPTER: frozen_v3}[
-            policy["adapter"]
-        ]
+    if policy["adapter"] in {LEGACY_ADAPTER, previous.ADAPTER}:
+        frozen = legacy if policy["adapter"] == LEGACY_ADAPTER else previous
         return frozen.capture(
             raw,
             packet,
@@ -388,13 +342,7 @@ def capture(raw, packet, workspace, policy, session_id, *, exit_code=0, failure=
                     observe_control(summary, "system.commands", event, "commands")
                     observe_control(summary, "system.status", event, "status")
                     observe_control(summary, "system.keys", {"keys": sorted(event)}, "keys")
-                    if event.get("subtype") == "thinking_tokens":
-                        for key in ("estimated_tokens", "estimated_tokens_delta"):
-                            observe_control(summary, "system." + key, event, key)
-                    if (
-                        not (request_start(event) or empty_catalog(event) or thinking_tokens(event))
-                        or summary["init_count"] != 1
-                    ):
+                    if not (request_start(event) or empty_catalog(event)) or not summary["init_count"]:
                         reasons.add("unsupported_system_event")
                         count_hash(summary["system_payloads"], event)
                     continue
@@ -604,7 +552,7 @@ def capture(raw, packet, workspace, policy, session_id, *, exit_code=0, failure=
     # Missing step counters mean unknown. Native num_turns is not exact API-call
     # accounting; output tokens come only from terminal usage, never placeholders.
     diagnostics = {
-        "schema_version": 6,
+        "schema_version": 5,
         "adapter": policy["adapter"],
         "cli_version": policy["cli"]["version"],
         "exit_code": exit_code,

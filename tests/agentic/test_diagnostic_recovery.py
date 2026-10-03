@@ -376,7 +376,7 @@ class RecoveryTests(GitFixture):
             state = recovery.load(self.repo)
             self.assertEqual(state["attempts"][1]["status"], "incomplete")
             with patch.object(review_claude, "execute") as execute:
-                with self.assertRaisesRegex(workflow.WorkflowError, "original v2"):
+                with self.assertRaisesRegex(workflow.WorkflowError, "recovery-only"):
                     self.run_diagnostic()
                 execute.assert_not_called()
             with patch.object(claude_native_auth, "bind") as bind:

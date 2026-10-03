@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import copy
+import hashlib
+import re
 import tempfile
 import uuid
 from pathlib import Path
@@ -16,7 +19,19 @@ from workflow import WorkflowError, write_json
 
 # Closed subset checked against the embedded settings declarations in the signed
 # 2.1.282 binary. Unknown keys cannot be silently ignored by print mode.
+BUILTIN_PLUGINS = (
+    "sec-default",
+    "agents-md",
+    "telemetry",
+    "plugin-authoring",
+    "tips",
+    "mermaid",
+    "responsive-mode",
+    "diff",
+    "claude-test",
+)
 SETTINGS = {
+    "enabledPlugins": {name + "@builtin": False for name in BUILTIN_PLUGINS},
     "disableAllHooks": True,
     "disableBundledSkills": True,
     "switchModelsOnFlag": False,
@@ -71,7 +86,7 @@ MANAGED_PATHS = (
 
 def trusted_settings(policy):
     return {
-        **SETTINGS,
+        **copy.deepcopy(SETTINGS),
         "model": policy["model"],
         "availableModels": [policy["model"]],
         "enforceAvailableModels": True,
@@ -132,6 +147,9 @@ def check_controls(binary, settings, policy=None):
         raise WorkflowError("Claude settings require bound exact-model compatibility")
     if settings != trusted_settings({"model": settings.get("model")}):
         raise WorkflowError("Trusted Claude settings differ from the approved isolation policy")
+    # Python equality treats 0 as False; native selection requires exact booleans.
+    if any(value is not False for value in settings["enabledPlugins"].values()):
+        raise WorkflowError("Builtin plugin controls require exact false values")
     data = Path(binary).read_bytes()
     # The signed binary binds this pinned supported-schema subset. The native
     # help hides --permission-prompts; verify its actual option declaration too.
@@ -141,6 +159,7 @@ def check_controls(binary, settings, policy=None):
         **{key: b":O().optional()" for key in SETTINGS if type(SETTINGS[key]) is bool},
         "fallbackModel": b":C(o()).optional()",
         "modelOverrides": b":me(o(),o()).optional()",
+        "enabledPlugins": b":me(o(),Fe([C(o()),O(),Jee()])).optional()",
         "model": b":o().optional()",
         "availableModels": b":C(o()).optional()",
         "enforceAvailableModels": b":O().optional()",
@@ -151,6 +170,20 @@ def check_controls(binary, settings, policy=None):
         raise WorkflowError("Trusted Claude settings cannot be validated against the pinned schema")
     if any(key.encode() not in data for key in FIXED_ENV if key.startswith("CLAUDE_CODE_")):
         raise WorkflowError("Pinned Claude binary lacks required retry/fallback controls")
+
+    try:
+        start = data.index(b"function _ye(){let e=Zr();")
+        end = data.index(b"\nexport{_ye}", start)
+        registrar = data[start:end]
+        names = re.findall(rb'Lke\("([^" ]+)"', registrar)
+        if (
+            names != [name.encode() for name in BUILTIN_PLUGINS]
+            or hashlib.sha256(registrar).hexdigest()
+            != "dabdb8c538d267a312d582a5c8893b3be2e80f4eaf0cce848ba959b4218918ca"
+        ):
+            raise ValueError
+    except ValueError:
+        raise WorkflowError("Pinned builtin plugin registrar differs from the audited controls") from None
 
 
 def preflight(repo, policy):

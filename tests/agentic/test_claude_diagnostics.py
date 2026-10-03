@@ -16,6 +16,15 @@ from claude_fixtures import AUTHENTICATION, native_stream
 class DiagnosticTests(GitFixture):
     def setUp(self):
         super().setUp()
+        # Frozen original two-attempt policy, never current v4 authorization.
+        provider = patch.dict(review_policy.PROVIDERS["claude-code"], adapter="claude-stream-json-2.1.282-v3")
+        provider.start()
+        self.addCleanup(provider.stop)
+        default = patch.object(
+            diagnostics, "DEFAULT_POLICY", review_policy.policy(review_policy.choices("claude-code"), {})
+        )
+        default.start()
+        self.addCleanup(default.stop)
         binding = patch.object(claude_native_auth, "current_binding", return_value=AUTHENTICATION)
         binding.start()
         self.addCleanup(binding.stop)

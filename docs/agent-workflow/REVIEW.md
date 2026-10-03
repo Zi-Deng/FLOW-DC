@@ -232,6 +232,9 @@ current live purposes remain required; the migration-only PR-review exception pe
 
 ## Approved revision-5 recovery — 2026-10-03 UTC
 
+Historical: this grant stopped after incomplete trial 3. Its unused isolation slot 4
+cannot run. The following records its original authorization and limits.
+
 The maintainer's explicit standing override approves the complete revision-5 plan
 and supersedes its preserved draft-state wording. The exact current contract is
 `5c8c8c8bc87c2cd02229ea1c0f74b98a9748542fa770fc93178234d73501c45f`.
@@ -250,3 +253,26 @@ remain independent obligations. The coordinator's full gate passed at `8516570`;
 CI associated with that head tested merge checkout
 `1034f122420a21ba85b01089ee556f74f52b7490`. Those receipts
 do not validate later ledger changes or qualify a capability diagnostic.
+
+## Revision-6 implementation and handoff — 2026-10-03 UTC
+
+[Revision 6](https://github.com/Zi-Deng/FLOW-DC/issues/33#issuecomment-5964751600)
+is bound under the standing authorization. The v4 adapter uses diagnostic schema 6,
+closed nine-builtin false settings and a strict numeric `thinking_tokens` envelope.
+V3 is frozen byte-identically for diagnostic schema 5 recovery; all three failed
+trials and their old grants remain incomplete and unchanged. Progress estimates do
+not establish usage or source inspection. Static fixtures are conditional evidence.
+
+The [current operating sequence](PROVIDERS.md#issue-33-revision-6-prospective-recovery)
+requires final-head checks/CI and explicit coordinator grant application before
+counted slot 4 tools/source, then slot 5 isolation only after 4 qualifies. Five total
+attempts include history; no sixth under this grant, and any failure stops it.
+No repeat user approval is pending. No provider call follows automatically from
+implementation. Both current successful purposes remain required for activation.
+
+The coordinator recorded 901 tests and required CI associated with `6ebd582`, whose
+actual tested merge checkout was `74bdee61b67d20b81e3c0375e65fdeba9c8ca68b` on
+base `72e23c47ce40911f64cce5a7b9159a0cd51cdb72`. Those checks are historical after
+v4 changes. Record final-head CI association separately from its tested checkout.
+The migration-only model PR-review exemption remains; ordinary gates are unchanged,
+no model-reviewed SHA is claimed, and only the human may merge. PR #32 is untouched.

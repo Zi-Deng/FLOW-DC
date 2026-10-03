@@ -87,15 +87,46 @@ def locked(repo):
 def ledger(repo):
     import diagnostic_recovery
     import diagnostic_recovery_v5
+    import diagnostic_recovery_v6
 
-    return diagnostic_recovery_v5.load(repo) or diagnostic_recovery.load(repo) or legacy_ledger(repo)
+    return (
+        diagnostic_recovery_v6.load(repo)
+        or diagnostic_recovery_v5.load(repo)
+        or diagnostic_recovery.load(repo)
+        or legacy_ledger(repo)
+    )
 
 
 def ledger_path(repo, state):
     from diagnostic_recovery import FILENAME
     from diagnostic_recovery_v5 import FILENAME as V5_FILENAME
+    from diagnostic_recovery_v6 import FILENAME as V6_FILENAME
 
-    return state_directory(repo) / {1: "ledger.json", 2: FILENAME, 3: V5_FILENAME}[state["schema_version"]]
+    return (
+        state_directory(repo)
+        / {1: "ledger.json", 2: FILENAME, 3: V5_FILENAME, 5: V6_FILENAME}[state["schema_version"]]
+    )
+
+
+def recovery_module(state):
+    import diagnostic_recovery
+    import diagnostic_recovery_v5
+    import diagnostic_recovery_v6
+
+    return {2: diagnostic_recovery, 3: diagnostic_recovery_v5, 5: diagnostic_recovery_v6}.get(
+        state["schema_version"]
+    )
+
+
+def execution_authority(repo, state, policy):
+    module = recovery_module(state)
+    if policy["adapter"] == "claude-stream-json-2.1.282-v4" and state["schema_version"] != 5:
+        raise WorkflowError("Current v4 diagnostics require the exact revision-6 grant before authentication")
+    if module:
+        if module.authorization(repo) != state["grant"]["authorization"]:
+            raise WorkflowError("Current approval differs from invocation grant")
+        review_policy.require_current_adapter(state["grant"]["policy"])
+    return module
 
 
 def validate_files(directory):
@@ -184,17 +215,13 @@ def require_activation(repo, policy):
     state = ledger(repo)
     verified = set()
     observed = []
-    recovery = state if state["schema_version"] in {2, 3} else None
-    if state["schema_version"] == 3:
-        from diagnostic_recovery_v5 import authorization
-
-        if authorization(repo) != state["grant"]["authorization"]:
-            raise WorkflowError("Current approval differs from activation grant")
+    recovery = state if state["schema_version"] in {2, 3, 5} else None
+    execution_authority(repo, state, policy)
     if recovery:
         from diagnostic_recovery import match_policy
 
         match_policy(state["grant"]["policy"], policy)
-    start = {1: 0, 2: 1, 3: 2}[state["schema_version"]]
+    start = {1: 0, 2: 1, 3: 2, 5: 3}[state["schema_version"]]
     for entry in state["attempts"][start:]:
         if entry["status"] == "qualified":
             try:
@@ -229,20 +256,11 @@ def run(repo, cfg, **overrides):
     root = state_directory(repo)
     with locked(repo):
         state = ledger(repo)
-        if state["schema_version"] == 3:
-            from diagnostic_recovery_v5 import authorization
-
-            if authorization(repo) != state["grant"]["authorization"]:
-                raise WorkflowError("Current approval differs from invocation grant")
+        module = execution_authority(repo, state, selected)
         selected = bind(selected)
-        recovery = state if state["schema_version"] in {2, 3} else None
+        recovery = state if state["schema_version"] in {2, 3, 5} else None
         if recovery:
-            if state["schema_version"] == 3:
-                from diagnostic_recovery_v5 import next_slot
-            else:
-                from diagnostic_recovery import next_slot
-
-            number, purpose = next_slot(repo, state, selected)
+            number, purpose = module.next_slot(repo, state, selected)
             maximum = state["grant"]["max_total_attempts"]
         else:
             maximum = 2
