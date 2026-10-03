@@ -24,3 +24,8 @@ Return the PR URL, executor/task identity, current head and validation evidence.
 Supply criterion/test mappings, explicit omissions and exact check commands/statuses. Keep static inspection separate from hosted head association and actual tested checkout. Partial or legacy reports cannot establish readiness.
 
 Read [the coverage contract and migration runbook](../../../docs/agent-workflow/COVERAGE.md).
+
+For current provider selection, immutable policy, activation blockers, typed budgets
+and historical recovery, read [provider guidance](../../../docs/agent-workflow/PROVIDERS.md).
+Partial/legacy evidence cannot establish readiness. Migration-only exceptions do not
+create a generic review bypass.

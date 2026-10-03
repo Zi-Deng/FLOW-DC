@@ -6,6 +6,7 @@ import re
 import subprocess
 
 import review as independent
+import review_policy
 from tasks import (
     TaskStore,
     body_text,
@@ -256,16 +257,21 @@ def report_record(repo, state, round_record):
         "plan_comment": state["approval"]["plan_comment"],
         "head_sha": round_record["head_sha"],
         "base_sha": round_record["base_sha"],
-        "requested_model": "claude-opus-5",
+        "requested_model": round_record.get("review_policy", {}).get("model", "claude-opus-5"),
     }
     if any(meta.get(key) != value for key, value in expected.items()):
         raise WorkflowError("Review metadata differs from the registered pipeline round")
     if round_record["contract_digest"] != digest(state["approval"]["contract"]):
         raise WorkflowError("Review used a superseded contract")
+    if meta.get("schema_version") == 5 and (
+        meta.get("review_policy") != round_record.get("review_policy")
+        or digest(meta["review_policy"]) != round_record.get("review_policy_digest")
+    ):
+        raise WorkflowError("Review provider policy differs from the registered immutable round")
     report = plain_path(directory / "review.md")
     if (
         not report.is_file()
-        or not meta.get("copilot_version")
+        or not meta.get(independent.version_field(meta))
         or independent.digest(report) != meta.get("review_sha256")
     ):
         raise WorkflowError("Pipeline review is incomplete or its report changed")
@@ -326,14 +332,15 @@ def review_task(
     approved_continuation=False,
     retry_confirmed_absent=False,
     prior_review=None,
+    review_provider=None,
+    review_model=None,
+    review_effort=None,
 ):
     number = positive(number)
     store = TaskStore(repo)
     with store.locked(f"issue-{number}") as state:
         contract = verify_contract(repo, state)
         pr = current_task_pr(repo, state)
-        if configuration(repo.root)["copilot_model"] != "claude-opus-5":
-            raise WorkflowError("Managed review requires the trusted claude-opus-5 policy")
         rounds = state.setdefault("review_rounds", [])
         binding = {
             "head_sha": pr["head"]["sha"],
@@ -341,6 +348,38 @@ def review_task(
             "contract_digest": digest(contract),
         }
         previous = rounds[-1] if rounds else None
+        same_head = previous and all(previous.get(k) == v for k, v in binding.items())
+        overrides = any(value is not None for value in (review_provider, review_model, review_effort))
+        legacy_recovery = same_head and not fresh and not overrides and "review_policy" not in previous
+        if (
+            same_head
+            and not fresh
+            and not overrides
+            and previous.get("run_attempted")
+            and previous.get("review_policy")
+        ):
+            # Recovery and publication are bound to the attempted packet, even if
+            # the operator subsequently changes the default or saved selection.
+            selection = {"policy": review_policy.validate_policy(previous["review_policy"])}
+        elif not legacy_recovery:
+            selection = review_policy.resolve(
+                repo,
+                configuration(repo.root),
+                review_provider=review_provider,
+                review_model=review_model,
+                review_effort=review_effort,
+            )
+            from claude_native_auth import bind
+
+            selection["policy"] = bind(selection["policy"])
+        if not legacy_recovery:
+            binding["review_policy_digest"] = digest(selection["policy"])
+            if (
+                same_head
+                and not fresh
+                and previous.get("review_policy_digest") != binding["review_policy_digest"]
+            ):
+                raise WorkflowError("Review provider/model/effort/budget changed; explicitly prepare --fresh")
         reuse = previous and not fresh and all(previous.get(k) == v for k, v in binding.items())
         record = previous if reuse else None
         needs_run = execute and (record is None or not record.get("run_attempted"))
@@ -361,9 +400,15 @@ def review_task(
                 state["approval"]["plan_comment"],
                 expected_head=binding["head_sha"],
                 prior_review=prior_review,
+                review_provider=review_provider,
+                review_model=review_model,
+                review_effort=review_effort,
             )
+            if independent.verify_packet(directory)["review_policy"] != selection["policy"]:
+                raise WorkflowError("Review selection changed during preparation; prepare a fresh packet")
             record = {
                 **binding,
+                "review_policy": selection["policy"],
                 "directory": str(directory),
                 "status": "prepared",
                 "run_attempted": False,
@@ -436,7 +481,8 @@ def review_task(
             "status": record["status"],
             "incomplete": record.get("coverage_qualified") is False,
             "coverage_qualified": record.get("coverage_qualified"),
-            "model": "claude-opus-5",
+            "model": record.get("review_policy", {}).get("model", "claude-opus-5"),
+            "review_policy": record.get("review_policy"),
             "attempted_rounds": sum(bool(item.get("run_attempted")) for item in rounds),
             "designated_review": state.get("designated_review"),
         }
@@ -464,6 +510,7 @@ def add_commands(sub):
         review_parser.add_argument("--" + flag, action="store_true")
     review_parser.add_argument("--continue-reason")
     review_parser.add_argument("--prior-review")
+    review_policy.add_arguments(review_parser)
 
 
 def dispatch(repo, args):
@@ -486,5 +533,8 @@ def dispatch(repo, args):
             args.approved_continuation,
             args.retry_confirmed_absent,
             args.prior_review,
+            args.review_provider,
+            args.review_model,
+            args.review_effort,
         )
     raise WorkflowError("Unknown pipeline operation")

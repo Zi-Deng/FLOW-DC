@@ -39,7 +39,9 @@ Include compatibility, permissions, restricted data, dependency changes and reco
 - Reviewed head SHA:
 - Material findings and disposition (fix / evidence-backed rebuttal / follow-up issue):
 - Implementer tool/model:
-- Independent reviewer tool/requested model:
+- Independent reviewer provider/exact model/effort and selection provenance:
+- CLI identity, adapter, billing mode, provider-specific budget and observed usage:
+- Live capability versus synthetic/static evidence and activation blockers:
 - Human decisions:
 
 - Coverage status, packet/report/diagnostic references, and unread/unsupported material:

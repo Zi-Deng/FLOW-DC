@@ -14,6 +14,8 @@ SOURCE = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(SOURCE / "scripts/agentic"))
 import install  # noqa: E402
 import review  # noqa: E402
+import review_cli  # noqa: E402
+import review_process  # noqa: E402
 import workflow  # noqa: E402
 
 
@@ -46,6 +48,8 @@ class GitFixture(unittest.TestCase):
         config_path = self.root / ".agentic/config.json"
         config = json.loads(config_path.read_text())
         config["required_checks"] = ["quality"]
+        # These existing lifecycle fixtures deliberately exercise preserved Copilot.
+        config.update(review_provider="copilot", review_model="claude-opus-5", review_effort="default")
         config_path.write_text(json.dumps(config))
         # Minimal policy text keeps this fixture independent of documentation wording.
         for name in ["REVIEW.md", "domain-review.md"]:
@@ -420,7 +424,7 @@ class ReviewTests(GitFixture):
         observed = []
 
         def fake(args, **kwargs):
-            if args[0] != "copilot":
+            if args[0] != "/fixture/copilot":
                 return original(args, **kwargs)
             if args[1] == "--help":
                 return subprocess.CompletedProcess(
@@ -454,6 +458,8 @@ class ReviewTests(GitFixture):
                 },
             ),
             patch.object(review, "run", side_effect=fake),
+            patch.object(review_cli, "executable", return_value="/fixture/copilot"),
+            patch.object(review_process, "capture", side_effect=fake),
             patch.object(
                 review,
                 "configuration",
@@ -526,6 +532,10 @@ class InstallerTests(unittest.TestCase):
             self.assertFalse((target / "memory").exists())
             self.assertFalse((target / "README.md").exists())
             self.assertTrue((target / "scripts/agentic/workflow.py").exists())
+            self.assertTrue((target / "scripts/agentic/claude_native_auth.py").exists())
+            self.assertTrue((target / "docs/agent-workflow/NATIVE-AUTH-AUDIT.md").exists())
+            self.assertFalse(list(target.rglob(".credentials.json")))
+            self.assertFalse(list(target.rglob("registration.json")))
             self.assertTrue((target / "scripts/finish-task.sh").exists())
             self.assertEqual(len(list((target / ".agents/skills").glob("*/SKILL.md"))), 8)
             self.assertFalse((target / ".agentic-local").exists())

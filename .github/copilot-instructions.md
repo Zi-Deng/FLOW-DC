@@ -14,3 +14,6 @@ Complete the same-request literal-tool capability probe and return report-schema
 Missing tool evidence or required material makes coverage incomplete, even with useful
 findings. The reviewer executes no tests. CI association and tested checkout must not
 be conflated. See docs/agent-workflow/COVERAGE.md for current evidence boundaries.
+
+This profile applies only to explicit Copilot selection. Native Claude Code uses a
+separate adapter; see [provider policy](../docs/agent-workflow/PROVIDERS.md).

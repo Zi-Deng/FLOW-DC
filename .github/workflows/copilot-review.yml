@@ -46,7 +46,11 @@ jobs:
         with:
           python-version: '3.12'
       - name: Install verified Copilot CLI
-        run: python scripts/agentic/install_tool.py copilot --directory "$RUNNER_TEMP/bin"
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python scripts/agentic/install_tool.py copilot --directory "$RUNNER_TEMP/bin"
+          python scripts/agentic/workflow.py register-reviewer copilot --binary "$RUNNER_TEMP/bin/copilot" --proof-directory "$RUNNER_TEMP/bin"
       - name: Prepare immutable review packet
         env:
           GH_TOKEN: ${{ github.token }}
@@ -55,7 +59,7 @@ jobs:
           REVIEW_PLAN: ${{ inputs.plan_comment }}
           REVIEW_SHA: ${{ inputs.head_sha }}
         run: |
-          python scripts/agentic/review.py prepare "$REVIEW_PR" --issue "$REVIEW_ISSUE" --plan-comment "$REVIEW_PLAN" --expected-head "$REVIEW_SHA" --output "$RUNNER_TEMP/review"
+          python scripts/agentic/review.py prepare "$REVIEW_PR" --issue "$REVIEW_ISSUE" --plan-comment "$REVIEW_PLAN" --expected-head "$REVIEW_SHA" --output "$RUNNER_TEMP/review" --review-provider copilot --review-model claude-opus-5 --review-effort default
       - name: Run independent Claude review through Copilot
         env:
           GH_TOKEN: ${{ github.token }}

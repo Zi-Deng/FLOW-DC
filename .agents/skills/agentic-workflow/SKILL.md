@@ -21,7 +21,7 @@ Read each phase skill only as it becomes relevant:
 2. [Plan](../agentic-plan/SKILL.md): publish the evidence plan and record human approval.
 3. [Prepare](../agentic-prepare/SKILL.md): establish the issue branch and sibling worktree.
 4. [Implement](../agentic-implement/SKILL.md): run the dedicated Astra executor, validate, and publish/update the draft PR.
-5. [Review](../agentic-review/SKILL.md): obtain and publish fresh independent Opus review.
+5. [Review](../agentic-review/SKILL.md): obtain and publish fresh independent model review.
 6. [Repair](../agentic-repair/SKILL.md): resume the original executor and publish dispositions; a changed head/base needs fresh review within the continuation policy.
 7. [Finish](../agentic-finish/SKILL.md): prepare the exact command the human can run to merge and archive/clean up.
 
@@ -29,8 +29,13 @@ After approval, continue authorized phases without asking again merely because t
 
 Use one attempted review round by default. Further rounds need a supported critical P0/P1 finding to verify after repair, or an explicit user request. Record the basis and concrete reason for each extra invocation as described in the operating contract. Minor findings or incomplete coverage alone do not authorize another round or waive current-head review.
 
-Keep GitHub issue/PR records authoritative for the public work and private task state authoritative only for local continuity. The executor remains the same Astra session across repairs; each Opus review starts fresh. Report current issue, PR, worktree, reviewed head and remaining blockers. Finish with a reviewable human merge command; never run that command or a real merge yourself.
+Keep GitHub issue/PR records authoritative for the public work and private task state authoritative only for local continuity. The executor remains the same Astra session across repairs; each independent model review starts fresh. Report current issue, PR, worktree, reviewed head and remaining blockers. Finish with a reviewable human merge command; never run that command or a real merge yourself.
 
 Apply the shared coverage gate through review, designation and finish. A useful partial report is publishable as incomplete but does not advance readiness. Retain diagnostics and uncovered material; bounded scopes organize one request without increasing budgets. Keep old records historical and actual hosted checkout separate from PR head association.
 
 Read [the coverage contract and migration runbook](../../../docs/agent-workflow/COVERAGE.md).
+
+For current provider selection, immutable policy, activation blockers, typed budgets
+and historical recovery, read [provider guidance](../../../docs/agent-workflow/PROVIDERS.md).
+Partial/legacy evidence cannot establish readiness. Migration-only exceptions do not
+create a generic review bypass.

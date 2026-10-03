@@ -8,7 +8,8 @@ accidental changes; they are not a cryptographic attestation against their owner
 
 ## Packet and scope contract
 
-New packets use metadata schema 3. `START.txt` leads to `issue.txt`, `plan.txt`,
+New packets use metadata schema 5 with immutable provider policy. Schema 4 is reserved
+for separate batch work and explicitly unsupported. `START.txt` leads to `issue.txt`, `plan.txt`,
 `criteria/*.txt`, `acceptance.txt`, `changed-files.json`, `changes/*.txt`, `test-map.json`,
 `findings/*.txt`, `validation.json`, `scopes.json` and `required-material.json`.
 Full `diff.txt`, `context.json`, `source-index.json`, `base-source-index.json` and inert
@@ -50,7 +51,19 @@ original assessment and unread material into a repair; their old qualification c
 Schema-1 packets without coverage require a fresh complete packet. Unsupported prior
 data fails explicitly.
 
-## Provider adapter and capability probe
+## Provider adapters and capability probe
+
+Claude native stream JSON is handled separately from Copilot session events. Its
+model-facing successful Read/Grep/Glob results normalize to shared read/search/list
+evidence; UI metadata does not earn credit. Numbered native Read uses tab or colon
+separators with exact source matching. Grep must return content and line numbers; Glob
+proves discovery only. A unique successful terminal result supplies exact report text;
+assistant fragments are never concatenated. Session/model mismatches, malformed events,
+unknown rendering, delegation and forbidden tools remain incomplete. Synthetic fixtures
+and static binary inspection do not establish live capability. Claude remains blocked
+before inference: see [PROVIDERS.md](PROVIDERS.md).
+
+The following Copilot-specific meanings remain unchanged:
 
 The pinned Copilot CLI is 1.0.83, defined with its archive digest in
 `scripts/agentic/copilot_policy.py`. Installer, invocation and current assessment share
@@ -136,7 +149,7 @@ coverage label are separate; neither is inserted into the saved model output.
 
 `review-capture.json` atomically saves exact output and sanitized diagnostics bound
 to the input packet **before assessment reads packet files**. `review-result.json` then
-journals the assessment hash. Both records use schema 3. A pending capture can recover
+journals the assessment hash. Both new records use schema 5. A pending capture can recover
 a transient assessment/storage failure after the original packet is restored; it never
 authorizes another model call. Strict UTF-8/IO failures produce fixed diagnostic reasons
 without lossy replacement decoding or raw error text. Final storage writes `review.md`,
@@ -187,8 +200,11 @@ uses the original report, not visible escape markers or a rewritten version.
 Metadata/result schema 2 and coverage schema 1 are now historical. The frozen
 `review_coverage_v1.py` reproduces their original assessment hashes, recovery and
 publication envelopes, including formerly malformed fenced reports. It cannot qualify
-new reviews. Current readiness and managed designation require schema 3 metadata/result
-and schema 2 evidence/report. Existing schema-1 records retain their older meaning too.
+new reviews. Schema-3 assessment and telemetry are frozen in `review_coverage_v2.py`
+and `review_telemetry_v2.py`, preserving original hashes and publication envelopes.
+Current readiness and managed designation require schema-5 metadata/result and schema-2
+evidence/report. Existing schema-1 records retain their older meaning too. Schema 4 is
+reserved and refused, never reinterpreted.
 Never rewrite a historical journal or retrofit new claims. A new packet/authorized
 invocation is needed for current evidence. `verify-publication` remains byte-exact.
 
@@ -218,6 +234,15 @@ python3 scripts/agentic/review.py verify-publication /absolute/old-review-direct
 This is read-only, emits hashes/counts rather than raw controls, and makes no model
 request. Successful exact comparison does not retroactively grant coverage. Keep old
 packets/journals inspectable under their original semantics; do not rewrite provenance
-hashes, historical review claims or PR #27's limitations. Review this workflow-changing
-PR under clean-main policy. Only the already-authorized narrow literal-tool/capability
-invocation may be used before merge; arbitrary PR policy must not become active.
+hashes, historical review claims or PR #27's limitations. The migration-only review
+exception for issue #33 is documented in [PROVIDERS.md](PROVIDERS.md); it introduces no
+generic bypass and establishes no normal finish readiness. PR #32 remains separate.
+
+
+Revision 8 freezes Claude v5/schema7 and its refusal helper. Current v6/schema8
+adds exact optional direct caller provenance and bounded predicate diagnostics,
+without changing exact returned-line matching or report bytes. Both diagnostic
+purposes bind the fixed directory/glob Grep command; successful transport with no
+matching source spans cannot satisfy Grep capability. Trials 4 and 6 retain only
+historical qualification, and trial 7 remains incomplete. See the
+[revision-8 grant and evidence boundary](PROVIDERS.md#issue-33-revision-8-prospective-recovery).

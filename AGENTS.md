@@ -82,7 +82,8 @@ FLOW-DC uses the pinned agentic GitHub workflow template. Read
   bootstrap uses the separately documented local control checkout and adoption worktree.
 - Preserve user edits. Never weaken tests or acceptance criteria to obtain a pass.
 - Draft, plan, implement, and repair with `gpt-6-astra`. Cheaper OpenAI models
-  require a deliberate policy change. Independent review uses Copilot CLI.
+  require a deliberate policy change. Independent review defaults to Claude Code; explicit Copilot remains supported.
+  Read `docs/agent-workflow/PROVIDERS.md` for activation blockers and selection.
 - Agents do not merge. The maintainer decides whether the reviewed commit is ready.
   The finish skill prepares a command; only the human runs `scripts/finish-task.sh`.
 - Managed implementation and repair use the same recorded Astra session UUID. An
@@ -92,7 +93,7 @@ FLOW-DC uses the pinned agentic GitHub workflow template. Read
 
 ### Commands and architecture
 
-- Runtime: Python 3.12+, Git, GitHub CLI; Codex and Copilot CLI for model sessions.
+- Runtime: Python 3.12+, Git, GitHub CLI; Codex and a verified pinned reviewer CLI for model sessions.
 - Development setup: `python3 -m venv .venv-agentic`, then
   `.venv-agentic/bin/python -m pip install -r requirements-dev.txt`.
 - Full local gate: `make check`. CI adds `make check-clean` after validation.
@@ -119,7 +120,8 @@ FLOW-DC uses the pinned agentic GitHub workflow template. Read
   and no ignored files that would be lost. The human finishing script archives ignored
   artifacts with verification before invoking guarded cleanup. Never use blanket cleanup commands.
 
-New independent reviews require validated actual `view`, `grep`, `glob` capability
+New independent reviews require validated actual provider tools (Claude `Read`, `Grep`, `Glob`;
+Copilot `view`, `grep`, `glob`) capability
 and required-material evidence. Nonempty output, human comments and legacy reports
 cannot establish coverage readiness. Partial findings remain publishable as incomplete.
 Read `docs/agent-workflow/COVERAGE.md` for migration, bounded repair scopes and recovery.

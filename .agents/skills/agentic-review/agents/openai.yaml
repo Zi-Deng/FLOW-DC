@@ -1,6 +1,6 @@
 interface:
   display_name: "Review Pull Request"
-  short_description: "Run fresh isolated Opus review and publish findings"
-  default_prompt: "Use $agentic-review to run fresh isolated Opus review and publish findings."
+  short_description: "Run isolated provider-selected model review"
+  default_prompt: "Use $agentic-review to inspect provider selection and activation, run a fresh isolated review, and publish exact findings."
 policy:
   allow_implicit_invocation: true

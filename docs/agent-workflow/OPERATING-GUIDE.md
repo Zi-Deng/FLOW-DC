@@ -162,7 +162,7 @@ runner for untrusted PR code.
 ## 8. Request independent review
 
 Return to the main checkout. Use the [review procedure](REVIEW.md) to prepare a fresh
-snapshot, run Claude through Copilot CLI and publish its COMMENT review. Supply the
+snapshot, validate the selected provider and publish its COMMENT review. See [provider selection and activation](PROVIDERS.md). Supply the
 approved plan comment ID. The review records the exact head and base commits.
 
 ## 9. Repair in the same PR
