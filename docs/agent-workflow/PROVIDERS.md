@@ -247,26 +247,69 @@ or exact API-call counts. No undocumented auth-retry-disable variable is used;
 `CLAUDE_CODE_MAX_RETRIES` was removed. Complete native retry/fallback qualification
 and controlled native error-path evidence remain activation requirements.
 
-After all prerequisites, at most two issue-33 diagnostics are authorized, each 300
-seconds and $2 estimated reference cost. They contain only a tiny canary packet and
-are not PR reviews. The private ledger records attempts before inference; interruption
-still counts. No automatic retry or reset exists.
+The original issue-33 allowance remains two explicit calls unless the separately
+approved revision-4 recovery grant is applied. Each diagnostic is limited to 300
+seconds and $2 estimated reference cost, with zero extra actual spending. The tiny
+canary packets are not PR reviews. The ledger records attempts before inference;
+failures and interruptions count. No automatic retry or reset exists.
+
+The coordinator invokes one diagnostic at a time, after checking the durable ledger
+and current native setup, billing receipt, lifetime and isolation prerequisites:
 
 ```bash
 python3 scripts/agentic/workflow.py diagnose-claude --review-provider claude-code
 ```
 
-This command requires the guarded native setup, current receipt, sufficient lifetime,
-and verified isolation described above. Normal activation additionally requires both
-matching successful diagnostics with exact native model/session identity, tools,
-terminal text, numerical accounting and unchanged packet/report evidence. Attempt 1
-inspects actual Read/Grep/Glob results and harmless ordinary authentication source. Attempt 2 additionally requires a
-correlated native permission refusal for an existing wrapper-owned file outside the
-restricted workspace. A missing-file error or assistant assertion is insufficient.
-The two purposes are distinct and neither is retried. Both must pass for CLI/adapter
-activation; every subsequent review still verifies its own exact model and actual
-tool canaries. A diagnostic refusal can never qualify ordinary PR coverage. Synthetic
-fixtures cannot create live evidence.
+Both distinct purposes must succeed under the current exact CLI/adapter/model/effort
+and compatible authentication provenance. The tools-and-source purpose inspects
+actual Read/Grep/Glob results and harmless ordinary authentication source. The
+isolation purpose additionally requires a correlated native permission refusal for
+an existing wrapper-owned file outside the restricted workspace. A missing-file
+error or assistant assertion is insufficient. Every subsequent review still verifies
+its own model and tool canaries. A diagnostic refusal cannot qualify ordinary PR
+coverage; synthetic fixtures cannot create live capability evidence.
+
+### Issue 33 revision-4 recovery only
+
+The recorded approval binds [plan comment 5963470903](https://github.com/Zi-Deng/FLOW-DC/issues/33#issuecomment-5963470903)
+and contract `dbbe4f2dccf83acd2a5fab4b6b031c96673516f4e63820df1036a198fd1c81c1`.
+The historical “PROPOSED” wording in that published draft does not replace the actual
+operator approval record. Publication alone never establishes that approval.
+After deterministic checks and final-head CI, the coordinator previews and applies
+the narrowly scoped grant from the clean control checkout:
+
+```bash
+python3 scripts/agentic/workflow.py claude-diagnostic-recovery
+python3 scripts/agentic/workflow.py claude-diagnostic-recovery \
+  --apply --preview-digest EXACT_DIGEST_FROM_PREVIEW
+```
+
+Before this migration is merged, invoke the implemented `workflow.py` by its absolute
+issue-33 worktree path while keeping the clean control checkout as the working
+directory. Preview/application performs local validation only and never inference.
+Application requires an unchanged preview digest and the exact recorded issue/plan
+approval; an old approval or edited limit/counter cannot add allowance. This is not
+a general continuation or PR-review bypass.
+
+The separate schema-2 `recovery-ledger.json` binds a version-1 grant to that approval,
+the current diagnostic policy and the original ledger text plus all attempt-1 file
+hashes. The original schema-1 `ledger.json` and attempt-1 files remain unchanged;
+attempt 1 stays counted and incomplete under frozen v1 semantics. Partial or
+conflicting migration state is refused. The prospective sequence is exactly:
+
+1. Counted slot 2: fresh replacement native-tools-and-source, current v2 adapter.
+2. Counted slot 3: isolation-refusal, only after slot 2 has verified successful exact
+   report, capture, packet, assessment and invocation evidence.
+
+Maximum total attempt ceilings are 900 seconds/$6 reference estimate including
+failed slot 1; they do not authorize extra actual spending. A future failure or
+interruption stops the sequence. There is no fourth slot, successful-output replay,
+report synthesis, automatic invocation or new allowance from renewal/software fixes.
+Both new purposes must qualify before activation; the old trial never earns current
+coverage. Each prospective packet freezes its grant digest, slot and purpose.
+Verified same-account renewal may retain the observed generation through the existing
+explicit lineage checks; it does not rewrite old evidence or the grant. Local records
+remain owner-writable accounting, not cryptographic attestations or billing guarantees.
 
 Native stream parsing requires correlated successful model-facing Read/Grep/Glob
 results and one successful terminal result. UI metadata, assistant fragments,

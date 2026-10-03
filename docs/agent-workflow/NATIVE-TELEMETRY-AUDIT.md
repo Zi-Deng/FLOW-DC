@@ -76,3 +76,14 @@ or reset the two-attempt ledger. Both distinct successful live purposes remain
 required. With one failed attempt counted, the present allowance cannot produce
 both; any recovery amendment requires separate exact approval before implementation
 or any replacement attempt. No allowance change is implemented here.
+
+
+## Subsequent recovery amendment — 2026-10-02
+
+The above audit records the pre-amendment allowance and does not retroactively
+qualify trial 1. Revision 4 subsequently received exact recorded approval for the
+finite prospective sequence in [PROVIDERS.md](PROVIDERS.md): counted slot 2 replaces
+the incomplete tools-and-source purpose, and slot 3 attempts isolation-refusal only
+after slot 2 succeeds. The separate versioned recovery ledger preserves the original
+ledger and trial bytes. Source inspection, parser repair and synthetic tests still
+cannot establish either live purpose; a future failure stops this sequence.

@@ -177,14 +177,16 @@ and budget. Changes require an explicit fresh packet and any existing continuati
 authority. Recovery uses the packet's original policy, never the current default.
 
 Issue #33 / PR #34 has an explicit, migration-only exemption from independent model PR
-review. No normal gate is bypassed and no model-reviewed SHA is asserted. At most two
-narrow capability diagnostics ($2 estimated reference cost and 300 seconds each) are
-authorized after all credential, billing and isolation prerequisites exist. They are not
-a PR review; no diagnostic has established native capability. See PROVIDERS.md for
+review. No normal gate is bypassed and no model-reviewed SHA is asserted. Narrow
+capability diagnostics remain limited to $2 estimated reference cost and 300 seconds
+each, after credential, billing and isolation prerequisites. The original two-slot
+allowance has only the explicitly approved issue-33 recovery exception described in
+PROVIDERS.md. They are not a PR review; no diagnostic has established native
+capability. See PROVIDERS.md for
 activation blockers and the separate human handoff. Other tasks retain normal review.
 Repair stays on the original branch and Astra UUID. New commits invalidate readiness.
 
-## Migration status — 2026-10-02
+## Historical migration status — 2026-10-02, before revision-4 recovery
 
 For issue #33, the coordinator verified guarded native Max login and preflight. The
 first live diagnostic nevertheless remained incomplete; successful authentication
@@ -194,3 +196,16 @@ successful purposes remain required. The original report and sanitized evidence
 are preserved. The repaired adapter requires fresh matching live evidence; any
 additional recovery allowance requires an explicitly approved, bound amendment.
 No such allowance is implemented, and this status does not waive any normal gate.
+
+
+## Revision-4 recovery implementation — 2026-10-02
+
+The subsequently recorded revision-4 approval authorizes one prospective replacement
+slot, for three total counted attempts including failed slot 1. The explicit preview
+and application interface in [PROVIDERS.md](PROVIDERS.md) preserves the original
+ledger and all failed-trial bytes. Slot 2 must prove native-tools-and-source capability
+before slot 3 can attempt isolation-refusal; a future failure stops the sequence.
+No fourth attempt or report repair is authorized. The coordinator applies the grant
+and invokes these diagnostics separately after final-head deterministic checks and CI.
+Implementation and synthetic regressions do not establish live capability. Both
+successful purposes and final-head CI evidence remain outstanding at this checkpoint.

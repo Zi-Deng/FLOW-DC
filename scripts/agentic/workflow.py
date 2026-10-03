@@ -505,6 +505,9 @@ def main():
     native.add_argument("--renew", action="store_true")
     native.add_argument("--retain-capability", action="store_true")
     native.add_argument("--paid-usage-disabled", action="store_true")
+    recovery = sub.add_parser("claude-diagnostic-recovery")
+    recovery.add_argument("--apply", action="store_true")
+    recovery.add_argument("--preview-digest")
     diagnostic = sub.add_parser("diagnose-claude")
     review_policy.add_arguments(diagnostic)
     sub.add_parser("doctor")
@@ -538,6 +541,7 @@ def main():
             "claude-subscription-setup",
             "claude-login-setup",
             "diagnose-claude",
+            "claude-diagnostic-recovery",
         }:
             if args.command == "review-selection":
                 overrides = {
@@ -547,6 +551,12 @@ def main():
                     review_policy.save_selection(repo, configuration(repo.root), **overrides)
                     overrides = {}
                 result = review_policy.status(repo, configuration(repo.root), **overrides)
+            elif args.command == "claude-diagnostic-recovery":
+                import diagnostic_recovery
+
+                result = diagnostic_recovery.prepare(
+                    repo, configuration(repo.root), apply=args.apply, preview_digest=args.preview_digest
+                )
             elif args.command == "register-reviewer":
                 import review_cli
 

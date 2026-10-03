@@ -152,6 +152,7 @@ class ReviewerInstallationTests(unittest.TestCase):
             "claude_telemetry",
             "claude_telemetry_v1",
             "review_diagnostics",
+            "diagnostic_recovery",
             "review_coverage_v1",
             "review_coverage_v2",
             "review_telemetry_v2",

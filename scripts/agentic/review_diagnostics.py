@@ -1,7 +1,8 @@
-"""At most two explicitly invoked migration canaries; never a review of PR #34."""
+"""Finite explicit migration canaries with separately approved prospective recovery."""
 
 from __future__ import annotations
 
+import contextlib
 import copy
 import fcntl
 import shutil
@@ -46,7 +47,7 @@ def state_directory(repo):
     return plain_path(repo.main / ".agentic-local/claude-migration-diagnostics")
 
 
-def ledger(repo):
+def legacy_ledger(repo):
     path = plain_path(state_directory(repo) / "ledger.json")
     if not path.exists():
         return {"schema_version": 1, "attempts": []}
@@ -71,14 +72,61 @@ def ledger(repo):
     return value
 
 
-def verify(repo, entry, policy):
+@contextlib.contextmanager
+def locked(repo):
+    root = state_directory(repo)
+    private_directory(root)
+    with plain_path(root / "ledger.lock").open("a") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise WorkflowError("A migration diagnostic is already in progress") from None
+        yield
+
+
+def ledger(repo):
+    import diagnostic_recovery
+
+    return diagnostic_recovery.load(repo) or legacy_ledger(repo)
+
+
+def ledger_path(repo, state):
+    from diagnostic_recovery import FILENAME
+
+    return state_directory(repo) / (FILENAME if state["schema_version"] == 2 else "ledger.json")
+
+
+def validate_files(directory):
+    """Refuse links/special files before reading any retained evidence."""
+    directory = plain_path(directory)
+    if not directory.is_dir():
+        raise WorkflowError("Missing diagnostic directory")
+    for path in directory.rglob("*"):
+        plain_path(path)
+        if not path.is_file() and not path.is_dir():
+            raise WorkflowError("Unsafe diagnostic evidence file")
+
+
+def verify(repo, entry, policy, *, recovery=None, require_qualified=True, strict_evidence=False):
     directory = plain_path(state_directory(repo) / f"attempt-{entry['number']}")
+    validate_files(directory)
     meta = coverage.read_json(directory / "metadata.json")
     review_policy.validate_policy(meta["review_policy"])
-    if meta.get("diagnostic_purpose") != PURPOSES[entry["number"] - 1] or entry.get(
-        "policy_digest"
-    ) != digest(meta["review_policy"]):
+    expected_purpose = entry["purpose"] if recovery else PURPOSES[entry["number"] - 1]
+    if meta.get("diagnostic_purpose") != expected_purpose or entry.get("policy_digest") != digest(
+        meta["review_policy"]
+    ):
         raise WorkflowError("Diagnostic purpose or policy changed")
+    if recovery:
+        from diagnostic_recovery import match_policy
+
+        match_policy(meta["review_policy"], policy)
+        if meta.get("recovery") != {
+            "grant_digest": recovery["grant_digest"],
+            "number": entry["number"],
+            "purpose": expected_purpose,
+        }:
+            raise WorkflowError("Diagnostic recovery grant changed")
     observed, current = compatible(meta["review_policy"]), compatible(policy)
     if observed != current:
         from claude_native_auth import capability_lineage
@@ -110,8 +158,19 @@ def verify(repo, entry, policy):
     if (directory / "report.txt").read_bytes() != capture["body"].encode("utf-8"):
         raise WorkflowError("Diagnostic report bytes changed")
     assessment = assess_diagnostic(directory / "packet", capture["body"], capture["diagnostics"], meta)
-    if not assessment["qualified"] or digest(assessment) != entry.get("assessment_digest"):
-        raise WorkflowError("Diagnostic capability is incomplete")
+    if assessment["qualified"] != require_qualified or digest(assessment) != entry.get("assessment_digest"):
+        raise WorkflowError("Diagnostic capability is incomplete or its historical assessment changed")
+    if strict_evidence or recovery:
+        if coverage.read_json(directory / "assessment.json") != assessment:
+            raise WorkflowError("Saved diagnostic assessment changed")
+        if coverage.read_json(directory / "attempt.json") != {
+            "schema_version": 5,
+            "input_digest": digest(meta),
+            "policy_digest": digest(meta["review_policy"]),
+            "status": "started",
+            "requests": 1,
+        }:
+            raise WorkflowError("Native diagnostic attempt binding changed")
     return True
 
 
@@ -123,11 +182,16 @@ def require_activation(repo, policy):
     state = ledger(repo)
     verified = set()
     observed = []
-    for entry in state["attempts"]:
+    recovery = state if state["schema_version"] == 2 else None
+    if recovery:
+        from diagnostic_recovery import match_policy
+
+        match_policy(state["grant"]["policy"], policy)
+    for entry in state["attempts"][1:] if recovery else state["attempts"]:
         if entry["status"] == "qualified":
             try:
-                verify(repo, entry, policy)
-                verified.add(PURPOSES[entry["number"] - 1])
+                verify(repo, entry, policy, recovery=recovery)
+                verified.add(entry["purpose"] if recovery else PURPOSES[entry["number"] - 1])
                 meta = coverage.read_json(
                     state_directory(repo) / f"attempt-{entry['number']}" / "metadata.json"
                 )
@@ -155,21 +219,24 @@ def run(repo, cfg, **overrides):
     from review_claude import execute, preflight
 
     selected = bind(selected)
-    preflight(repo, selected)  # Missing credentials/receipt/controls never spend an attempt.
     root = state_directory(repo)
-    private_directory(root)
-    with plain_path(root / "ledger.lock").open("a") as lock:
-        try:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            raise WorkflowError("A migration diagnostic is already in progress") from None
+    with locked(repo):
         state = ledger(repo)
-        if len(state["attempts"]) >= 2:
-            raise WorkflowError(
-                "Both authorized migration diagnostic attempts are accounted for; no automatic retry"
-            )
-        number = len(state["attempts"]) + 1
-        purpose = PURPOSES[number - 1]
+        recovery = state if state["schema_version"] == 2 else None
+        if recovery:
+            from diagnostic_recovery import next_slot
+
+            number, purpose = next_slot(repo, state, selected)
+            maximum = 3
+        else:
+            maximum = 2
+            if len(state["attempts"]) >= maximum:
+                raise WorkflowError(
+                    "Both authorized migration diagnostic attempts are accounted for; no automatic retry"
+                )
+            number = len(state["attempts"]) + 1
+            purpose = PURPOSES[number - 1]
+        preflight(repo, selected)  # Failed prerequisites never spend an attempt.
         directory = root / f"attempt-{number}"
         private_directory(directory, exist_ok=False)
         packet = directory / "packet"
@@ -234,10 +301,14 @@ def run(repo, cfg, **overrides):
                 if p.is_file()
             },
         }
+        if recovery:
+            meta["recovery"] = {"grant_digest": state["grant_digest"], "number": number, "purpose": purpose}
         atomic_json(directory / "metadata.json", meta)
         entry = {"number": number, "status": "attempted", "policy_digest": digest(selected)}
+        if recovery:
+            entry.update(purpose=purpose, grant_digest=state["grant_digest"])
         state["attempts"].append(entry)
-        atomic_json(root / "ledger.json", state)
+        atomic_json(ledger_path(repo, state), state)
         try:
             body, diagnostics, _ = execute(repo, directory, meta, diagnostic=True)
             captured = {
@@ -257,13 +328,13 @@ def run(repo, cfg, **overrides):
             )
         except BaseException:
             entry["status"] = "incomplete"
-            atomic_json(root / "ledger.json", state)
+            atomic_json(ledger_path(repo, state), state)
             raise
-        atomic_json(root / "ledger.json", state)
+        atomic_json(ledger_path(repo, state), state)
         return {
             "attempt": number,
             "status": entry["status"],
-            "remaining_attempts": 2 - number,
+            "remaining_attempts": (0 if recovery and entry["status"] != "qualified" else maximum - number),
             "estimated_reference_cost": diagnostics["usage"],
             "extra_spend_authorized_usd": 0,
         }
