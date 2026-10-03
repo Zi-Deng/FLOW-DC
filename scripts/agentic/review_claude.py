@@ -314,7 +314,7 @@ def validate_canary(path, workspace, root, env):
         raise WorkflowError("Unsafe or native-exempt diagnostic canary location") from None
 
 
-def execute(repo, directory, meta, *, diagnostic=False):
+def execute(repo, directory, meta, *, diagnostic=False, dispatch_context=None):
     from review import digest as file_digest
     from review_diagnostics import require_activation
 
@@ -356,6 +356,10 @@ def execute(repo, directory, meta, *, diagnostic=False):
             "No delegation, commands, edits or network tools. Do not claim approval or test execution. "
             "Keep the complete report under 50000 UTF-8 bytes. CI association and actual checkout are separate evidence."
         )
+        if not diagnostic:
+            import review_prompt
+
+            prompt = review_prompt.native(directory, meta)
         if diagnostic:
             prompt = "This is a narrow tool/isolation diagnostic, not a PR review. " + prompt
         refusal_path = None
@@ -373,7 +377,7 @@ def execute(repo, directory, meta, *, diagnostic=False):
         atomic_json(
             Path(directory) / "attempt.json",
             {
-                "schema_version": 5,
+                "schema_version": meta["schema_version"],
                 "input_digest": digest(meta),
                 "policy_digest": digest(policy),
                 "status": "started",
@@ -384,9 +388,14 @@ def execute(repo, directory, meta, *, diagnostic=False):
         recheck_auth()
         if refusal_path is not None:
             validate_canary(refusal_path, workspace, root, env)
-        response = review_process.capture(
-            args, cwd=workspace, env=env, timeout=policy["budget"]["timeout_seconds"]
+        from review_batch import dispatch_timeout
+
+        timeout = (
+            policy["budget"]["timeout_seconds"]
+            if diagnostic
+            else dispatch_timeout(repo, directory, meta, dispatch_context)
         )
+        response = review_process.capture(args, cwd=workspace, env=env, timeout=timeout)
         body, diagnostics = claude_telemetry.capture(
             response.stdout,
             Path(directory) / "packet",

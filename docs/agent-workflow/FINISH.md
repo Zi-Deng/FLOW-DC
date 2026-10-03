@@ -1,5 +1,13 @@
 # Human merge, archival and cleanup
 
+Current issue-31 batch records use metadata/capture 6, plan 6 and ledger 2 (saved plan 5 remains reproducible); see
+[provider-aware bounded batches](COVERAGE.md#provider-aware-bounded-batches-current)
+for typed allocations, named authorization, exact-report publication and recovery-only
+history. Single-review schema 5 remains eligible under its original provider checks.
+Batch children cannot qualify parents; finish still requires every component and
+integration, exact current-head/base publications and CI receipts. Dated migration
+notes below retain their historical meaning and grant no new inference allowance.
+
 The finish skill prepares the decision and command; the maintainer runs the command.
 Merge preparation is not a merge approval. The script checks mechanical preconditions,
 but the human still decides whether the reviewed change and domain evidence justify

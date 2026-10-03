@@ -2,6 +2,7 @@
 
 import copy
 import json
+from unittest.mock import patch
 
 from test_workflow import GitFixture, git, review, workflow
 
@@ -29,6 +30,78 @@ class CoverageTests(GitFixture):
         self.assertEqual(diagnostics["capability"], {"view": True, "grep": True, "glob": True})
         self.assertEqual(result["inspected_count"], result["required_count"])
         self.assertTrue(all(row["evidence"] for row in result["material"]))
+
+    def test_invalid_generated_fixture_cannot_dispatch(self):
+        path = self.packet / "capability.json"
+        original = path.read_bytes()
+        metadata = self.directory / "metadata.json"
+        original_meta = metadata.read_bytes()
+        for value in (
+            [],
+            {},
+            {"artifact": "wrong", "token": "bad"},
+            {"artifact": "capability/fixture.txt", "token": 42},
+            {"artifact": "capability/fixture.txt", "token": "bad"},
+        ):
+            path.write_text(json.dumps(value))
+            meta = json.loads(original_meta)
+            meta["files"]["capability.json"] = review.digest(path)
+            metadata.write_text(json.dumps(meta))
+            with (
+                patch.object(review, "run") as provider,
+                self.assertRaisesRegex(workflow.WorkflowError, "Invalid generated"),
+            ):
+                review.run_review(self.repo, self.directory)
+            provider.assert_not_called()
+        path.unlink()
+        with patch.object(review, "run") as provider, self.assertRaises(workflow.WorkflowError):
+            review.run_review(self.repo, self.directory)
+        provider.assert_not_called()
+        path.write_bytes(original)
+        metadata.write_bytes(original_meta)
+
+    def test_view_request_diagnostics_are_bounded_and_do_not_grant_credit(self):
+        rows = events(self.packet)
+        for row in rows:
+            if row["type"] == "tool.execution_start" and row["data"]["toolName"] == "view":
+                row["data"]["arguments"]["view_range"] = [99, 1]
+        result, diag = self.evaluate(rows)
+        self.assertFalse(result["qualified"])
+        views = [e for e in diag["events"] if e["tool"] == "view"]
+        self.assertTrue(views)
+        self.assertTrue(all(e["view_request"] == {"state": "range", "range": [99, 1]} for e in views))
+        self.assertEqual(
+            coverage.view_request({"view_range": ["secret", 10**100]}), {"state": "invalid", "range": None}
+        )
+        views[0]["view_request"]["range"] = ["secret", 1]
+        with self.assertRaises(workflow.WorkflowError):
+            coverage.validate_diagnostics(diag, self.packet)
+
+    def test_missing_grep_probe_invalidates_otherwise_complete_reads(self):
+        rows = events(self.packet)
+        grep_ids = {
+            r["data"]["toolCallId"]
+            for r in rows
+            if r["type"] == "tool.execution_start" and r["data"]["toolName"] == "grep"
+        }
+        rows = [r for r in rows if r.get("data", {}).get("toolCallId") not in grep_ids]
+        result, diag = self.evaluate(rows)
+        self.assertEqual(diag["capability"], {"view": True, "grep": False, "glob": True})
+        self.assertFalse(result["qualified"])
+        self.assertIn("capability_or_execution_incomplete", result["reasons"])
+
+    def test_missing_prior_binding_blob_records_incomplete_reason(self):
+        inventory = coverage.read_json(self.packet / "required-material.json")
+        item = next(x for x in inventory["required"] if x["kind"] == "changed-source")
+        item.update(
+            revision="prior-snapshot:missing",
+            artifact="prior-source/missing.txt",
+            provenance={"source_commit": None, "snapshot_sha256": "missing"},
+        )
+        (self.packet / "required-material.json").write_text(json.dumps(inventory))
+        result, _ = self.evaluate(events(self.packet, omit=[item["id"]]))
+        self.assertFalse(result["qualified"])
+        self.assertIn("prior_snapshot_binding_mismatch", result["reasons"])
 
     def test_bad_missing_truncated_unknown_and_uncorrelated_telemetry_fail_closed(self):
         original = events(self.packet)
@@ -86,6 +159,49 @@ class CoverageTests(GitFixture):
                 result, diagnostics = self.evaluate(original)
                 self.assertTrue(result["qualified"])
                 self.assertEqual(diagnostics["events"][0]["spans"], [])
+
+    def test_glob_no_discovery_is_diagnostic_not_execution_failure(self):
+        probe = coverage.read_json(self.packet / "capability.json")["artifact"]
+        for content, reason, paths in [
+            ("", "glob_no_discovery", []),
+            (" \n", "glob_no_discovery", []),
+            ("No matches found", "glob_unrecognized_or_outside_packet", []),
+            (json.dumps([probe]), "glob_unrecognized_or_outside_packet", []),
+            ("/outside/private-example.txt", "glob_unrecognized_or_outside_packet", []),
+            (probe, None, [probe]),
+            (f"{probe}\n{probe}\n/outside/private-example.txt", None, [probe]),
+        ]:
+            with self.subTest(content=content):
+                original = events(self.packet)
+                original[6]["data"]["result"]["content"] = content
+                result, diagnostics = self.evaluate(original)
+                record = next(row for row in diagnostics["events"] if row["tool"] == "glob")
+                self.assertTrue(record["success"])
+                self.assertEqual(record["reason"], reason)
+                self.assertEqual(record["paths"], paths)
+                self.assertEqual(record["spans"], [])
+                self.assertEqual(diagnostics["capability"]["glob"], bool(paths))
+                self.assertEqual(result["qualified"], bool(paths))
+                self.assertNotIn("private-example", json.dumps(diagnostics))
+                # An unsuccessful discovery must not poison a later valid probe.
+                recovery = events(self.packet)[5:7]
+                for event in recovery:
+                    event["data"]["toolCallId"] = "recovery-glob"
+                original[7:7] = recovery
+                self.assertTrue(self.evaluate(original)[0]["qualified"])
+
+    def test_glob_discovery_cannot_replace_source_inspection(self):
+        required = coverage.read_json(self.packet / "required-material.json")["required"]
+        item = next(row for row in required if row["kind"] == "changed-source")
+        original = events(self.packet, omit=[item["id"]])
+        probe = coverage.read_json(self.packet / "capability.json")["artifact"]
+        original[6]["data"]["result"]["content"] = f"{probe}\n{item['artifact']}"
+        result, diagnostics = self.evaluate(original)
+        self.assertTrue(diagnostics["capability"]["glob"])
+        self.assertFalse(result["qualified"])
+        record = next(row for row in diagnostics["events"] if row["tool"] == "glob")
+        self.assertEqual(record["paths"], sorted([probe, item["artifact"]]))
+        self.assertEqual(record["spans"], [])
 
     def test_jsonl_unicode_line_separators_are_part_of_exact_model_content(self):
         original = events(self.packet)
@@ -297,6 +413,14 @@ class PacketTests(GitFixture):
         current = review.prepare(self.repo, 31, 12, 1234, prior_review=previous)
         now = coverage.read_json(current / "packet/required-material.json")["required"]
         self.assertTrue(any(item["id"] == unread["id"] for item in now))
+        carried = next(item for item in now if item["id"] == unread["id"])
+        self.assertTrue(carried["revision"].startswith("prior:"))
+        self.assertEqual(
+            carried["provenance"]["source_commit"], coverage.read_json(previous / "metadata.json")["head_sha"]
+        )
+        self.assertEqual(
+            carried["provenance"]["snapshot_sha256"], review.digest(current / "packet" / carried["artifact"])
+        )
         self.assertTrue((current / "packet/repair-delta.txt").is_file())
         self.assertEqual(
             len([i for i in now if i["kind"] == "policy"]),
@@ -306,6 +430,97 @@ class PacketTests(GitFixture):
         third = review.prepare(self.repo, 31, 12, 1234, prior_review=current)
         later = coverage.read_json(third / "packet/required-material.json")["required"]
         self.assertLessEqual(len(later), len(now) + 2)
+
+    def test_carried_omitted_source_has_no_current_packet_pointer(self):
+        self.commit_task()
+        (self.task_path / "code.py").write_text("x" * 65537 + "\n")
+        self.updated_head()
+        previous = review.prepare(self.repo, 31, 12, 1234)
+        old = coverage.read_json(previous / "packet/required-material.json")["required"]
+        omitted = [
+            x for x in old if x["path"] == "code.py" and x["kind"] == "changed-source" and x.get("omitted")
+        ]
+        self.assertTrue(omitted)
+        self.assertTrue(any(x.get("artifact") for x in omitted))
+        store(self.repo, previous)
+        (self.task_path / "code.py").write_text("value = 9\n")
+        self.updated_head()
+        current = review.prepare(self.repo, 31, 12, 1234, prior_review=previous)
+        now = {x["id"]: x for x in coverage.read_json(current / "packet/required-material.json")["required"]}
+        for item in omitted:
+            self.assertEqual(now[item["id"]]["omitted"], item["omitted"])
+            self.assertIsNone(now[item["id"]].get("artifact"))
+
+    def test_base_snapshot_retains_prior_merge_base_when_file_leaves_diff(self):
+        self.commit_task()
+        previous = review.prepare(self.repo, 31, 12, 1234)
+        old = coverage.read_json(previous / "packet/required-material.json")["required"]
+        base_item = next(x for x in old if x["path"] == "code.py" and x["revision"] == "base")
+        store(self.repo, previous, omit=[base_item["id"]])
+        (self.task_path / "code.py").write_text(git(self.task_path, "show", self.base + ":code.py") + "\n")
+        (self.task_path / "other.py").write_text("value = 3\n")
+        self.updated_head()
+        current = review.prepare(self.repo, 31, 12, 1234, prior_review=previous)
+        item = next(
+            x
+            for x in coverage.read_json(current / "packet/required-material.json")["required"]
+            if x["id"] == base_item["id"]
+        )
+        self.assertEqual(item["revision"], "prior:" + self.base)
+        self.assertEqual(item["provenance"]["source_commit"], self.base)
+        self.assertEqual(
+            (current / "packet" / item["artifact"]).read_bytes(),
+            (previous / "packet" / base_item["artifact"]).read_bytes(),
+        )
+
+    def test_multi_repair_source_and_test_snapshots_keep_immutable_provenance(self):
+        self.commit_task()
+        (self.task_path / "tests").mkdir()
+        (self.task_path / "tests/test_code.py").write_text("def test_old():\n    assert True\n")
+        self.updated_head()
+        previous = review.prepare(self.repo, 31, 12, 1234)
+        original_head = self.head
+        original = coverage.read_json(previous / "packet/required-material.json")["required"]
+        unread = [
+            x["id"]
+            for x in original
+            if x["revision"] == "head" and x["path"] in {"code.py", "tests/test_code.py"}
+        ]
+        self.assertTrue(unread)
+        for generation in (1, 2):
+            store(self.repo, previous, omit=unread)
+            (self.task_path / "code.py").write_text("# moved\n" * generation + f"value = {generation + 4}\n")
+            (self.task_path / "tests/test_code.py").write_text(
+                "# moved\n" * generation + "def test_new():\n    assert 1\n"
+            )
+            self.updated_head()
+            current = review.prepare(self.repo, 31, 12, 1234, prior_review=previous)
+            packet = current / "packet"
+            required = coverage.read_json(packet / "required-material.json")["required"]
+            index = {x["path"]: x for x in coverage.read_json(packet / "source-index.json")}
+            for item in required:
+                if item["id"] in unread:
+                    self.assertEqual(item["revision"], "prior:" + original_head)
+                    self.assertEqual(
+                        item["provenance"]["snapshot_sha256"], review.digest(packet / item["artifact"])
+                    )
+                if item["revision"] == "head" and item["kind"] in {"changed-source", "test"}:
+                    self.assertEqual(item["artifact"], index[item["path"]]["snapshot"])
+            self.assertTrue(set(unread) <= {x["id"] for x in required})
+            # Even a synthetically well-formed report cannot qualify a false head binding.
+            bad = next(x for x in required if x["id"] in unread)
+            bad["revision"] = "head"
+            workflow.write_json(
+                packet / "required-material.json", {"schema_version": 2, "required": required}
+            )
+            raw = stream(packet)
+            body, diag = coverage.parse_events(raw, packet, packet, version="1.0.83")
+            self.assertIn("source_revision_binding_mismatch", coverage.assess(packet, body, diag)["reasons"])
+            bad["revision"] = "prior:" + original_head
+            workflow.write_json(
+                packet / "required-material.json", {"schema_version": 2, "required": required}
+            )
+            previous = current
 
     def test_invalid_prior_repository_ancestry_and_missing_coverage_are_refused(self):
         self.commit_task()

@@ -386,3 +386,65 @@ def require_current_adapter(value):
     validate_policy(value)
     if value["adapter"] != PROVIDERS[value["provider"]]["adapter"]:
         raise WorkflowError("Historical review adapter is recovery-only; prepare a fresh packet")
+
+
+def exact_amount(value, name, *, positive=True):
+    """JSON decimal input, with no binary-float allowance or bool coercion."""
+    from decimal import Decimal, InvalidOperation
+
+    if type(value) not in {str, int, float}:
+        raise WorkflowError(f"Invalid {name}")
+    try:
+        result = Decimal(str(value))
+    except InvalidOperation:
+        raise WorkflowError(f"Invalid {name}") from None
+    if not result.is_finite() or result < 0 or (positive and result == 0):
+        raise WorkflowError(f"Invalid {name}")
+    return result
+
+
+def batch_budget(value, parent_policy, units):
+    """Reserve a full sequential review in the provider's own accounting domain."""
+    from fractions import Fraction
+
+    validate_policy(parent_policy)
+    keys = {
+        "requests",
+        "kind",
+        "cost",
+        "seconds",
+        "unit_cost",
+        "unit_seconds",
+        "max_report_bytes",
+        "max_integration_bytes",
+    }
+    if not isinstance(value, dict) or set(value) != keys:
+        raise WorkflowError("Explicit typed batch budget and report bounds are required")
+    for key in ("requests", "seconds", "unit_seconds", "max_report_bytes", "max_integration_bytes"):
+        if type(value[key]) is not int or value[key] <= 0:
+            raise WorkflowError(f"Batch {key} must be a positive integer")
+    if value["kind"] != parent_policy["budget"]["kind"]:
+        raise WorkflowError("Batch cost kind differs from provider")
+    cost, unit = (exact_amount(value[k], k) for k in ("cost", "unit_cost"))
+    if (
+        value["requests"] < units
+        or Fraction(cost) < Fraction(unit) * units
+        or value["seconds"] < value["unit_seconds"] * units
+        or value["max_report_bytes"] > 50000
+    ):
+        raise WorkflowError("Full-review allocation cannot fund every component and integration")
+    unit_policy = copy.deepcopy(parent_policy)
+    field = "estimated_usd" if value["kind"] == "reference-usd" else "ai_credits"
+    # Policy's established numeric syntax remains unchanged. Reject lossy conversion.
+    numeric = int(unit) if unit == unit.to_integral_value() else float(unit)
+    if exact_amount(numeric, field) != unit:
+        raise WorkflowError("Per-unit allocation is not exactly representable by provider policy")
+    if (
+        unit > exact_amount(parent_policy["budget"][field], field)
+        or value["unit_seconds"] > parent_policy["budget"]["timeout_seconds"]
+    ):
+        raise WorkflowError("Unit allocation exceeds immutable parent policy")
+    unit_policy["budget"][field] = numeric
+    unit_policy["budget"]["timeout_seconds"] = value["unit_seconds"]
+    validate_policy(unit_policy)
+    return {**value, "cost": str(cost), "unit_cost": str(unit)}, unit_policy

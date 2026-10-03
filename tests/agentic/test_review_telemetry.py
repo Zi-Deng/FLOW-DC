@@ -57,6 +57,54 @@ class TelemetryTests(GitFixture):
         self.assertNotIn("secret-looking-not-retained", json.dumps(diag))
         self.assertNotIn(self.session, json.dumps(diag))
 
+    def test_null_bookkeeping_stdout_matches_coverage_compatibility(self):
+        terminal = {"type": "result", "exitCode": 0, "result": self.rows[-2]["data"]["content"]}
+        for kind in ("session.idle", "session.shutdown", "session.info", "assistant.turn_end"):
+            with self.subTest(kind=kind):
+                result, _ = self.evaluate(stdout=[{"type": kind, "data": None}, terminal])
+                self.assertTrue(result["qualified"])
+                for value in ([], "", 0, False):
+                    result, diag = self.evaluate(stdout=[{"type": kind, "data": value}, terminal])
+                    self.assertFalse(result["qualified"])
+                    self.assertIn("malformed_stdout_framing", diag["reasons"])
+        for kind in (
+            "session.start",
+            "tool.execution_start",
+            "tool.execution_complete",
+            "tool.execution_progress",
+            "tool.execution_partial_result",
+            "unknown.event",
+        ):
+            result, _ = self.evaluate(stdout=[{"type": kind, "data": None}, terminal])
+            self.assertFalse(result["qualified"])
+        result, _ = self.evaluate(
+            stdout=[{"type": "session.idle", "data": None, "agentId": "delegated"}, terminal]
+        )
+        self.assertFalse(result["qualified"])
+
+    def test_known_stdout_falsy_payloads_are_malformed(self):
+        for value in (None, [], "", 0, False):
+            with self.subTest(value=value):
+                result, diag = self.evaluate(
+                    stdout=[
+                        {"type": "session.start", "data": value},
+                        {"type": "result", "exitCode": 0, "result": self.rows[-2]["data"]["content"]},
+                    ]
+                )
+                self.assertFalse(result["qualified"])
+                self.assertIn("malformed_stdout_framing", diag["reasons"])
+
+    def test_null_tool_progress_remains_stricter_on_stdout_than_session_history(self):
+        terminal = {"type": "result", "exitCode": 0, "result": self.rows[-2]["data"]["content"]}
+        for kind in ("tool.execution_progress", "tool.execution_partial_result"):
+            with self.subTest(kind=kind):
+                event = {"type": kind, "data": None}
+                rows = [*self.rows[:-2], event, *self.rows[-2:]]
+                self.assertTrue(self.evaluate(rows=rows)[0]["qualified"])
+                result, diag = self.evaluate(stdout=[event, terminal])
+                self.assertFalse(result["qualified"])
+                self.assertIn("malformed_stdout_framing", diag["reasons"])
+
     def test_session_identity_ambiguity_symlink_and_missing_events_fail_closed(self):
         rows = copy.deepcopy(self.rows)
         rows[0]["data"]["sessionId"] = "wrong-session"
@@ -173,6 +221,201 @@ class TelemetryTests(GitFixture):
                 self.assertFalse(self.evaluate(self.rows[:1] + [event] + self.rows[1:])[0]["qualified"])
                 terminal = {"type": "result", "exitCode": 0, "result": self.rows[-2]["data"]["content"]}
                 self.assertFalse(self.evaluate(stdout=[event, terminal])[0]["qualified"])
+
+    def test_warning_diagnostics_distinguish_categories_without_retaining_payloads(self):
+        for category in ("subscription", "policy", "mcp", "private-category"):
+            warning = {
+                "type": "session.warning",
+                "data": {
+                    "warningType": category,
+                    "message": "private-message",
+                    "url": "https://private-url/credential",
+                    "remediation": {"private-key": "private-value"},
+                },
+            }
+            terminal = {"type": "result", "exitCode": 0, "result": self.rows[-2]["data"]["content"]}
+            for source in ("stdout", "session"):
+                with self.subTest(category=category, source=source):
+                    result, diag = (
+                        self.evaluate(stdout=[warning, terminal])
+                        if source == "stdout"
+                        else self.evaluate(self.rows[:1] + [warning] + self.rows[1:])
+                    )
+                    self.assertFalse(result["qualified"])
+                    row = diag["telemetry"]["warnings"][source]
+                    self.assertEqual(row["count"], 1)
+                    self.assertEqual(row["message_string"], 1)
+                    self.assertEqual(row["url_string"], 1)
+                    self.assertEqual(row["remediation_present"], 1)
+                    key = category if category != "private-category" else "other"
+                    self.assertEqual(row["categories"][key], 1)
+                    self.assertNotIn("private-", json.dumps(diag))
+                    telemetry.validate_summary(diag["telemetry"])
+
+    def test_warning_projection_is_fixed_size_and_never_weakens_isolation(self):
+        warnings = [
+            {"type": "session.warning", "data": {"warningType": f"private-{i}", "message": "secret"}}
+            for i in range(100)
+        ]
+        result, diag = self.evaluate(self.rows[:1] + warnings + self.rows[1:])
+        self.assertFalse(result["qualified"])
+        row = diag["telemetry"]["warnings"]["session"]
+        self.assertEqual(row["categories"]["other"], 100)
+        self.assertLess(len(json.dumps(diag["telemetry"]["warnings"])), 1000)
+        telemetry.validate_summary(diag["telemetry"])
+        self.assertNotIn("warnings", self.evaluate()[1]["telemetry"])
+        for field in ("agentId", "parentToolCallId", "mcpServerName"):
+            warning = copy.deepcopy(warnings[0])
+            if field == "agentId":
+                warning[field] = "private-child"
+            else:
+                warning["data"][field] = "private-child"
+            result, diag = self.evaluate(self.rows[:1] + [warning] + self.rows[1:])
+            self.assertFalse(result["qualified"])
+            self.assertIn("delegated_or_mcp_event", diag["reasons"])
+            self.assertNotIn("private-", json.dumps(diag))
+
+    def test_warning_shapes_and_summary_tampering_remain_fail_closed(self):
+        for data in (
+            None,
+            [],
+            {},
+            {"warningType": 42},
+            {"warningType": "policy", "message": [], "url": 7, "private-key": "secret"},
+        ):
+            warning = {"type": "session.warning", "data": data}
+            result, diag = self.evaluate(self.rows[:1] + [warning] + self.rows[1:])
+            self.assertFalse(result["qualified"])
+            row = diag["telemetry"]["warnings"]["session"]
+            self.assertEqual(row["count"], 1)
+            self.assertEqual(row["message_string"], 0)
+            mixed = isinstance(data, dict) and data.get("warningType") == "policy"
+            self.assertEqual(row["categories"]["policy" if mixed else "missing_or_invalid"], 1)
+            self.assertEqual(row["url_string"], 0)
+            self.assertEqual(row["url_present"], int(mixed))
+            self.assertEqual(row["extra_fields"], int(mixed))
+            self.assertEqual(row["remediation_present"], 0)
+            self.assertNotIn("secret", json.dumps(diag))
+            telemetry.validate_summary(diag["telemetry"])
+        for key, value in (("message", "secret"), ("count", True), ("url_string", 2)):
+            bad = copy.deepcopy(diag["telemetry"])
+            bad["warnings"]["session"][key] = value
+            with self.assertRaises(coverage.WorkflowError):
+                telemetry.validate_summary(bad)
+        bad = copy.deepcopy(diag["telemetry"])
+        bad["warnings"]["session"]["categories"]["private-category"] = 1
+        with self.assertRaises(coverage.WorkflowError):
+            telemetry.validate_summary(bad)
+
+    def test_unmanaged_ephemeral_stdout_requires_exact_no_policy_shape(self):
+        event = {
+            "type": "session.managed_settings_resolved",
+            "ephemeral": True,
+            "id": self.session,
+            "parentId": None,
+            "timestamp": "2026-09-30T20:00:00Z",
+            "data": {
+                "source": "none",
+                "failClosed": False,
+                "managedKeys": [],
+                "deviceManaged": False,
+                "serverManaged": False,
+                "bypassPermissionsDisabled": False,
+            },
+        }
+        terminal = {"type": "result", "exitCode": 0, "result": self.rows[-2]["data"]["content"]}
+        optional = (
+            "clientManaged",
+            "policyHelperManaged",
+            "permissionsAllowIntersected",
+            "sandboxEnabledByUndeterminedPolicy",
+        )
+        for restrictive in (False, True):
+            good = copy.deepcopy(event)
+            good["data"]["bypassPermissionsDisabled"] = restrictive
+            if restrictive:
+                good["data"].update(dict.fromkeys(optional, False))
+                good["parentId"] = self.session
+            result, diag = self.evaluate(stdout=[good, terminal])
+            self.assertTrue(result["qualified"], diag["reasons"])
+            telemetry.validate_summary(diag["telemetry"])
+        variants = []
+        for key in event:
+            bad = copy.deepcopy(event)
+            del bad[key]
+            if key != "type":  # Missing discriminator is rejected by JSONL framing.
+                variants.append(bad)
+        for key in event["data"]:
+            bad = copy.deepcopy(event)
+            del bad["data"][key]
+            variants.append(bad)
+        for key, values in {
+            "source": ["server", "device", "client", "policyHelper", "mixed", "secret", None],
+            "failClosed": [True, 0, None],
+            "managedKeys": [["secret"], {}, None],
+            "deviceManaged": [True, 0],
+            "serverManaged": [True, "false"],
+            "bypassPermissionsDisabled": [0, 1, None, "false"],
+            "settings": [None, {}, {"secret": "credential"}],
+            "extra": ["secret"],
+            **{key: [True, 0, None] for key in optional},
+            "parentToolCallId": ["secret"],
+            "mcpServerName": ["secret"],
+        }.items():
+            for value in values:
+                bad = copy.deepcopy(event)
+                bad["data"][key] = value
+                variants.append(bad)
+        for key, value in (
+            ("agentId", None),
+            ("agentId", "secret"),
+            ("ephemeral", False),
+            ("ephemeral", 1),
+            ("extra", "secret"),
+            ("id", "secret"),
+            ("parentId", 1),
+            ("timestamp", "2026-02-30T20:00:00Z"),
+            ("data", []),
+            ("data", None),
+            ("type", "session.managed_settings_enforced"),
+        ):
+            bad = copy.deepcopy(event)
+            bad[key] = value
+            variants.append(bad)
+        for bad in variants:
+            with self.subTest(event=bad):
+                result, diag = self.evaluate(stdout=[bad, terminal])
+                self.assertFalse(result["qualified"])
+                self.assertNotIn("secret", json.dumps(diag))
+                self.assertNotIn("credential", json.dumps(diag))
+                telemetry.validate_summary(diag["telemetry"])
+        # Ephemeral bookkeeping is not documented as persisted tool evidence.
+        self.assertFalse(self.evaluate([self.rows[0], event] + self.rows[1:])[0]["qualified"])
+        no_tools = [row for row in self.rows if not row["type"].startswith("tool.")]
+        result, diag = self.evaluate(no_tools, stdout=[event, terminal])
+        self.assertFalse(result["qualified"])
+        self.assertEqual(diag["events"], [])
+
+    def test_managed_settings_diagnostics_never_grant_policy_credit(self):
+        terminal = {"type": "result", "exitCode": 0, "result": self.rows[-2]["data"]["content"]}
+        for data in (
+            {"source": "none", "failClosed": False},
+            {"source": "server", "failClosed": True, "settings": {"secret": "credential"}},
+            {"source": "secret-source", "managedKeys": ["secret-key"]},
+            None,
+        ):
+            event = {"type": "session.managed_settings_resolved", "ephemeral": True, "data": data}
+            result, diag = self.evaluate(stdout=[event, terminal])
+            self.assertFalse(result["qualified"])
+            self.assertIn("unsupported_stdout_event", diag["reasons"])
+            row = diag["telemetry"]["managed_settings"]["stdout"]
+            self.assertEqual(row["count"], 1)
+            self.assertNotIn("secret", json.dumps(diag))
+            self.assertNotIn("credential", json.dumps(diag))
+            telemetry.validate_summary(diag["telemetry"])
+        row["settings"] = "secret"
+        with self.assertRaises(coverage.WorkflowError):
+            telemetry.validate_summary(diag["telemetry"])
 
     def test_unknown_event_names_are_bounded_digests_and_never_qualify(self):
         events = [{"type": f"secret-type-{i}", "data": {"content": "private"}} for i in range(100)]

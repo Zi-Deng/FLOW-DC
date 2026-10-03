@@ -1,5 +1,13 @@
 # Reviewer providers and activation
 
+Current issue-31 batch records use metadata/capture 6, plan 6 and ledger 2 (saved plan 5 remains reproducible); see
+[provider-aware bounded batches](COVERAGE.md#provider-aware-bounded-batches-current)
+for typed allocations, named authorization, exact-report publication and recovery-only
+history. Single-review schema 5 remains eligible under its original provider checks.
+Batch children cannot qualify parents; finish still requires every component and
+integration, exact current-head/base publications and CI receipts. Dated migration
+notes below retain their historical meaning and grant no new inference allowance.
+
 Configuration schema 2 selects `claude-code`, exact model `claude-opus-5-5`, effort
 `medium`. Schema 1 retains Copilot selection. Copilot remains an explicit supported
 choice: `copilot`, `claude-opus-5`, effort `default` (no effort flag is sent to that CLI).
@@ -464,15 +472,14 @@ current readiness. A provenance/generation change requires explicit fresh packet
 preparation; no old blocked store is silently upgraded or replaced. No setup or
 renewal creates a new diagnostic allowance.
 
-
 Schema 1 publication retains its original bytes/envelope. Schema 2 uses the frozen
 `review_coverage_v1.py`; schema 3 uses `review_coverage_v2.py` and
 `review_telemetry_v2.py`. Historical assessment hashes/envelopes do not change and
-cannot qualify a current review. Schema 4 is reserved for PR #32 and explicitly
-unsupported here. Current packets/results/captures use schema 5; model reports remain
-schema 2. Schema-5 token-mode records without an authentication payload retain
+cannot qualify a current review. Schema-4 batches and their schema-3 children use the
+frozen issue-31 modules for recovery only. Current packets/results/captures use schema 6;
+existing schema-5 singles retain their original semantics. Model reports remain schema 2. Schema-5 token-mode records without an authentication payload retain
 exact historical hashes, assessment and publication envelopes, but cannot execute
-or establish native readiness. New schema-5 Claude policies bind the versioned
+or establish native readiness. Current Claude policies bind the versioned
 native auth mode and random registration/generation identifiers. Dated research, adoption evidence and template provenance remain historical.
 
 The hosted opt-in workflow explicitly selects and registers Copilot. It remains

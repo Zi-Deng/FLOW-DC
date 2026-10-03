@@ -8,7 +8,7 @@ import fcntl
 import shutil
 
 import diagnostic_tool_contract as tool_contract
-import review_coverage as coverage
+import review_coverage_v5 as coverage
 import review_policy
 from review_packet import stable_id
 from tasks import atomic_json, atomic_text, digest, plain_path, private_directory

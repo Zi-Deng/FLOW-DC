@@ -1,5 +1,13 @@
 # Issue to merged PR
 
+Current issue-31 batch records use metadata/capture 6, plan 6 and ledger 2 (saved plan 5 remains reproducible); see
+[provider-aware bounded batches](COVERAGE.md#provider-aware-bounded-batches-current)
+for typed allocations, named authorization, exact-report publication and recovery-only
+history. Single-review schema 5 remains eligible under its original provider checks.
+Batch children cannot qualify parents; finish still requires every component and
+integration, exact current-head/base publications and CI receipts. Dated migration
+notes below retain their historical meaning and grant no new inference allowance.
+
 The issue is the contract, the PR is the durable record, and the maintainer owns the
 merge. Agent conversations support that record; they never replace it.
 
@@ -242,8 +250,12 @@ into public documentation only after checking them.
 
 Use the [coverage runbook](COVERAGE.md) for new reviews. The immutable packet exposes
 individual acceptance items, source hunks/context, relevant tests and prior findings.
-One request covers deterministic scopes plus a cross-boundary pass; scopes do not
-increase the request or credit budget. `task-review --prior-review DIRECTORY` validates
+By default, one request covers deterministic scopes plus a cross-boundary pass; scopes do not
+increase the request or credit budget. Explicit `task-review --batch` previews component
+and integration assignments; execution requires finite aggregate and per-unit bounds.
+See [batch controls](COVERAGE.md#provider-aware-bounded-batches-current) for recovery,
+exact unit publication and aggregate readiness. No live trial is implied by selection.
+`task-review --prior-review DIRECTORY` validates
 repair ancestry and retains uncovered material. A changed head/base needs fresh evidence.
 
 A report with missing capability, malformed telemetry or unread required material is

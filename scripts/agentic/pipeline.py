@@ -6,6 +6,7 @@ import re
 import subprocess
 
 import review as independent
+import review_batch
 import review_policy
 from tasks import (
     TaskStore,
@@ -263,15 +264,21 @@ def report_record(repo, state, round_record):
         raise WorkflowError("Review metadata differs from the registered pipeline round")
     if round_record["contract_digest"] != digest(state["approval"]["contract"]):
         raise WorkflowError("Review used a superseded contract")
-    if meta.get("schema_version") == 5 and (
+    if meta.get("schema_version") in {5, 6} and (
         meta.get("review_policy") != round_record.get("review_policy")
         or digest(meta["review_policy"]) != round_record.get("review_policy_digest")
     ):
         raise WorkflowError("Review provider policy differs from the registered immutable round")
+    if meta.get("kind") == "batch-parent":
+        planned = review_batch.load(directory)
+        if round_record.get("batch_sha256") != digest(planned) or round_record.get(
+            "authorization_digest"
+        ) != digest(planned["authorization"]):
+            raise WorkflowError("Batch plan or authorization differs from the registered round")
     report = plain_path(directory / "review.md")
     if (
         not report.is_file()
-        or not meta.get(independent.version_field(meta))
+        or (meta.get("kind") != "batch-parent" and not meta.get(independent.version_field(meta)))
         or independent.digest(report) != meta.get("review_sha256")
     ):
         raise WorkflowError("Pipeline review is incomplete or its report changed")
@@ -290,6 +297,8 @@ def published_report(repo, state, round_record):
     ]
     if len(matching) > 1:
         raise WorkflowError("Multiple published reviews match this pipeline round")
+    if matching and meta.get("kind") == "batch-parent":
+        review_batch.verify_unit_publications(repo, round_record["directory"], complete_only=False)
     return matching[0] if matching else None
 
 
@@ -332,10 +341,18 @@ def review_task(
     approved_continuation=False,
     retry_confirmed_absent=False,
     prior_review=None,
+    batch=False,
+    batch_limits=None,
+    batch_resume=False,
     review_provider=None,
     review_model=None,
     review_effort=None,
+    batch_authorization=None,
 ):
+    if batch_limits is not None and not batch:
+        raise WorkflowError("Budget flags require explicit --batch selection")
+    if batch_resume and not (batch and execute):
+        raise WorkflowError("Batch resume requires --batch and --execute")
     number = positive(number)
     store = TaskStore(repo)
     with store.locked(f"issue-{number}") as state:
@@ -415,7 +432,26 @@ def review_task(
             }
             rounds.append(record)
             store.save(state)
+        is_batch = independent.verify_packet(record["directory"]).get("kind") == "batch-parent"
+        if batch and record["run_attempted"] and not is_batch:
+            raise WorkflowError("Cannot switch an attempted single review into batch mode")
+        if batch and is_batch and batch_limits is not None:
+            review_batch.select(record["directory"], batch_limits, batch_authorization)
+        if is_batch and not batch:
+            raise WorkflowError("Existing batch requires explicit --batch selection")
+        if batch and not record["run_attempted"] and execute:
+            if batch_limits is None:
+                raise WorkflowError("Explicit aggregate and unit budgets are required for batch execution")
+            review_batch.select(record["directory"], batch_limits, batch_authorization)
+        if batch_resume and not record["run_attempted"]:
+            raise WorkflowError("There is no attempted batch to resume")
         if execute and not record["run_attempted"]:
+            if batch:
+                planned = review_batch.load(record["directory"])
+                record.update(
+                    batch_sha256=digest(planned),
+                    authorization_digest=digest(planned["authorization"]),
+                )
             record.update(
                 status="running",
                 run_attempted=True,
@@ -426,7 +462,10 @@ def review_task(
             )
             store.save(state)
             try:
-                independent.review(repo, record["directory"])
+                if batch:
+                    review_batch.execute(repo, record["directory"])
+                else:
+                    independent.review(repo, record["directory"])
                 report_record(repo, state, record)
             except BaseException:
                 record["status"] = "incomplete"
@@ -438,7 +477,10 @@ def review_task(
         elif execute and record.get("run_attempted"):
             # Recover a completed report after interruption, but never rerun an
             # uncertain model invocation in this directory.
-            independent.recover_review(repo, record["directory"])
+            if batch_resume:
+                review_batch.execute(repo, record["directory"], resume=True)
+            else:
+                independent.recover_review(repo, record["directory"])
             report_record(repo, state, record)
             if record["status"] not in {"publishing", "published", "published-incomplete"}:
                 record["coverage_qualified"] = independent.coverage_ready(record["directory"])
@@ -476,6 +518,9 @@ def review_task(
             state.pop("finish", None)
             store.save(state)
         return {
+            "batch_preview": review_batch.preview(record["directory"], batch_limits)
+            if batch and not execute
+            else None,
             "pr": state["pr"],
             "directory": record["directory"],
             "status": record["status"],
@@ -510,6 +555,26 @@ def add_commands(sub):
         review_parser.add_argument("--" + flag, action="store_true")
     review_parser.add_argument("--continue-reason")
     review_parser.add_argument("--prior-review")
+    review_parser.add_argument(
+        "--batch", action="store_true", help="Preview or explicitly execute bounded review units"
+    )
+    review_parser.add_argument(
+        "--batch-resume", action="store_true", help="Resume only never-started eligible units"
+    )
+    for name, kind in (
+        ("requests", int),
+        ("kind", str),
+        ("cost", str),
+        ("seconds", int),
+        ("unit-cost", str),
+        ("unit-seconds", int),
+        ("max-report-bytes", int),
+        ("max-integration-bytes", int),
+    ):
+        review_parser.add_argument("--batch-" + name, type=kind)
+    review_parser.add_argument(
+        "--batch-authorization", help="Named authorization JSON bound to final executable preview"
+    )
     review_policy.add_arguments(review_parser)
 
 
@@ -533,8 +598,16 @@ def dispatch(repo, args):
             args.approved_continuation,
             args.retry_confirmed_absent,
             args.prior_review,
+            args.batch,
+            review_batch.arguments_budget(args)
+            if any(review_batch.arguments_budget(args).values())
+            else None,
+            args.batch_resume,
             args.review_provider,
             args.review_model,
             args.review_effort,
+            independent.coverage.read_json(plain_path(args.batch_authorization))
+            if args.batch_authorization
+            else None,
         )
     raise WorkflowError("Unknown pipeline operation")

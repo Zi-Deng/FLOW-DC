@@ -14,9 +14,12 @@ import uuid
 from pathlib import Path, PurePosixPath
 
 import ci_evidence
+import review_batch
 import review_coverage as coverage
 import review_coverage_v1 as legacy_coverage
 import review_coverage_v2 as schema3_coverage
+import review_coverage_v5 as schema5_coverage
+import review_issue31_v3 as issue31_history
 import review_packet
 import review_policy
 from tasks import atomic_json, atomic_text, plain_path, private_directory
@@ -35,6 +38,7 @@ TEXT_SUFFIXES = {
     ".cfg",
     ".sh",
     ".js",
+    ".mjs",
     ".ts",
     ".tsx",
     ".jsx",
@@ -230,7 +234,7 @@ def prepare(
             ["git", "-C", repo.root, "merge-base", "--is-ancestor", old["head_sha"], head], check=False
         ).returncode:
             raise WorkflowError("Prior review head is not an ancestor of current head")
-        if old.get("schema_version") not in {2, 3, 5}:
+        if old.get("schema_version") not in {2, 3, 4, 5, 6}:
             raise WorkflowError(
                 "Legacy prior review has no required-material inventory; use a full fresh packet"
             )
@@ -294,7 +298,8 @@ def prepare(
     )
     files = {str(p.relative_to(packet)): digest(p) for p in packet.rglob("*") if p.is_file()}
     metadata = {
-        "schema_version": 5,
+        "schema_version": 6,
+        "kind": "single",
         "review_policy": selection["policy"],
         "selection_sources": selection["sources"],
         "repository": repo.name,
@@ -317,17 +322,37 @@ def prepare(
 def verify_packet(directory):
     directory = plain_path(directory)
     metadata = coverage.read_json(plain_path(directory / "metadata.json"))
-    if type(metadata.get("schema_version")) is not int or metadata["schema_version"] not in {1, 2, 3, 5}:
-        raise WorkflowError(
-            "Unsupported review packet schema (4 is reserved for the separate batch migration)"
-        )
-    if metadata["schema_version"] == 5:
+    if type(metadata.get("schema_version")) is not int or metadata["schema_version"] not in {
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+    }:
+        raise WorkflowError("Unsupported review packet schema")
+    if metadata["schema_version"] == 6 and metadata.get("kind") not in {
+        "single",
+        "batch-parent",
+        "batch-unit",
+    }:
+        raise WorkflowError("Unsupported schema-6 packet kind")
+    if metadata["schema_version"] == 4 and (metadata.get("kind") or metadata.get("review_policy")):
+        raise WorkflowError("Historical schema-4 packet has prospective fields")
+    if metadata["schema_version"] in {5, 6}:
         review_policy.validate_policy(metadata.get("review_policy"))
         if metadata.get("requested_model") != metadata["review_policy"]["model"]:
             raise WorkflowError("Packet model differs from immutable review policy")
     packet = directory / "packet"
-    actual = {str(p.relative_to(packet)): digest(p) for p in packet.rglob("*") if p.is_file()}
-    if any(p.is_symlink() for p in packet.rglob("*")) or actual != metadata["files"]:
+    actual, has_symlink = {}, False
+    for parent, directories, names in packet.walk(follow_symlinks=False):
+        prefix = "" if parent == packet else parent.relative_to(packet).as_posix() + "/"
+        has_symlink |= any((parent / name).is_symlink() for name in directories + names)
+        for name in names:
+            path = parent / name
+            if path.is_file():
+                actual[prefix + name] = digest(path)
+    if has_symlink or actual != metadata["files"]:
         raise WorkflowError("Review packet changed after preparation")
     return metadata
 
@@ -341,16 +366,41 @@ RESULT_FIELDS = {
 }
 
 
+def historical_child(directory, meta):
+    parent = Path(directory).parent.parent
+    original = issue31_history.verify_packet(parent)
+    if original["schema_version"] != 4 or not meta.get("batch_unit"):
+        raise WorkflowError("Historical child requires retained schema-4 parent lineage")
+    batch = issue31_history.review_batch.load(parent)
+    unit = meta["batch_unit"]["unit"]
+    if unit not in batch["units"] or Path(directory) != issue31_history.review_batch.unit_path(parent, unit):
+        raise WorkflowError("Historical child lineage changed")
+    if meta["batch_unit"]["batch_sha256"] != value_digest(batch):
+        raise WorkflowError("Historical child parent binding changed")
+
+
 def version_field(meta):
-    return "provider_version" if meta["schema_version"] == 5 else "copilot_version"
+    return "provider_version" if meta["schema_version"] in {5, 6} else "copilot_version"
 
 
 def assess_result(directory, meta, body, diagnostics):
     if meta["schema_version"] == 2:
         return legacy_coverage.assess(Path(directory) / "packet", body, diagnostics)
+    if meta["schema_version"] == 3 and meta.get("batch_unit"):
+        historical_child(directory, meta)
+        return issue31_history.coverage.assess(Path(directory) / "packet", body, diagnostics)
     if meta["schema_version"] == 3:
         return schema3_coverage.assess(Path(directory) / "packet", body, diagnostics)
-    return coverage.assess(Path(directory) / "packet", body, diagnostics, policy=meta["review_policy"])
+    evaluator = schema5_coverage if meta["schema_version"] == 5 else coverage
+    result = evaluator.assess(Path(directory) / "packet", body, diagnostics, policy=meta["review_policy"])
+    if meta["schema_version"] == 6:
+        result = {
+            **result,
+            "schema_version": 3,
+            "policy_digest": value_digest(meta["review_policy"]),
+            "input_digest": value_digest({k: v for k, v in meta.items() if k not in RESULT_FIELDS}),
+        }
+    return result
 
 
 def stored_result(directory, meta):
@@ -360,7 +410,7 @@ def stored_result(directory, meta):
         not isinstance(result, dict)
         or type(result.get("schema_version")) is not int
         or result["schema_version"] != meta.get("schema_version")
-        or result["schema_version"] not in {1, 2, 3, 5}
+        or result["schema_version"] not in {1, 2, 3, 5, 6}
         or result.get("input_digest") != value_digest(inputs)
         or not isinstance(result.get("body"), str)
         or not result["body"].strip()
@@ -369,9 +419,11 @@ def stored_result(directory, meta):
         or coverage.checksum(result["body"]) != result.get("review_sha256")
     ):
         raise WorkflowError("Saved review result changed or belongs to another packet")
-    if result["schema_version"] == 5 and result.get("policy_digest") != value_digest(meta["review_policy"]):
+    if result["schema_version"] in {5, 6} and result.get("policy_digest") != value_digest(
+        meta["review_policy"]
+    ):
         raise WorkflowError("Saved review policy binding changed")
-    if result["schema_version"] in {2, 3, 5}:
+    if result["schema_version"] in {2, 3, 5, 6}:
         diagnostics = result.get("diagnostics")
         if value_digest(diagnostics) != result.get("diagnostics_sha256"):
             raise WorkflowError("Saved diagnostics changed")
@@ -380,7 +432,7 @@ def stored_result(directory, meta):
             raise WorkflowError("Saved coverage changed")
     else:
         assessment = {"qualified": False, "reasons": ["legacy_report_without_coverage"]}
-    if result["schema_version"] in {3, 5}:
+    if result["schema_version"] in {3, 5, 6}:
         capture = coverage.read_json(plain_path(Path(directory) / "review-capture.json"))
         if capture != {key: value for key, value in result.items() if key != "coverage_sha256"}:
             raise WorkflowError("Exact review capture changed or is missing")
@@ -391,16 +443,24 @@ def qualification(directory, *, require=False):
     """Shared gate used by recovery, publication, managed designation and preflight."""
     directory = plain_path(directory)
     meta = verify_packet(directory)
+    if meta["schema_version"] == 4:
+        if require:
+            raise WorkflowError("Historical batches cannot establish current readiness")
+        return issue31_history.qualification(directory)
+    if meta.get("kind") == "batch-parent":
+        return review_batch.qualification(directory, require)
+    if require and (meta.get("batch_unit") or meta.get("kind") == "batch-unit"):
+        raise WorkflowError("A batch unit cannot independently qualify its parent")
     result, assessment = stored_result(directory, meta)
     for name, key in (("review.md", "review_sha256"),):
         if not (directory / name).is_file() or digest(plain_path(directory / name)) != meta.get(key):
             raise WorkflowError("Review report changed or is incomplete")
-    if result["schema_version"] in {2, 3, 5}:
+    if result["schema_version"] in {2, 3, 5, 6}:
         for name, key in (("diagnostics.json", "diagnostics_sha256"), ("coverage.json", "coverage_sha256")):
             value = coverage.read_json(plain_path(directory / name))
             if value_digest(value) != result[key] or meta.get(key) != result[key]:
                 raise WorkflowError("Coverage or diagnostics changed or are missing")
-    if require and result["schema_version"] != 5:
+    if require and result["schema_version"] not in {5, 6}:
         raise WorkflowError("Legacy review policy cannot establish current coverage readiness")
     if require and meta.get("review_policy", {}).get("provider") == "claude-code":
         from claude_native_auth import validate_binding
@@ -426,12 +486,17 @@ def coverage_ready(directory):
             validate_binding(meta["review_policy"].get("authentication"))
         except WorkflowError:
             return False
-    return meta.get("schema_version") == 5 and assessment["qualified"]
+    return meta.get("schema_version") in {5, 6} and not meta.get("batch_unit") and assessment["qualified"]
 
 
 def recover_review(repo, directory):
     """Finalize a durably saved exact result without another model request."""
     directory = plain_path(directory)
+    meta = verify_packet(directory)
+    if meta["schema_version"] == 4:
+        return issue31_history.recover_review(repo, directory)
+    if meta.get("kind") == "batch-parent":
+        return review_batch.execute(repo, directory, recover_only=True)
     result_path = plain_path(directory / "review-result.json")
     capture_path = plain_path(directory / "review-capture.json")
     if not result_path.exists() and not capture_path.exists():
@@ -444,7 +509,7 @@ def recover_review(repo, directory):
         inputs = {key: value for key, value in meta.items() if key not in RESULT_FIELDS}
         capture = coverage.read_json(capture_path)
         if (
-            meta.get("schema_version") not in {3, 5}
+            meta.get("schema_version") not in {3, 5, 6}
             or not isinstance(capture, dict)
             or capture.get("input_digest") != value_digest(inputs)
         ):
@@ -467,7 +532,7 @@ def recover_review(repo, directory):
         qualification(directory)
         return report
     atomic_text(report, result["body"])
-    if result["schema_version"] in {2, 3, 5}:
+    if result["schema_version"] in {2, 3, 5, 6}:
         atomic_json(directory / "diagnostics.json", result["diagnostics"])
         atomic_json(directory / "coverage.json", assessment)
         meta.update(
@@ -481,7 +546,7 @@ def recover_review(repo, directory):
 
 def save_result(directory, meta, body, diagnostics, version):
     directory = Path(directory)
-    if meta.get("schema_version") not in {3, 5} or not isinstance(body, str) or not body.strip():
+    if meta.get("schema_version") not in {3, 5, 6} or not isinstance(body, str) or not body.strip():
         raise WorkflowError("New results require a current packet and exact nonempty report")
     capture = {
         "schema_version": meta["schema_version"],
@@ -492,7 +557,7 @@ def save_result(directory, meta, body, diagnostics, version):
         "diagnostics": diagnostics,
         "diagnostics_sha256": value_digest(diagnostics),
     }
-    if meta["schema_version"] == 5:
+    if meta["schema_version"] in {5, 6}:
         capture["policy_digest"] = value_digest(meta["review_policy"])
     capture_path = plain_path(directory / "review-capture.json")
     if capture_path.exists():
@@ -502,13 +567,15 @@ def save_result(directory, meta, body, diagnostics, version):
         # Durable before assessment reads any packet file. A transient storage
         # failure can be recovered without another paid provider invocation.
         atomic_json(capture_path, capture)
+    if meta.get("kind") == "batch-unit":
+        review_batch.captured(directory, meta)
     assessment = assess_result(directory, meta, body, diagnostics)
     atomic_json(directory / "review-result.json", {**capture, "coverage_sha256": value_digest(assessment)})
 
 
-def review(repo, directory):
+def review(repo, directory, *, dispatch_context=None):
     try:
-        return run_review(repo, directory)
+        return run_review(repo, directory, dispatch_context=dispatch_context)
     except BaseException:
         # Failures before inference still leave bounded diagnostic reasons. Never
         # replace a journal or already-captured attempt with a generic failure.
@@ -516,7 +583,7 @@ def review(repo, directory):
         if not (directory / "diagnostics.json").exists() and (directory / "packet/capability.json").is_file():
             meta = coverage.read_json(directory / "metadata.json")
             if (
-                meta.get("schema_version") == 5
+                meta.get("schema_version") in {5, 6}
                 and meta.get("review_policy", {}).get("provider") == "claude-code"
             ):
                 import claude_telemetry
@@ -542,26 +609,38 @@ def review(repo, directory):
         raise
 
 
-def run_review(repo, directory):
+def run_review(repo, directory, *, dispatch_context=None):
     directory = plain_path(directory)
     meta = verify_packet(directory)
+    if meta.get("kind") == "batch-parent":
+        raise WorkflowError("Batch execution requires explicit batch-run or batch-resume")
+    if meta.get("batch_unit") and dispatch_context is None:
+        raise WorkflowError("Batch units require an aggregate reservation")
     if repo.name != meta["repository"]:
         raise WorkflowError("Review packet belongs to another repository")
     current_pr(repo, meta["pr"], meta["head_sha"], meta["base_sha"])
     recovered = recover_review(repo, directory)
     if recovered is not None:
         return recovered
-    if meta.get("schema_version") != 5:
+    if meta.get("schema_version") not in {5, 6}:
         raise WorkflowError("Legacy packets cannot run a coverage review; prepare a fresh packet")
     if (directory / "attempt.json").exists():
         raise WorkflowError(
             "Prior review attempt has no recoverable result; do not automatically spend another request"
         )
+    from review_prompt import native
+
+    native(directory, meta)  # Validate generated fixture before any provider preflight.
     if meta["review_policy"]["provider"] == "copilot":
         from review_copilot import execute
     else:
         from review_claude import execute
-    body, diagnostics, version = execute(repo, directory, meta)
+    body, diagnostics, version = execute(
+        repo,
+        directory,
+        meta,
+        **({"dispatch_context": dispatch_context} if dispatch_context is not None else {}),
+    )
     # Save sanitized diagnostics on failure too. Provider homes and raw stdout /
     # stderr are discarded; only exact final model output survives separately.
     if body.strip():
@@ -571,7 +650,7 @@ def run_review(repo, directory):
     atomic_json(
         directory / "attempt.json",
         {
-            "schema_version": 5,
+            "schema_version": meta["schema_version"],
             "input_digest": value_digest(meta),
             "policy_digest": value_digest(meta["review_policy"]),
             "cli_version": version,
@@ -591,6 +670,12 @@ def run_review(repo, directory):
 
 def publication_body(directory):
     meta = verify_packet(directory)
+    if meta["schema_version"] == 4 or (meta["schema_version"] == 3 and meta.get("batch_unit")):
+        if meta.get("batch_unit"):
+            historical_child(directory, meta)
+        return issue31_history.publication_body(directory)
+    if meta.get("kind") == "batch-parent":
+        return review_batch.publication_body(directory)
     body = (Path(directory) / "review.md").read_bytes().decode("utf-8")
     if meta["schema_version"] == 1:
         if coverage.checksum(body) != meta.get("review_sha256"):
@@ -602,8 +687,14 @@ def publication_body(directory):
         if assessment["qualified"]
         else "INCOMPLETE static inspection — not ready"
     )
+    if meta.get("batch_unit"):
+        parent = Path(directory).parent.parent
+        planned = review_batch.load(parent)
+        complete = review_batch.unit_assessment(parent, planned, meta["batch_unit"]["unit"])["complete"]
+        label = "assigned material complete" if complete else "INCOMPLETE static inspection — not ready"
+        label = f"batch unit {meta['batch_unit']['unit']['id']} — {label}; parent readiness requires aggregate qualification"
     provider_label = "Copilot CLI"
-    if meta["schema_version"] == 5 and meta["review_policy"]["provider"] == "claude-code":
+    if meta["schema_version"] in {5, 6} and meta["review_policy"]["provider"] == "claude-code":
         provider_label = "Claude Code"
     header = (
         f"## Independent {provider_label} review\n\nPR #{meta['pr']} · reviewed head `{meta['head_sha']}` "
@@ -612,7 +703,7 @@ def publication_body(directory):
         "This is not human approval. The reviewer executed no tests. CI association and tested checkout "
         "are separately recorded in validation.json; unknown execution details remain unknown.\n\n"
     )
-    marker = f"<!-- agentic-review:{meta['head_sha']}:{meta['review_sha256']} -->"
+    marker = report_marker(meta)
     binding = f"<!-- agentic-coverage:v{1 if meta['schema_version'] < 3 else 2}:{value_digest(assessment)}:{meta.get('diagnostics_sha256', 'legacy')} -->"
     return header + body + "\n\n" + marker + "\n" + binding
 
@@ -629,7 +720,11 @@ def verified_published(repo, directory, number, head, base):
         }.items()
     ):
         raise WorkflowError("Review coverage record is stale or belongs to another PR")
+    current_pr(repo, number, head, base)
+    review_batch.current_contract(repo, Path(directory), meta)
     qualification(directory, require=True)
+    if meta.get("kind") == "batch-parent":
+        review_batch.verify_unit_publications(repo, directory)
     expected = publication_body(directory)
     matching = [
         item
@@ -644,6 +739,10 @@ def verified_published(repo, directory, number, head, base):
 def verify_publication(repo, directory):
     """Read-only byte comparison, including historical reports; never inference."""
     meta = verify_packet(directory)
+    if meta["schema_version"] == 4:
+        return issue31_history.verify_publication(repo, directory)
+    if meta.get("kind") == "batch-parent":
+        review_batch.verify_unit_publications(repo, directory, complete_only=False)
     if meta["repository"] != repo.name:
         raise WorkflowError("Review packet belongs to another repository")
     report = plain_path(Path(directory) / "review.md")
@@ -656,13 +755,13 @@ def verify_publication(repo, directory):
         )
     else:
         expected = publication_body(directory)
-    marker = f"<!-- agentic-review:{meta['head_sha']}:{meta['review_sha256']} -->"
+    marker = report_marker(meta)
     matches = [
         item
         for item in repo.api(f"pulls/{meta['pr']}/reviews", paginate=True)
         if marker in (item.get("body") or "") and item.get("commit_id") == meta["head_sha"]
     ]
-    if len(matches) != 1 or matches[0].get("body") != expected:
+    if len(matches) != 1 or matches[0].get("body") != expected or matches[0].get("state") != "COMMENTED":
         raise WorkflowError(
             "Exact saved/published review comparison failed; no model rerun or record rewrite"
         )
@@ -679,13 +778,17 @@ def verify_publication(repo, directory):
 def publish(repo, directory):
     directory = plain_path(directory)
     meta = verify_packet(directory)
+    if meta["schema_version"] == 4:
+        return issue31_history.publish(repo, directory)
     body = publication_body(directory)
     if repo.name != meta["repository"]:
         raise WorkflowError("Wrong repository for review publication")
     if len(body.encode("utf-8")) > 60000:
         raise WorkflowError("Review exceeds the publication budget; summarize separately with attribution")
     current_pr(repo, meta["pr"], meta["head_sha"], meta["base_sha"])
-    marker = f"<!-- agentic-review:{meta['head_sha']}:{meta['review_sha256']} -->"
+    marker = report_marker(meta)
+    if meta.get("kind") == "batch-parent":
+        review_batch.publish_units(repo, directory)
     reviews = repo.api(f"pulls/{meta['pr']}/reviews", paginate=True)
     for existing in reviews:
         if marker in (existing.get("body") or ""):
@@ -718,9 +821,22 @@ def main():
     prep.add_argument("--output")
     prep.add_argument("--prior-review")
     review_policy.add_arguments(prep)
-    for name in ["run", "publish", "qualify", "verify-publication"]:
+    for name in [
+        "run",
+        "publish",
+        "qualify",
+        "verify-publication",
+        "batch-preview",
+        "batch-run",
+        "batch-resume",
+        "batch-recover",
+    ]:
         p = sub.add_parser(name)
         p.add_argument("directory")
+        if name in {"batch-run", "batch-preview"}:
+            review_batch.add_budget_arguments(
+                p, required=name == "batch-run", authorization=name == "batch-run"
+            )
     args = parser.parse_args()
     try:
         repo = Repo()
@@ -738,6 +854,26 @@ def main():
                 review_model=args.review_model,
                 review_effort=args.review_effort,
             )
+        elif args.command == "batch-preview":
+            result = review_batch.preview(
+                args.directory,
+                review_batch.arguments_budget(args)
+                if any(review_batch.arguments_budget(args).values())
+                else None,
+            )
+        elif args.command in {"batch-run", "batch-resume", "batch-recover"}:
+            if args.command == "batch-run":
+                review_batch.select(
+                    args.directory,
+                    review_batch.arguments_budget(args),
+                    coverage.read_json(Path(args.batch_authorization)),
+                )
+            result = review_batch.execute(
+                repo,
+                args.directory,
+                resume=args.command == "batch-resume",
+                recover_only=args.command == "batch-recover",
+            )
         elif args.command == "run":
             result = review(repo, args.directory)
         elif args.command == "publish":
@@ -745,6 +881,9 @@ def main():
         elif args.command == "verify-publication":
             result = verify_publication(repo, args.directory)
         else:
+            meta = verify_packet(args.directory)
+            current_pr(repo, meta["pr"], meta["head_sha"], meta["base_sha"])
+            review_batch.current_contract(repo, Path(args.directory), meta)
             result = qualification(args.directory, require=True)
         print(json.dumps(result, indent=2) if isinstance(result, dict) else result)
         if args.command == "run" and not coverage_ready(args.directory):
@@ -753,6 +892,12 @@ def main():
     except (WorkflowError, OSError, ValueError, subprocess.SubprocessError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
+
+
+def report_marker(meta):
+    unit = meta.get("batch_unit")
+    suffix = f":{unit['batch_sha256']}:{unit['unit']['id']}" if unit else ""
+    return f"<!-- agentic-review:{meta['head_sha']}:{meta['review_sha256']}{suffix} -->"
 
 
 if __name__ == "__main__":

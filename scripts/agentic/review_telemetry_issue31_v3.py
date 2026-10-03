@@ -12,7 +12,7 @@ from datetime import datetime
 from pathlib import Path
 from uuid import UUID
 
-import review_coverage as coverage
+import review_coverage_issue31_v3 as coverage
 from workflow import WorkflowError
 
 KNOWN_TYPES = (

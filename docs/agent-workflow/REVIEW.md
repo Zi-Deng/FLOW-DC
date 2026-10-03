@@ -24,6 +24,13 @@ another request. Never silently switch models, broaden permissions or launch ano
 wrapper inference attempt. The pinned native 401 boundary is disclosed in
 PROVIDERS.md; it grants no wrapper retry.
 
+Explicit provider-bound batches use the [current coverage procedure](COVERAGE.md#provider-aware-bounded-batches-current).
+They require a named finite authorization bound to the final executable preview and
+tested harness, then sequential component requests and one integration request. They
+never reuse historical reservations. Every invocation must perform all three provider
+probes, even when no source range needs searching; the final message itself is JSON-only.
+Prompts cannot guarantee compliance. Missing evidence remains incomplete.
+
 ## Local procedure
 
 ```bash
@@ -70,7 +77,10 @@ secret detector: inspect public source and comments for sensitive material.
 `max_diff_bytes` is unlimited when null/omitted; an explicit positive integer opts into
 a hard pre-packet cap. There is no silent diff truncation. Per-source-file limit is
 250000 bytes and the combined head/base/carried-source budget is 12000000 bytes.
-Scopes are navigation within one request, not additional paid rounds. Limits are
+By default, scopes are navigation within one request, not additional paid rounds.
+Explicit schema-6 batches require separately supplied finite aggregate and per-unit
+bounds and named authorization; see [bounded batches](COVERAGE.md#provider-aware-bounded-batches-current).
+Single-request limits are
 900 seconds and, for Claude, $10 estimated reference cost with zero extra spending
 authorized; explicit Copilot retains 400 AI credits. These are different units. In-flight
 requests may overshoot estimates; unknown usage cannot authorize continuation. Large
@@ -110,8 +120,12 @@ Return compact schema-2 JSON matching `report-schema.json`: copy `inventory-sha2
 list positively inspected IDs in `reviewed`, group specific reasons in `incomplete`,
 and state general `limitations` once. Every unclaimed inventory ID remains unread and
 blocks readiness. The wrapper supplies original paths/ranges from the hash-bound
-inventory and correlates them with actual successful tool results. One complete outer
-`json` fence is accepted without changing saved bytes. A checkmark, percentage, listing
+inventory and correlates them with actual successful tool results. The invocation asks
+for one bare JSON object with no introductory prose or Markdown fences; capability and scope notes belong inside `limitations`. Batch prompts require
+the assigned IDs, while single-request prompts require the full inventory. These are
+prompt constraints, not a guarantee of model compliance. One complete outer
+`json` fence is still accepted without changing saved bytes; surrounding prose stays
+malformed and cannot be stripped to recover qualification. A checkmark, percentage, listing
 or diff header cannot replace source/test inspection. Observed reads do not prove
 understanding. Do not infer a provider timeout or exhausted budget from partial coverage.
 Historical assessments/publication bytes retain their original policy; current readiness
@@ -172,7 +186,7 @@ checkout to save it. Both local `prepare` and managed `task-review` accept
 fail before inference. See [the complete provider procedure](PROVIDERS.md).
 
 Historical Sonnet/Fable and Copilot adoption records retain their original meaning.
-New schema-5 packets freeze provider, exact model, effort, CLI identity, adapter, billing
+New schema-6 packets freeze provider, exact model, effort, CLI identity, adapter, billing
 and budget. Changes require an explicit fresh packet and any existing continuation
 authority. Recovery uses the packet's original policy, never the current default.
 
@@ -181,10 +195,17 @@ review. No normal gate is bypassed and no model-reviewed SHA is asserted. Narrow
 capability diagnostics remain limited to $2 estimated reference cost and 300 seconds
 each, after credential, billing and isolation prerequisites. The original two-slot
 allowance has only the explicitly approved issue-33 recovery exception described in
-PROVIDERS.md. They are not a PR review; no diagnostic has established native
-capability. See PROVIDERS.md for
-activation blockers and the separate human handoff. Other tasks retain normal review.
+PROVIDERS.md. Retained successful v6 purposes 8 and 9 establish the native capability
+activation prerequisite under their exact bindings, not PR inspection or readiness.
+All nine attempts remain historical and the grant is exhausted; no attempt 10.
+See PROVIDERS.md for current authentication, isolation and activation checks and
+the separate human handoff. Other tasks retain normal review.
 Repair stays on the original branch and Astra UUID. New commits invalidate readiness.
+
+The dated migration sections below retain their then-current blockers and prospective
+authorizations as history. Purposes 8 and 9 subsequently qualified under v6; the
+nine-attempt diagnostic grant is exhausted. These historical sequences cannot be
+executed again and supply no PR #32 inspection.
 
 ## Historical migration status — 2026-10-02, before revision-4 recovery
 
@@ -300,7 +321,7 @@ PR-review exemption, strict normal gates, human merge and untouched PR32 still a
 
 ## Revision-8 call provenance and deterministic Grep — 2026-10-03 UTC
 
-Use the [current revision-8 sequence](PROVIDERS.md#issue-33-revision-8-prospective-recovery).
+Historical preparation used the [revision-8 sequence](PROVIDERS.md#issue-33-revision-8-prospective-recovery).
 V5 telemetry and its helper remain frozen for schema7 recovery; current v6 uses
 schema8. Exact optional direct-caller metadata is accepted only with all existing
 identity, tool, input, result and terminal evidence. Unknown/delegated metadata is
@@ -311,3 +332,52 @@ Seven historical trials and five ledgers retain their original bytes and status;
 trial7 remains incomplete on both refusal and Grep evidence. After final gates/CI,
 coordinator-only explicit grant application permits slot8 tools/source and then9
 isolation if8 qualifies, failure-stop/no10. No software repair or renewal runs inference.
+
+
+## Full batch feasibility before authorization
+
+Inspect the fresh preview, including omissions, component count, required/context
+volumes and integration report envelope. Ordinary required test fixtures must not
+have known unsupported material before a completion trial. Long-line inventory
+projections are described in [COVERAGE.md](COVERAGE.md); they preserve raw bytes and
+need actual returned evidence just like other required material.
+
+For N sequential wrapper invocations at timeout T, the full-review elapsed allocation
+must cover at least N × T plus preparation/dispatch overhead. A native receipt's
+seven-day validity does not establish credential lifetime. Each native call requires
+its credential to outlive its effective timeout plus the 300-second refresh margin
+and 60-second clock allowance. A no-renewal full sequence therefore needs observed
+remaining credential lifetime greater than the whole elapsed envelope plus 360
+seconds, as well as a valid receipt throughout. The coordinator must establish this
+without exposing credentials. Existing verified same-account human renewal preserves
+history; it does not reset the original deadline, stop state or invocation count.
+Do not assume a one-call preflight proves a long sequence feasible.
+
+Integration must read all exact component reports. At C components and report bound
+R, reserve at least C × R bytes if authorizing the worst-case report envelope; a
+smaller explicit integration envelope may stop before its call when actual reports
+exceed it. Parent context remains available, and navigation context is not proof of
+semantic integration. Assess report size, required lines, provider context limits,
+tool/event/capture bounds and the 900-second / $10 reference per-call ceiling together.
+A storage bound or green synthetic test does not prove those volumes fit one model
+context or one invocation. No automatic report truncation, extra integration call,
+provider switch, renewed diagnostic grant or paid-extra spending follows a mismatch.
+Keep the completion allocation blocked while feasibility evidence is missing.
+
+### Bounded unit navigation
+
+New plan-6 units start at `navigation/START.txt` and follow paged required-material,
+related-context and complete-artifact indexes. Read explicit offset/limit windows;
+use actual numbered Grep matches for discovery or blank tails. Do not request whole
+large findings/disposition or source-index files. All originals remain available;
+lossless context chunks do not grant source inspection credit. The trusted prompt
+states the unit's frozen report ceiling, which may be below 50,000 bytes.
+
+Source/test-family grouping (longest matching implementation stem, including specialized
+test suffixes) replaces workflow-wide hash ordering for new packets.
+Criteria, findings and cross-boundary obligations remain fully assigned. Linked
+context is conservative, not a guarantee of sufficient reasoning. Plan 5 assignments,
+exact reports and stopped ledgers retain their original semantics. The db897e9
+one-invocation trial is incomplete and cannot be replayed; its seven positive primary
+reads and successful probes did not overcome the failed Read. A fresh changed-head
+preview, current CI and separately bounded coordinator authorization remain necessary.

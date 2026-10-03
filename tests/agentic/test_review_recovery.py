@@ -39,6 +39,10 @@ class ReviewRecoveryTests(GitFixture):
                 if self.version_fails:
                     raise workflow.WorkflowError("Version probe failed")
                 return subprocess.CompletedProcess(args, 0, "Copilot CLI 1.0.83\n", "")
+            prompt = args[args.index("--prompt") + 1]
+            self.assertIn("inspect EVERY required-material.json entry", prompt)
+            self.assertNotIn("one bounded batch unit", prompt)
+            self.assertIn("Return exactly one JSON object", prompt)
             self.model_calls += 1
             self.reviewer_environment = kwargs["env"].copy()
             for key in (

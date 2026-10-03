@@ -170,20 +170,6 @@ def view_text_matches(expected, returned):
     )
 
 
-def view_request(arguments):
-    """Bounded request coordinates only; no arbitrary arguments or paths."""
-    value = arguments.get("view_range")
-    if value is None:
-        return {"state": "absent", "range": None}
-    if (
-        isinstance(value, list)
-        and len(value) == 2
-        and all(type(n) is int and -(2**31) <= n < 2**31 for n in value)
-    ):
-        return {"state": "range", "range": value}
-    return {"state": "invalid", "range": None}
-
-
 def tool_observation(name, arguments, content, workspace, files):
     """Credit exact model-facing content against immutable packet text.
 
@@ -251,13 +237,7 @@ def tool_observation(name, arguments, content, workspace, files):
                     observed.setdefault(path, set()).add(number)
     elif name == "glob":
         paths = [packet_path(line, workspace, files) for line in content.splitlines()]
-        discovered = sorted({path for path in paths if path})
-        # This describes discovery evidence, not whether the tool executed
-        # successfully. Do not retain unrecognized provider text or paths.
-        reason = None
-        if not discovered:
-            reason = "glob_unrecognized_or_outside_packet" if content.strip() else "glob_no_discovery"
-        return [], discovered, reason
+        return [], sorted({path for path in paths if path}), None
     spans = []
     for path, numbers in sorted(observed.items()):
         for start, end in ranges(numbers):
@@ -427,7 +407,6 @@ def parse_events(
                         "result_sha256": checksum(content) if isinstance(content, str) else None,
                         "spans": spans,
                         "paths": paths,
-                        **({"view_request": view_request(args)} if name == "view" else {}),
                     }
                 )
             elif kind == "assistant.message":
@@ -646,7 +625,7 @@ def validate_diagnostics(diagnostics, packet, policy=None):
         else:
             from claude_telemetry import validate_summary
     else:
-        from review_telemetry import validate_summary
+        from review_telemetry_v5 import validate_summary
     validate_summary(diagnostics["telemetry"])
     if policy and diagnostics["cli_version"] != policy["cli"]["version"]:
         raise WorkflowError("Diagnostic CLI identity differs from the packet")
@@ -672,7 +651,7 @@ def validate_diagnostics(diagnostics, packet, policy=None):
     if len(json.dumps(diagnostics["events"]).encode("utf-8")) > MAX_DIAGNOSTIC_BYTES + 2 * MAX_TOOL_RECORDS:
         raise WorkflowError("Diagnostic evidence exceeds its bound")
     for event in diagnostics["events"]:
-        if not isinstance(event, dict) or set(event) - {"view_request"} != {
+        if not isinstance(event, dict) or set(event) != {
             "id",
             "tool",
             "success",
@@ -692,18 +671,6 @@ def validate_diagnostics(diagnostics, packet, policy=None):
             or not isinstance(event["paths"], list)
         ):
             raise WorkflowError("Invalid tool evidence identity")
-        if "view_request" in event:
-            request = event["view_request"]
-            if (
-                event["tool"] != "view"
-                or not isinstance(request, dict)
-                or set(request) != {"state", "range"}
-                or not isinstance(request["state"], str)
-                or request["state"] not in {"absent", "invalid", "range"}
-                or (request["state"] != "range" and request["range"] is not None)
-                or (request["state"] == "range" and view_request({"view_range": request["range"]}) != request)
-            ):
-                raise WorkflowError("Invalid bounded view request diagnostics")
         ids.add(event["id"])
         if (
             event["reason"] is not None
@@ -772,58 +739,6 @@ def assess(packet, body, diagnostics, policy=None):
     inventory = read_json(packet / "required-material.json")
     required = inventory["required"]
     reasons = list(diagnostics["reasons"])
-    if type(inventory.get("schema_version")) is not int or inventory["schema_version"] not in {1, 2, 3}:
-        reasons.append("unsupported_inventory_version")
-
-    def binding_bytes(artifact):
-        if not isinstance(artifact, str):
-            return None
-        try:
-            return (packet / artifact).read_bytes()
-        except OSError:
-            return None
-
-    if inventory.get("schema_version") in {2, 3}:
-        indexes = {
-            revision: {row["path"]: row for row in read_json(packet / name)}
-            for revision, name in (("head", "source-index.json"), ("base", "base-source-index.json"))
-        }
-        for item in required:
-            if item.get("omitted"):
-                continue
-            revision, artifact = item["revision"], item.get("artifact")
-            source_artifact = artifact
-            if "projection" in item:
-                import review_projection
-
-                if inventory.get("schema_version") != 3 or not review_projection.validate(packet, item):
-                    reasons.append("projection_source_binding_mismatch")
-                else:
-                    source_artifact = item["projection"]["source_artifact"]
-            elif (artifact or "").startswith("projections/"):
-                reasons.append("projection_source_binding_mismatch")
-            if revision in indexes and item["kind"] in {"changed-source", "test", "prior-material"}:
-                expected = indexes[revision].get(item["path"], {}).get("snapshot")
-                if not expected or (
-                    source_artifact != expected
-                    and not ((artifact or "").startswith("empty/") and binding_bytes(expected) == b"")
-                ):
-                    reasons.append("source_revision_binding_mismatch")
-            if revision.startswith("prior") or (artifact or "").startswith("prior-source/"):
-                provenance = item.get("provenance", {})
-                blob = binding_bytes(artifact)
-                digest = hashlib.sha256(blob).hexdigest() if blob is not None else None
-                expected_revision = (
-                    "prior:" + provenance["source_commit"]
-                    if provenance.get("source_commit")
-                    else "prior-snapshot:" + str(provenance.get("snapshot_sha256"))
-                )
-                if (
-                    digest is None
-                    or provenance.get("snapshot_sha256") != digest
-                    or revision != expected_revision
-                ):
-                    reasons.append("prior_snapshot_binding_mismatch")
     if diagnostics["exit_code"] != 0 or not all(diagnostics["capability"].values()):
         reasons.append("capability_or_execution_incomplete")
     if diagnostics["cli_version"] != (policy["cli"]["version"] if policy else CLI_VERSION):

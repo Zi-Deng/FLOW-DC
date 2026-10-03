@@ -8,6 +8,7 @@ import json
 import re
 from pathlib import Path, PurePosixPath
 
+import review_projection
 from review_coverage import read_json, report_document
 from workflow import WorkflowError, run, write_json
 
@@ -198,8 +199,19 @@ def source_ranges(path, text, hunks, revision):
 def build(repo, packet, head, ancestor, head_index, base_index, context, cfg, prior=None, provider="copilot"):
     packet = Path(packet)
     required = []
+    projection_bytes = 0
 
-    def add(artifact, kind, original=None, revision="packet", links=None, omitted=None, intervals=None):
+    def add(
+        artifact,
+        kind,
+        original=None,
+        revision="packet",
+        links=None,
+        omitted=None,
+        intervals=None,
+        projection=None,
+    ):
+        nonlocal projection_bytes
         original = original or artifact
         if omitted:
             required.append(
@@ -232,13 +244,16 @@ def build(repo, packet, head, ancestor, head_index, base_index, context, cfg, pr
         def entry(end):
             required.append(
                 {
-                    "id": stable_id(kind, revision, original, lines[start - 1 : end], start, end),
+                    "id": stable_id(kind, revision, original, lines[start - 1 : end], start, end)
+                    if projection is None
+                    else stable_id(kind, revision, original, projection, start, end),
                     "kind": kind,
                     "path": original,
                     "revision": revision,
                     "artifact": artifact,
                     "start_line": start,
                     "end_line": end,
+                    **({"projection": projection} if projection is not None else {}),
                     "bytes": size,
                     "links": links or [],
                 }
@@ -254,18 +269,45 @@ def build(repo, packet, head, ancestor, head_index, base_index, context, cfg, pr
             if length > MATERIAL_BYTES:
                 if size:
                     entry(number - 1)
-                required.append(
-                    {
-                        "id": stable_id(kind, revision, original, blob, number),
-                        "kind": kind,
-                        "path": original,
-                        "revision": revision,
-                        "artifact": artifact,
-                        "omitted": f"Line {number} exceeds bounded material byte limit",
-                        "links": links or [],
-                        "bytes": length,
-                    }
-                )
+                try:
+                    start_byte = sum(len(part.encode("utf-8")) for part in lines[: number - 1])
+                    rendered = review_projection.render(line, start_byte)
+                    target = f"projections/{stable_id(artifact, blob, number)}.txt"
+                    if not (packet / target).exists():
+                        if projection_bytes + len(rendered) > review_projection.MAX_PACKET_BYTES:
+                            raise ValueError("Packet exceeds bounded projection byte limit")
+                        (packet / "projections").mkdir(exist_ok=True)
+                        (packet / target).write_bytes(rendered)
+                        projection_bytes += len(rendered)
+                    add(
+                        target,
+                        kind,
+                        original=original,
+                        revision=revision,
+                        links=links,
+                        projection={
+                            "schema_version": review_projection.VERSION,
+                            "source_artifact": artifact,
+                            "source_sha256": blob,
+                            "source_line": number,
+                            "start_byte": start_byte,
+                            "end_byte": start_byte + length,
+                            "sha256": hashlib.sha256(rendered).hexdigest(),
+                        },
+                    )
+                except ValueError as exc:
+                    required.append(
+                        {
+                            "id": stable_id(kind, revision, original, blob, number),
+                            "kind": kind,
+                            "path": original,
+                            "revision": revision,
+                            "artifact": artifact,
+                            "omitted": f"Line {number}: {exc}",
+                            "links": links or [],
+                            "bytes": length,
+                        }
+                    )
                 start, size = number + 1, 0
                 continue
             if size and (number - start >= MATERIAL_LINES or size + length > MATERIAL_BYTES):
@@ -459,8 +501,26 @@ def build(repo, packet, head, ancestor, head_index, base_index, context, cfg, pr
         )
         add("prior-review.json", "findings")
         (packet / "prior-report.txt").write_bytes((previous / "review.md").read_bytes())
+        if metadata.get("schema_version") == 4 or (
+            metadata.get("schema_version") == 6 and metadata.get("kind") == "batch-parent"
+        ):
+            (packet / "prior-unit-reports").mkdir()
+            for unit in assessment["units"]:
+                if "review_sha256" in unit:
+                    artifact = f"prior-unit-reports/{unit['id']}.txt"
+                    (packet / artifact).write_bytes(
+                        (previous / "units" / unit["id"] / "review.md").read_bytes()
+                    )
+                    add(artifact, "finding", f"prior-unit-report:{unit['id']}")
+            findings = assessment["findings"]
+        else:
+            findings = None
         try:
-            findings = finding_document((previous / "review.md").read_bytes().decode("utf-8"))["findings"]
+            findings = (
+                findings
+                if findings is not None
+                else finding_document((previous / "review.md").read_bytes().decode("utf-8"))["findings"]
+            )
         except (ValueError, KeyError, TypeError):
             findings = [
                 {"unstructured_prior_report": "Read prior-report.txt; previous findings could not be parsed."}
@@ -510,14 +570,58 @@ def build(repo, packet, head, ancestor, head_index, base_index, context, cfg, pr
             ):
                 continue
             old_artifact = old.get("artifact")
+            carried = dict(old)
+            provenance = old.get("provenance")
+            if provenance is None:
+                # Source/base-source inherit the validated prior packet commits.
+                # Legacy prior-source has only a trustworthy snapshot digest.
+                source_commit = (
+                    metadata["head_sha"]
+                    if old_artifact
+                    and old.get("projection", {}).get("source_artifact", old_artifact).startswith("source/")
+                    else metadata["merge_base_sha"]
+                    if old_artifact
+                    and old.get("projection", {})
+                    .get("source_artifact", old_artifact)
+                    .startswith("base-source/")
+                    else None
+                )
+                provenance = {
+                    "schema_version": 1,
+                    "source_commit": source_commit,
+                    "snapshot_sha256": hashlib.sha256(
+                        (previous / "packet" / old_artifact).read_bytes()
+                    ).hexdigest()
+                    if old_artifact and not old.get("omitted")
+                    else None,
+                    "original_revision": old["revision"],
+                    "original_id": old["id"],
+                    "from_packet_head": metadata["head_sha"],
+                }
+            carried["provenance"] = provenance
+            carried["revision"] = (
+                "prior:" + provenance["source_commit"]
+                if provenance["source_commit"]
+                else "prior-snapshot:" + provenance["snapshot_sha256"]
+                if provenance["snapshot_sha256"]
+                else "prior-unavailable:" + provenance["from_packet_head"]
+            )
             if old.get("omitted"):
-                required.append(dict(old))
+                carried["artifact"] = None
+                required.append(carried)
             else:
                 if old_artifact not in copied:
                     target = f"prior-source/{len(copied):06d}.txt"
                     (packet / target).write_bytes((previous / "packet" / old_artifact).read_bytes())
                     copied[old_artifact] = target
-                required.append({**old, "artifact": copied[old_artifact]})
+                if old.get("projection"):
+                    source_artifact = old["projection"]["source_artifact"]
+                    if source_artifact not in copied:
+                        target = f"prior-source/{len(copied):06d}.txt"
+                        (packet / target).write_bytes((previous / "packet" / source_artifact).read_bytes())
+                        copied[source_artifact] = target
+                    carried["projection"] = {**old["projection"], "source_artifact": copied[source_artifact]}
+                required.append({**carried, "artifact": copied[old_artifact]})
     text_artifact(
         "cross-boundary.txt",
         "Cross-boundary static pass: assess config/CLI/schema consumers, callers, error and recovery paths, permissions, hosted/local/managed readiness, installer payload, test adequacy and contract criteria together.\n"
@@ -529,13 +633,40 @@ def build(repo, packet, head, ancestor, head_index, base_index, context, cfg, pr
     )
     scopes, current = [], []
     totals = [0, 0]
+
     # Cross-boundary material always follows component material. Repair material
     # leads navigation; the inventory still requires the original complete scope.
+    implementation_stems = {
+        PurePosixPath(path).stem
+        for path in set(by_head) | set(by_base)
+        if path.startswith("scripts/agentic/") and path.endswith(".py")
+    }
+
+    def family(item):
+        path = PurePosixPath(item["path"])
+        if item["kind"] in {"acceptance", "policy", "finding"}:
+            return item["kind"]
+        if str(path).startswith(("scripts/agentic/", "tests/agentic/")) and path.suffix == ".py":
+            stem = path.stem.removeprefix("test_")
+            if str(path).startswith("tests/agentic/"):
+                stem = max(
+                    (s for s in implementation_stems if stem == s or stem.startswith(s + "_")),
+                    key=len,
+                    default=stem,
+                )
+            return "agentic:" + stem
+        return item["path"]
+
     ordered = sorted(
         required,
         key=lambda item: (
             0 if item["kind"] == "repair" else 2 if item["kind"] == "cross-boundary" else 1,
             component(item["path"]),
+            family(item),
+            item["path"],
+            item.get("revision", ""),
+            item.get("artifact") or "",
+            item.get("start_line", 0),
             item["id"],
         ),
     )
@@ -559,6 +690,7 @@ def build(repo, packet, head, ancestor, head_index, base_index, context, cfg, pr
             len(current) >= SCOPE_ITEMS
             or totals[0] + lines > SCOPE_LINES
             or totals[1] + size > SCOPE_BYTES
+            or family(current[0]) != family(item)
             or component(current[0]["path"]) != component(item["path"])
             or current[0]["kind"] == "cross-boundary"
             or item["kind"] == "cross-boundary"
@@ -575,7 +707,10 @@ def build(repo, packet, head, ancestor, head_index, base_index, context, cfg, pr
         artifact = f"scopes/{scope['id']}.json"
         write_json(packet / artifact, {**scope, "material": [lookup[key] for key in scope["required_ids"]]})
         scope["artifact"] = artifact
-    write_json(packet / "required-material.json", {"schema_version": 1, "required": required})
+    write_json(
+        packet / "required-material.json",
+        {"schema_version": 3 if any("projection" in item for item in required) else 2, "required": required},
+    )
     (packet / "inventory-sha256.txt").write_text(
         hashlib.sha256((packet / "required-material.json").read_bytes()).hexdigest() + "\n", encoding="utf-8"
     )
@@ -583,6 +718,7 @@ def build(repo, packet, head, ancestor, head_index, base_index, context, cfg, pr
         packet / "scopes.json",
         {
             "schema_version": 1,
+            "partition": "source-test-family-v2",
             "scopes": scopes,
             "required_items": len(required),
             "required_lines": sum(s["lines"] for s in scopes),
@@ -612,7 +748,8 @@ def build(repo, packet, head, ancestor, head_index, base_index, context, cfg, pr
             else ""
         )
         + "Use scopes.json and scopes/*.json to navigate every entry in required-material.json. Full diff.txt, source-index.json and base-source-index.json remain available.\n"
-        "Read each required range through view(path, view_range=[start,end]); grep only credits actual returned matching lines, glob only proves discovery.\n"
+        "Projection version 1 rows are JSON [absolute UTF-8 start byte, exclusive end byte, exact text] chunks of one oversized raw line. Their inventory binding names the original source snapshot, line and SHA-256. Read every assigned projection range; decoded text concatenates without separators. Raw snapshots remain unchanged. Projection evidence credits only returned projection ranges, never inferred raw-line reads.\n"
+        "Read each required range through view(path, view_range=[start,end]) using 1-based inclusive positions. If the end is blank, extend through a following nonblank line when available. At EOF, view only the nonblank prefix and use grep pattern ^\\s*$ with actual numbered matches for the blank tail; for all-blank ranges use grep alone. Never infer or reconstruct omitted output. Grep only credits actual returned matching lines, glob only proves discovery.\n"
         "Return compact JSON matching report-schema.json: copy inventory-sha256.txt into inventory_sha256, list only positively inspected IDs in reviewed, and group specific incomplete reasons in incomplete. Omitted IDs remain unread and block readiness; do not repeat an unread row for each ID. Explain general limits once in limitations. Do not assert budget exhaustion without a provider signal. Never infer execution from static inspection.\n",
         encoding="utf-8",
     )
@@ -637,7 +774,7 @@ def build(repo, packet, head, ancestor, head_index, base_index, context, cfg, pr
         for directory in ("source", "base-source", "prior-source")
         for p in (packet / directory).glob("*.txt")
     )
-    if source_bytes > cfg["max_snapshot_bytes"]:
+    if source_bytes + projection_bytes > cfg["max_snapshot_bytes"]:
         raise WorkflowError(
             "Full head/base/prior source exceeds snapshot budget; required material was not reduced"
         )

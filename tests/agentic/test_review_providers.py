@@ -265,7 +265,7 @@ class ProviderPolicyTests(GitFixture):
         self.commit_task()
         directory = review.prepare(self.repo, 31, 12, 1234, review_provider="claude-code")
         meta = review.verify_packet(directory)
-        self.assertEqual(meta["schema_version"], 5)
+        self.assertEqual(meta["schema_version"], 6)
         for field, value in [("model", "auto"), ("adapter", "future-adapter"), ("billing_mode", "api-key")]:
             changed = copy.deepcopy(meta)
             changed["review_policy"][field] = value
@@ -273,7 +273,7 @@ class ProviderPolicyTests(GitFixture):
             with self.subTest(field=field), self.assertRaises(workflow.WorkflowError):
                 review.verify_packet(directory)
         review.atomic_json(directory / "metadata.json", {**meta, "schema_version": 4})
-        with self.assertRaisesRegex(workflow.WorkflowError, "reserved"):
+        with self.assertRaisesRegex(workflow.WorkflowError, "Historical"):
             review.verify_packet(directory)
 
     def test_frozen_schema_five_token_record_recovers_without_authentication_or_relabelling(self):

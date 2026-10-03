@@ -1,5 +1,13 @@
 # Use the Golden Path skills
 
+Current issue-31 batch records use metadata/capture 6, plan 6 and ledger 2 (saved plan 5 remains reproducible); see
+[provider-aware bounded batches](COVERAGE.md#provider-aware-bounded-batches-current)
+for typed allocations, named authorization, exact-report publication and recovery-only
+history. Single-review schema 5 remains eligible under its original provider checks.
+Batch children cannot qualify parents; finish still requires every component and
+integration, exact current-head/base publications and CI receipts. Dated migration
+notes below retain their historical meaning and grant no new inference allowance.
+
 The eight repository skills turn the operating guide into reusable entrypoints. Use
 one skill for a particular phase, or ask the workflow skill to coordinate the complete
 issue-to-PR process. The issue and approved plan remain the public task contract; the
@@ -296,8 +304,11 @@ gaps. Preparation keeps the contract discoverable. Implementation/repair supply 
 commands, omissions and finding dispositions without claiming the reviewer ran tests.
 
 `task-review --prior-review DIRECTORY` accepts a validated same-PR ancestor packet,
-retains old uncovered material and adds repair/finding links. Scope planning remains
-one bounded request. Actual successful canary and source-range evidence are required;
+retains old uncovered material and adds repair/finding links. Default scope planning remains
+one bounded request. Explicit `task-review --batch` previews the full partition;
+execution requires explicit typed budgets, output bounds and a named authorization. Resume never retries attempted units.
+See [batch controls and evidence](COVERAGE.md#provider-aware-bounded-batches-current).
+Actual successful canary and source-range evidence are required;
 configuration or nonempty prose is insufficient. Partial publication returns incomplete
 and never designates readiness. Finish also rejects legacy, missing or changed evidence.
 Keep the exact model response separate from its publication envelope, retain sanitized

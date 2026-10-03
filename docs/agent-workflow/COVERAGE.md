@@ -6,10 +6,117 @@ It does not prove understanding, defect detection, acceptance correctness or sci
 validity. The owner can rewrite private records and their hashes. These records detect
 accidental changes; they are not a cryptographic attestation against their owner.
 
+## Provider-aware bounded batches (current)
+
+Single-request review remains the default. Explicit `batch-preview DIRECTORY` derives
+complete navigation assignments without inference. Supply the same typed bounds to
+`batch-preview` to obtain the executable preview used by the named authorization:
+`--batch-requests`, `--batch-kind`, `--batch-cost`, `--batch-seconds`,
+`--batch-unit-cost`, `--batch-unit-seconds`, `--batch-max-report-bytes` and
+`--batch-max-integration-bytes`. Every bound is explicit; full-review allocations must
+fund all components plus integration before execution. Requests count wrapper
+invocations, not provider-internal API requests. Bounds never imply inspection.
+
+Native cost kind is `reference-usd`; terminal `estimated_usd` is a provider reference
+estimate, not a bill or allowance for extra spending. Included-Max authentication and
+zero extra spending remain mandatory. Native units cannot exceed 900 seconds/$10
+reference cost or their immutable parent policy. Explicit Copilot uses `ai-credits`
+and `totalNanoAiu / 1e9`; no dollar conversion exists. Allocation comparisons use
+exact decimal/rational arithmetic; unknown usage, overshoot and incomplete units stop dispatch.
+
+`batch-run DIRECTORY` requires those bounds plus `--batch-authorization FILE`.
+The coordinator supplies a JSON object containing a nonempty `name`, `preview_digest`
+(the canonical tasks.digest of the executable preview), `expires_at` (finite UTC Unix
+timestamp), exact `harness_commit`, and `harness_files` mapping every Python module
+under the actual invocation harness's `scripts/agentic` to its SHA-256. Dispatch checks
+the imported harness, not an unrelated control checkout. This record documents an
+actual separately granted finite authorization; creating JSON cannot confer authority.
+Unmerged PR source is inert data unless its exact tested harness is separately authorized.
+
+The preview exposes per-unit required/context items, lines and UTF-8 byte volumes.
+Plan versions 5 and 6 bind contract, head/base/merge-base, immutable parent inventory and
+files, complete provider/authentication policy, context links, output limits and
+integration dependency identities. Every original ID has one primary assignment;
+context overlap earns no duplicate credit. Integration reads the exact component
+reports as additional required ranges. Oversized report material stops before its
+provider invocation. Reports are never truncated to fit an allocation.
+
+Plan 6 adds reproducible unit navigation and the frozen exact-report ceiling to each
+assignment. New packet scopes group source paths and agentic tests by the longest
+matching implementation stem (including specialized test suffixes) before
+applying the existing 12-item, 800-line and 64,000-byte limits; hash IDs no longer
+interleave unrelated workflow files. Diff/base/head slices remain ordered within a
+path. Criteria and findings retain separate complete primary obligations. Context
+closure remains conservative and available in full; related source/test paths, linked
+criteria and findings mentioning the primary paths lead the context index. This
+organization does not certify semantic completeness or test adequacy.
+
+Start each new unit at `navigation/START.txt`. Its paged required, related and artifact
+indexes expose every original file and byte through finite Read offset/limit windows
+(or inclusive view ranges). Pages and direct windows are at most 120 lines and 16,000
+UTF-8 bytes; navigation has a separate 16,000,000-byte ceiling. Original context lines
+above 16,000 bytes use lossless JSON byte-offset/text chunks, bounded by the existing
+65,536-byte projection line ceiling. These context copies earn no original source
+credit. Required inventory projections must still be inspected at their assigned
+paths. Missing, changed, oversized or truncated material fails closed. Materialization
+and validation recompute the exact original-byte bindings before dispatch and aggregate
+assessment; no historical packet is rewritten. Plan 5 qualification/publication remains
+byte reproducible with its original assignment format.
+
+The prompt states the assigned frozen report limit (including grants below 50,000
+bytes). Use explicit windows for large findings/dispositions, source inventories and
+assignment metadata; whole-file reads can fail at provider limits. Prompt guidance
+cannot guarantee correct tool use or completed inspection. The db897e9 trial remains
+incomplete: one invocation, a failed Read, zero aggregate credit of 629 entries, and
+no subsequent component or integration dispatch. Seven positive primary reads did
+not override that failure. A stopped grant cannot resume or replay.
+
+Ledger version 2 persists start, absolute deadline, authorization, ordered reservations,
+dispatch identity and first failure-stop before inference. Adapters revalidate the
+reservation, remote head/base/contract and remaining time after provider preflight;
+the effective timeout may shorten but the frozen policy is never rewritten. Existing
+native activation, verified executable, managed controls and authentication checks
+remain mandatory. The implementation dispatches sequentially under a batch lock.
+
+`batch-recover` performs storage recovery only. `batch-resume` may dispatch only
+never-started eligible units under the original unexpired authorization, with all prior
+units complete and known usage. It cannot clear a durable stop, reset the deadline,
+reclaim an uncertain slot or replay a successful call. A changed head/contract needs
+a fresh full packet; old-contract coverage cannot be imported through repair routing.
+
+Managed equivalents use `task-review ISSUE --batch`, the same bounds and authorization
+file, `--execute`, and explicit `--batch-resume` where eligible. One batch remains one
+managed round; round-continuation authority is separately required. Publication verifies
+each exact COMMENT child and aggregate, including partial reports. All readiness paths
+require the full parent plus integration; a child cannot independently qualify a parent.
+Hosted operation remains opt-in Copilot single-review only.
+
+| Record namespace | Current | Frozen historical handling |
+| --- | --- | --- |
+| Packet metadata | 6 with explicit kind | 1–3 original meanings; 4 recovery-only batch; 5 provider-bound single |
+| Batch plan / ledger | 6 / 2 | Plan 5 retains original assignments; plans 1–4 and ledger 1 never dispatch unused slots |
+| Capture / result | 6 | Exact schema-3 and schema-5 journals recover without inference |
+| Single or unit / aggregate assessment | 3 / 5 | Original assessment hashes reproduced by frozen dependencies |
+| Model report | 2 | Unchanged JSON syntax and exact final bytes |
+| Native diagnostics | adapter v6 / schema 8 | No event-shape change, diagnostic renewal or attempt 10 |
+
+`review_batch_v4`, `review_issue31_v3`, `review_coverage_issue31_v3` and
+`review_telemetry_issue31_v3` retain issue-31 historical storage/publication semantics.
+Schema-3 batch children require their validated schema-4 parent lineage; detached
+children fail explicitly. `review_coverage_v5` and `review_telemetry_v5` preserve merged
+schema-5 single assessments. Existing older and native frozen modules remain intact.
+Historical assessment success does not confer current readiness; eligible schema-5
+single reviews retain current-policy checks without artifact migration.
+
+Synthetic tests exercise both providers, immutable policy/authorization, exact report
+recovery, typed accounting, deadlines, stops and publication. They are not live batch
+completion. PR #32 still requires final-head software/CI evidence and a separately
+bounded native component-plus-integration review. The PR #34 exception does not apply.
+
 ## Packet and scope contract
 
-New packets use metadata schema 5 with immutable provider policy. Schema 4 is reserved
-for separate batch work and explicitly unsupported. `START.txt` leads to `issue.txt`, `plan.txt`,
+New packets use metadata schema 6 with immutable provider policy and an explicit
+single, batch-parent or batch-unit kind. Schema 4 is historical recovery-only evidence. `START.txt` leads to `issue.txt`, `plan.txt`,
 `criteria/*.txt`, `acceptance.txt`, `changed-files.json`, `changes/*.txt`, `test-map.json`,
 `findings/*.txt`, `validation.json`, `scopes.json` and `required-material.json`.
 Full `diff.txt`, `context.json`, `source-index.json`, `base-source-index.json` and inert
@@ -32,12 +139,56 @@ plus addition. Empty files have an explicit empty-blob inventory record. Oversiz
 nonregular or unsupported changed material remains an unsupported obligation.
 
 Each navigation scope has at most 12 items, 800 required lines and 64000 required
-UTF-8 bytes. Material entries split at 120 lines or 16000 bytes. A single line beyond
-that bound remains explicitly unsupported, with its complete source available.
+UTF-8 bytes. Material entries split at 120 lines or 16000 bytes. New packets can
+represent a longer line through inventory schema 3 / projection version 1 below.
+Lines exceeding that finite representation remain explicitly unsupported; existing
+inventories and their omission assessments are never rewritten.
 The global inventory partitions every required ID exactly once, including a separate
 cross-boundary pass. `scopes.json` reports required items/lines/bytes and available
 source bytes. These are operational counts, never percentages proving correctness.
 Scopes organize **one request** with the existing budget; they never launch paid fan-out.
+
+### Lossless long-line navigation (inventory 3 / projection 1)
+
+Regular UTF-8 `.mjs` module fixtures join the inert text suffix allowlist. Git blobs
+are copied to numeric `.txt` names; nothing is imported or executed. Symlinks,
+nonregular entries, invalid UTF-8, NUL and existing file/snapshot limits still refuse.
+
+An oversized line of at most 65,536 UTF-8 bytes can become a separate inert projection.
+Each ASCII JSON row is `[start_byte,end_byte,text]`, with absolute zero-based UTF-8
+byte offsets, an exclusive end and at most 128 Unicode characters of exact text.
+JSON escaping preserves control characters, Unicode, backslashes and line endings.
+Concatenating decoded text without separators reproduces exactly one original line.
+The binding records the raw artifact/hash, original 1-based line, byte interval and
+projection hash. The original Git snapshot stays byte-identical and available.
+
+Each projected range is an independently required item under the existing 120-line /
+16,000-byte bounds, retaining source/test/path/revision links. Every generated chunk
+remains obligated. Qualification reproduces the complete canonical projection from
+the hashed raw source before considering actual returned projection spans. Missing,
+changed, truncated or unread chunks fail; reading the raw line does not manufacture
+projection evidence. Returned projection spans never become raw-line tool spans.
+Current source-index bindings and carried immutable provenance remain required.
+Repeated repairs copy both raw and projected bytes and preserve unread IDs.
+
+`review_projection.py` centrally caps each raw projected line at 65,536 bytes and new
+projections at 2,000,000 bytes per packet. The existing total snapshot ceiling also
+counts new projections and carried source. Overflows retain an explicit unsupported
+obligation, never a shortened source. Inventory 3 is emitted only when projections
+exist; old inventory 1/2 and frozen assessment semantics remain unchanged.
+
+Offline pinned-source inspection on 2026-10-03 found no 2,000-character clipping in
+2.1.282's explicit-range small-file selector or returned-line renderer: 2,000 is the
+default line count. Binary SHA-256 remains
+`3afe8535c0cc33f0e24f7b25dab7a1727b8b592196f8496a8bc302ba2161eed3`.
+The `IF` selector at bytes 199889395–199890414 hashes to
+`afb0f63964adda80b32310ef3a58cf61ae177dab45f1285d6b6fc0c6a53b5b67`;
+the existing `Lcn/h2n` renderer at 194962901–194963261 hashes to
+`98d5c80d42301f2beac040149f9e8f2911dee3218e02e1f42ec9dd5fb96812bd`.
+Executing these extracted pure functions offline preserved the 22,496-byte fixture
+line, a 65,537-byte ASCII case and a 24,002-byte Unicode/CRLF case. This does not
+invoke the provider or establish live capability. Native byte/token caps still apply;
+whole-file truncation and any missing returned bytes remain unsupported evidence.
 
 A repair packet accepts `--prior-review DIRECTORY` on local preparation or managed
 `task-review`. The prior packet/report/diagnostics must validate, belong to the same
@@ -60,8 +211,12 @@ separators with exact source matching. Grep must return content and line numbers
 proves discovery only. A unique successful terminal result supplies exact report text;
 assistant fragments are never concatenated. Session/model mismatches, malformed events,
 unknown rendering, delegation and forbidden tools remain incomplete. Synthetic fixtures
-and static binary inspection do not establish live capability. Claude remains blocked
-before inference: see [PROVIDERS.md](PROVIDERS.md).
+and static binary inspection do not establish live capability. Retained successful v6
+purposes 8 and 9 satisfy the native capability activation prerequisite, subject to
+current binding validation in [PROVIDERS.md](PROVIDERS.md). They do not inspect PR #32.
+All nine diagnostic attempts remain historical; the exhausted grant permits no tenth
+attempt. Current authentication, isolation, exact harness authorization and finite
+review allocation remain separate prerequisites.
 
 The following Copilot-specific meanings remain unchanged:
 
@@ -114,6 +269,13 @@ earn no range credit; later complete reads can satisfy the material. Missing or
 unrecognized canary results cannot qualify. An unsupported provider rendering requires
 a reviewed adapter change, not a wildcard permission or invented evidence.
 
+A successful glob with blank output records `glob_no_discovery`; nonblank output
+without recognized packet paths records `glob_unrecognized_or_outside_packet`.
+These bounded diagnostics preserve tool success and do not retain unknown paths or
+provider text. Unsupported rendering and outside-packet output cannot always be
+distinguished, so neither is credited. Recognized paths are deduplicated and earn
+discovery credit only; the capability fixture still requires its actual path.
+
 Root `subagent.selected` is supported only for `independent-reviewer` with exactly
 `view`, `grep`, `glob`; null/all-tools, other agents and top-level `agentId` are refused.
 The SDK uses top-level `agentId` for a delegated instance, absent on root events.
@@ -149,7 +311,7 @@ coverage label are separate; neither is inserted into the saved model output.
 
 `review-capture.json` atomically saves exact output and sanitized diagnostics bound
 to the input packet **before assessment reads packet files**. `review-result.json` then
-journals the assessment hash. Both new records use schema 5. A pending capture can recover
+journals the assessment hash. New capture/result records use schema 6. A pending capture can recover
 a transient assessment/storage failure after the original packet is restored; it never
 authorizes another model call. Strict UTF-8/IO failures produce fixed diagnostic reasons
 without lossy replacement decoding or raw error text. Final storage writes `review.md`,
@@ -202,9 +364,10 @@ Metadata/result schema 2 and coverage schema 1 are now historical. The frozen
 publication envelopes, including formerly malformed fenced reports. It cannot qualify
 new reviews. Schema-3 assessment and telemetry are frozen in `review_coverage_v2.py`
 and `review_telemetry_v2.py`, preserving original hashes and publication envelopes.
-Current readiness and managed designation require schema-5 metadata/result and schema-2
-evidence/report. Existing schema-1 records retain their older meaning too. Schema 4 is
-reserved and refused, never reinterpreted.
+Current readiness and managed designation accept eligible schema-5 singles or schema-6
+singles/complete parents under their bound provider policies. Model reports remain schema 2;
+current unit assessments are version 3 and aggregate assessments version 5. Schema-4
+batches and their children reproduce historical evidence only, never current readiness.
 Never rewrite a historical journal or retrofit new claims. A new packet/authorized
 invocation is needed for current evidence. `verify-publication` remains byte-exact.
 
@@ -234,6 +397,249 @@ python3 scripts/agentic/review.py verify-publication /absolute/old-review-direct
 This is read-only, emits hashes/counts rather than raw controls, and makes no model
 request. Successful exact comparison does not retroactively grant coverage. Keep old
 packets/journals inspectable under their original semantics; do not rewrite provenance
+hashes, historical review claims or PR #27's limitations. Review this workflow-changing
+PR under clean-main policy. Only the already-authorized narrow literal-tool/capability
+invocation may be used before merge; arbitrary PR policy must not become active.
+
+## Historical Copilot batch design (metadata schema 4)
+
+The following records describe the pre-provider design. Its execution commands and
+credit-only allocations cannot dispatch historical reservations. Use the schema-6
+procedure above for new work; old reports, assessments and publication bytes remain
+unchanged. No historical incomplete trial establishes current readiness.
+
+Single-request schema-3 records keep their existing semantics. A batch is an explicit
+opt-in before inference; a deterministic preview makes no model call. From the clean
+trusted control checkout, prepare the original packet, then inspect:
+
+```bash
+python3 scripts/agentic/review.py batch-preview /absolute/review-directory
+```
+
+The preview partitions every original required ID, omissions included, into the
+existing bounded component scopes and a separate integration assignment. Links and
+source/test mapping supply navigation context. Each component owns its assigned IDs;
+reading another component's material does not transfer credit. Overlapping source
+ranges can support distinct obligations, but each parent ID counts once. Every unit
+retains the complete original packet. Assignments are not proof of coherent reasoning
+or exhaustive semantic coverage; the integration pass must assess interactions and
+test adequacy across those assignments.
+
+Execution needs **all five explicit bounds**: `--batch-requests`, `--batch-credits`,
+`--batch-seconds`, `--batch-unit-credits`, and `--batch-unit-seconds`. Supply them to
+`review.py batch-run DIRECTORY`; there are no paid batch defaults. Requests count
+fresh Copilot CLI invocations, including failed or uncertain attempts, not internal
+provider API calls. Per-unit allocations are reserved durably before dispatch and
+cannot exceed remaining aggregate allocations. A deliberately insufficient allocation
+stops incomplete; the wrapper never silently increases it to finish a checklist.
+
+`batch.json` freezes repository/PR/issue/plan, exact head/base, every parent artifact,
+inventory digest, policy, assignments and budget. `batch-state.json` persists the
+start, deadline and ordered reservations. Each `units/UNIT` holds its own packet,
+assignment, exact capture/report, sanitized diagnostics and recovery journal. Unit
+reports remain schema 3 and cannot qualify the parent independently. For integration,
+exact component reports become additional required material; changed, missing or
+incomplete dependencies prevent completion. The parent inventory is never replaced
+by a reduced checklist.
+
+Each invocation uses the existing isolated Copilot path and must establish actual
+`view`, `grep`, `glob` capability. The aggregate credits only assigned positive
+inspections supported by immutable ranges and validated telemetry. Missing, masked,
+truncated, malformed, omitted and unsupported material stays incomplete. A complete
+parent source count cannot replace required integration report reads.
+
+`review.py batch-recover DIRECTORY` recovers saved captures without inference.
+`review.py batch-resume DIRECTORY` additionally permits never-started eligible units
+under the **original** budget and deadline. Attempted units without recoverable reports
+are not retried. Incomplete prior units, unknown usage, exhausted limits, stale
+snapshots/contracts and ambiguous state stop further requests. Clock rollback before
+the persisted start is refused. A process interruption after reservation but before
+inference conservatively consumes that reservation; inspect it rather than retrying.
+
+The retained `totalNanoAiu` counter uses the SDK's `1e9` nano-unit scaling for AI-credit
+accounting; other counters remain retained but cannot substitute for it. See GitHub's
+[usage metric definitions](https://docs.github.com/en/copilot/how-tos/copilot-sdk/features/usage-and-billing)
+and [CLI unit reference](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-command-reference).
+No currency conversion is inferred. Provider limits are **soft**: an in-flight request
+can overshoot. Known actual usage is retained, unknown or over-allocation usage blocks
+readiness and further spending. Reservation bounds are not a hard monetary cap.
+
+The parent `review.md` is explicitly attributed aggregate bookkeeping, not a model
+response. Publication retains each exact unit report in a separate attributed COMMENT,
+then publishes the aggregate status with report hashes. Reports are never concatenated
+and presented as one response. Readiness validates all exact published unit reports
+and the aggregate on the current head/base. Partial output remains publishable as
+incomplete. Each COMMENT retains the existing 60000-byte transport ceiling; an
+oversized report fails publication without truncating or editing its bytes.
+
+The managed equivalent is `workflow.py task-review ISSUE --batch` for preview, adding
+`--execute` and the five bounds for the initial run. Use `--batch --execute
+--batch-resume` for eligible continuation, or `--batch --execute` to recover only after
+an attempted run. `--publish` publishes retained evidence. The complete batch is one
+explicitly budgeted managed round; starting a fresh batch still obeys the existing
+round-continuation authorization. `--prior-review` can retain validated batch findings,
+exact unit reports and original uncovered obligations without inheriting readiness.
+
+All qualification, managed designation, hosted qualification, preflight and finish
+use the same version-aware gate. Hosted automation keeps its single-request default;
+it does not silently fan out. Installer payload discovery includes the new module and
+tests without a path-manifest change. Synthetic tests cover budgeting, isolation,
+recovery, report binding and publication. No live multi-invocation completion has been
+validated by those tests. A separate finite trial budget and explicit trust in the
+invocation code are required before applying unmerged batch policy to its own PR.
+
+### Session warning diagnostics (offline repair)
+
+The pinned [GitHub SDK WarningEvent/WarningData source](https://github.com/github/copilot-sdk/blob/4dc774c91aff609c338563aadc699d5c2dc596f7/nodejs/src/generated/session-events.ts#L2240-L2285)
+uses an open string `warningType`, a string `message`, optional string `url`, and
+optional `remediation`. The downloaded source SHA-256 is
+`8bc4ec9dea0577c5ae6f6244ce1e30b51fc5855a8ba15ccc109f22d3feba2cb6`.
+Its examples (`subscription`, `policy`, `mcp`) do not establish benign semantics.
+All `session.warning` events therefore still fail the existing unsupported-event
+gates in either stdout or session telemetry. No category is allowlisted for readiness.
+
+Future captures add an optional `telemetry.warnings` summary only when warnings
+occur. Separate stdout/session counters retain those three literal example labels;
+all other nonempty string categories become `other`, and absent/invalid categories
+become `missing_or_invalid`. Fixed counters describe field presence/types and extra
+fields. They do not certify schema validity or harmlessness. No warning messages,
+URLs, remediation contents, arbitrary category names or extra field names are saved.
+Existing stream/event/diagnostic bounds and isolation checks still apply. Historical
+summaries remain accepted without this optional field and are never rewritten.
+
+This is synthetic-test-backed diagnostic collection, not live compatibility or
+completion evidence. The earlier event-name digest identifies `session.warning`
+but cannot recover its historical category or payload. A coordinator-run diagnostic
+under finite approved execution bounds must gather fresh sanitized evidence before
+any further compatibility decision; `other` may still require source investigation.
+The original malformed report, unsupported-event failures and 0/211 aggregate stay
+incomplete. Fresh head/base review and independent validation remain required.
+
+### Assigned inspection navigation
+
+New batch plan version 2 expands test-map context to transitive closure, independent
+of mapping order. Saved version-1 plans retain their original single-pass semantics
+for validation; they are not silently upgraded or credited with extra inspection.
+
+New unit assignments include deterministic `inspection_suggestions` for each
+assigned readable inventory entry (including integration report obligations).
+`view_range` uses 1-based inclusive start/end positions, not start/count. If the
+required end is blank, the suggestion extends through the next nonblank line when
+available. At EOF it also suggests a blank-line grep pattern and the needed line
+interval. Only actual numbered `path:line:text` matches support those lines; a
+search request or empty result proves nothing. Read the other required context with
+view. Omitted material stays explicitly unavailable.
+
+These suggestions neither change the required inventory nor bypass exact-byte
+validation. The historical omitted-final-blank-line result remains unsupported.
+Whitespace is not stripped, missing text is not reconstructed, and suggestions do
+not establish inspection or understanding. Tests use synthetic returned output
+against real local packet text; live completion remains a separate review gate.
+
+### Repair provenance and EOF navigation follow-up
+
+Inventory version 2 labels carried unread snapshots `prior:<commit SHA>` when the
+source commit is known, with an exact snapshot SHA-256 and original ID. Source/
+and base-source/ snapshots inherit the validated prior packet head/merge-base
+commit; legacy prior-source/ files lacking that commit provenance use `prior-snapshot:<SHA-256>`;
+no ancestor commit is guessed. Omitted material remains unavailable. Repeated
+repairs preserve that provenance and the original unread obligations. Current
+head/base source and tests retain separate requirements tied to their snapshot
+indexes. The new gate rejects mismatched current revision bindings or carried
+snapshot digests. Version-1 inventories and all historical assessments remain
+unchanged; no old inspection becomes current-head credit. Exact prior batch unit
+reports are also registered as required finding material in new repair packets.
+
+Batch plan version 3 narrows EOF view suggestions to the nonblank prefix, or omits
+view entirely for an all-blank range; numbered grep results cover the blank tail.
+Version-2 saved suggestions retain their old semantics for validation. Suggestions
+exist in version-2/3 batch assignments, not default single-request packets. Newly
+built START.txt and the invocation prompt give single-request reviewers the same
+blank-boundary procedure without generating assignment hints. Qualification was
+never impossible without hints: exact complete output, numbered view or numbered
+grep evidence can support blanks. No implied, missing or stripped output earns
+credit. Inventory, suggestions and observer all use Python splitlines semantics;
+Unicode/control separators are not silently converted to LF-only numbering.
+
+The pinned SDK source documented above (lines 11810–11889, source enum 1405–1417)
+defines experimental ephemeral `session.managed_settings_resolved` policy
+snapshots separately from action-enforcement events. Current historical payloads
+are unknown. New captures retain only fixed bounded counters under optional
+`telemetry.managed_settings`: root/ephemeral shape, known source, indeterminate
+policy and field presence. No settings, managed key names or arbitrary source
+strings are retained. Future stdout captures accept only the complete root ephemeral
+no-policy shape: source `none`, empty managedKeys, false failClosed/deviceManaged/
+serverManaged, boolean bypassPermissionsDisabled, and absent or false optional
+clientManaged/policyHelperManaged/permissionsAllowIntersected/
+sandboxEnabledByUndeterminedPolicy. Settings must be absent. The envelope requires
+UUID-v4 identifiers (nullable parentId), a timezone-bearing ISO timestamp and only
+recognized keys. Both boolean bypassPermissionsDisabled values are accepted;
+true is restrictive. The pinned source enum explicitly defines `none` as no policy.
+Persisted session-log occurrences remain unsupported: the SDK documents this event
+as live-only. Enforcement, unknown, active/indeterminate policy, malformed and
+delegated events remain rejected. Existing bounded name-digest/shape diagnostics
+are retained even for this narrow stdout exception; they confer no inspection
+credit. Actual tool evidence and every other gate remain required. Validation is
+synthetic only; historical payloads stay unknown and historical diagnostics and
+qualification are unchanged. No paid call is launched by repair.
+
+The trusted invocation prompt supplies all three exact generated fixture calls.
+Every invocation requires view content, a matching numbered grep line and glob
+discovery before review, even when no source range needs grep. Missing any probe
+invalidates the entire unit. Prompt guidance cannot guarantee model compliance;
+historical missing-probe results remain incomplete.
+
+### Batch plan version 4 and bounded request diagnostics
+
+New version-4 plans emit 24-hex integration component-report IDs, matching the
+published report schema. Saved versions 1–3 retain their original 64-hex report
+IDs when validating historical integration packets; runtime inventory membership
+validation did not enforce the schema's 24-hex pattern. The mismatch was a contract
+inconsistency, not evidence that every historical integration was rejected.
+Version-4 assignments also bind publication version 2: the unit status includes
+its own qualified/incomplete label as well as the separate parent readiness rule.
+Older publication bodies retain their exact labeling. Managed publication checks
+verify every available exact unit report even for incomplete aggregates.
+
+Metadata schema 4 explicitly uses the parent `review.md` for attributed aggregate
+JSON bookkeeping. It is not model output: version-aware qualification and
+publication route it through `review_batch`; exact model bytes live in each unit's
+`review.md`. The aggregate carries both review idempotence and batch markers.
+
+New view event diagnostics optionally retain only a bounded `view_request`:
+`state` is `absent`, `invalid`, or `range`; `range` is null or two signed 32-bit
+integers. Coordinates describe the supplied request, including reversed or
+out-of-bounds values; they never grant inspection credit. No extra path, arbitrary
+argument, provider message or secret is retained. Historical events lacking this
+field remain unchanged. The four latest rejected excerpt hashes can be reproduced
+from public packet bytes, but their historical request arguments remain unknown;
+matching excerpt bytes alone do not retroactively validate those ranges.
+
+Authenticated numeric-repository pagination is resolved against the original
+named repository's API identity. Only a matching positive repository ID and full
+name permit continuation to the same endpoint and query on the named origin.
+The transport never sends credentials to a numeric-link destination or follows a
+redirect. Wrong identities, changed endpoints, other origins and ambiguous/cyclic
+pagination remain errors. Offline transport fixtures exercise this behavior;
+there has been no live validation of this repair.
+
+Unknown event diagnostics allow 64 distinct name digests plus one fixed overflow
+counter, as the validator already requires. Explicit non-object stdout `data`,
+including falsy values, is malformed except null data on recognized bookkeeping
+and idle/shutdown events, matching existing coverage-parser compatibility.
+Session-start identity and all tool payloads are excluded from that exception;
+unknown/policy/delegated events still fail their existing gates. Absent optional
+data remains supported. The pinned SDK describes idle/shutdown object payloads;
+this narrow stdout compatibility rule is not a claim that its typed session schema
+declares null payloads valid.
+
+Trusted final-response guidance explicitly requires the final assistant message
+itself to be JSON-only, without an announcement that the report is being emitted.
+Progress messages do not excuse prose in the final message. This is only prompt
+mitigation: historical prose-prefixed reports remain malformed and exact, with
+zero coverage credit. The strict report parser and last-message selection are
+unchanged; no JSON substring is extracted to repair provider output.
+
 hashes, historical review claims or PR #27's limitations. The migration-only review
 exception for issue #33 is documented in [PROVIDERS.md](PROVIDERS.md); it introduces no
 generic bypass and establishes no normal finish readiness. PR #32 remains separate.
@@ -246,3 +652,7 @@ purposes bind the fixed directory/glob Grep command; successful transport with n
 matching source spans cannot satisfy Grep capability. Trials 4 and 6 retain only
 historical qualification, and trial 7 remains incomplete. See the
 [revision-8 grant and evidence boundary](PROVIDERS.md#issue-33-revision-8-prospective-recovery).
+
+The revision-8 paragraph describes its preparation history. Retained successful v6
+purposes 8 and 9 now satisfy that capability prerequisite under their exact bindings;
+all nine attempts remain historical, with no tenth attempt authorized.
