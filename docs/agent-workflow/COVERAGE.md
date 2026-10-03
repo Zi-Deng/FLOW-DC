@@ -42,7 +42,8 @@ reports as additional required ranges. Oversized report material stops before it
 provider invocation. Reports are never truncated to fit an allocation.
 
 Plan 6 adds reproducible unit navigation and the frozen exact-report ceiling to each
-assignment. New packet scopes group source paths and same-stem agentic tests before
+assignment. New packet scopes group source paths and agentic tests by the longest
+matching implementation stem (including specialized test suffixes) before
 applying the existing 12-item, 800-line and 64,000-byte limits; hash IDs no longer
 interleave unrelated workflow files. Diff/base/head slices remain ordered within a
 path. Criteria and findings retain separate complete primary obligations. Context

@@ -98,21 +98,35 @@ def plan(directory, *, version=6):
             "depends_on": [unit["id"] for unit in components],
         }
     ]
+    implementation_stems = {
+        Path(item["path"]).stem
+        for item in inventory
+        if item["path"].startswith("scripts/agentic/") and item["path"].endswith(".py")
+    }
+
+    def family_stem(path):
+        stem = Path(path).stem.removeprefix("test_")
+        if path.startswith("tests/agentic/"):
+            return max(
+                (s for s in implementation_stems if stem == s or stem.startswith(s + "_")),
+                key=len,
+                default=stem,
+            )
+        return stem
+
     for unit in units:
         if version == 6:
             primary_paths = {lookup[key]["path"] for key in unit["required_ids"]}
-            stems = {Path(path).stem.removeprefix("test_") for path in primary_paths}
-            related_paths = set(primary_paths)
+            stems = {family_stem(path) for path in primary_paths}
+            related_paths = {item["path"] for item in inventory if family_stem(item["path"]) in stems}
             for mapping in mappings:
-                if mapping["changed_path"] in primary_paths:
-                    related_paths.update(
-                        p for p in mapping["candidates"] if Path(p).stem.removeprefix("test_") in stems
-                    )
+                if family_stem(mapping["changed_path"]) in stems:
+                    related_paths.update(p for p in mapping["candidates"] if family_stem(p) in stems)
             relevant_findings = set()
             for key, item in lookup.items():
                 if item["kind"] == "finding" and item.get("artifact") and not item.get("omitted"):
                     text = (packet / item["artifact"]).read_bytes().decode("utf-8")
-                    if any(path in text for path in primary_paths):
+                    if any(path in text for path in related_paths):
                         relevant_findings.add(key)
             linked = {link for key in unit["required_ids"] for link in lookup[key].get("links", [])}
             related = {

@@ -22,7 +22,11 @@ class NavigationTests(GitFixture):
             }
         ]
         for name in ("alpha", "beta"):
-            for path in (f"scripts/agentic/{name}.py", f"tests/agentic/test_{name}.py"):
+            for path in (
+                f"scripts/agentic/{name}.py",
+                f"tests/agentic/test_{name}.py",
+                f"tests/agentic/test_{name}_providers.py",
+            ):
                 target = self.task_path / path
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_text("value = 1\n" * 30)
@@ -54,7 +58,9 @@ class NavigationTests(GitFixture):
         for name in ("alpha", "beta"):
             self.assertTrue(
                 any(
-                    f"scripts/agentic/{name}.py" in p and f"tests/agentic/test_{name}.py" in p
+                    f"scripts/agentic/{name}.py" in p
+                    and f"tests/agentic/test_{name}.py" in p
+                    and f"tests/agentic/test_{name}_providers.py" in p
                     for p in families
                 )
             )

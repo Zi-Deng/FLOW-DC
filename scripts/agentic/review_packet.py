@@ -636,12 +636,25 @@ def build(repo, packet, head, ancestor, head_index, base_index, context, cfg, pr
 
     # Cross-boundary material always follows component material. Repair material
     # leads navigation; the inventory still requires the original complete scope.
+    implementation_stems = {
+        PurePosixPath(path).stem
+        for path in set(by_head) | set(by_base)
+        if path.startswith("scripts/agentic/") and path.endswith(".py")
+    }
+
     def family(item):
         path = PurePosixPath(item["path"])
         if item["kind"] in {"acceptance", "policy", "finding"}:
             return item["kind"]
         if str(path).startswith(("scripts/agentic/", "tests/agentic/")) and path.suffix == ".py":
-            return "agentic:" + path.stem.removeprefix("test_")
+            stem = path.stem.removeprefix("test_")
+            if str(path).startswith("tests/agentic/"):
+                stem = max(
+                    (s for s in implementation_stems if stem == s or stem.startswith(s + "_")),
+                    key=len,
+                    default=stem,
+                )
+            return "agentic:" + stem
         return item["path"]
 
     ordered = sorted(

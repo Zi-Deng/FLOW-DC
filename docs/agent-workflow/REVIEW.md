@@ -373,7 +373,8 @@ large findings/disposition or source-index files. All originals remain available
 lossless context chunks do not grant source inspection credit. The trusted prompt
 states the unit's frozen report ceiling, which may be below 50,000 bytes.
 
-Source/test-family grouping replaces workflow-wide hash ordering for new packets.
+Source/test-family grouping (longest matching implementation stem, including specialized
+test suffixes) replaces workflow-wide hash ordering for new packets.
 Criteria, findings and cross-boundary obligations remain fully assigned. Linked
 context is conservative, not a guarantee of sufficient reasoning. Plan 5 assignments,
 exact reports and stopped ledgers retain their original semantics. The db897e9
