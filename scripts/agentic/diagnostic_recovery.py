@@ -19,6 +19,9 @@ CONTRACT = {
 CONTRACT_DIGEST = "dbbe4f2dccf83acd2a5fab4b6b031c96673516f4e63820df1036a198fd1c81c1"
 SEQUENCE = {2: "native-tools-and-source", 3: "isolation-refusal"}
 FILENAME = "recovery-ledger.json"
+# Revision 4 is frozen, including its consumed/stopped v2 grant. New adapters
+# cannot reuse it; changing software does not create another diagnostic slot.
+REV4_ADAPTER = "claude-stream-json-2.1.282-v2"
 
 
 def authorization(repo):
@@ -82,19 +85,24 @@ def historical(repo):
 def validate_policy(policy):
     import claude_native_auth
 
-    review_policy.require_current_adapter(policy)
+    review_policy.validate_policy(policy)
     claude_native_auth.validate_binding(policy.get("authentication"))
-    expected = review_policy.policy(review_policy.choices("claude-code"), {}, diagnostic=True)
+    expected = review_policy.policy(
+        review_policy.choices("claude-code", "claude-opus-5-5", "medium"), {}, diagnostic=True
+    )
+    expected["adapter"] = REV4_ADAPTER
     expected["authentication"] = policy["authentication"]
     if policy != expected:
-        raise WorkflowError("Recovery requires the approved exact Claude model/effort/CLI/budget policy")
+        raise WorkflowError(
+            "Revision-4 recovery is bound to its original v2 Claude model/effort/CLI/budget policy"
+        )
 
 
 def match_policy(observed, current):
     """Only explicit verified same-account credential lineage may differ."""
     import claude_native_auth
 
-    review_policy.require_current_adapter(current)
+    review_policy.validate_policy(current)
     claude_native_auth.validate_binding(current.get("authentication"))
     left = {k: v for k, v in observed.items() if k not in {"budget", "authentication"}}
     right = {k: v for k, v in current.items() if k not in {"budget", "authentication"}}
@@ -184,6 +192,7 @@ def load(repo):
 def next_slot(repo, state, policy):
     import review_diagnostics as diagnostics
 
+    review_policy.require_current_adapter(policy)
     validate_policy(policy)
     match_policy(state["grant"]["policy"], policy)
     attempts = state["attempts"]
@@ -204,6 +213,8 @@ def prepare(repo, cfg, *, apply=False, preview_digest=None):
     repo.assert_main()
     selected = review_policy.resolve(repo, cfg, review_provider="claude-code")["policy"]
     selected["budget"] = review_policy.budget("claude-code", {}, diagnostic=True)
+    if selected["adapter"] != REV4_ADAPTER:
+        raise WorkflowError("Revision-4 grant is recovery-only for its original v2 adapter; no new allowance")
     selected = claude_native_auth.bind(selected)
     with diagnostics.locked(repo):
         current = load(repo)

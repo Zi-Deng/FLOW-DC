@@ -209,3 +209,22 @@ No fourth attempt or report repair is authorized. The coordinator applies the gr
 and invokes these diagnostics separately after final-head deterministic checks and CI.
 Implementation and synthetic regressions do not establish live capability. Both
 successful purposes and final-head CI evidence remain outstanding at this checkpoint.
+
+
+## Stopped recovery and v3 offline repair — 2026-10-03 UTC
+
+The coordinator applied revision 4 and invoked slot 2 once on `495dd3d`. Required CI
+passed for that PR head with actual tested merge checkout
+`47ecd1c24ab2da33b275e902e8d3e518a515a07f`; that evidence does not cover later commits.
+Slot 2 returned valid report/tool/source evidence but failed initialization/customization
+and system-event checks. The sequence therefore stopped; slot 3 was not invoked and
+no executable allowance remains. Both trials retain their exact incomplete records.
+
+The offline v3 repair enforces the supported bundled-skills setting and strict empty
+initial/update catalogs, records bounded field shapes and hashes, and freezes v2
+recovery semantics. Source fixtures do not reconstruct the missing trial payloads or
+establish live capability. The stopped v2 grant cannot authorize v3. Any proposed
+further recovery requires actual separate approval and exact binding before new
+allowance code or calls. See [the source audit](NATIVE-TELEMETRY-AUDIT.md) for the
+conditional native behavior and evidence limits. Final-head checks and both successful
+current live purposes remain required; the migration-only PR-review exception persists.

@@ -34,7 +34,7 @@ class ProviderPolicyTests(GitFixture):
             "model": "claude-fixture-99" if provider == "claude-code" else "gpt-fixture-99",
             "efforts": ["medium"] if provider == "claude-code" else ["default", "high"],
             "cli_version": "2.1.282" if provider == "claude-code" else "1.0.83",
-            "adapter": "claude-stream-json-2.1.282-v2"
+            "adapter": "claude-stream-json-2.1.282-v3"
             if provider == "claude-code"
             else "copilot-session-events-v2",
             "evidence": [
@@ -400,15 +400,22 @@ class ProviderPolicyTests(GitFixture):
         self.assertEqual(json.loads((directory / "review-result.json").read_bytes()), journal)
 
     def test_legacy_adapter_model_declaration_is_frozen_not_a_new_selection(self):
-        extension = self.extension()
-        extension["adapter"] = "claude-stream-json-2.1.282-v1"
-        selected = policy.policy(policy.choices("claude-code"), {})
-        selected.update(model=extension["model"], adapter=extension["adapter"], model_compatibility=extension)
-        original = copy.deepcopy(selected)
-        self.assertEqual(policy.validate_policy(selected), original)
-        self.assertEqual(selected, original)
-        with self.assertRaises(workflow.WorkflowError):
-            policy.model_extensions(self.config(review_model_extensions=[extension]))
-        selected["model_compatibility"] = "malformed"
-        with self.assertRaises(workflow.WorkflowError):
-            policy.validate_policy(selected)
+        for adapter in ("claude-stream-json-2.1.282-v1", "claude-stream-json-2.1.282-v2"):
+            with self.subTest(adapter=adapter):
+                extension = self.extension()
+                extension["adapter"] = adapter
+                selected = policy.policy(policy.choices("claude-code"), {})
+                selected.update(model=extension["model"], adapter=adapter, model_compatibility=extension)
+                original = copy.deepcopy(selected)
+                self.assertEqual(policy.validate_policy(selected), original)
+                self.assertEqual(selected, original)
+                with self.assertRaises(workflow.WorkflowError):
+                    policy.model_extensions(self.config(review_model_extensions=[extension]))
+                with self.assertRaisesRegex(workflow.WorkflowError, "recovery-only"):
+                    policy.require_current_adapter(selected)
+                selected["model_compatibility"]["adapter"] = policy.PROVIDERS["claude-code"]["adapter"]
+                with self.assertRaises(workflow.WorkflowError):
+                    policy.validate_policy(selected)
+                selected["model_compatibility"] = "malformed"
+                with self.assertRaises(workflow.WorkflowError):
+                    policy.validate_policy(selected)

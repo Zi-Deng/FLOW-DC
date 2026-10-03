@@ -1,0 +1,126 @@
+{
+  "provenance": {
+    "binary_sha256": "3afe8535c0cc33f0e24f7b25dab7a1727b8b592196f8496a8bc302ba2161eed3",
+    "ranges": [
+      {
+        "start": 200783323,
+        "end": 200783419,
+        "sha256": "4214a4c3aec3dad0895026f3613851fe4b758e759a06664029138bb655b45c47"
+      },
+      {
+        "start": 204370812,
+        "end": 204371277,
+        "sha256": "c9ef21ab60544b85a1d8d8f035838bdb4d027f95b01b5c3adc593e53465f3f8c"
+      },
+      {
+        "start": 210039274,
+        "end": 210041595,
+        "sha256": "7276da1df42e62f522b93197fe2c846550a6aaff2916f113a8dfeb3deeb22b0b"
+      },
+      {
+        "start": 204361946,
+        "end": 204362287,
+        "sha256": "921251524f6ae8422921ecbaa2260ba8cbd46da3e0f1e4100803e4a9bf934f74"
+      },
+      {
+        "start": 210060785,
+        "end": 210060869,
+        "sha256": "35d3ce981be3e49b057a648fb5c793ea8bd03ef5ee12cf5c2ddf18a5a21eb9aa"
+      },
+      {
+        "start": 219363058,
+        "end": 219363115,
+        "sha256": "d4e820cb45f2a1f77afd2d310abfda0e132b04e90ed0c7c6bc8a99be30538d8a"
+      }
+    ],
+    "method": "Exact pinned pure functions/early-return branches, synthetic inputs and dependency stubs; no native CLI/auth/network/model; not live observations."
+  },
+  "disabled": [
+    {
+      "setting": false,
+      "result": false
+    },
+    {
+      "setting": true,
+      "result": true
+    }
+  ],
+  "initialization": {
+    "type": "system",
+    "subtype": "init",
+    "cwd": "synthetic-cwd",
+    "session_id": "fixture-session",
+    "tools": [
+      "Read",
+      "Grep",
+      "Glob"
+    ],
+    "mcp_servers": [],
+    "model": "claude-opus-5-5",
+    "permissionMode": "dontAsk",
+    "slash_commands": [],
+    "claude_code_version": "2.1.282",
+    "agents": [],
+    "skills": [],
+    "plugins": [],
+    "uuid": "12345678-1234-4234-8234-123456789012"
+  },
+  "catalogs": [
+    {
+      "input": [],
+      "event": {
+        "type": "system",
+        "subtype": "commands_changed",
+        "commands": [],
+        "session_id": "fixture-session",
+        "uuid": "12345678-1234-4234-8234-123456789012"
+      }
+    },
+    {
+      "input": [
+        {
+          "name": "synthetic-custom",
+          "description": "synthetic description",
+          "source": "custom"
+        }
+      ],
+      "event": {
+        "type": "system",
+        "subtype": "commands_changed",
+        "commands": [
+          {
+            "name": "synthetic-custom",
+            "description": "synthetic description",
+            "argumentHint": ""
+          }
+        ],
+        "session_id": "fixture-session",
+        "uuid": "12345678-1234-4234-8234-123456789012"
+      }
+    },
+    {
+      "input": [
+        {
+          "name": "synthetic-builtin",
+          "description": "synthetic description",
+          "source": "builtin"
+        }
+      ],
+      "event": {
+        "type": "system",
+        "subtype": "commands_changed",
+        "commands": [
+          {
+            "name": "synthetic-builtin",
+            "description": "synthetic description",
+            "argumentHint": "",
+            "builtin": true
+          }
+        ],
+        "session_id": "fixture-session",
+        "uuid": "12345678-1234-4234-8234-123456789012"
+      }
+    }
+  ],
+  "skills_disabled_branch": []
+}

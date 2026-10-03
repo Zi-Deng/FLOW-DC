@@ -531,3 +531,167 @@ class ClaudeTelemetryTests(GitFixture):
         self.assertFalse(review.coverage_ready(self.directory))
         with self.assertRaisesRegex(workflow.WorkflowError, "recovery-only"):
             review.qualification(self.directory, require=True)
+
+    def test_empty_command_catalog_update_is_supported_with_exact_bytes(self):
+        event = {
+            "type": "system",
+            "subtype": "commands_changed",
+            "commands": [],
+            "session_id": "fixture-session",
+            "uuid": "12345678-1234-4234-8234-123456789012",
+        }
+        result, diag, body = self.evaluate(self.rows[:1] + [event] + self.rows[1:])
+        self.assertTrue(result["qualified"], diag["reasons"])
+        self.assertEqual(body.encode(), self.rows[-1]["result"].encode())
+
+    def test_initial_empty_catalog_fields_are_required(self):
+        for field in ("skills", "plugins", "agents", "slash_commands", "mcp_servers"):
+            rows = copy.deepcopy(self.rows)
+            rows[0].pop(field, None)
+            with self.subTest(field=field):
+                self.assertFalse(self.evaluate(rows)[0]["qualified"])
+
+    def test_rejected_initial_control_fields_retain_safe_shapes(self):
+        self.rows[0]["skills"] = [{"name": "PRIVATE_SKILL", "path": "PRIVATE_PATH"}]
+        self.rows[0]["plugins"] = "PRIVATE_PLUGIN"
+        self.rows[0]["mcp_servers"] = None
+        result, diag, _ = self.evaluate(self.rows)
+        self.assertFalse(result["qualified"])
+        summary = diag["telemetry"]
+        self.assertIn("control_fields", summary)
+        for text in ("PRIVATE_SKILL", "PRIVATE_PATH", "PRIVATE_PLUGIN"):
+            self.assertNotIn(text, json.dumps(diag))
+        fields = summary["control_fields"]
+        self.assertEqual(fields["init.skills"]["observations"][0]["type"], "array")
+        self.assertEqual(fields["init.skills"]["observations"][0]["length"], 1)
+        self.assertEqual(fields["init.plugins"]["observations"][0]["type"], "string")
+        self.assertEqual(fields["init.mcp_servers"]["observations"][0]["type"], "null")
+        telemetry.validate_summary(summary)
+
+    def test_bundled_skills_control_is_explicit_and_cannot_be_omitted(self):
+        settings = review_claude.trusted_settings(self.policy)
+        self.assertIs(settings.get("disableBundledSkills"), True)
+        settings.pop("disableBundledSkills")
+        with self.assertRaises(workflow.WorkflowError):
+            review_claude.check_controls("/not-opened", settings, self.policy)
+
+    def test_source_extracted_catalog_fixtures_accept_only_empty_update(self):
+        fixture = json.loads((Path(__file__).parent / "fixtures/claude-catalog-2.1.282.json").read_text())
+        self.assertEqual(
+            fixture["disabled"], [{"setting": False, "result": False}, {"setting": True, "result": True}]
+        )
+        self.assertEqual(fixture["skills_disabled_branch"], [])
+        for field in ("skills", "plugins", "slash_commands", "mcp_servers", "agents"):
+            self.assertEqual(fixture["initialization"][field], [])
+        for item in fixture["catalogs"]:
+            event = copy.deepcopy(item["event"])
+            result, diag, _ = self.evaluate(self.rows[:1] + [event] + self.rows[1:])
+            self.assertEqual(result["qualified"], not item["input"], diag["reasons"])
+        event = fixture["catalogs"][0]["event"]
+        for change in (
+            {"commands": None},
+            {"commands": {}},
+            {"uuid": "wrong"},
+            {"agent_id": "delegated"},
+            {"hook": "anything"},
+            {"commands": ["builtin"]},
+        ):
+            with self.subTest(change=change):
+                changed = {**event, **change}
+                self.assertFalse(self.evaluate(self.rows[:1] + [changed] + self.rows[1:])[0]["qualified"])
+        self.assertFalse(self.evaluate([event] + self.rows)[0]["qualified"])
+        self.assertFalse(self.evaluate(self.rows + [event])[0]["qualified"])
+
+    def test_control_metadata_limits_and_saved_privacy_validation(self):
+        events = []
+        for n in range(20):
+            events.append(
+                {
+                    "type": "system",
+                    "subtype": "commands_changed",
+                    "commands": [f"PRIVATE_{n}_{i}" for i in range(70)],
+                    "session_id": "fixture-session",
+                    "uuid": "12345678-1234-4234-8234-123456789012",
+                }
+            )
+        result, diag, _ = self.evaluate(self.rows[:1] + events + self.rows[1:])
+        self.assertFalse(result["qualified"])
+        fields = diag["telemetry"]["control_fields"]
+        observed = fields["system.commands"]
+        self.assertEqual(len(observed["observations"]), 8)
+        self.assertEqual(observed["overflow"], 12)
+        self.assertEqual(observed["observations"][0]["value_hashes"]["overflow"], 6)
+        self.assertNotIn("PRIVATE_", json.dumps(diag))
+        telemetry.validate_summary(diag["telemetry"])
+        for target, value in (
+            ("type", "PRIVATE_TYPE"),
+            ("length", -1),
+            ("present", "yes"),
+            ("value_hashes", {"PRIVATE_VALUE": 1}),
+        ):
+            changed = copy.deepcopy(diag["telemetry"])
+            changed["control_fields"]["system.commands"]["observations"][0][target] = value
+            with self.assertRaises(workflow.WorkflowError):
+                telemetry.validate_summary(changed)
+        changed = copy.deepcopy(diag["telemetry"])
+        changed["control_fields"]["PRIVATE_FIELD"] = observed
+        with self.assertRaises(workflow.WorkflowError):
+            telemetry.validate_summary(changed)
+
+    def test_v2_exact_recovery_and_assessment_do_not_gain_v3_catalog_semantics(self):
+        import claude_telemetry_v2
+        from tasks import digest
+
+        legacy_policy = {**self.policy, "adapter": "claude-stream-json-2.1.282-v2"}
+        event = {
+            "type": "system",
+            "subtype": "commands_changed",
+            "commands": [],
+            "session_id": "fixture-session",
+            "uuid": "12345678-1234-4234-8234-123456789012",
+        }
+        rows = self.rows[:1] + [event] + self.rows[1:]
+        raw = "\n".join(json.dumps(row) for row in rows)
+        body, diag = claude_telemetry_v2.capture(
+            raw, self.packet, self.packet, legacy_policy, "fixture-session"
+        )
+        self.assertEqual(
+            (body, diag), telemetry.capture(raw, self.packet, self.packet, legacy_policy, "fixture-session")
+        )
+        self.assertIn("unsupported_system_event", diag["reasons"])
+        self.assertEqual(diag["schema_version"], 3)
+        self.assertNotIn("control_fields", diag["telemetry"])
+        assessment = coverage.assess(self.packet, body, diag, policy=legacy_policy)
+        expected = digest(assessment)
+        meta = review.verify_packet(self.directory)
+        meta["review_policy"] = legacy_policy
+        review.atomic_json(self.directory / "metadata.json", meta)
+        review.save_result(self.directory, meta, body, diag, "2.1.282")
+        review.recover_review(self.repo, self.directory)
+        envelope = review.publication_body(self.directory)
+        names = ("review-result.json", "review-capture.json", "coverage.json", "review.md")
+        original = {name: (self.directory / name).read_bytes() for name in names}
+        (self.directory / "review-result.json").unlink()
+        with (
+            patch.object(
+                claude_native_auth,
+                "current_binding",
+                side_effect=AssertionError("No authentication on recovery"),
+            ),
+            patch.object(
+                review_claude.review_process,
+                "capture",
+                side_effect=AssertionError("No inference on recovery"),
+            ),
+        ):
+            review.recover_review(self.repo, self.directory)
+        self.assertEqual(original, {name: (self.directory / name).read_bytes() for name in names})
+        self.assertEqual(envelope, review.publication_body(self.directory))
+        self.assertEqual(expected, digest(coverage.assess(self.packet, body, diag, policy=legacy_policy)))
+        self.assertFalse(review.coverage_ready(self.directory))
+        with (
+            patch.object(review_claude.review_cli, "executable") as binary,
+            self.assertRaisesRegex(workflow.WorkflowError, "recovery-only"),
+        ):
+            review_claude.preflight(self.repo, legacy_policy)
+        binary.assert_not_called()

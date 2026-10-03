@@ -18,6 +18,7 @@ from workflow import WorkflowError, write_json
 # 2.1.282 binary. Unknown keys cannot be silently ignored by print mode.
 SETTINGS = {
     "disableAllHooks": True,
+    "disableBundledSkills": True,
     "switchModelsOnFlag": False,
     "autoContinueAtUsageLimit": False,
     "fallbackModel": [],

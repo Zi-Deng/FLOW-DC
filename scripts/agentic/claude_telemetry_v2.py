@@ -12,7 +12,6 @@ import re
 from pathlib import Path
 
 import claude_telemetry_v1 as legacy
-import claude_telemetry_v2 as previous
 import review_coverage as coverage
 from workflow import WorkflowError
 
@@ -21,132 +20,29 @@ KINDS = {"system", "assistant", "user", "result", "rate_limit_event"}
 # Pinned built-in declarations are not delegation permission. Agent is absent
 # from the tool list and actual delegated messages remain forbidden.
 BUILTIN_AGENTS = {*legacy.BUILTIN_AGENTS, "claude-code-guide"}
-ADAPTER = "claude-stream-json-2.1.282-v3"
+ADAPTER = "claude-stream-json-2.1.282-v2"
 LEGACY_ADAPTER = "claude-stream-json-2.1.282-v1"
 
 
-CONTROL_FIELDS = {
-    "init." + name
-    for name in (
-        "mcp_servers",
-        "plugins",
-        "skills",
-        "agents",
-        "slash_commands",
-        "terminal_slash_commands",
-        "plugin_errors",
-        "plugin_warnings",
-        "mcp_server_errors",
-    )
-} | {"system.commands", "system.status", "system.keys"}
-FIELD_TYPES = {"missing", "null", "boolean", "number", "string", "array", "object"}
-
-
 def validate_summary(value):
-    if not isinstance(value, dict) or "control_fields" not in value:
-        raise WorkflowError("Invalid Claude v3 control summary")
-    previous.validate_summary({k: v for k, v in value.items() if k != "control_fields"})
-    fields = value["control_fields"]
-    if not isinstance(fields, dict) or set(fields) - CONTROL_FIELDS:
-        raise WorkflowError("Unsafe control field names")
-    for field in fields.values():
+    extra = {"system_subtypes", "system_payloads", "unknown_agents"}
+    if not isinstance(value, dict) or not extra <= value.keys():
+        raise WorkflowError("Invalid Claude v2 telemetry summary")
+    legacy.validate_summary({key: item for key, item in value.items() if key not in extra})
+    for key in extra:
+        counts = value[key]
         if (
-            not isinstance(field, dict)
-            or set(field) != {"observations", "overflow"}
-            or type(field["overflow"]) is not int
-            or not 0 <= field["overflow"] <= coverage.MAX_EVENTS
-            or not isinstance(field["observations"], list)
-            or len(field["observations"]) > 8
+            not isinstance(counts, dict)
+            or len(counts) > 65
+            or any(
+                not isinstance(name, str)
+                or (name != "overflow" and not re.fullmatch(r"[a-f0-9]{64}", name))
+                or type(count) is not int
+                or not 0 < count <= coverage.MAX_EVENTS
+                for name, count in counts.items()
+            )
         ):
-            raise WorkflowError("Unsafe control field observations")
-        for item in field["observations"]:
-            if (
-                not isinstance(item, dict)
-                or set(item) != {"present", "type", "length", "value_hashes", "name_hashes", "count"}
-                or type(item["present"]) is not bool
-                or not isinstance(item["type"], str)
-                or item["type"] not in FIELD_TYPES
-                or item["present"] != (item["type"] != "missing")
-                or (
-                    item["length"] is not None
-                    and (
-                        type(item["length"]) is not int
-                        or not 0 <= item["length"] <= coverage.MAX_STREAM_BYTES
-                    )
-                )
-                or type(item["count"]) is not int
-                or not 0 < item["count"] <= coverage.MAX_EVENTS
-            ):
-                raise WorkflowError("Unsafe control field shape")
-            for name in ("value_hashes", "name_hashes"):
-                counts = item[name]
-                if (
-                    not isinstance(counts, dict)
-                    or len(counts) > 65
-                    or any(
-                        not isinstance(key, str)
-                        or (key != "overflow" and re.fullmatch(r"[a-f0-9]{64}", key) is None)
-                        or type(count) is not int
-                        or not 0 < count <= coverage.MAX_EVENTS
-                        for key, count in counts.items()
-                    )
-                ):
-                    raise WorkflowError("Unsafe control field hashes")
-
-
-def observe_control(summary, field, event, key):
-    """Retain bounded shapes and hashes, never raw customization/account/path data."""
-    present = key in event
-    value = event.get(key)
-    kind = (
-        "missing"
-        if not present
-        else "null"
-        if value is None
-        else "boolean"
-        if type(value) is bool
-        else "number"
-        if type(value) in {int, float}
-        else "string"
-        if isinstance(value, str)
-        else "array"
-        if isinstance(value, list)
-        else "object"
-    )
-    item = {
-        "present": present,
-        "type": kind,
-        "length": len(value) if isinstance(value, (str, list, dict)) else None,
-        "value_hashes": {},
-        "name_hashes": {},
-    }
-    values = value if isinstance(value, list) else [value] if present else []
-    for entry in values[:64]:
-        count_hash(item["value_hashes"], entry)
-        name = entry.get("name") if isinstance(entry, dict) else entry if isinstance(entry, str) else None
-        if name is not None:
-            count_hash(item["name_hashes"], name)
-    if len(values) > 64:
-        item["value_hashes"]["overflow"] = min(len(values) - 64, coverage.MAX_EVENTS)
-    target = summary["control_fields"].setdefault(field, {"observations": [], "overflow": 0})
-    for old in target["observations"]:
-        if {k: v for k, v in old.items() if k != "count"} == item:
-            old["count"] = min(old["count"] + 1, coverage.MAX_EVENTS)
-            return
-    if len(target["observations"]) < 8:
-        target["observations"].append({**item, "count": 1})
-    else:
-        target["overflow"] = min(target["overflow"] + 1, coverage.MAX_EVENTS)
-
-
-def empty_catalog(event):
-    return (
-        set(event) == {"type", "subtype", "commands", "session_id", "uuid"}
-        and event.get("subtype") == "commands_changed"
-        and event.get("commands") == []
-        and isinstance(event.get("uuid"), str)
-        and re.fullmatch(r"[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}", event["uuid"]) is not None
-    )
+            raise WorkflowError("Unsafe Claude v2 telemetry counts")
 
 
 def count_hash(counts, value):
@@ -255,9 +151,8 @@ def observation(tool, args, content, workspace, files):
 
 
 def capture(raw, packet, workspace, policy, session_id, *, exit_code=0, failure=None, refusal_path=None):
-    if policy["adapter"] in {LEGACY_ADAPTER, previous.ADAPTER}:
-        frozen = legacy if policy["adapter"] == LEGACY_ADAPTER else previous
-        return frozen.capture(
+    if policy["adapter"] == LEGACY_ADAPTER:
+        return legacy.capture(
             raw,
             packet,
             workspace,
@@ -281,7 +176,6 @@ def capture(raw, packet, workspace, policy, session_id, *, exit_code=0, failure=
     if exit_code != 0:
         reasons.add("provider_exit_failure")
     summary = {
-        "control_fields": {},
         "system_subtypes": {},
         "system_payloads": {},
         "unknown_agents": {},
@@ -339,10 +233,7 @@ def capture(raw, packet, workspace, policy, session_id, *, exit_code=0, failure=
             if kind == "system":
                 count_hash(summary["system_subtypes"], event.get("subtype"))
                 if event.get("subtype") != "init":
-                    observe_control(summary, "system.commands", event, "commands")
-                    observe_control(summary, "system.status", event, "status")
-                    observe_control(summary, "system.keys", {"keys": sorted(event)}, "keys")
-                    if not (request_start(event) or empty_catalog(event)) or not summary["init_count"]:
+                    if not request_start(event) or not summary["init_count"]:
                         reasons.add("unsupported_system_event")
                         count_hash(summary["system_payloads"], event)
                     continue
@@ -360,25 +251,14 @@ def capture(raw, packet, workspace, policy, session_id, *, exit_code=0, failure=
                     for agent in agents[: coverage.MAX_EVENTS]:
                         if not isinstance(agent, str) or agent not in BUILTIN_AGENTS:
                             count_hash(summary["unknown_agents"], agent)
-                required = {"mcp_servers", "plugins", "skills", "agents", "slash_commands"}
-                optional = {
-                    "terminal_slash_commands",
-                    "plugin_errors",
-                    "plugin_warnings",
-                    "mcp_server_errors",
-                }
-                for field in sorted(required | optional):
-                    observe_control(summary, "init." + field, event, field)
-                    allowed_agents = (
-                        field == "agents"
-                        and isinstance(agents, list)
-                        and all(isinstance(agent, str) and agent in BUILTIN_AGENTS for agent in agents)
-                    )
-                    if (field in required and field not in event) or (
-                        field in event and event[field] != [] and not allowed_agents
-                    ):
-                        reasons.add("unexpected_init_" + field)
-                        reasons.add("customization_or_mcp_loaded")
+                if (
+                    event.get("mcp_servers") != []
+                    or event.get("plugins", []) != []
+                    or event.get("skills", []) != []
+                    or not isinstance(agents, list)
+                    or any(not isinstance(agent, str) or agent not in BUILTIN_AGENTS for agent in agents)
+                ):
+                    reasons.add("customization_or_mcp_loaded")
                 if (
                     event.get("permissionMode") != "dontAsk"
                     or event.get("cwd") != str(workspace)
@@ -552,7 +432,7 @@ def capture(raw, packet, workspace, policy, session_id, *, exit_code=0, failure=
     # Missing step counters mean unknown. Native num_turns is not exact API-call
     # accounting; output tokens come only from terminal usage, never placeholders.
     diagnostics = {
-        "schema_version": 5,
+        "schema_version": 3,
         "adapter": policy["adapter"],
         "cli_version": policy["cli"]["version"],
         "exit_code": exit_code,

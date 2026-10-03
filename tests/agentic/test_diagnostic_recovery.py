@@ -22,6 +22,15 @@ from tasks import atomic_json, digest
 class RecoveryTests(GitFixture):
     def setUp(self):
         super().setUp()
+        # Frozen revision-4 tests model its original v2 runtime explicitly.
+        provider = patch.dict(review_policy.PROVIDERS["claude-code"], adapter=recovery.REV4_ADAPTER)
+        provider.start()
+        self.addCleanup(provider.stop)
+        default = patch.object(
+            diagnostics, "DEFAULT_POLICY", review_policy.policy(review_policy.choices("claude-code"), {})
+        )
+        default.start()
+        self.addCleanup(default.stop)
         self.repo._info["nameWithOwner"] = "Zi-Deng/FLOW-DC"
         binding = patch.object(claude_native_auth, "current_binding", return_value=AUTHENTICATION)
         binding.start()
@@ -352,3 +361,30 @@ class RecoveryTests(GitFixture):
             target.unlink()
             target.write_bytes(original)
         self.assert_original()
+
+    def test_stopped_v2_grant_remains_readable_but_never_authorizes_v3(self):
+        self.apply()
+        with (
+            patch.object(review_claude, "preflight"),
+            patch.object(review_claude, "execute", side_effect=KeyboardInterrupt),
+        ):
+            with self.assertRaises(KeyboardInterrupt):
+                self.run_diagnostic()
+        paths = [p for p in self.root_state.rglob("*") if p.is_file()]
+        original = {p: p.read_bytes() for p in paths}
+        with patch.dict(review_policy.PROVIDERS["claude-code"], adapter="claude-stream-json-2.1.282-v3"):
+            state = recovery.load(self.repo)
+            self.assertEqual(state["attempts"][1]["status"], "incomplete")
+            with patch.object(review_claude, "execute") as execute:
+                with self.assertRaisesRegex(workflow.WorkflowError, "original v2"):
+                    self.run_diagnostic()
+                execute.assert_not_called()
+            with patch.object(claude_native_auth, "bind") as bind:
+                with self.assertRaisesRegex(workflow.WorkflowError, "recovery-only"):
+                    self.apply()
+                bind.assert_not_called()
+            policy = review_policy.policy(review_policy.choices("claude-code"), {})
+            policy["authentication"] = AUTHENTICATION
+            with self.assertRaises(workflow.WorkflowError):
+                diagnostics.require_activation(self.repo, policy)
+        self.assertEqual(original, {p: p.read_bytes() for p in paths})

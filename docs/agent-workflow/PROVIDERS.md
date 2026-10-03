@@ -58,7 +58,7 @@ Each declaration has exactly these fields:
 | `model` | Exact lowercase versioned provider identifier, at most 128 characters; no aliases, auto/default/latest segments, paths or context modifiers |
 | `efforts` | Nonempty unique list of the model's verified efforts, within the pinned CLI's supported controls; Copilot `default` omits its effort flag |
 | `cli_version` | `2.1.282` for Claude or `1.0.83` for Copilot |
-| `adapter` | `claude-stream-json-2.1.282-v2` or `copilot-session-events-v2`, matching the provider |
+| `adapter` | `claude-stream-json-2.1.282-v3` or `copilot-session-events-v2`, matching the provider |
 | `evidence` | One to eight public HTTPS primary documentation URLs, without query strings or credentials; Claude documentation hosts for Claude, `docs.github.com` for Copilot |
 
 The list defaults to empty. Declarations cannot override built-in model entries or
@@ -204,8 +204,12 @@ policy is refused, not ignored. `auth status` display fallback cannot prove this
 
 The command requests safe/restricted mode, Read/Grep/Glob only, dontAsk, no permission
 prompts, empty settings discovery, explicit trusted settings, empty strict MCP,
-no slash commands and no persistence. Settings disable hooks, model switching,
-fallback models, auto-memory and usage-limit continuation. No shell, edits,
+no slash commands and no persistence. Settings explicitly require
+`disableBundledSkills: true` as well as disabling hooks, model switching, fallback
+models, auto-memory and usage-limit continuation. The bundled-skills setting alone
+does not prove an empty catalog: native exceptions exist. Required empty initial
+skills/plugins/MCP/slash-command metadata and empty command updates remain separate
+validation requirements; unexpected metadata blocks qualification. No shell, edits,
 delegation or fetch tool is authorized. Workspace hashes are checked afterwards.
 This is CLI containment, not an OS sandbox against a compromised signed executable.
 
@@ -247,18 +251,13 @@ or exact API-call counts. No undocumented auth-retry-disable variable is used;
 `CLAUDE_CODE_MAX_RETRIES` was removed. Complete native retry/fallback qualification
 and controlled native error-path evidence remain activation requirements.
 
-The original issue-33 allowance remains two explicit calls unless the separately
-approved revision-4 recovery grant is applied. Each diagnostic is limited to 300
-seconds and $2 estimated reference cost, with zero extra actual spending. The tiny
-canary packets are not PR reviews. The ledger records attempts before inference;
-failures and interruptions count. No automatic retry or reset exists.
-
-The coordinator invokes one diagnostic at a time, after checking the durable ledger
-and current native setup, billing receipt, lifetime and isolation prerequisites:
-
-```bash
-python3 scripts/agentic/workflow.py diagnose-claude --review-provider claude-code
-```
+Issue 33's original allowance and separately approved revision-4 recovery sequence
+are historical accounting. **The recovery sequence stopped after incomplete slot 2;
+there is no remaining executable allowance.** Slot 3 was never invoked. The current
+v3 adapter cannot apply or execute the old v2 grant. Neither a software fix nor
+credential renewal creates another call. Each counted diagnostic was bounded to
+300 seconds/$2 estimated reference cost, with zero extra actual spending authorized.
+The tiny canary packets are not PR reviews. Failed/interrupted calls stay counted.
 
 Both distinct purposes must succeed under the current exact CLI/adapter/model/effort
 and compatible authentication provenance. The tools-and-source purpose inspects
@@ -269,47 +268,37 @@ error or assistant assertion is insufficient. Every subsequent review still veri
 its own model and tool canaries. A diagnostic refusal cannot qualify ordinary PR
 coverage; synthetic fixtures cannot create live capability evidence.
 
-### Issue 33 revision-4 recovery only
+### Issue 33 revision-4 history and stopped execution
 
 The recorded approval binds [plan comment 5963470903](https://github.com/Zi-Deng/FLOW-DC/issues/33#issuecomment-5963470903)
 and contract `dbbe4f2dccf83acd2a5fab4b6b031c96673516f4e63820df1036a198fd1c81c1`.
 The historical “PROPOSED” wording in that published draft does not replace the actual
 operator approval record. Publication alone never establishes that approval.
-After deterministic checks and final-head CI, the coordinator previews and applies
-the narrowly scoped grant from the clean control checkout:
+The coordinator explicitly previewed/applied the grant and invoked slot 2 once on
+`495dd3de7f6e7404441b033409c831f3190d17f2`, after deterministic checks and required CI.
 
-```bash
-python3 scripts/agentic/workflow.py claude-diagnostic-recovery
-python3 scripts/agentic/workflow.py claude-diagnostic-recovery \
-  --apply --preview-digest EXACT_DIGEST_FROM_PREVIEW
-```
+That grant authorized exactly slot 2 for replacement native-tools-and-source and
+slot 3 for isolation-refusal only after slot 2 qualified. Total ceilings were
+900 seconds/$6 reference estimate including incomplete slot 1. Slot 2 returned a
+valid complete JSON report, matching model/session, actual Read/Grep/Glob and both
+inventory entries, but remained incomplete for customization and an unsupported
+system event. Its $0.0621016 reference estimate is not a subscription bill. Under
+the approved failure-stop rule, slot 3 cannot run. No fourth attempt, successful-output
+replay, report repair, automatic retry or fallback is authorized.
 
-Before this migration is merged, invoke the implemented `workflow.py` by its absolute
-issue-33 worktree path while keeping the clean control checkout as the working
-directory. Preview/application performs local validation only and never inference.
-Application requires an unchanged preview digest and the exact recorded issue/plan
-approval; an old approval or edited limit/counter cannot add allowance. This is not
-a general continuation or PR-review bypass.
+The schema-2 `recovery-ledger.json` and its version-1 grant remain bound to the
+original v2 policy, approval, original ledger text and attempt-1 hashes. Both trials'
+exact packet/report/capture/assessment bytes remain unchanged and incomplete. The
+current code reads the stopped grant using frozen v2 policy semantics, without
+credentials or inference. `claude-diagnostic-recovery` refuses new application under
+v3 before authentication. No operator command here grants another diagnostic.
 
-The separate schema-2 `recovery-ledger.json` binds a version-1 grant to that approval,
-the current diagnostic policy and the original ledger text plus all attempt-1 file
-hashes. The original schema-1 `ledger.json` and attempt-1 files remain unchanged;
-attempt 1 stays counted and incomplete under frozen v1 semantics. Partial or
-conflicting migration state is refused. The prospective sequence is exactly:
-
-1. Counted slot 2: fresh replacement native-tools-and-source, current v2 adapter.
-2. Counted slot 3: isolation-refusal, only after slot 2 has verified successful exact
-   report, capture, packet, assessment and invocation evidence.
-
-Maximum total attempt ceilings are 900 seconds/$6 reference estimate including
-failed slot 1; they do not authorize extra actual spending. A future failure or
-interruption stops the sequence. There is no fourth slot, successful-output replay,
-report synthesis, automatic invocation or new allowance from renewal/software fixes.
-Both new purposes must qualify before activation; the old trial never earns current
-coverage. Each prospective packet freezes its grant digest, slot and purpose.
-Verified same-account renewal may retain the observed generation through the existing
-explicit lineage checks; it does not rewrite old evidence or the grant. Local records
-remain owner-writable accounting, not cryptographic attestations or billing guarantees.
+Any further recovery needs a concrete separately approved and exactly bound amendment
+before allowance implementation or calls. A private proposal does not change the
+stopped ledger. Verified same-account lineage may preserve observed generations only
+under its existing rules; it never rewrites historical evidence or creates allowance.
+Local records remain owner-writable accounting, not cryptographic attestations or
+billing guarantees.
 
 Native stream parsing requires correlated successful model-facing Read/Grep/Glob
 results and one successful terminal result. UI metadata, assistant fragments,
@@ -325,20 +314,27 @@ The terminal text is saved exactly even when partial; no substring extraction,
 concatenation, report synthesis or inference repair is performed. Partial findings
 remain publishable as incomplete, while all ordinary readiness gates remain strict.
 
-The v2 Claude stream adapter uses diagnostic schema 3. Its Read parser recognizes
+The v3 Claude stream adapter uses diagnostic schema 5 (schema 4 remains reserved). Its Read parser recognizes
 the pinned renderer's numbered final empty segment after a trailing newline, without
 crediting that segment as source. LF/CRLF and tab-aware separators are supported;
 ambiguous native/inventory line numbering and extra reminder/truncation text remain
 incomplete. A precisely shaped `system/status/requesting` event is accepted; compact,
 null/unknown status, hook, retry and fallback events remain unsupported. Subtypes,
 unknown agent names and rejected system payloads are retained only as bounded hash
-counts. `claude-code-guide` is a known built-in declaration, never permission to use
+counts. V3 additionally accepts only an exact `commands_changed` envelope with an
+empty commands array, matching session, valid UUID and correct event order. Nonempty
+built-in/custom catalogs, extra fields and missing/null catalogs remain incomplete.
+Required initialization fields must be present; optional terminal commands and
+plugin/MCP error fields must be empty if present. Fixed per-field reasons and bounded
+presence/type/length observations with hashed names/values make failures inspectable
+without retaining raw provider strings. `claude-code-guide` is a known built-in declaration, never permission to use
 Agent or delegated tools. See [the pinned source audit](NATIVE-TELEMETRY-AUDIT.md).
 
 ## Historical records, hosted operation and this migration
 
-The original `claude-stream-json-2.1.282-v1` adapter and diagnostic schema 2 retain
-frozen parsing/validation for exact recovery and publication. They cannot execute or
+The original v1 adapter/diagnostic schema 2 and v2 adapter/diagnostic schema 3
+retain byte-identical frozen parsers and their original validation for exact
+recovery and publication. They cannot execute or
 establish current readiness. Adapter changes require fresh preparation and matching
 live capability evidence; they never upgrade a failed diagnostic or reset its ledger.
 

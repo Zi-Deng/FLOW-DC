@@ -57,7 +57,7 @@ PROVIDERS = {
             "manifest_sha256": "041abb14aba47e7dd31f8ba83d8102e54b6350d099382cb1def7ab10add415ed",
             "signing_fingerprint": "31DDDE24DDFAB679F42D7BD2BAA929FF1A7ECACE",
         },
-        "adapter": "claude-stream-json-2.1.282-v2",
+        "adapter": "claude-stream-json-2.1.282-v3",
         "billing_mode": "included-max-subscription-only",
     },
 }
@@ -218,9 +218,10 @@ def validate_policy(value):
     if type(value.get("schema_version")) is not int or value["schema_version"] != 1:
         raise WorkflowError("Unsupported review policy version")
     selected = {key: value.get(key) for key in ("provider", "model", "effort")}
-    legacy_claude = (
-        value.get("provider") == "claude-code" and value.get("adapter") == "claude-stream-json-2.1.282-v1"
-    )
+    legacy_claude = value.get("provider") == "claude-code" and value.get("adapter") in {
+        "claude-stream-json-2.1.282-v1",
+        "claude-stream-json-2.1.282-v2",
+    }
     cfg = {}
     if "model_compatibility" in value:
         cfg["review_model_extensions"] = [copy.deepcopy(value["model_compatibility"])]
