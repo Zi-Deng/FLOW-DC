@@ -363,3 +363,20 @@ A storage bound or green synthetic test does not prove those volumes fit one mod
 context or one invocation. No automatic report truncation, extra integration call,
 provider switch, renewed diagnostic grant or paid-extra spending follows a mismatch.
 Keep the completion allocation blocked while feasibility evidence is missing.
+
+### Bounded unit navigation
+
+New plan-6 units start at `navigation/START.txt` and follow paged required-material,
+related-context and complete-artifact indexes. Read explicit offset/limit windows;
+use actual numbered Grep matches for discovery or blank tails. Do not request whole
+large findings/disposition or source-index files. All originals remain available;
+lossless context chunks do not grant source inspection credit. The trusted prompt
+states the unit's frozen report ceiling, which may be below 50,000 bytes.
+
+Source/test-family grouping replaces workflow-wide hash ordering for new packets.
+Criteria, findings and cross-boundary obligations remain fully assigned. Linked
+context is conservative, not a guarantee of sufficient reasoning. Plan 5 assignments,
+exact reports and stopped ledgers retain their original semantics. The db897e9
+one-invocation trial is incomplete and cannot be replayed; its seven positive primary
+reads and successful probes did not overcome the failed Read. A fresh changed-head
+preview, current CI and separately bounded coordinator authorization remain necessary.

@@ -10,6 +10,7 @@ import uuid
 from pathlib import Path
 
 import review_coverage as coverage
+import review_navigation
 import review_policy
 from tasks import atomic_json, atomic_text, digest, plain_path
 from workflow import WorkflowError
@@ -33,9 +34,9 @@ def api():
     return review
 
 
-def plan(directory, *, version=5):
+def plan(directory, *, version=6):
     """Deterministic scope partition with explicit linked navigation context."""
-    if type(version) is not int or version != 5:
+    if type(version) is not int or version not in {5, 6}:
         raise WorkflowError("Unsupported batch plan version")
     directory = Path(directory)
     meta = api().verify_packet(directory)
@@ -98,6 +99,35 @@ def plan(directory, *, version=5):
         }
     ]
     for unit in units:
+        if version == 6:
+            primary_paths = {lookup[key]["path"] for key in unit["required_ids"]}
+            stems = {Path(path).stem.removeprefix("test_") for path in primary_paths}
+            related_paths = set(primary_paths)
+            for mapping in mappings:
+                if mapping["changed_path"] in primary_paths:
+                    related_paths.update(
+                        p for p in mapping["candidates"] if Path(p).stem.removeprefix("test_") in stems
+                    )
+            relevant_findings = set()
+            for key, item in lookup.items():
+                if item["kind"] == "finding" and item.get("artifact") and not item.get("omitted"):
+                    text = (packet / item["artifact"]).read_bytes().decode("utf-8")
+                    if any(path in text for path in primary_paths):
+                        relevant_findings.add(key)
+            linked = {link for key in unit["required_ids"] for link in lookup[key].get("links", [])}
+            related = {
+                key for key, item in lookup.items() if item["path"] in related_paths or key in linked
+            } | relevant_findings
+            unit["context_ids"] = sorted(set(unit["context_ids"]) | (related - set(unit["required_ids"])))
+            unit["navigation_ids"] = sorted(
+                related - set(unit["required_ids"]),
+                key=lambda key: (
+                    lookup[key]["kind"],
+                    lookup[key]["path"],
+                    lookup[key].get("start_line", 0),
+                    key,
+                ),
+            )
         for field in ("required_ids", "context_ids"):
             entries = [lookup[key] for key in unit[field]]
             unit[field.removesuffix("_ids") + "_volume"] = {
@@ -117,6 +147,18 @@ def plan(directory, *, version=5):
         "inventory_sha256": api().digest(packet / "required-material.json"),
         "units": units,
         "resources": {
+            **(
+                {
+                    "navigation": {
+                        "version": 1,
+                        "page_bytes": review_navigation.PAGE_BYTES,
+                        "page_lines": review_navigation.PAGE_LINES,
+                        "max_bytes_per_unit": review_navigation.MAX_NAVIGATION_BYTES,
+                    }
+                }
+                if version == 6
+                else {}
+            ),
             "context_bytes": sum(item.get("bytes", 0) for item in inventory),
             "omissions": [item["id"] for item in inventory if item.get("omitted")],
             "report_materialization": "exact-utf8-ranges-v4",
@@ -248,6 +290,11 @@ def prepare_unit(directory, batch, unit, reservation):
             ],
             version=batch["schema_version"],
         )
+    if batch["schema_version"] == 6:
+        assignment["max_report_bytes"] = batch["budget"]["max_report_bytes"]
+        assignment["navigation"] = review_navigation.materialize(
+            packet, {**unit, "required_ids": assignment["required_ids"]}, assignment["max_report_bytes"]
+        )
     atomic_json(packet / "assignment.json", assignment)
     meta = api().verify_packet(parent)
     child_meta = {
@@ -323,6 +370,7 @@ def unit_assessment(directory, batch, unit):
         version=batch["schema_version"],
     ):
         raise WorkflowError("Unit inspection suggestions changed")
+    validate_navigation(target, batch, unit, assignment)
     state = state_for(directory, batch)
     reservation = (
         next((row for row in state["reservations"] if row["binding"]["unit"] == unit["id"]), None)
@@ -425,7 +473,9 @@ def verify_unit_publications(repo, directory, complete_only=True):
 def select(directory, limits, authorization=None):
     directory = plain_path(directory)
     meta = api().verify_packet(directory)
-    preview = plan(directory)
+    preview = plan(
+        directory, version=load(directory)["schema_version"] if meta.get("kind") == "batch-parent" else 6
+    )
     limits, policy = review_policy.batch_budget(limits, meta["review_policy"], len(preview["units"]))
     executable = {**preview, "budget": limits, "unit_policy": policy}
     if meta.get("kind") == "batch-parent":
@@ -478,7 +528,7 @@ def load(directory):
     if meta.get("kind") != "batch-parent" or digest(saved) != meta.get("batch_sha256"):
         raise WorkflowError("Batch binding changed")
     limits, policy = review_policy.batch_budget(saved["budget"], meta["review_policy"], len(saved["units"]))
-    expected = {**plan(directory), "budget": limits, "unit_policy": policy}
+    expected = {**plan(directory, version=saved["schema_version"]), "budget": limits, "unit_policy": policy}
     validate_authorization(saved["authorization"], expected)
     if saved != {**expected, "authorization": saved["authorization"]}:
         raise WorkflowError("Batch plan, provider or allocation changed")
@@ -636,6 +686,7 @@ def dispatch_timeout(repo, directory, meta, context, *, clock=time.time):
     ):
         raise WorkflowError("Dispatch context or child binding changed")
     api().verify_packet(directory)
+    validate_navigation(directory, batch, unit, meta["batch_unit"])
     api().current_pr(repo, meta["pr"], meta["head_sha"], meta["base_sha"])
     current_contract(repo, parent, meta)
     for prior in batch["units"][: row["binding"]["slot"] - 1]:
@@ -955,3 +1006,16 @@ def verify_harness(authorization):
     }
     if actual_commit != authorization["harness_commit"] or files != authorization["harness_files"]:
         raise WorkflowError("Authorized harness commit or complete module hashes changed")
+
+
+def validate_navigation(directory, batch, unit, assignment):
+    if batch["schema_version"] == 6:
+        limit = batch["budget"]["max_report_bytes"]
+        if assignment.get("max_report_bytes") != limit:
+            raise WorkflowError("Unit report bound changed")
+        review_navigation.validate(
+            Path(directory) / "packet",
+            {**unit, "required_ids": assignment["required_ids"]},
+            limit,
+            assignment.get("navigation"),
+        )

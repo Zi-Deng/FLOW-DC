@@ -633,13 +633,27 @@ def build(repo, packet, head, ancestor, head_index, base_index, context, cfg, pr
     )
     scopes, current = [], []
     totals = [0, 0]
+
     # Cross-boundary material always follows component material. Repair material
     # leads navigation; the inventory still requires the original complete scope.
+    def family(item):
+        path = PurePosixPath(item["path"])
+        if item["kind"] in {"acceptance", "policy", "finding"}:
+            return item["kind"]
+        if str(path).startswith(("scripts/agentic/", "tests/agentic/")) and path.suffix == ".py":
+            return "agentic:" + path.stem.removeprefix("test_")
+        return item["path"]
+
     ordered = sorted(
         required,
         key=lambda item: (
             0 if item["kind"] == "repair" else 2 if item["kind"] == "cross-boundary" else 1,
             component(item["path"]),
+            family(item),
+            item["path"],
+            item.get("revision", ""),
+            item.get("artifact") or "",
+            item.get("start_line", 0),
             item["id"],
         ),
     )
@@ -663,6 +677,7 @@ def build(repo, packet, head, ancestor, head_index, base_index, context, cfg, pr
             len(current) >= SCOPE_ITEMS
             or totals[0] + lines > SCOPE_LINES
             or totals[1] + size > SCOPE_BYTES
+            or family(current[0]) != family(item)
             or component(current[0]["path"]) != component(item["path"])
             or current[0]["kind"] == "cross-boundary"
             or item["kind"] == "cross-boundary"
@@ -690,6 +705,7 @@ def build(repo, packet, head, ancestor, head_index, base_index, context, cfg, pr
         packet / "scopes.json",
         {
             "schema_version": 1,
+            "partition": "source-test-family-v2",
             "scopes": scopes,
             "required_items": len(required),
             "required_lines": sum(s["lines"] for s in scopes),

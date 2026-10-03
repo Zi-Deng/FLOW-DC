@@ -533,6 +533,7 @@ class BatchTests(GitFixture):
 
         from review_fixtures import HELP, provider_response
 
+        self.limits["max_report_bytes"] = 10000
         batch_fixtures.select(self.repo, self.directory, self.limits)
         original = review.run
         homes = []
@@ -573,6 +574,8 @@ class BatchTests(GitFixture):
             self.assertIn("inspect every required_ids entry", prompt)
             self.assertIn("1-based inclusive", prompt)
             self.assertIn("inspection_suggestions", prompt)
+            self.assertIn("under 10000 UTF-8 bytes", prompt)
+            self.assertIn('view({"path":"navigation/START.txt","view_range":[1,20]})', prompt)
             self.assertNotIn("inspect EVERY required-material.json entry", prompt)
             self.assertNotIn("then cover the full inventory", prompt)
             self.assertIn("--available-tools=view,grep,glob", args)

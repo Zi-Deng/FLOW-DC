@@ -34,12 +34,41 @@ actual separately granted finite authorization; creating JSON cannot confer auth
 Unmerged PR source is inert data unless its exact tested harness is separately authorized.
 
 The preview exposes per-unit required/context items, lines and UTF-8 byte volumes.
-Plan version 5 binds contract, head/base/merge-base, immutable parent inventory and
+Plan versions 5 and 6 bind contract, head/base/merge-base, immutable parent inventory and
 files, complete provider/authentication policy, context links, output limits and
 integration dependency identities. Every original ID has one primary assignment;
 context overlap earns no duplicate credit. Integration reads the exact component
 reports as additional required ranges. Oversized report material stops before its
 provider invocation. Reports are never truncated to fit an allocation.
+
+Plan 6 adds reproducible unit navigation and the frozen exact-report ceiling to each
+assignment. New packet scopes group source paths and same-stem agentic tests before
+applying the existing 12-item, 800-line and 64,000-byte limits; hash IDs no longer
+interleave unrelated workflow files. Diff/base/head slices remain ordered within a
+path. Criteria and findings retain separate complete primary obligations. Context
+closure remains conservative and available in full; related source/test paths, linked
+criteria and findings mentioning the primary paths lead the context index. This
+organization does not certify semantic completeness or test adequacy.
+
+Start each new unit at `navigation/START.txt`. Its paged required, related and artifact
+indexes expose every original file and byte through finite Read offset/limit windows
+(or inclusive view ranges). Pages and direct windows are at most 120 lines and 16,000
+UTF-8 bytes; navigation has a separate 16,000,000-byte ceiling. Original context lines
+above 16,000 bytes use lossless JSON byte-offset/text chunks, bounded by the existing
+65,536-byte projection line ceiling. These context copies earn no original source
+credit. Required inventory projections must still be inspected at their assigned
+paths. Missing, changed, oversized or truncated material fails closed. Materialization
+and validation recompute the exact original-byte bindings before dispatch and aggregate
+assessment; no historical packet is rewritten. Plan 5 qualification/publication remains
+byte reproducible with its original assignment format.
+
+The prompt states the assigned frozen report limit (including grants below 50,000
+bytes). Use explicit windows for large findings/dispositions, source inventories and
+assignment metadata; whole-file reads can fail at provider limits. Prompt guidance
+cannot guarantee correct tool use or completed inspection. The db897e9 trial remains
+incomplete: one invocation, a failed Read, zero aggregate credit of 629 entries, and
+no subsequent component or integration dispatch. Seven positive primary reads did
+not override that failure. A stopped grant cannot resume or replay.
 
 Ledger version 2 persists start, absolute deadline, authorization, ordered reservations,
 dispatch identity and first failure-stop before inference. Adapters revalidate the
@@ -64,7 +93,7 @@ Hosted operation remains opt-in Copilot single-review only.
 | Record namespace | Current | Frozen historical handling |
 | --- | --- | --- |
 | Packet metadata | 6 with explicit kind | 1–3 original meanings; 4 recovery-only batch; 5 provider-bound single |
-| Batch plan / ledger | 5 / 2 | Plans 1–4 and ledger 1 never dispatch unused slots |
+| Batch plan / ledger | 6 / 2 | Plan 5 retains original assignments; plans 1–4 and ledger 1 never dispatch unused slots |
 | Capture / result | 6 | Exact schema-3 and schema-5 journals recover without inference |
 | Single or unit / aggregate assessment | 3 / 5 | Original assessment hashes reproduced by frozen dependencies |
 | Model report | 2 | Unchanged JSON syntax and exact final bytes |
