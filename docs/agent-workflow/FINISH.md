@@ -1,5 +1,13 @@
 # Human merge, archival and cleanup
 
+Current issue-31 batch records use metadata/capture 6, plan 5 and ledger 2; see
+[provider-aware bounded batches](COVERAGE.md#provider-aware-bounded-batches-current)
+for typed allocations, named authorization, exact-report publication and recovery-only
+history. Single-review schema 5 remains eligible under its original provider checks.
+Batch children cannot qualify parents; finish still requires every component and
+integration, exact current-head/base publications and CI receipts. Dated migration
+notes below retain their historical meaning and grant no new inference allowance.
+
 The finish skill prepares the decision and command; the maintainer runs the command.
 Merge preparation is not a merge approval. The script checks mechanical preconditions,
 but the human still decides whether the reviewed change and domain evidence justify
@@ -176,3 +184,12 @@ inspection fail readiness. The low-level alternative also requires `--review-dir
 and the exact published coverage-qualified COMMENT. This gate verifies accounting,
 not understanding or human approval. Acceptance, findings and executable validation
 remain separate obligations. See [migration and recovery](COVERAGE.md).
+
+## Provider migration handoff
+
+Normal finish still requires a qualified current provider-bound packet, exact report
+publication and required CI. Legacy or partial records cannot establish readiness.
+Issue #33 / PR #34 alone has an approved independent model review exemption, so normal
+finish tooling remains inapplicable to that exceptional handoff. See
+[PROVIDERS.md](PROVIDERS.md) for incomplete activation evidence, exact-head human checks
+and the separate PR #32 sequence. No generic skip-review flag is implemented.

@@ -19,9 +19,13 @@ import tasks
 
 class FinishTests(PipelineFixture):
     def test_finish_uses_aggregate_and_every_exact_unit_publication(self):
+        from batch_fixtures import authorize
+        from batch_fixtures import limits as batch_limits
         from test_review_batch import BatchPipelineTests
 
-        limits = dict(requests=100, credits=100, seconds=600, unit_credits=1, unit_seconds=60)
+        limits = batch_limits()
+        preview = pipeline.review_task(self.repo, 12, batch=True, fresh=True)
+        authorization = authorize(self.repo, preview["directory"], limits)
         before = len(self.reviews)
         with patch.object(
             review,
@@ -35,9 +39,9 @@ class FinishTests(PipelineFixture):
                 12,
                 batch=True,
                 batch_limits=limits,
+                batch_authorization=authorization,
                 execute=True,
                 publish=True,
-                fresh=True,
                 approved_continuation=True,
                 continue_reason="Explicit synthetic batch test",
             )

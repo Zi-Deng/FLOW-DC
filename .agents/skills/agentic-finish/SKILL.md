@@ -20,3 +20,8 @@ The human-run script must verify remote merge state before archival/cleanup, pre
 Require machine-validated coverage and exact published output bound to the current packet/head/base. Reject legacy, partial, malformed or missing diagnostics, including manually supplied review IDs. Coverage accounting does not prove understanding or human approval; required checks and acceptance remain separate.
 
 Read [the coverage contract and migration runbook](../../../docs/agent-workflow/COVERAGE.md).
+
+For current provider selection, immutable policy, activation blockers, typed budgets
+and historical recovery, read [provider guidance](../../../docs/agent-workflow/PROVIDERS.md).
+Partial/legacy evidence cannot establish readiness. Migration-only exceptions do not
+create a generic review bypass.

@@ -12,7 +12,7 @@ The core component is **PAARC (Policy-Aware Adaptive Request Controller)**, a co
 
 ## Agentic development
 
-Future development uses the repository's eight [agentic workflow skills](docs/agent-workflow/SKILLS.md): an approved issue plan, isolated worktree, Astra implementation, independent Copilot Opus review and a human merge decision. Start with the [workflow guide](docs/agent-workflow/README.md) and [setup instructions](docs/agent-workflow/SETUP.md). The [verification record](docs/agent-workflow/VERIFICATION.md) distinguishes tested behavior from remaining rollout steps.
+Future development uses the repository's eight [agentic workflow skills](docs/agent-workflow/SKILLS.md): an approved issue plan, isolated worktree, Astra implementation, independent provider-selected model review and a human merge decision. Start with the [workflow guide](docs/agent-workflow/README.md) and [setup instructions](docs/agent-workflow/SETUP.md). The [verification record](docs/agent-workflow/VERIFICATION.md) distinguishes tested behavior from remaining rollout steps.
 
 Developer validation uses a separate Python 3.12+ environment and `make check`; it runs the focused FLOW-DC and workflow suites without a dataset or cluster campaign. Private task context belongs in Git-ignored `memory/`, and workflow state lives in Git-ignored `.agentic-local/`.
 

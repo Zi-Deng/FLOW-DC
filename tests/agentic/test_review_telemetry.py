@@ -94,6 +94,17 @@ class TelemetryTests(GitFixture):
                 self.assertFalse(result["qualified"])
                 self.assertIn("malformed_stdout_framing", diag["reasons"])
 
+    def test_null_tool_progress_remains_stricter_on_stdout_than_session_history(self):
+        terminal = {"type": "result", "exitCode": 0, "result": self.rows[-2]["data"]["content"]}
+        for kind in ("tool.execution_progress", "tool.execution_partial_result"):
+            with self.subTest(kind=kind):
+                event = {"type": kind, "data": None}
+                rows = [*self.rows[:-2], event, *self.rows[-2:]]
+                self.assertTrue(self.evaluate(rows=rows)[0]["qualified"])
+                result, diag = self.evaluate(stdout=[event, terminal])
+                self.assertFalse(result["qualified"])
+                self.assertIn("malformed_stdout_framing", diag["reasons"])
+
     def test_session_identity_ambiguity_symlink_and_missing_events_fail_closed(self):
         rows = copy.deepcopy(self.rows)
         rows[0]["data"]["sessionId"] = "wrong-session"
@@ -443,6 +454,16 @@ class CaptureTests(unittest.TestCase):
             )
             self.assertEqual(result.failure_reason, "stream_limit_exceeded")
             self.assertLessEqual(len(result.stdout), 32)
+            result = review_process.capture(
+                [sys.executable, "-c", "import os;os.write(2,b'private-stderr'*4096)"],
+                cwd=directory,
+                env=os.environ.copy(),
+                timeout=5,
+                limit=32,
+            )
+            self.assertEqual(result.failure_reason, "stream_limit_exceeded")
+            self.assertEqual(result.stderr, b"")
+            self.assertNotIn(b"private-stderr", result.stdout)
             result = review_process.capture(
                 [sys.executable, "-c", "import time;time.sleep(5)"],
                 cwd=directory,

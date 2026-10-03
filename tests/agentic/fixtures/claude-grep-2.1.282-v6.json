@@ -1,0 +1,117 @@
+{
+  "binary_sha256": "3afe8535c0cc33f0e24f7b25dab7a1727b8b592196f8496a8bc302ba2161eed3",
+  "ranges": [
+    {
+      "label": "rg JSON result rendering",
+      "start": 202194210,
+      "end": 202195562,
+      "sha256": "43835618441916cf43d30c013a70271f657ebdf9cffa2d37ce928ded17e8cd7a",
+      "source": "function nRn(e,n){let s=(F)=>F===void 0?\"\":F.text!==void 0?F.text:Buffer.from(F.bytes??\"\",\"base64\").toString(\"utf8\"),g=(F,B)=>F.length>500?B===\"match\"?\"[Omitted long matching line]\":\"[Omitted long context line]\":F,h=[],b=[],w=null,M=-1;for(let F of e){if(!F.startsWith(\"{\"))continue;let B;try{B=zo(F)}catch{continue}if(B===null||typeof B!==\"object\")continue;let G=B.data??{};if(B.type===\"begin\"){b=[];continue}if(B.type===\"end\"){let $e=G.binary_offset,Le=typeof $e===\"number\";for(let He of b)if(!Le||!He.slice(He.indexOf(\"\\x00\")+1).includes(\"\\x00\"))h.push(He);if(Le&&b.length>0)h.push(`${s(G.path)}\\x00binary file matches (found \"\\\\0\" byte around offset ${$e})`);b=[];continue}if(B.type!==\"match\"&&B.type!==\"context\")continue;let ge=s(G.path),_e=G.line_number??0,we=s(G.lines).replace(/\\r?\\n$/,\"\");if(n.contextBreaks&&w!==null&&(ge!==w||_e>M+1))b.push(\"--\");if(B.type===\"match\"&&n.onlyMatching){let $e=_e;for(let Le of G.submatches??[]){let He=_e+oRn(Buffer.from(we),Le.start??0);s(Le.match).split(`\n`).forEach((We,Xe)=>{b.push(`${ge}\\x00${He+Xe}:${g(We.replace(/\\r$/,\"\"),\"match\")}`),$e=He+Xe})}w=ge,M=$e;continue}let Ee=B.type===\"match\"?\"match\":\"context\",xe=Ee===\"match\"?\":\":\"-\",Ie=we.split(`\n`).map(($e)=>$e.replace(/\\r$/,\"\"));Ie.forEach(($e,Le)=>{b.push(`${ge}\\x00${_e+Le}${xe}${g($e,Ee)}`)}),w=ge,M=_e+Ie.length-1}for(let F of b)h.push(F);return h}"
+    },
+    {
+      "label": "Grep lexical path projection",
+      "start": 202193555,
+      "end": 202193917,
+      "sha256": "20984c1dc340476cdbc465d2dd24ecef0fcdae83eb25f285f7f6a17ab2861ebe",
+      "source": "function eRn(e,n){let r=n.lexical.endsWith(oA)?n.lexical:n.lexical+oA;if(n.relativeOutput)return e.startsWith(\"./\")?r+e.slice(2):e;for(let s of[n.target,n.canonical]){let g=s.endsWith(oA)?s:s+oA;if(e.startsWith(g))return r+e.slice(g.length);if(e===s)return n.lexical;if(e.startsWith(`${s}:`)||e.startsWith(`${s}\\x00`))return n.lexical+e.slice(s.length)}return e}"
+    },
+    {
+      "label": "relative file display",
+      "start": 194952030,
+      "end": 194952092,
+      "sha256": "ce992cde020b9051d4c6a18d83492f05fa12f611fd09be999aba41f6978457f7",
+      "source": "function Bct(e){let r=v(ne(),e);return r.startsWith(\"..\")?e:r}"
+    },
+    {
+      "label": "bounded pagination",
+      "start": 202184401,
+      "end": 202184562,
+      "sha256": "d88f37c5dc07e11ecb8a8d1f80bfd5a10ab9299b354adfdf5bd1ec4f83580496",
+      "source": "function V_e(e,n,r=0){if(n===0)return{items:e.slice(r),appliedLimit:void 0};let s=n??VCn,g=e.slice(r,r+s),h=e.length-r>s;return{items:g,appliedLimit:h?s:void 0}}"
+    },
+    {
+      "label": "pagination label",
+      "start": 202184562,
+      "end": 202184673,
+      "sha256": "6936c60fa966871018bd2460a48da8947609a2d8a88b6c989315452a38114557",
+      "source": "function Y_e(e,n){let r=[];if(e!==void 0)r.push(`limit: ${e}`);if(n)r.push(`offset: ${n}`);return r.join(\", \")}"
+    },
+    {
+      "label": "Grep result mapper",
+      "start": 202185996,
+      "end": 202186980,
+      "sha256": "fcb6ca60cf3d904baa4146b1dcb9888cda31b68ed70aa263a345b1eaea8bef52",
+      "source": "mapToolResultToToolResultBlockParam({mode:e=\"files_with_matches\",numFiles:n,filenames:r,content:s,numLines:g,numMatches:h,totalFiles:b,totalLines:w,appliedLimit:M,appliedOffset:F},B){if(e===\"content\"){let _e=Y_e(M,F),we=s||(F&&(w??0)>0?\"No entries at this offset\":\"No matches found\"),Ee=_e?`${we}\n\n[Showing results with pagination = ${_e}]`:we;return{tool_use_id:B,type:\"tool_result\",content:Ee}}if(e===\"count\"){let _e=Y_e(M,F),we=h??0,Ee=n??0,xe=s||(we>0?\"No entries at this offset\":\"No matches found\"),Ie=`\n\nFound ${we} total ${we===1?\"occurrence\":\"occurrences\"} across ${Ee} ${Ee===1?\"file\":\"files\"}.${_e?` with pagination = ${_e}`:\"\"}`;return{tool_use_id:B,type:\"tool_result\",content:xe+Ie}}let G=Y_e(M,F);if(n===0)return{tool_use_id:B,type:\"tool_result\",content:F&&(b??0)>0?`No entries at this offset. [Showing results with pagination = ${G}]`:\"No files found\"};let ge=`Found ${n} ${P(n,\"file\")}${G?` ${G}`:\"\"}\n${r.join(`\n`)}`;return{tool_use_id:B,type:\"tool_result\",content:ge}}"
+    },
+    {
+      "label": "Grep content-mode display",
+      "start": 202192107,
+      "end": 202192606,
+      "sha256": "87e086685bcaee84bae483f709ce0410944fc27c4d37f4f01ae5f3ea3fc01d68",
+      "source": "if(g===\"content\"){let{items:Xn,appliedLimit:mo}=V_e(ft,ge,_e),jn=Xn.map((Vt)=>{let yn=Vt.indexOf(\"\\x00\");if(yn<0)return F?Vt:Vt.replace(/^\\d+[:-]/,\"\");let _n=Vt.substring(yn+1),mn=/^(\\d+)([:-])/.exec(_n),An=mn?.[2]??\":\",qo=F||mn===null?_n:_n.substring(mn[0].length);return e.isDirectory?Bct(Vt.substring(0,yn))+An+qo:qo});return{data:{mode:\"content\",numFiles:0,filenames:[],content:jn.join(`\n`),numLines:jn.length,totalLines:ft.length,...mo!==void 0&&{appliedLimit:mo},..._e>0&&{appliedOffset:_e}}}}"
+    },
+    {
+      "label": "Grep input schema",
+      "start": 202181907,
+      "end": 202184340,
+      "sha256": "4a0bb59cf4136efdf0449be2864aa4451e62ed8522f0bcb86741534dc42c789b",
+      "source": "var zCn=f(()=>Je({pattern:o().describe(\"The regular expression pattern to search for in file contents\"),path:o().optional().describe(\"File or directory to search in (rg PATH). Defaults to current working directory.\"),glob:o().optional().describe('Glob pattern to filter files (e.g. \"*.js\", \"*.{ts,tsx}\") - maps to rg --glob'),output_mode:z([\"content\",\"files_with_matches\",\"count\"]).optional().describe('Output mode: \"content\" shows matching lines (supports -A/-B/-C context, -n line numbers, head_limit), \"files_with_matches\" shows file paths (supports head_limit), \"count\" shows match counts (supports head_limit). Defaults to \"files_with_matches\".'),\"-B\":SH(k().optional()).describe('Number of lines to show before each match (rg -B). Requires output_mode: \"content\", ignored otherwise.'),\"-A\":SH(k().optional()).describe('Number of lines to show after each match (rg -A). Requires output_mode: \"content\", ignored otherwise.'),\"-C\":SH(k().optional()).describe(\"Alias for context.\"),context:SH(k().optional()).describe('Number of lines to show before and after each match (rg -C). Requires output_mode: \"content\", ignored otherwise.'),\"-n\":vC(O().optional()).describe('Show line numbers in output (rg -n). Requires output_mode: \"content\", ignored otherwise. Defaults to true.'),\"-i\":vC(O().optional()).describe(\"Case insensitive search (rg -i)\"),\"-o\":vC(O().optional()).describe('Print only the matched (non-empty) parts of each matching line, one match per output line (rg -o / --only-matching). Requires output_mode: \"content\", ignored otherwise. Defaults to false.'),type:o().optional().describe(\"File type to search (rg --type). Common types: js, py, rust, go, java, etc. More efficient than include for standard file types.\"),head_limit:SH(k().optional()).describe('Limit output to first N lines/entries, equivalent to \"| head -N\". Works across all output modes: content (limits output lines), files_with_matches (limits file paths), count (limits count entries). Defaults to 250 when unspecified. Pass 0 for unlimited (use sparingly \\u2014 large result sets waste context).'),offset:SH(k().optional()).describe('Skip first N lines/entries before applying head_limit, equivalent to \"| tail -n +N | head -N\". Works across all output modes. Defaults to 0.'),multiline:vC(O().optional()).describe(\"Enable multiline mode where . matches newlines and patterns can span lines (rg -U --multiline-dotall). Default: false.\"),...A4()})),"
+    },
+    {
+      "label": "Grep argv prefix",
+      "start": 202188625,
+      "end": 202189715,
+      "sha256": "3984d2912aef7925328e6d5cf77dc6dc79ff3314ee7b93feff42b1f2345c19f8",
+      "source": "async function ZCn(e,{pattern:n,glob:r,type:s,output_mode:g=\"files_with_matches\",\"-B\":h,\"-A\":b,\"-C\":w,context:M,\"-n\":F=!0,\"-i\":B=!1,\"-o\":G=!1,head_limit:ge,offset:_e=0,multiline:we=!1},Ee){let{signal:xe}=Ee,Ie=e.canonical,$e=[\"--hidden\"],Le=[],He=new Set,We=(Xn)=>{He.add($e.length),$e.push(\"--glob\",Xn)};for(let Xn of KCn)We(`!${Xn}`);if($e.push(\"--max-columns\",\"500\"),we)$e.push(\"-U\",\"--multiline-dotall\");if(B)$e.push(\"-i\");if(g===\"files_with_matches\")$e.push(\"-l\");else if(g===\"count\")$e.push(\"-c\",\"-H\");if($e.push(g===\"content\"?\"--json\":\"--null\"),g===\"content\")$e.push(\"-n\");if(G&&g===\"content\")$e.push(\"-o\");if(g===\"content\")if(M!==void 0)$e.push(\"-C\",M.toString());else if(w!==void 0)$e.push(\"-C\",w.toString());else{if(h!==void 0)$e.push(\"-B\",h.toString());if(b!==void 0)$e.push(\"-A\",b.toString())}if(n.startsWith(\"-\"))$e.push(\"-e\",n);else $e.push(n);if(s)$e.push(\"--type\",s);if(r){let Xn=[],mo=r.split(/\\s+/);for(let jn of mo)if(jn.includes(\"{\")&&jn.includes(\"}\"))Xn.push(jn);else Xn.push(...jn.split(\",\").filter(Boolean));for(let jn of Xn.filter(Boolean))Le.push($e.length),We(jn)}"
+    },
+    {
+      "label": "Grep parsed result dispatch",
+      "start": 202191219,
+      "end": 202191405,
+      "sha256": "d239c7964b6f5f36f364037b8aa8dbdcdedc7be74fbde4e2a15f1ef0082fcb0c",
+      "source": "if(Gt&&g===\"content\")ft=nRn(ft,{contextBreaks:[M,w,h,b].some((Xn)=>typeof Xn===\"number\"&&Xn>0),onlyMatching:G===!0});if(Gt&&(e.relativeOutput||!e.isDirectory))ft=ft.map((Xn)=>eRn(Xn,e));"
+    }
+  ],
+  "limits": "Exact pure renderer/pagination/path functions and selected content-mode branch, synthetic rg JSON. No native rg/tool/endpoint/auth/CLI execution. Input schema and argv dispatch source-audited only; not proof of actual trial7 args/result.",
+  "outputs": {
+    "directory": {
+      "tool_use_id": "grep-call",
+      "type": "tool_result",
+      "content": "capability/fixture.txt:2:CLAUDE_NATIVE_CANARY"
+    },
+    "file": {
+      "tool_use_id": "grep-call",
+      "type": "tool_result",
+      "content": "2:CLAUDE_NATIVE_CANARY"
+    },
+    "noNumbers": {
+      "tool_use_id": "grep-call",
+      "type": "tool_result",
+      "content": "capability/fixture.txt:CLAUDE_NATIVE_CANARY"
+    },
+    "paginated": {
+      "tool_use_id": "grep-call",
+      "type": "tool_result",
+      "content": "capability/fixture.txt:2:CLAUDE_NATIVE_CANARY\n\n[Showing results with pagination = limit: 1]"
+    },
+    "offset": {
+      "tool_use_id": "grep-call",
+      "type": "tool_result",
+      "content": "No entries at this offset\n\n[Showing results with pagination = offset: 1]"
+    },
+    "empty": {
+      "tool_use_id": "grep-call",
+      "type": "tool_result",
+      "content": "No matches found"
+    }
+  },
+  "command": {
+    "pattern": "CLAUDE_NATIVE_CANARY",
+    "path": ".",
+    "glob": "capability/fixture.txt",
+    "output_mode": "content",
+    "-n": true,
+    "head_limit": 10
+  },
+  "not_live_evidence": true
+}

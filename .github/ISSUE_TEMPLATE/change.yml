@@ -52,7 +52,7 @@ body:
     id: budget
     attributes:
       label: Budget and stop conditions
-      value: "Use gpt-6-astra for nonreview work and Copilot claude-opus-5 for independent review. One attempted review round by default, including failures: 400 AI credits and 900 seconds. Another round needs supported critical P0/P1 repair verification or explicit user continuation. Reassess after two substantive repair rounds. No dataset or cluster campaign unless authorized."
+      value: "Use gpt-6-astra for nonreview work and Claude Code claude-opus-5-5 medium for independent review after activation prerequisites. One attempted round by default, including failures: 900 seconds and $10 estimated reference cost, zero extra spending. Explicit Copilot claude-opus-5 retains 400 AI credits/900 seconds. Another round needs supported critical P0/P1 repair verification or explicit user continuation. Reassess after two substantive repair rounds. No dataset or cluster campaign unless authorized."
     validations: {required: true}
   - type: textarea
     id: rollback

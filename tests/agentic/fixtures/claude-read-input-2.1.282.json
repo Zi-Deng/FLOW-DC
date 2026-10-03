@@ -1,0 +1,41 @@
+{
+  "binary_sha256": "3afe8535c0cc33f0e24f7b25dab7a1727b8b592196f8496a8bc302ba2161eed3",
+  "method": "Read-only signed source; no native schema engine execution. Main pure fixture explicitly stubs inputSchema.parse as identity. No reconstruction of historical input.",
+  "ranges": [
+    {
+      "label": "Read schema dispatch",
+      "start": 202152746,
+      "end": 202152790,
+      "sha256": "3219f79027f0e41fc7cb3bbbb7823a9c2fc25691c01ec5b1a4707645e3522b77",
+      "source": "inputSchema(){return kCn()},coerceInput:$Pn,"
+    },
+    {
+      "label": "Read input schema",
+      "start": 202147454,
+      "end": 202147982,
+      "sha256": "c5e2dd107e6e79356103e5f1d45fd20052d6cecfe465048c62eac0c6ca15692a",
+      "source": "kCn=f(()=>Je({file_path:o().describe(\"The absolute path to the file to read\"),offset:SH(k().int().nonnegative().optional()).describe(\"The line number to start reading from. Only provide if the file is too large to read at once\"),limit:SH(k().int().positive().optional()).describe(\"The number of lines to read. Only provide if the file is too large to read at once.\"),pages:o().optional().describe(`Page range for PDF files (e.g., \"1-5\", \"3\", \"10-20\"). Only applicable to PDF files. Maximum ${UAe} pages per request.`),...A4()}))"
+    },
+    {
+      "label": "empty input extension",
+      "start": 198078397,
+      "end": 198078420,
+      "sha256": "7ca7ee27e6c3daf25493106b200d0984c7a8544c3eb00bcfdf198f432088e4a3",
+      "source": "function A4(){return{}}"
+    },
+    {
+      "label": "optional numeric preprocess",
+      "start": 201315176,
+      "end": 201315357,
+      "sha256": "59aa17241e59e382c206d775d19d6063981cb2711e5596222ae6d888d664c0da",
+      "source": "function SH(e=k()){return Bi(uEe,e)}function uEe(e){if(typeof e===\"string\"){let n=e.trim();if(/^[-+]?\\d+(\\.\\d+)?$/.test(n)){let r=Number(n);if(Number.isFinite(r))return r}}return e}"
+    },
+    {
+      "label": "input repair",
+      "start": 202145280,
+      "end": 202145837,
+      "sha256": "af643338b88c033bbd90b12ba3a92f5c8d01343c32688ff1ce6e27ad1f501aa1",
+      "source": "function $Pn(e){if(!V(e))return null;let n={...e},r=[];if(Array.isArray(n.offset)&&n.offset.length===1)n.offset=n.offset[0],r.push(\"offset_array\");if(Array.isArray(n.limit)&&n.limit.length===1)n.limit=n.limit[0],r.push(\"limit_array\");let s=U_e(n.offset);if(s!==void 0&&s<0)delete n.offset,r.push(\"offset_neg\");let g=U_e(n.limit);if(g!==void 0&&g<=0)delete n.limit,r.push(\"limit_dropped\");if(\"length\"in n){let h=U_e(n.length);if(!(\"limit\"in n)&&h!==void 0&&h>0)n.limit=h;delete n.length,r.push(\"length\")}return r.length?{input:n,shapeClass:r.join(\",\")}:null}"
+    }
+  ]
+}

@@ -1,6 +1,6 @@
 # Set up the FLOW-DC agentic workflow
 
-The adopted repository is [Zi-Deng/FLOW-DC](https://github.com/Zi-Deng/FLOW-DC). Use local execution and local Copilot review first. The hosted review workflow is present but deliberately disabled. See [verification](VERIFICATION.md) for the current rollout state; file installation alone does not prove that accounts, CI or branch protection work.
+The adopted repository is [Zi-Deng/FLOW-DC](https://github.com/Zi-Deng/FLOW-DC). Use local execution and local provider-selected review first. Read [provider setup](PROVIDERS.md) for Claude activation blockers and explicit Copilot selection. The hosted review workflow is present but deliberately disabled. See [verification](VERIFICATION.md) for the current rollout state; file installation alone does not prove that accounts, CI or branch protection work.
 
 ## 1. Establish a clean control checkout
 
@@ -26,7 +26,7 @@ do not silently upload a new key or replace the account.
 
 ## 2. Install and verify local tools
 
-The workflow runtime requires Python 3.12+, Git, GitHub CLI, GNU Make, Codex and Copilot CLI. The human finish/archive helper currently targets Linux and requires `renameat2` through the process C library and support on the destination filesystem.
+The workflow runtime requires Python 3.12+, Git, GitHub CLI, GNU Make, Codex and the selected pinned reviewer CLI (GnuPG also verifies Claude release signatures). The human finish/archive helper currently targets Linux and requires `renameat2` through the process C library and support on the destination filesystem.
 
 Observed during adoption on September 14, 2026: Ubuntu 24.04.4, Codex 0.154.0, Copilot CLI 1.0.83 and gh 2.100.0. These are tested observations, not a promise that they will remain the latest versions. Install from official releases and inspect new CLI help before upgrading the pinned workflow assumptions.
 
@@ -40,7 +40,7 @@ codex login status
 python3 -c 'import ctypes; print(ctypes.CDLL(None).renameat2)'
 ```
 
-Codex is authenticated through ChatGPT on this workstation. Managed execution explicitly requests `gpt-6-astra`; the helper does not change the account's global model. The review helper uses `COPILOT_GITHUB_TOKEN` if supplied, otherwise retrieves the active `gh` token internally. Confirm that the inference account can select `claude-opus-5`; CLI installation and successful GitHub API calls do not establish model entitlement. Consult the [Copilot CLI authentication reference](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-command-reference) and [supported models](https://docs.github.com/en/copilot/reference/ai-models/supported-models) before changing account plans.
+Codex is authenticated through ChatGPT on this workstation. Managed execution explicitly requests `gpt-6-astra`; the helper does not change the account's global model. For explicit Copilot selection, the review helper uses `COPILOT_GITHUB_TOKEN` if supplied, otherwise retrieves the active `gh` token internally. Confirm that the inference account can select `claude-opus-5`; CLI installation and successful GitHub API calls do not establish model entitlement. Consult the [Copilot CLI authentication reference](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-command-reference) and [supported models](https://docs.github.com/en/copilot/reference/ai-models/supported-models) before changing account plans.
 
 ### Create the dedicated Python environment
 
@@ -116,7 +116,7 @@ Create the reviewed ruleset only if it does not already exist; use a deliberate 
 
 ## 5. Run a managed task
 
-Use the [skill contract](SKILLS.md), beginning with `$agentic-workflow`. The coordinator owns GitHub writes and the clean control checkout. The dedicated Astra executor owns implementation in the assigned worktree and retains one exact session UUID through continuation and repair. Each Opus review uses a fresh static snapshot and independent session.
+Use the [skill contract](SKILLS.md), beginning with `$agentic-workflow`. The coordinator owns GitHub writes and the clean control checkout. The dedicated Astra executor owns implementation in the assigned worktree and retains one exact session UUID through continuation and repair. Each provider-selected review uses a fresh static snapshot and independent session.
 
 The first post-installation pilot is a small, useful FLOW-DC maintainer quick reference. Its acceptance includes a native checkpoint, continuation of that same UUID, a draft PR, both CI checks, local Opus review, explicit feedback assessment and human finish preparation. If the review has no material findings, a no-edit feedback assessment can demonstrate continuation without inventing repairs. A successful model turn alone does not satisfy the whole pilot.
 
@@ -150,7 +150,7 @@ and project-specific assertions are not generic template requirements.
 ## Coverage schema upgrade
 
 Install the complete payload together: `scripts/agentic/review*.py`,
-`github_transport.py`, `ci_evidence.py`, `copilot_policy.py`,
+`github_transport.py`, `ci_evidence.py`, `copilot_policy.py`, `claude_*.py`,
 `.agentic/schemas/review-report.json`, the
 literal-tool profile, prompts, eight skills, hosted workflow and coverage documentation.
 The installer discovers these files recursively and refuses overwriting different
@@ -158,8 +158,10 @@ existing files. Preview in a disposable staging directory, inspect conflicts and
 apply the approved upgrade deliberately; do not replace a production installation
 just to test it. FLOW-DC's project-specific `flowdc-tests` job remains project-owned.
 
-Pin Copilot CLI 1.0.83. Its help must expose JSONL output and explicit session IDs;
-help is not live capability proof. New packets and result journals use schema 3;
+Pin Claude Code native 2.1.282 with its signed manifest or explicitly select pinned
+Copilot CLI 1.0.83. Register verified versioned binaries using [PROVIDERS.md](PROVIDERS.md);
+PATH shims and version text alone do not establish identity. Help is not live capability
+proof. New packets and result journals use schema 5 (4 remains reserved);
 compact reports and coverage evidence use schema 2. They require observed tool evidence.
 Old packets remain inspectable with their original semantics but cannot satisfy the
 new readiness gate. Do not regenerate historical provenance hashes or adopt unmerged

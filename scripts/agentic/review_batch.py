@@ -1,19 +1,20 @@
-"""Explicit bounded review batches. Assignments never replace the parent inventory."""
+"""Provider-bound sequential batches; historical evidence is recovery-only."""
 
 import contextlib
 import fcntl
-import math
 import os
 import shutil
 import stat
 import time
+import uuid
 from pathlib import Path
 
 import review_coverage as coverage
+import review_policy
 from tasks import atomic_json, atomic_text, digest, plain_path
 from workflow import WorkflowError
 
-SCHEMA = 4
+SCHEMA = 6
 BINDING = (
     "repository",
     "pr",
@@ -27,38 +28,18 @@ BINDING = (
 
 
 def api():
-    # Avoid a circular import: review owns the existing single-request machinery.
     import review
 
     return review
 
 
-def bounded(value, name, integer=False):
-    if type(value) not in ({int} if integer else {int, float}) or not math.isfinite(value) or value <= 0:
-        raise WorkflowError(f"Batch {name} must be explicit, finite and positive")
-    return value
-
-
-def budget(requests, credits, seconds, unit_credits, unit_seconds):
-    result = {
-        "requests": bounded(requests, "requests", True),
-        "credits": bounded(credits, "credits"),
-        "seconds": bounded(seconds, "seconds"),
-        "unit_credits": bounded(unit_credits, "unit credits"),
-        "unit_seconds": bounded(unit_seconds, "unit seconds"),
-    }
-    if unit_credits > credits or unit_seconds > seconds:
-        raise WorkflowError("Per-unit bounds exceed aggregate allocation")
-    return result
-
-
-def plan(directory, *, version=4):
+def plan(directory, *, version=5):
     """Deterministic scope partition with explicit linked navigation context."""
-    if type(version) is not int or version not in {1, 2, 3, 4}:
+    if type(version) is not int or version != 5:
         raise WorkflowError("Unsupported batch plan version")
     directory = Path(directory)
     meta = api().verify_packet(directory)
-    if meta["schema_version"] not in {3, SCHEMA} or meta.get("batch_unit"):
+    if meta["schema_version"] != 6 or meta.get("kind") not in {"single", "batch-parent"}:
         raise WorkflowError("Batch planning requires a current parent packet")
     packet = directory / "packet"
     inventory = coverage.read_json(packet / "required-material.json")["required"]
@@ -116,46 +97,33 @@ def plan(directory, *, version=4):
             "depends_on": [unit["id"] for unit in components],
         }
     ]
+    for unit in units:
+        for field in ("required_ids", "context_ids"):
+            entries = [lookup[key] for key in unit[field]]
+            unit[field.removesuffix("_ids") + "_volume"] = {
+                "items": len(entries),
+                "bytes": sum(item.get("bytes", 0) for item in entries),
+                "lines": sum(
+                    item["end_line"] - item["start_line"] + 1 for item in entries if not item.get("omitted")
+                ),
+            }
     return {
         "schema_version": version,
         "binding": {key: meta[key] for key in BINDING},
         "files": meta["files"],
-        "policy": meta["config"],
+        "policy": meta["review_policy"],
+        "contract_digest": contract_digest(meta, coverage.read_json(packet / "context.json")),
+        "config": meta["config"],
         "inventory_sha256": api().digest(packet / "required-material.json"),
         "units": units,
+        "resources": {
+            "context_bytes": sum(item.get("bytes", 0) for item in inventory),
+            "omissions": [item["id"] for item in inventory if item.get("omitted")],
+            "report_materialization": "exact-utf8-ranges-v4",
+            "integration_dependencies": [u["id"] for u in components],
+        },
         "note": "Assignments are navigation, not inspection. Full original inventory and surrounding context remain required.",
     }
-
-
-def select(directory, limits):
-    """Opt in before any attempt; no inference and no implicit paid defaults."""
-    directory = plain_path(directory)
-    meta = api().verify_packet(directory)
-    expected = {**plan(directory), "budget": budget(**limits)}
-    if meta["schema_version"] == SCHEMA:
-        if load(directory) != expected:
-            raise WorkflowError("Batch selection or budget changed; continuation refused")
-        return expected
-    if any(
-        (directory / name).exists()
-        for name in ("attempt.json", "review-capture.json", "review-result.json", "review.md")
-    ):
-        raise WorkflowError("Cannot convert an attempted single review into a batch")
-    atomic_json(directory / "batch.json", expected)
-    meta.update(schema_version=SCHEMA, batch_sha256=digest(expected))
-    atomic_json(directory / "metadata.json", meta)
-    return expected
-
-
-def load(directory):
-    meta = api().verify_packet(directory)
-    saved = coverage.read_json(plain_path(Path(directory) / "batch.json"))
-    if meta["schema_version"] != SCHEMA or digest(saved) != meta.get("batch_sha256"):
-        raise WorkflowError("Batch plan changed")
-    limits = saved.get("budget", {})
-    if saved != {**plan(directory, version=saved.get("schema_version")), "budget": budget(**limits)}:
-        raise WorkflowError("Batch binding, inventory, policy or membership changed")
-    return saved
 
 
 def unit_path(directory, unit):
@@ -252,11 +220,20 @@ def prepare_unit(directory, batch, unit, reservation):
         inventory["required"].extend(extra)
         atomic_json(packet / "required-material.json", inventory)
         atomic_text(packet / "inventory-sha256.txt", api().digest(packet / "required-material.json") + "\n")
+    if any(
+        len((packet / f"component-reports/{key}.txt").read_bytes()) > batch["budget"]["max_report_bytes"]
+        for key in dependencies
+    ):
+        raise WorkflowError("Component report exceeds authorized output bound")
+    if sum(item["bytes"] for item in extra) > batch["budget"]["max_integration_bytes"]:
+        raise WorkflowError("Integration report material exceeds authorized bound")
     assignment = {
         "batch_sha256": digest(batch),
         "unit": unit,
         "required_ids": unit["required_ids"] + [item["id"] for item in extra],
         "dependencies": dependencies,
+        "policy_digest": digest(batch["unit_policy"]),
+        "authorization_digest": digest(batch["authorization"]),
     }
     if batch["schema_version"] >= 4:
         assignment["publication_version"] = 2
@@ -277,14 +254,14 @@ def prepare_unit(directory, batch, unit, reservation):
         key: value for key, value in meta.items() if key not in api().RESULT_FIELDS | {"batch_sha256"}
     }
     child_meta.update(
-        schema_version=3,
+        schema_version=6,
+        kind="batch-unit",
+        review_policy=batch["unit_policy"],
+        reservation_digest=digest(reservation["binding"]),
+        authorization_digest=digest(batch["authorization"]),
         batch_unit=assignment,
         files={p.relative_to(packet).as_posix(): api().digest(p) for p in packet.rglob("*") if p.is_file()},
-        config={
-            **meta["config"],
-            "review_max_ai_credits": reservation["credits"],
-            "review_timeout_seconds": reservation["seconds"],
-        },
+        config=meta["config"],
     )
     atomic_json(target / "metadata.json", child_meta)
     return target
@@ -300,7 +277,9 @@ def unit_assessment(directory, batch, unit):
         or assignment.get("unit") != unit
     ):
         raise WorkflowError("Unit assignment changed")
-    if any(meta.get(key) != batch["binding"][key] for key in BINDING):
+    if meta.get("config") != batch["config"] or any(
+        meta.get(key) != batch["binding"][key] for key in BINDING
+    ):
         raise WorkflowError("Unit snapshot or contract changed")
     # Every original artifact remains byte-identical, except the integration's
     # inventory which must contain every parent item plus exact report obligations.
@@ -346,15 +325,23 @@ def unit_assessment(directory, batch, unit):
         raise WorkflowError("Unit inspection suggestions changed")
     state = state_for(directory, batch)
     reservation = (
-        next((row for row in state["reservations"] if row["unit"] == unit["id"]), None) if state else None
+        next((row for row in state["reservations"] if row["binding"]["unit"] == unit["id"]), None)
+        if state
+        else None
     )
-    if not reservation or meta["config"] != {
-        **batch["policy"],
-        "review_max_ai_credits": reservation["credits"],
-        "review_timeout_seconds": reservation["seconds"],
-    }:
-        raise WorkflowError("Unit policy differs from reserved limits")
+    if (
+        not reservation
+        or meta["review_policy"] != batch["unit_policy"]
+        or meta.get("reservation_digest") != digest(reservation["binding"])
+        or meta.get("authorization_digest") != digest(batch["authorization"])
+        or assignment.get("policy_digest") != digest(batch["unit_policy"])
+        or assignment.get("authorization_digest") != digest(batch["authorization"])
+        or reservation.get("assignment_digest") != digest(assignment)
+    ):
+        raise WorkflowError("Unit policy or reservation binding changed")
     assessment = api().qualification(target)
+    if (target / "review.md").stat().st_size > batch["budget"]["max_report_bytes"]:
+        raise WorkflowError("Unit report exceeds authorized output bound")
     selected = [row for row in assessment["material"] if row["id"] in ids]
     complete = (
         not assessment["reasons"]
@@ -362,53 +349,6 @@ def unit_assessment(directory, batch, unit):
         and all(row["state"] == "reviewed" for row in selected)
     )
     return {"complete": complete, "material": selected, "reasons": assessment["reasons"]}
-
-
-def state_for(directory, batch):
-    path = plain_path(Path(directory) / "batch-state.json")
-    if not path.exists():
-        return None
-    state = coverage.read_json(path)
-    if (
-        not isinstance(state, dict)
-        or set(state) != {"schema_version", "batch_sha256", "started", "deadline", "reservations"}
-        or state.get("batch_sha256") != digest(batch)
-        or type(state.get("schema_version")) is not int
-        or state["schema_version"] != 1
-    ):
-        raise WorkflowError("Batch execution state changed")
-    reservations = state.get("reservations")
-    if not isinstance(reservations, list) or len(reservations) > batch["budget"]["requests"]:
-        raise WorkflowError("Invalid request accounting")
-    if any(not isinstance(row, dict) or set(row) != {"unit", "credits", "seconds"} for row in reservations):
-        raise WorkflowError("Malformed reservation record")
-    ids = [row.get("unit") for row in reservations]
-    if ids != [unit["id"] for unit in batch["units"][: len(ids)]]:
-        raise WorkflowError("Ambiguous, duplicate or reordered reservations")
-    start = bounded(state.get("started"), "start")
-    if state.get("deadline") != start + batch["budget"]["seconds"]:
-        raise WorkflowError("Batch deadline changed")
-    for row in reservations:
-        bounded(row.get("credits"), "reserved credits")
-        bounded(row.get("seconds"), "reserved seconds")
-        if (
-            row.get("credits") != batch["budget"]["unit_credits"]
-            or not 0 < row.get("seconds", 0) <= batch["budget"]["unit_seconds"]
-        ):
-            raise WorkflowError("Unit reservation changed")
-    if sum(row["credits"] for row in reservations) > batch["budget"]["credits"]:
-        raise WorkflowError("Reserved allocation exceeds budget")
-    return state
-
-
-def observed_credits(target):
-    """Retain counters; nano-AIU is an AI-credit unit, never a currency quote."""
-    diagnostics = coverage.read_json(target / "diagnostics.json")
-    usage = diagnostics.get("usage", {})
-    value = usage.get("counters", {}).get("totalNanoAiu")
-    if type(value) not in {int, float} or not math.isfinite(value) or value < 0:
-        return None
-    return value / 1_000_000_000
 
 
 @contextlib.contextmanager
@@ -438,192 +378,6 @@ def current_contract(repo, directory, meta):
         or issue.get("state") != "open"
     ) or approved.get("body") != context["designated_plan_comment"].get("body"):
         raise WorkflowError("Batch contract changed; continuation refused")
-
-
-def execute(repo, directory, *, resume=False, recover_only=False, clock=time.time):
-    """Reserve before dispatch; never retry any started or uncertain unit."""
-    directory = plain_path(directory)
-    with locked(directory):
-        batch = load(directory)
-        meta = api().verify_packet(directory)
-        if repo.name != meta["repository"]:
-            raise WorkflowError("Batch belongs to another repository")
-        api().current_pr(repo, meta["pr"], meta["head_sha"], meta["base_sha"])
-        current_contract(repo, directory, meta)
-        state = state_for(directory, batch)
-        if state is not None and not (resume or recover_only):
-            raise WorkflowError("Batch already started; select explicit resume or recovery")
-        if state is None:
-            if recover_only:
-                return finalize(directory)
-            now = clock()
-            state = {
-                "schema_version": 1,
-                "batch_sha256": digest(batch),
-                "started": now,
-                "deadline": now + batch["budget"]["seconds"],
-                "reservations": [],
-            }
-            atomic_json(directory / "batch-state.json", state)
-        for unit in batch["units"]:
-            target = unit_path(directory, unit)
-            reserved = next((row for row in state["reservations"] if row["unit"] == unit["id"]), None)
-            if reserved:
-                if not target.exists() or api().recover_review(repo, target) is None:
-                    finalize(directory)
-                    raise WorkflowError("Attempted unit has no recoverable report; no automatic retry")
-                continue
-            if recover_only:
-                break
-            # All prior calls count, even failed/uncertain ones. Unknown usage or
-            # an incomplete dependency stops further spending, not just integration.
-            spent = 0
-            for previous in batch["units"][: len(state["reservations"])]:
-                child = unit_path(directory, previous)
-                if not unit_assessment(directory, batch, previous)["complete"]:
-                    finalize(directory)
-                    raise WorkflowError("Incomplete prior unit; further requests stopped")
-                actual = observed_credits(child)
-                if actual is None:
-                    finalize(directory)
-                    raise WorkflowError("Unknown AI-credit usage; further requests stopped")
-                if actual > batch["budget"]["unit_credits"]:
-                    finalize(directory)
-                    raise WorkflowError("Per-unit soft credit allocation exceeded; further requests stopped")
-                spent += actual
-            limits = batch["budget"]
-            now = clock()
-            if now < state["started"]:
-                raise WorkflowError("Clock moved before batch start; continuation is ambiguous")
-            remaining = state["deadline"] - now
-            allocated = sum(row["credits"] for row in state["reservations"])
-            if (
-                len(state["reservations"]) >= limits["requests"]
-                or remaining <= 0
-                or max(spent, allocated) + limits["unit_credits"] > limits["credits"]
-            ):
-                finalize(directory)
-                raise WorkflowError("Aggregate request, credit or time allocation exhausted")
-            api().current_pr(repo, meta["pr"], meta["head_sha"], meta["base_sha"])
-            current_contract(repo, directory, meta)
-            reservation = {
-                "unit": unit["id"],
-                "credits": limits["unit_credits"],
-                "seconds": min(remaining, limits["unit_seconds"]),
-            }
-            state["reservations"].append(reservation)
-            atomic_json(directory / "batch-state.json", state)
-            try:
-                target = prepare_unit(directory, batch, unit, reservation)
-                api().review(repo, target, _batch_authorized=True, _batch_deadline=state["deadline"])
-            finally:
-                # Persist bookkeeping even on interruption. Exact unit capture is
-                # owned by the existing single-request recovery journal.
-                finalize(directory)
-        return finalize(directory)
-
-
-def assessment(directory):
-    batch = load(directory)
-    state = state_for(directory, batch)
-    reserved = {row["unit"] for row in state["reservations"]} if state else set()
-    rows, units, findings = {}, [], []
-    reasons, usage = [], []
-    for unit in batch["units"]:
-        target = unit_path(directory, unit)
-        if unit["id"] not in reserved:
-            units.append({"id": unit["id"], "state": "never-started"})
-            continue
-        actual = None
-        usage_path = target / "diagnostics.json"
-        if usage_path.exists():
-            diagnostics = coverage.read_json(usage_path)
-            coverage.validate_diagnostics(diagnostics, target / "packet")
-            projection = diagnostics["usage"]
-            actual = observed_credits(target)
-            usage.append({"unit": unit["id"], "usage": projection, "ai_credits": actual})
-        else:
-            usage.append({"unit": unit["id"], "usage": {"status": "unknown"}, "ai_credits": None})
-        if actual is None:
-            reasons.append("unknown_credit_usage")
-        elif actual > batch["budget"]["unit_credits"]:
-            reasons.append("unit_credit_allocation_exceeded")
-        if not (target / "review.md").exists():
-            units.append({"id": unit["id"], "state": "attempted-incomplete"})
-            continue
-        result = unit_assessment(directory, batch, unit)
-        binding = report_binding(target)
-        units.append(
-            {"id": unit["id"], "state": "complete" if result["complete"] else "incomplete", **binding}
-        )
-        if result["reasons"]:
-            reasons.append("unit_protocol_incomplete")
-        for row in result["material"]:
-            if row["id"] in unit["required_ids"] and not result["reasons"]:
-                rows[row["id"]] = {**row, "unit": unit["id"]}
-        if not result["reasons"]:
-            document = coverage.report_document((target / "review.md").read_bytes().decode("utf-8"))
-            findings.extend({"unit": unit["id"], "finding": finding} for finding in document["findings"])
-    inventory = coverage.read_json(Path(directory) / "packet/required-material.json")["required"]
-    material = [
-        rows.get(
-            item["id"],
-            {
-                "id": item["id"],
-                "state": "unsupported" if item.get("omitted") else "unread",
-                "evidence": [],
-                "reason": item.get("omitted") or "assigned_unit_not_inspected",
-                "location": {
-                    key: item.get(key)
-                    for key in ("artifact", "start_line", "end_line", "path", "revision", "kind")
-                },
-            },
-        )
-        for item in inventory
-    ]
-    if sum(row["ai_credits"] or 0 for row in usage) > batch["budget"]["credits"]:
-        reasons.append("observed_credit_allocation_exceeded")
-    complete = all(unit["state"] == "complete" for unit in units)
-    return {
-        "schema_version": SCHEMA,
-        "qualified": complete and not reasons,
-        "reasons": sorted(set(reasons)),
-        "material": material,
-        "units": units,
-        "findings": findings,
-        "required_count": len(material),
-        "inspected_count": sum(row["state"] == "reviewed" for row in material),
-        "budget": batch["budget"],
-        "usage": usage,
-        "reservations": state["reservations"] if state else [],
-        "started": state["started"] if state else None,
-        "deadline": state["deadline"] if state else None,
-        "limit": "Attributed aggregate bookkeeping, not a model response. Observed reads do not prove understanding. AI-credit limits are soft; in-flight overshoot is possible.",
-    }
-
-
-def finalize(directory):
-    result = assessment(directory)
-    atomic_json(Path(directory) / "coverage.json", result)
-    atomic_json(Path(directory) / "review.md", result)
-    meta = api().verify_packet(directory)
-    meta.update(review_sha256=api().digest(Path(directory) / "review.md"), copilot_version=api().CLI_VERSION)
-    atomic_json(Path(directory) / "metadata.json", meta)
-    return Path(directory) / "review.md"
-
-
-def qualification(directory, require=False):
-    result = assessment(directory)
-    meta = api().verify_packet(directory)
-    if (
-        coverage.read_json(Path(directory) / "coverage.json") != result
-        or coverage.read_json(Path(directory) / "review.md") != result
-        or api().digest(Path(directory) / "review.md") != meta.get("review_sha256")
-    ):
-        raise WorkflowError("Aggregate bookkeeping changed or requires saved-result recovery")
-    if require and not result["qualified"]:
-        raise WorkflowError("Batch coverage incomplete; every component and integration is required")
-    return result
 
 
 def publication_body(directory):
@@ -668,19 +422,536 @@ def verify_unit_publications(repo, directory, complete_only=True):
             api().verify_publication(repo, unit_path(directory, unit))
 
 
-def add_budget_arguments(parser):
+def select(directory, limits, authorization=None):
+    directory = plain_path(directory)
+    meta = api().verify_packet(directory)
+    preview = plan(directory)
+    limits, policy = review_policy.batch_budget(limits, meta["review_policy"], len(preview["units"]))
+    executable = {**preview, "budget": limits, "unit_policy": policy}
+    if meta.get("kind") == "batch-parent":
+        existing = load(directory)
+        if {k: v for k, v in existing.items() if k != "authorization"} != executable:
+            raise WorkflowError("Batch selection or budget changed")
+        if authorization is not None and existing["authorization"] != authorization:
+            raise WorkflowError("Batch authorization changed")
+        return existing
+    if any(
+        (directory / n).exists()
+        for n in ("attempt.json", "review-capture.json", "review-result.json", "review.md")
+    ):
+        raise WorkflowError("Attempted single review cannot become a batch")
+    validate_authorization(authorization, executable)
+    record = {**executable, "authorization": authorization}
+    atomic_json(directory / "batch.json", record)
+    meta.update(kind="batch-parent", batch_sha256=digest(record))
+    atomic_json(directory / "metadata.json", meta)
+    return record
+
+
+def validate_authorization(auth, executable):
+    keys = {"name", "preview_digest", "harness_commit", "harness_files", "expires_at"}
+    if (
+        not isinstance(auth, dict)
+        or set(auth) != keys
+        or not isinstance(auth["name"], str)
+        or not auth["name"].strip()
+        or auth["preview_digest"] != digest(executable)
+    ):
+        raise WorkflowError("Named finite authorization must bind the executable preview")
+    from workflow import sha
+
+    sha(auth["harness_commit"])
+    if type(auth["expires_at"]) not in {int, float}:
+        raise WorkflowError("Authorization expiry must be a finite timestamp")
+    review_policy.exact_amount(auth["expires_at"], "authorization expiry")
+    if not isinstance(auth["harness_files"], dict) or not auth["harness_files"]:
+        raise WorkflowError("Exact tested harness hashes are required")
+    for name, value in auth["harness_files"].items():
+        if not isinstance(name, str) or not isinstance(value, str) or len(value) != 64:
+            raise WorkflowError("Invalid harness binding")
+
+
+def load(directory):
+    directory = plain_path(directory)
+    meta = api().verify_packet(directory)
+    saved = coverage.read_json(directory / "batch.json")
+    if meta.get("kind") != "batch-parent" or digest(saved) != meta.get("batch_sha256"):
+        raise WorkflowError("Batch binding changed")
+    limits, policy = review_policy.batch_budget(saved["budget"], meta["review_policy"], len(saved["units"]))
+    expected = {**plan(directory), "budget": limits, "unit_policy": policy}
+    validate_authorization(saved["authorization"], expected)
+    if saved != {**expected, "authorization": saved["authorization"]}:
+        raise WorkflowError("Batch plan, provider or allocation changed")
+    return saved
+
+
+def state_for(directory, batch):
+    path = Path(directory) / "batch-state.json"
+    if not path.exists():
+        return None
+    state = coverage.read_json(path)
+    if (
+        not isinstance(state, dict)
+        or set(state)
+        != {
+            "schema_version",
+            "batch_sha256",
+            "authorization_digest",
+            "started",
+            "deadline",
+            "last_clock",
+            "reservations",
+            "stop_reason",
+        }
+        or type(state.get("schema_version")) is not int
+        or state.get("schema_version") != 2
+        or state.get("batch_sha256") != digest(batch)
+        or state.get("authorization_digest") != digest(batch["authorization"])
+    ):
+        raise WorkflowError("Batch ledger binding changed")
+    for key in ("started", "deadline", "last_clock"):
+        review_policy.exact_amount(state.get(key), key, positive=False)
+    if (
+        state["deadline"]
+        != min(state["started"] + batch["budget"]["seconds"], batch["authorization"]["expires_at"])
+        or not state["started"] <= state["last_clock"] <= state["deadline"]
+    ):
+        raise WorkflowError("Batch clock or deadline changed")
+    if state["stop_reason"] not in {None, "execution_incomplete_or_interrupted"}:
+        raise WorkflowError("Invalid durable stop state")
+    rows = state.get("reservations")
+    if not isinstance(rows, list) or len(rows) > min(batch["budget"]["requests"], len(batch["units"])):
+        raise WorkflowError("Invalid batch reservations")
+    for index, row in enumerate(rows):
+        if not isinstance(row, dict) or row.get("status") not in {
+            "reserved/uncertain",
+            "captured",
+            "assessed-complete",
+            "assessed-incomplete",
+        }:
+            raise WorkflowError("Invalid reservation state")
+        binding = row.get("binding", {})
+        if (
+            not isinstance(binding, dict)
+            or set(binding)
+            != {
+                "unit",
+                "slot",
+                "dispatch_id",
+                "policy_digest",
+                "authorization_digest",
+                "batch_sha256",
+                "allocation",
+            }
+            or type(binding.get("slot")) is not int
+            or binding.get("unit") != batch["units"][index]["id"]
+            or binding.get("slot") != index + 1
+            or binding.get("policy_digest") != digest(batch["unit_policy"])
+            or binding.get("authorization_digest") != digest(batch["authorization"])
+            or binding.get("batch_sha256") != digest(batch)
+            or binding.get("allocation")
+            != {"cost": batch["budget"]["unit_cost"], "seconds": batch["budget"]["unit_seconds"]}
+        ):
+            raise WorkflowError("Reserved identity or allocation changed")
+        try:
+            uuid.UUID(binding["dispatch_id"])
+        except (ValueError, KeyError, TypeError, AttributeError):
+            raise WorkflowError("Invalid dispatch identity") from None
+    return state
+
+
+def observed_usage(target, policy):
+    path = Path(target) / "diagnostics.json"
+    if not path.exists():
+        return None
+    diagnostics = coverage.read_json(path)
+    coverage.validate_diagnostics(diagnostics, Path(target) / "packet", policy)
+    usage = diagnostics["usage"]
+    if usage.get("status") != "observed":
+        return None
+    counters = usage.get("counters", {})
+    field = "estimated_usd" if policy["provider"] == "claude-code" else "totalNanoAiu"
+    if field not in counters:
+        return None
+    for key, value in counters.items():
+        if (key == "totalNanoAiu" or key.endswith("_tokens") or key in {"num_turns", "requests"}) and (
+            type(value) is not int or value < 0
+        ):
+            raise WorkflowError("Invalid integer provider counter")
+    amount = review_policy.exact_amount(counters[field], "observed usage", positive=False)
+    if field == "totalNanoAiu":
+        # Decimal division otherwise obeys the process's finite precision context.
+        from decimal import Decimal
+
+        parts = amount.as_tuple()
+        amount = Decimal((parts.sign, parts.digits, parts.exponent - 9))
+    return amount
+
+
+def captured(directory, meta):
+    """Record durable capture before assessment; recovery never reclaims its slot."""
+    parent = Path(directory).parent.parent
+    batch = load(parent)
+    state = state_for(parent, batch)
+    if not state or not state["reservations"]:
+        raise WorkflowError("Captured child has no reservation")
+    row = next(
+        (r for r in state["reservations"] if digest(r["binding"]) == meta.get("reservation_digest")),
+        None,
+    )
+    if (
+        row is None
+        or unit_path(parent, batch["units"][row["binding"]["slot"] - 1]) != Path(directory)
+        or row.get("assignment_digest") != digest(meta.get("batch_unit"))
+    ):
+        raise WorkflowError("Capture reservation changed")
+    if row["status"] == "reserved/uncertain":
+        row["status"] = "captured"
+        atomic_json(parent / "batch-state.json", state)
+
+
+def dispatch_timeout(repo, directory, meta, context, *, clock=time.time):
+    """Called again inside the adapter, after preflight and immediately before spawn."""
+    if meta.get("kind") != "batch-unit":
+        if context is not None:
+            raise WorkflowError("Single review received batch dispatch context")
+        return meta["review_policy"]["budget"]["timeout_seconds"]
+    if not isinstance(context, dict) or set(context) != {"parent", "dispatch_id"}:
+        raise WorkflowError("Batch child requires a validated reservation context")
+    parent = plain_path(context["parent"])
+    batch = load(parent)
+    state = state_for(parent, batch)
+    if not state or state["stop_reason"] is not None:
+        raise WorkflowError("Batch is stopped or unreserved")
+    row = state["reservations"][-1]
+    unit = batch["units"][row["binding"]["slot"] - 1]
+    if (
+        unit_path(parent, unit) != Path(directory)
+        or row["binding"]["dispatch_id"] != context["dispatch_id"]
+        or row["status"] != "reserved/uncertain"
+        or meta.get("reservation_digest") != digest(row["binding"])
+        or meta.get("batch_unit") != coverage.read_json(Path(directory) / "packet/assignment.json")
+        or digest(meta["batch_unit"]) != row.get("assignment_digest")
+        or meta["review_policy"] != batch["unit_policy"]
+    ):
+        raise WorkflowError("Dispatch context or child binding changed")
+    api().verify_packet(directory)
+    api().current_pr(repo, meta["pr"], meta["head_sha"], meta["base_sha"])
+    current_contract(repo, parent, meta)
+    for prior in batch["units"][: row["binding"]["slot"] - 1]:
+        if not unit_assessment(parent, batch, prior)["complete"]:
+            raise WorkflowError("Prior component is incomplete")
+        use = observed_usage(unit_path(parent, prior), batch["unit_policy"])
+        if use is None or use > review_policy.exact_amount(batch["budget"]["unit_cost"], "unit cost"):
+            raise WorkflowError("Prior usage is unknown or exceeds allocation")
+    now = clock()
+    if now < state["last_clock"] or now >= state["deadline"]:
+        raise WorkflowError("Batch clock rollback or deadline expiry")
+    verify_harness(batch["authorization"])
+    ready = clock()
+    if ready < now or ready >= state["deadline"]:
+        raise WorkflowError("Batch clock rollback or deadline expiry")
+    now = ready
+    effective = min(row["binding"]["allocation"]["seconds"], state["deadline"] - now)
+    state["last_clock"] = now
+    row["effective_timeout"] = effective
+    atomic_json(parent / "batch-state.json", state)
+    return effective
+
+
+def execute(repo, directory, *, resume=False, recover_only=False, clock=time.time):
+    directory = plain_path(directory)
+    if api().verify_packet(directory)["schema_version"] == 4:
+        from review_batch_v4 import execute as historical_execute
+
+        return historical_execute(repo, directory, resume=resume, recover_only=recover_only)
+    with locked(directory):
+        batch = load(directory)
+        state = state_for(directory, batch)
+        if not recover_only:
+            meta = api().verify_packet(directory)
+            api().current_pr(repo, meta["pr"], meta["head_sha"], meta["base_sha"])
+            current_contract(repo, directory, meta)
+        if recover_only:
+            saved_meta = api().verify_packet(directory)
+            if saved_meta.get("review_sha256"):
+                if api().digest(directory / "review.md") != saved_meta["review_sha256"] or coverage.read_json(
+                    directory / "review.md"
+                ) != coverage.read_json(directory / "coverage.json"):
+                    raise WorkflowError("Completed aggregate bytes changed")
+            if state:
+                for unit in batch["units"][: len(state["reservations"])]:
+                    target = unit_path(directory, unit)
+                    if target.exists():
+                        api().recover_review(repo, target)
+            meta = api().verify_packet(directory)
+            if meta.get("review_sha256") and all(
+                row.get("status") == "assessed-complete" for row in (state or {}).get("reservations", [])
+            ):
+                qualification(directory)
+                return directory / "review.md"
+            return finalize(directory)
+        if state and (not resume or state["stop_reason"] is not None):
+            raise WorkflowError("Batch already started or durably stopped; no replay")
+        if not state:
+            if (directory / "units").exists() or (directory / "review.md").exists():
+                raise WorkflowError("Missing ledger cannot reset existing execution")
+            now = clock()
+            if now >= batch["authorization"]["expires_at"]:
+                raise WorkflowError("Authorization expired before batch start")
+            state = {
+                "schema_version": 2,
+                "batch_sha256": digest(batch),
+                "authorization_digest": digest(batch["authorization"]),
+                "started": now,
+                "deadline": min(now + batch["budget"]["seconds"], batch["authorization"]["expires_at"]),
+                "last_clock": now,
+                "reservations": [],
+                "stop_reason": None,
+            }
+        try:
+            for index, unit in enumerate(batch["units"]):
+                target = unit_path(directory, unit)
+                if index < len(state["reservations"]):
+                    if not target.exists() or api().recover_review(repo, target) is None:
+                        raise WorkflowError("Uncertain reservation cannot be replayed")
+                else:
+                    now = clock()
+                    if now < state["last_clock"] or now >= state["deadline"]:
+                        raise WorkflowError("Batch clock rollback or expired authorization")
+                    state["last_clock"] = now
+                    meta = api().verify_packet(directory)
+                    api().current_pr(repo, meta["pr"], meta["head_sha"], meta["base_sha"])
+                    current_contract(repo, directory, meta)
+                    row = {
+                        "binding": {
+                            "unit": unit["id"],
+                            "slot": index + 1,
+                            "dispatch_id": str(uuid.uuid4()),
+                            "batch_sha256": digest(batch),
+                            "policy_digest": digest(batch["unit_policy"]),
+                            "authorization_digest": digest(batch["authorization"]),
+                            "allocation": {
+                                "cost": batch["budget"]["unit_cost"],
+                                "seconds": batch["budget"]["unit_seconds"],
+                            },
+                        },
+                        "status": "reserved/uncertain",
+                        "assignment_digest": None,
+                    }
+                    state["reservations"].append(row)
+                    atomic_json(directory / "batch-state.json", state)
+                    target = prepare_unit(directory, batch, unit, row)
+                    row["assignment_digest"] = digest(api().verify_packet(target)["batch_unit"])
+                    atomic_json(directory / "batch-state.json", state)
+                    context = {"parent": str(directory), "dispatch_id": row["binding"]["dispatch_id"]}
+                    api().review(repo, target, dispatch_context=context)
+                    state = state_for(directory, batch)
+                now = clock()
+                if now < state["last_clock"] or now > state["deadline"]:
+                    raise WorkflowError("Batch clock rollback or deadline exceeded during completion")
+                state["last_clock"] = now
+                result = unit_assessment(directory, batch, unit)
+                row = state["reservations"][index]
+                row["status"] = "assessed-complete" if result["complete"] else "assessed-incomplete"
+                atomic_json(directory / "batch-state.json", state)
+                use = observed_usage(target, batch["unit_policy"])
+                if (
+                    not result["complete"]
+                    or use is None
+                    or use > review_policy.exact_amount(batch["budget"]["unit_cost"], "unit cost")
+                ):
+                    raise WorkflowError("Incomplete unit or unknown/over-allocation usage; dispatch stopped")
+            return finalize(directory)
+        except BaseException as exc:
+            # The capture writer may have advanced the durable ledger before an
+            # assessment/storage failure. Never overwrite that state with a stale copy.
+            state = state_for(directory, batch) or state
+            state["stop_reason"] = state.get("stop_reason") or "execution_incomplete_or_interrupted"
+            atomic_json(directory / "batch-state.json", state)
+            finalize(directory)
+            raise exc
+
+
+def assessment(directory):
+    batch = load(directory)
+    state = state_for(directory, batch)
+    selected, units, findings, usage, reasons = {}, [], [], [], []
+    reservations = state["reservations"] if state else []
+    for index, unit in enumerate(batch["units"]):
+        target = unit_path(directory, unit)
+        if index >= len(reservations):
+            units.append({"id": unit["id"], "state": "never-started"})
+            continue
+        actual = observed_usage(target, batch["unit_policy"])
+        usage.append(
+            {
+                "unit": unit["id"],
+                "kind": batch["budget"]["kind"],
+                "amount": str(actual) if actual is not None else None,
+            }
+        )
+        if actual is None or actual > review_policy.exact_amount(batch["budget"]["unit_cost"], "unit cost"):
+            reasons.append("unknown_or_exceeded_unit_usage")
+        if not (target / "review.md").exists():
+            units.append({"id": unit["id"], "state": "reserved/uncertain"})
+            continue
+        result = unit_assessment(directory, batch, unit)
+        units.append(
+            {
+                "id": unit["id"],
+                "state": "complete" if result["complete"] else "incomplete",
+                **report_binding(target),
+            }
+        )
+        if result["reasons"]:
+            reasons.append("unit_protocol_incomplete")
+        else:
+            selected.update(
+                {
+                    row["id"]: {**row, "unit": unit["id"]}
+                    for row in result["material"]
+                    if row["id"] in unit["required_ids"]
+                }
+            )
+        # A valid finding is still publishable when evidence/capability is incomplete.
+        # Never turn a protocol failure into deletion of the model's finding obligations.
+        try:
+            report = coverage.report_document((target / "review.md").read_bytes().decode("utf-8"))
+        except (WorkflowError, ValueError):
+            report = None
+        if isinstance(report, dict) and "malformed_report_contract" not in result["reasons"]:
+            findings.extend({"unit": unit["id"], "finding": f} for f in report["findings"])
+    inventory = coverage.read_json(Path(directory) / "packet/required-material.json")["required"]
+    material = [
+        selected.get(
+            item["id"],
+            {
+                "id": item["id"],
+                "state": "unsupported" if item.get("omitted") else "unread",
+                "reason": item.get("omitted") or "assigned_unit_not_inspected",
+                "evidence": [],
+                "location": {
+                    key: item.get(key)
+                    for key in ("artifact", "start_line", "end_line", "path", "revision", "kind")
+                },
+            },
+        )
+        for item in inventory
+    ]
+    if state and state["stop_reason"]:
+        reasons.append(state["stop_reason"])
+    return {
+        "schema_version": 5,
+        "qualified": not reasons and all(u["state"] == "complete" for u in units),
+        "reasons": sorted(set(reasons)),
+        "material": material,
+        "units": units,
+        "findings": findings,
+        "required_count": len(material),
+        "inspected_count": sum(m["state"] == "reviewed" for m in material),
+        "policy_digest": digest(batch["policy"]),
+        "batch_sha256": digest(batch),
+        "authorization_digest": digest(batch["authorization"]),
+        "budget": batch["budget"],
+        "usage": usage,
+        "reservations": reservations,
+        "started": state["started"] if state else None,
+        "deadline": state["deadline"] if state else None,
+        "limit": "Attributed bookkeeping, not model output. Provider ceilings are soft; reference cost is not billing. Observed reads do not prove understanding.",
+    }
+
+
+def finalize(directory):
+    result = assessment(directory)
+    atomic_json(Path(directory) / "coverage.json", result)
+    atomic_json(Path(directory) / "review.md", result)
+    meta = api().verify_packet(directory)
+    meta.update(review_sha256=api().digest(Path(directory) / "review.md"))
+    atomic_json(Path(directory) / "metadata.json", meta)
+    return Path(directory) / "review.md"
+
+
+def qualification(directory, require=False):
+    result = assessment(directory)
+    meta = api().verify_packet(directory)
+    if (
+        coverage.read_json(Path(directory) / "coverage.json") != result
+        or coverage.read_json(Path(directory) / "review.md") != result
+        or api().digest(Path(directory) / "review.md") != meta.get("review_sha256")
+    ):
+        raise WorkflowError("Aggregate changed or requires saved-result recovery")
+    if require:
+        review_policy.require_current_adapter(meta["review_policy"])
+        if meta["review_policy"]["provider"] == "claude-code":
+            from claude_native_auth import validate_binding
+
+            validate_binding(meta["review_policy"].get("authentication"))
+        if not result["qualified"]:
+            raise WorkflowError("Batch coverage incomplete; every component and integration required")
+    return result
+
+
+def add_budget_arguments(parser, *, required=True, authorization=True):
     for name, kind in (
         ("requests", int),
-        ("credits", float),
-        ("seconds", float),
-        ("unit-credits", float),
-        ("unit-seconds", float),
+        ("kind", str),
+        ("cost", str),
+        ("seconds", int),
+        ("unit-cost", str),
+        ("unit-seconds", int),
+        ("max-report-bytes", int),
+        ("max-integration-bytes", int),
     ):
-        parser.add_argument("--batch-" + name, type=kind, required=True)
+        parser.add_argument("--batch-" + name, type=kind, required=required)
+    if authorization:
+        parser.add_argument("--batch-authorization", required=required)
 
 
 def arguments_budget(args):
     return {
         name: getattr(args, "batch_" + name)
-        for name in ("requests", "credits", "seconds", "unit_credits", "unit_seconds")
+        for name in (
+            "requests",
+            "kind",
+            "cost",
+            "seconds",
+            "unit_cost",
+            "unit_seconds",
+            "max_report_bytes",
+            "max_integration_bytes",
+        )
     }
+
+
+def contract_digest(meta, context):
+    issue, plan = context["issue"], context["designated_plan_comment"]
+    return digest(
+        {
+            "issue": meta["issue"],
+            "plan_comment": meta["plan_comment"],
+            "issue_digest": digest({"title": issue["title"], "body": issue.get("body") or ""}),
+            "plan_digest": digest({"id": meta["plan_comment"], "body": plan.get("body") or ""}),
+        }
+    )
+
+
+def preview(directory, limits=None):
+    planned = plan(directory)
+    if limits is None:
+        return planned
+    limits, policy = review_policy.batch_budget(limits, planned["policy"], len(planned["units"]))
+    return {**planned, "budget": limits, "unit_policy": policy}
+
+
+def verify_harness(authorization):
+    """Bind the actual imported harness, not an unrelated control checkout."""
+    from workflow import run
+
+    root = Path(__file__).resolve().parents[2]
+    actual_commit = run(["git", "-C", root, "rev-parse", "HEAD"]).stdout.strip()
+    files = {
+        str(p.relative_to(root)): api().digest(plain_path(p)) for p in (root / "scripts/agentic").glob("*.py")
+    }
+    if actual_commit != authorization["harness_commit"] or files != authorization["harness_files"]:
+        raise WorkflowError("Authorized harness commit or complete module hashes changed")

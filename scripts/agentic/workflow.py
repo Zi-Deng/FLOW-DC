@@ -174,7 +174,7 @@ def configuration(root):
     if (
         not isinstance(result, dict)
         or type(result.get("schema_version")) is not int
-        or result["schema_version"] != 1
+        or result["schema_version"] not in {1, 2}
     ):
         raise WorkflowError("Unsupported .agentic/config.json schema")
     result.setdefault("max_diff_bytes", None)
@@ -208,6 +208,10 @@ def configuration(root):
         or len(set(checks)) != len(checks)
     ):
         raise WorkflowError("required_checks must be a nonempty list of unique check names")
+    from review_policy import defaults
+
+    if result["schema_version"] == 2:
+        defaults(result)
     return result
 
 
@@ -485,6 +489,27 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
     add_commands(sub)
+    import review_policy
+
+    select = sub.add_parser("review-selection")
+    review_policy.add_arguments(select)
+    select.add_argument("--save", action="store_true")
+    register = sub.add_parser("register-reviewer")
+    register.add_argument("provider", choices=["copilot", "claude-code"])
+    register.add_argument("--binary", required=True)
+    register.add_argument("--proof-directory", required=True)
+    credentials = sub.add_parser("claude-subscription-setup")
+    credentials.add_argument("--replace", action="store_true")
+    credentials.add_argument("--paid-usage-disabled", action="store_true")
+    native = sub.add_parser("claude-login-setup")
+    native.add_argument("--renew", action="store_true")
+    native.add_argument("--retain-capability", action="store_true")
+    native.add_argument("--paid-usage-disabled", action="store_true")
+    recovery = sub.add_parser("claude-diagnostic-recovery")
+    recovery.add_argument("--apply", action="store_true")
+    recovery.add_argument("--preview-digest")
+    diagnostic = sub.add_parser("diagnose-claude")
+    review_policy.add_arguments(diagnostic)
     sub.add_parser("doctor")
     sub.add_parser("memory-init")
     new = sub.add_parser("new-task")
@@ -510,11 +535,62 @@ def main():
     args = parser.parse_args()
     try:
         repo = Repo()
+        if args.command in {
+            "review-selection",
+            "register-reviewer",
+            "claude-subscription-setup",
+            "claude-login-setup",
+            "diagnose-claude",
+            "claude-diagnostic-recovery",
+        }:
+            if args.command == "review-selection":
+                overrides = {
+                    key: getattr(args, key) for key in ("review_provider", "review_model", "review_effort")
+                }
+                if args.save:
+                    review_policy.save_selection(repo, configuration(repo.root), **overrides)
+                    overrides = {}
+                result = review_policy.status(repo, configuration(repo.root), **overrides)
+            elif args.command == "claude-diagnostic-recovery":
+                import diagnostic_recovery
+
+                result = diagnostic_recovery.prepare(
+                    repo, configuration(repo.root), apply=args.apply, preview_digest=args.preview_digest
+                )
+            elif args.command == "register-reviewer":
+                import review_cli
+
+                result = review_cli.register(repo, args.provider, args.binary, args.proof_directory)
+            elif args.command == "claude-subscription-setup":
+                raise WorkflowError("The legacy setup-token route is blocked; use guarded native login setup")
+            elif args.command == "claude-login-setup":
+                import claude_native_auth
+
+                result = claude_native_auth.setup(
+                    repo,
+                    renew=args.renew,
+                    paid_usage_disabled=args.paid_usage_disabled,
+                    retain_capability=args.retain_capability,
+                )
+            else:
+                import review_diagnostics
+
+                result = review_diagnostics.run(
+                    repo,
+                    configuration(repo.root),
+                    **{
+                        key: getattr(args, key)
+                        for key in ("review_provider", "review_model", "review_effort")
+                    },
+                )
+            print(json.dumps(result, indent=2))
+            return 2 if result.get("status") == "incomplete" else 0
         if args.command == "doctor":
             result = {
                 "root": str(repo.root),
                 "main": str(repo.main),
-                "tools": {tool: shutil.which(tool) for tool in ["git", "gh", "codex", "copilot"]},
+                "tools": {tool: shutil.which(tool) for tool in ["git", "gh", "codex"]},
+                "review_selection": review_policy.status(repo, configuration(repo.root)),
                 "git_clean": not bool(repo.git("status", "--porcelain")),
                 "github_authenticated": run(["gh", "auth", "status"], check=False).returncode == 0
                 if shutil.which("gh")

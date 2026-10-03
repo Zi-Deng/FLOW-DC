@@ -6,9 +6,87 @@ It does not prove understanding, defect detection, acceptance correctness or sci
 validity. The owner can rewrite private records and their hashes. These records detect
 accidental changes; they are not a cryptographic attestation against their owner.
 
+## Provider-aware bounded batches (current)
+
+Single-request review remains the default. Explicit `batch-preview DIRECTORY` derives
+complete navigation assignments without inference. Supply the same typed bounds to
+`batch-preview` to obtain the executable preview used by the named authorization:
+`--batch-requests`, `--batch-kind`, `--batch-cost`, `--batch-seconds`,
+`--batch-unit-cost`, `--batch-unit-seconds`, `--batch-max-report-bytes` and
+`--batch-max-integration-bytes`. Every bound is explicit; full-review allocations must
+fund all components plus integration before execution. Requests count wrapper
+invocations, not provider-internal API requests. Bounds never imply inspection.
+
+Native cost kind is `reference-usd`; terminal `estimated_usd` is a provider reference
+estimate, not a bill or allowance for extra spending. Included-Max authentication and
+zero extra spending remain mandatory. Native units cannot exceed 900 seconds/$10
+reference cost or their immutable parent policy. Explicit Copilot uses `ai-credits`
+and `totalNanoAiu / 1e9`; no dollar conversion exists. Allocation comparisons use
+exact decimal/rational arithmetic; unknown usage, overshoot and incomplete units stop dispatch.
+
+`batch-run DIRECTORY` requires those bounds plus `--batch-authorization FILE`.
+The coordinator supplies a JSON object containing a nonempty `name`, `preview_digest`
+(the canonical tasks.digest of the executable preview), `expires_at` (finite UTC Unix
+timestamp), exact `harness_commit`, and `harness_files` mapping every Python module
+under the actual invocation harness's `scripts/agentic` to its SHA-256. Dispatch checks
+the imported harness, not an unrelated control checkout. This record documents an
+actual separately granted finite authorization; creating JSON cannot confer authority.
+Unmerged PR source is inert data unless its exact tested harness is separately authorized.
+
+The preview exposes per-unit required/context items, lines and UTF-8 byte volumes.
+Plan version 5 binds contract, head/base/merge-base, immutable parent inventory and
+files, complete provider/authentication policy, context links, output limits and
+integration dependency identities. Every original ID has one primary assignment;
+context overlap earns no duplicate credit. Integration reads the exact component
+reports as additional required ranges. Oversized report material stops before its
+provider invocation. Reports are never truncated to fit an allocation.
+
+Ledger version 2 persists start, absolute deadline, authorization, ordered reservations,
+dispatch identity and first failure-stop before inference. Adapters revalidate the
+reservation, remote head/base/contract and remaining time after provider preflight;
+the effective timeout may shorten but the frozen policy is never rewritten. Existing
+native activation, verified executable, managed controls and authentication checks
+remain mandatory. The implementation dispatches sequentially under a batch lock.
+
+`batch-recover` performs storage recovery only. `batch-resume` may dispatch only
+never-started eligible units under the original unexpired authorization, with all prior
+units complete and known usage. It cannot clear a durable stop, reset the deadline,
+reclaim an uncertain slot or replay a successful call. A changed head/contract needs
+a fresh full packet; old-contract coverage cannot be imported through repair routing.
+
+Managed equivalents use `task-review ISSUE --batch`, the same bounds and authorization
+file, `--execute`, and explicit `--batch-resume` where eligible. One batch remains one
+managed round; round-continuation authority is separately required. Publication verifies
+each exact COMMENT child and aggregate, including partial reports. All readiness paths
+require the full parent plus integration; a child cannot independently qualify a parent.
+Hosted operation remains opt-in Copilot single-review only.
+
+| Record namespace | Current | Frozen historical handling |
+| --- | --- | --- |
+| Packet metadata | 6 with explicit kind | 1–3 original meanings; 4 recovery-only batch; 5 provider-bound single |
+| Batch plan / ledger | 5 / 2 | Plans 1–4 and ledger 1 never dispatch unused slots |
+| Capture / result | 6 | Exact schema-3 and schema-5 journals recover without inference |
+| Single or unit / aggregate assessment | 3 / 5 | Original assessment hashes reproduced by frozen dependencies |
+| Model report | 2 | Unchanged JSON syntax and exact final bytes |
+| Native diagnostics | adapter v6 / schema 8 | No event-shape change, diagnostic renewal or attempt 10 |
+
+`review_batch_v4`, `review_issue31_v3`, `review_coverage_issue31_v3` and
+`review_telemetry_issue31_v3` retain issue-31 historical storage/publication semantics.
+Schema-3 batch children require their validated schema-4 parent lineage; detached
+children fail explicitly. `review_coverage_v5` and `review_telemetry_v5` preserve merged
+schema-5 single assessments. Existing older and native frozen modules remain intact.
+Historical assessment success does not confer current readiness; eligible schema-5
+single reviews retain current-policy checks without artifact migration.
+
+Synthetic tests exercise both providers, immutable policy/authorization, exact report
+recovery, typed accounting, deadlines, stops and publication. They are not live batch
+completion. PR #32 still requires final-head software/CI evidence and a separately
+bounded native component-plus-integration review. The PR #34 exception does not apply.
+
 ## Packet and scope contract
 
-New packets use metadata schema 3. `START.txt` leads to `issue.txt`, `plan.txt`,
+New packets use metadata schema 6 with immutable provider policy and an explicit
+single, batch-parent or batch-unit kind. Schema 4 is historical recovery-only evidence. `START.txt` leads to `issue.txt`, `plan.txt`,
 `criteria/*.txt`, `acceptance.txt`, `changed-files.json`, `changes/*.txt`, `test-map.json`,
 `findings/*.txt`, `validation.json`, `scopes.json` and `required-material.json`.
 Full `diff.txt`, `context.json`, `source-index.json`, `base-source-index.json` and inert
@@ -50,7 +128,19 @@ original assessment and unread material into a repair; their old qualification c
 Schema-1 packets without coverage require a fresh complete packet. Unsupported prior
 data fails explicitly.
 
-## Provider adapter and capability probe
+## Provider adapters and capability probe
+
+Claude native stream JSON is handled separately from Copilot session events. Its
+model-facing successful Read/Grep/Glob results normalize to shared read/search/list
+evidence; UI metadata does not earn credit. Numbered native Read uses tab or colon
+separators with exact source matching. Grep must return content and line numbers; Glob
+proves discovery only. A unique successful terminal result supplies exact report text;
+assistant fragments are never concatenated. Session/model mismatches, malformed events,
+unknown rendering, delegation and forbidden tools remain incomplete. Synthetic fixtures
+and static binary inspection do not establish live capability. Claude remains blocked
+before inference: see [PROVIDERS.md](PROVIDERS.md).
+
+The following Copilot-specific meanings remain unchanged:
 
 The pinned Copilot CLI is 1.0.83, defined with its archive digest in
 `scripts/agentic/copilot_policy.py`. Installer, invocation and current assessment share
@@ -143,7 +233,7 @@ coverage label are separate; neither is inserted into the saved model output.
 
 `review-capture.json` atomically saves exact output and sanitized diagnostics bound
 to the input packet **before assessment reads packet files**. `review-result.json` then
-journals the assessment hash. Both records use schema 3. A pending capture can recover
+journals the assessment hash. New capture/result records use schema 6. A pending capture can recover
 a transient assessment/storage failure after the original packet is restored; it never
 authorizes another model call. Strict UTF-8/IO failures produce fixed diagnostic reasons
 without lossy replacement decoding or raw error text. Final storage writes `review.md`,
@@ -194,8 +284,12 @@ uses the original report, not visible escape markers or a rewritten version.
 Metadata/result schema 2 and coverage schema 1 are now historical. The frozen
 `review_coverage_v1.py` reproduces their original assessment hashes, recovery and
 publication envelopes, including formerly malformed fenced reports. It cannot qualify
-new reviews. Current readiness and managed designation require schema 3 metadata/result
-and schema 2 evidence/report. Existing schema-1 records retain their older meaning too.
+new reviews. Schema-3 assessment and telemetry are frozen in `review_coverage_v2.py`
+and `review_telemetry_v2.py`, preserving original hashes and publication envelopes.
+Current readiness and managed designation accept eligible schema-5 singles or schema-6
+singles/complete parents under their bound provider policies. Model reports remain schema 2;
+current unit assessments are version 3 and aggregate assessments version 5. Schema-4
+batches and their children reproduce historical evidence only, never current readiness.
 Never rewrite a historical journal or retrofit new claims. A new packet/authorized
 invocation is needed for current evidence. `verify-publication` remains byte-exact.
 
@@ -229,7 +323,12 @@ hashes, historical review claims or PR #27's limitations. Review this workflow-c
 PR under clean-main policy. Only the already-authorized narrow literal-tool/capability
 invocation may be used before merge; arbitrary PR policy must not become active.
 
-## Explicit bounded batches (metadata schema 4)
+## Historical Copilot batch design (metadata schema 4)
+
+The following records describe the pre-provider design. Its execution commands and
+credit-only allocations cannot dispatch historical reservations. Use the schema-6
+procedure above for new work; old reports, assessments and publication bytes remain
+unchanged. No historical incomplete trial establishes current readiness.
 
 Single-request schema-3 records keep their existing semantics. A batch is an explicit
 opt-in before inference; a deterministic preview makes no model call. From the clean
@@ -462,3 +561,16 @@ Progress messages do not excuse prose in the final message. This is only prompt
 mitigation: historical prose-prefixed reports remain malformed and exact, with
 zero coverage credit. The strict report parser and last-message selection are
 unchanged; no JSON substring is extracted to repair provider output.
+
+hashes, historical review claims or PR #27's limitations. The migration-only review
+exception for issue #33 is documented in [PROVIDERS.md](PROVIDERS.md); it introduces no
+generic bypass and establishes no normal finish readiness. PR #32 remains separate.
+
+
+Revision 8 freezes Claude v5/schema7 and its refusal helper. Current v6/schema8
+adds exact optional direct caller provenance and bounded predicate diagnostics,
+without changing exact returned-line matching or report bytes. Both diagnostic
+purposes bind the fixed directory/glob Grep command; successful transport with no
+matching source spans cannot satisfy Grep capability. Trials 4 and 6 retain only
+historical qualification, and trial 7 remains incomplete. See the
+[revision-8 grant and evidence boundary](PROVIDERS.md#issue-33-revision-8-prospective-recovery).

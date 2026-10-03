@@ -1,5 +1,13 @@
 # Use the Golden Path skills
 
+Current issue-31 batch records use metadata/capture 6, plan 5 and ledger 2; see
+[provider-aware bounded batches](COVERAGE.md#provider-aware-bounded-batches-current)
+for typed allocations, named authorization, exact-report publication and recovery-only
+history. Single-review schema 5 remains eligible under its original provider checks.
+Batch children cannot qualify parents; finish still requires every component and
+integration, exact current-head/base publications and CI receipts. Dated migration
+notes below retain their historical meaning and grant no new inference allowance.
+
 The eight repository skills turn the operating guide into reusable entrypoints. Use
 one skill for a particular phase, or ask the workflow skill to coordinate the complete
 issue-to-PR process. The issue and approved plan remain the public task contract; the
@@ -21,7 +29,7 @@ skills do not appear, restart the session. See [OpenAI's skills documentation](h
 | Plan an existing issue | `$agentic-plan Issue #123` | Proposed plan comment, then recorded human approval |
 | Prepare the workspace | `$agentic-prepare Issue #123` | Registered sibling worktree and branch |
 | Implement an approved task | `$agentic-implement Issue #123` | Dedicated Astra executor, coherent commits, checks and draft PR |
-| Review the current PR | `$agentic-review PR #456` | Fresh Opus COMMENT review bound to the current head/base |
+| Review the current PR | `$agentic-review PR #456` | Fresh selected-model COMMENT review bound to the current head/base |
 | Address review findings | `$agentic-repair PR #456` | Same Astra session, repairs and public dispositions |
 | Prepare to merge | `$agentic-finish PR #456` | Evidence assessment and exact human-run finishing command |
 
@@ -42,7 +50,7 @@ flowchart TD
   A -->|Yes| W[Prepare sibling worktree]
   W --> I[Start dedicated Astra executor]
   I --> D[Commit, publish draft PR and check evidence]
-  D --> R[Fresh isolated Opus review]
+  D --> R[Fresh isolated selected-model review]
   R --> F{Supported material findings?}
   F -->|Yes| X[Resume original Astra UUID and publish dispositions]
   X --> D
@@ -85,10 +93,12 @@ change the active model of an arbitrary host conversation; use Astra for coordin
 and the explicit managed launcher for implementation. Cheaper-model changes require
 a separate deliberate policy decision.
 
-The managed launcher and review coordinator explicitly enforce the selected Astra/Opus
-policy. A deliberate model change must update those policy guards and their validation
-along with configuration and role guidance; editing a model ID alone is insufficient
-for the managed path.
+The managed launcher enforces Astra implementation; the review coordinator binds
+the selected provider/model/effort policy to each packet and round. Supported reviewer
+changes use explicit flags, saved selection or trusted configuration. New exact models
+need verified compatibility declarations as described in [PROVIDERS.md](PROVIDERS.md);
+changing CLI controls or telemetry protocols still requires adapter implementation
+and validation. A selection never bypasses activation or continuation requirements.
 
 The managed executor implements the approved scope, runs checks, prepares commits and
 returns publication text. The coordinator checks actual Git state and performs GitHub
@@ -104,10 +114,11 @@ permissions. Do not claim that the environment marker isolates credentials or ma
 a malicious executor harmless. This is distinct from the independent reviewer's
 restricted model-tool surface.
 
-The Opus reviewer is a new Copilot process with a fresh snapshot and state directory
-for every round. Its selected model is `claude-opus-5`; the profile and invocation
-request only the literal tools `view`, `grep` and `glob`. These settings do not attest
-successful provider tool calls. It sees the public contract, source/diff, checks and rubric.
+The independent reviewer uses a fresh provider process, snapshot and state directory for
+every round. Schema-2 configuration defaults to Claude Code `claude-opus-5-5`, effort
+`medium`, with native `Read`, `Grep`, `Glob`; explicit Copilot uses `claude-opus-5` and
+`view`, `grep`, `glob`. [Provider selection, budgets and activation](PROVIDERS.md) must
+validate before inference. Configuration does not attest successful provider tool calls. It sees the public contract, source/diff, checks and rubric.
 It receives neither the Astra conversation nor private task memory. Read
 [REVIEW.md](REVIEW.md) for the exact isolation boundary and evidence limitations.
 
@@ -295,8 +306,8 @@ commands, omissions and finding dispositions without claiming the reviewer ran t
 `task-review --prior-review DIRECTORY` accepts a validated same-PR ancestor packet,
 retains old uncovered material and adds repair/finding links. Default scope planning remains
 one bounded request. Explicit `task-review --batch` previews the full partition;
-execution requires five finite budget options. Resume never retries attempted units.
-See [batch controls and evidence](COVERAGE.md#explicit-bounded-batches-metadata-schema-4).
+execution requires explicit typed budgets, output bounds and a named authorization. Resume never retries attempted units.
+See [batch controls and evidence](COVERAGE.md#provider-aware-bounded-batches-current).
 Actual successful canary and source-range evidence are required;
 configuration or nonempty prose is insufficient. Partial publication returns incomplete
 and never designates readiness. Finish also rejects legacy, missing or changed evidence.

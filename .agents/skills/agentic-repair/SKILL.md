@@ -26,3 +26,8 @@ A new head or base requires a fresh independent review. Keep the configured revi
 Prepare a finding/disposition map and repair delta linked to a validated prior packet. Preserve prior uncovered source/tests and outstanding findings; a legacy nonempty report is not coverage. Changes require renewed current-head evidence within the existing request allowance.
 
 Read [the coverage contract and migration runbook](../../../docs/agent-workflow/COVERAGE.md).
+
+For current provider selection, immutable policy, activation blockers, typed budgets
+and historical recovery, read [provider guidance](../../../docs/agent-workflow/PROVIDERS.md).
+Partial/legacy evidence cannot establish readiness. Migration-only exceptions do not
+create a generic review bypass.
