@@ -195,10 +195,17 @@ review. No normal gate is bypassed and no model-reviewed SHA is asserted. Narrow
 capability diagnostics remain limited to $2 estimated reference cost and 300 seconds
 each, after credential, billing and isolation prerequisites. The original two-slot
 allowance has only the explicitly approved issue-33 recovery exception described in
-PROVIDERS.md. They are not a PR review; no diagnostic has established native
-capability. See PROVIDERS.md for
-activation blockers and the separate human handoff. Other tasks retain normal review.
+PROVIDERS.md. Retained successful v6 purposes 8 and 9 establish the native capability
+activation prerequisite under their exact bindings, not PR inspection or readiness.
+All nine attempts remain historical and the grant is exhausted; no attempt 10.
+See PROVIDERS.md for current authentication, isolation and activation checks and
+the separate human handoff. Other tasks retain normal review.
 Repair stays on the original branch and Astra UUID. New commits invalidate readiness.
+
+The dated migration sections below retain their then-current blockers and prospective
+authorizations as history. Purposes 8 and 9 subsequently qualified under v6; the
+nine-attempt diagnostic grant is exhausted. These historical sequences cannot be
+executed again and supply no PR #32 inspection.
 
 ## Historical migration status — 2026-10-02, before revision-4 recovery
 
@@ -314,7 +321,7 @@ PR-review exemption, strict normal gates, human merge and untouched PR32 still a
 
 ## Revision-8 call provenance and deterministic Grep — 2026-10-03 UTC
 
-Use the [current revision-8 sequence](PROVIDERS.md#issue-33-revision-8-prospective-recovery).
+Historical preparation used the [revision-8 sequence](PROVIDERS.md#issue-33-revision-8-prospective-recovery).
 V5 telemetry and its helper remain frozen for schema7 recovery; current v6 uses
 schema8. Exact optional direct-caller metadata is accepted only with all existing
 identity, tool, input, result and terminal evidence. Unknown/delegated metadata is
@@ -325,3 +332,34 @@ Seven historical trials and five ledgers retain their original bytes and status;
 trial7 remains incomplete on both refusal and Grep evidence. After final gates/CI,
 coordinator-only explicit grant application permits slot8 tools/source and then9
 isolation if8 qualifies, failure-stop/no10. No software repair or renewal runs inference.
+
+
+## Full batch feasibility before authorization
+
+Inspect the fresh preview, including omissions, component count, required/context
+volumes and integration report envelope. Ordinary required test fixtures must not
+have known unsupported material before a completion trial. Long-line inventory
+projections are described in [COVERAGE.md](COVERAGE.md); they preserve raw bytes and
+need actual returned evidence just like other required material.
+
+For N sequential wrapper invocations at timeout T, the full-review elapsed allocation
+must cover at least N × T plus preparation/dispatch overhead. A native receipt's
+seven-day validity does not establish credential lifetime. Each native call requires
+its credential to outlive its effective timeout plus the 300-second refresh margin
+and 60-second clock allowance. A no-renewal full sequence therefore needs observed
+remaining credential lifetime greater than the whole elapsed envelope plus 360
+seconds, as well as a valid receipt throughout. The coordinator must establish this
+without exposing credentials. Existing verified same-account human renewal preserves
+history; it does not reset the original deadline, stop state or invocation count.
+Do not assume a one-call preflight proves a long sequence feasible.
+
+Integration must read all exact component reports. At C components and report bound
+R, reserve at least C × R bytes if authorizing the worst-case report envelope; a
+smaller explicit integration envelope may stop before its call when actual reports
+exceed it. Parent context remains available, and navigation context is not proof of
+semantic integration. Assess report size, required lines, provider context limits,
+tool/event/capture bounds and the 900-second / $10 reference per-call ceiling together.
+A storage bound or green synthetic test does not prove those volumes fit one model
+context or one invocation. No automatic report truncation, extra integration call,
+provider switch, renewed diagnostic grant or paid-extra spending follows a mismatch.
+Keep the completion allocation blocked while feasibility evidence is missing.

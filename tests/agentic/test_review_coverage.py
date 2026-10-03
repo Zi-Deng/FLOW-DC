@@ -433,7 +433,7 @@ class PacketTests(GitFixture):
 
     def test_carried_omitted_source_has_no_current_packet_pointer(self):
         self.commit_task()
-        (self.task_path / "code.py").write_text("x" * 17000 + "\n")
+        (self.task_path / "code.py").write_text("x" * 65537 + "\n")
         self.updated_head()
         previous = review.prepare(self.repo, 31, 12, 1234)
         old = coverage.read_json(previous / "packet/required-material.json")["required"]

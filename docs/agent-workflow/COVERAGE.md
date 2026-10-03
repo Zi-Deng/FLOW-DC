@@ -109,12 +109,56 @@ plus addition. Empty files have an explicit empty-blob inventory record. Oversiz
 nonregular or unsupported changed material remains an unsupported obligation.
 
 Each navigation scope has at most 12 items, 800 required lines and 64000 required
-UTF-8 bytes. Material entries split at 120 lines or 16000 bytes. A single line beyond
-that bound remains explicitly unsupported, with its complete source available.
+UTF-8 bytes. Material entries split at 120 lines or 16000 bytes. New packets can
+represent a longer line through inventory schema 3 / projection version 1 below.
+Lines exceeding that finite representation remain explicitly unsupported; existing
+inventories and their omission assessments are never rewritten.
 The global inventory partitions every required ID exactly once, including a separate
 cross-boundary pass. `scopes.json` reports required items/lines/bytes and available
 source bytes. These are operational counts, never percentages proving correctness.
 Scopes organize **one request** with the existing budget; they never launch paid fan-out.
+
+### Lossless long-line navigation (inventory 3 / projection 1)
+
+Regular UTF-8 `.mjs` module fixtures join the inert text suffix allowlist. Git blobs
+are copied to numeric `.txt` names; nothing is imported or executed. Symlinks,
+nonregular entries, invalid UTF-8, NUL and existing file/snapshot limits still refuse.
+
+An oversized line of at most 65,536 UTF-8 bytes can become a separate inert projection.
+Each ASCII JSON row is `[start_byte,end_byte,text]`, with absolute zero-based UTF-8
+byte offsets, an exclusive end and at most 128 Unicode characters of exact text.
+JSON escaping preserves control characters, Unicode, backslashes and line endings.
+Concatenating decoded text without separators reproduces exactly one original line.
+The binding records the raw artifact/hash, original 1-based line, byte interval and
+projection hash. The original Git snapshot stays byte-identical and available.
+
+Each projected range is an independently required item under the existing 120-line /
+16,000-byte bounds, retaining source/test/path/revision links. Every generated chunk
+remains obligated. Qualification reproduces the complete canonical projection from
+the hashed raw source before considering actual returned projection spans. Missing,
+changed, truncated or unread chunks fail; reading the raw line does not manufacture
+projection evidence. Returned projection spans never become raw-line tool spans.
+Current source-index bindings and carried immutable provenance remain required.
+Repeated repairs copy both raw and projected bytes and preserve unread IDs.
+
+`review_projection.py` centrally caps each raw projected line at 65,536 bytes and new
+projections at 2,000,000 bytes per packet. The existing total snapshot ceiling also
+counts new projections and carried source. Overflows retain an explicit unsupported
+obligation, never a shortened source. Inventory 3 is emitted only when projections
+exist; old inventory 1/2 and frozen assessment semantics remain unchanged.
+
+Offline pinned-source inspection on 2026-10-03 found no 2,000-character clipping in
+2.1.282's explicit-range small-file selector or returned-line renderer: 2,000 is the
+default line count. Binary SHA-256 remains
+`3afe8535c0cc33f0e24f7b25dab7a1727b8b592196f8496a8bc302ba2161eed3`.
+The `IF` selector at bytes 199889395–199890414 hashes to
+`afb0f63964adda80b32310ef3a58cf61ae177dab45f1285d6b6fc0c6a53b5b67`;
+the existing `Lcn/h2n` renderer at 194962901–194963261 hashes to
+`98d5c80d42301f2beac040149f9e8f2911dee3218e02e1f42ec9dd5fb96812bd`.
+Executing these extracted pure functions offline preserved the 22,496-byte fixture
+line, a 65,537-byte ASCII case and a 24,002-byte Unicode/CRLF case. This does not
+invoke the provider or establish live capability. Native byte/token caps still apply;
+whole-file truncation and any missing returned bytes remain unsupported evidence.
 
 A repair packet accepts `--prior-review DIRECTORY` on local preparation or managed
 `task-review`. The prior packet/report/diagnostics must validate, belong to the same
@@ -137,8 +181,12 @@ separators with exact source matching. Grep must return content and line numbers
 proves discovery only. A unique successful terminal result supplies exact report text;
 assistant fragments are never concatenated. Session/model mismatches, malformed events,
 unknown rendering, delegation and forbidden tools remain incomplete. Synthetic fixtures
-and static binary inspection do not establish live capability. Claude remains blocked
-before inference: see [PROVIDERS.md](PROVIDERS.md).
+and static binary inspection do not establish live capability. Retained successful v6
+purposes 8 and 9 satisfy the native capability activation prerequisite, subject to
+current binding validation in [PROVIDERS.md](PROVIDERS.md). They do not inspect PR #32.
+All nine diagnostic attempts remain historical; the exhausted grant permits no tenth
+attempt. Current authentication, isolation, exact harness authorization and finite
+review allocation remain separate prerequisites.
 
 The following Copilot-specific meanings remain unchanged:
 
@@ -574,3 +622,7 @@ purposes bind the fixed directory/glob Grep command; successful transport with n
 matching source spans cannot satisfy Grep capability. Trials 4 and 6 retain only
 historical qualification, and trial 7 remains incomplete. See the
 [revision-8 grant and evidence boundary](PROVIDERS.md#issue-33-revision-8-prospective-recovery).
+
+The revision-8 paragraph describes its preparation history. Retained successful v6
+purposes 8 and 9 now satisfy that capability prerequisite under their exact bindings;
+all nine attempts remain historical, with no tenth attempt authorized.

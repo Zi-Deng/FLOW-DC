@@ -38,6 +38,7 @@ TEXT_SUFFIXES = {
     ".cfg",
     ".sh",
     ".js",
+    ".mjs",
     ".ts",
     ".tsx",
     ".jsx",

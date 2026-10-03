@@ -8,6 +8,7 @@ import json
 import re
 from pathlib import Path, PurePosixPath
 
+import review_projection
 from review_coverage import read_json, report_document
 from workflow import WorkflowError, run, write_json
 
@@ -198,8 +199,19 @@ def source_ranges(path, text, hunks, revision):
 def build(repo, packet, head, ancestor, head_index, base_index, context, cfg, prior=None, provider="copilot"):
     packet = Path(packet)
     required = []
+    projection_bytes = 0
 
-    def add(artifact, kind, original=None, revision="packet", links=None, omitted=None, intervals=None):
+    def add(
+        artifact,
+        kind,
+        original=None,
+        revision="packet",
+        links=None,
+        omitted=None,
+        intervals=None,
+        projection=None,
+    ):
+        nonlocal projection_bytes
         original = original or artifact
         if omitted:
             required.append(
@@ -232,13 +244,16 @@ def build(repo, packet, head, ancestor, head_index, base_index, context, cfg, pr
         def entry(end):
             required.append(
                 {
-                    "id": stable_id(kind, revision, original, lines[start - 1 : end], start, end),
+                    "id": stable_id(kind, revision, original, lines[start - 1 : end], start, end)
+                    if projection is None
+                    else stable_id(kind, revision, original, projection, start, end),
                     "kind": kind,
                     "path": original,
                     "revision": revision,
                     "artifact": artifact,
                     "start_line": start,
                     "end_line": end,
+                    **({"projection": projection} if projection is not None else {}),
                     "bytes": size,
                     "links": links or [],
                 }
@@ -254,18 +269,45 @@ def build(repo, packet, head, ancestor, head_index, base_index, context, cfg, pr
             if length > MATERIAL_BYTES:
                 if size:
                     entry(number - 1)
-                required.append(
-                    {
-                        "id": stable_id(kind, revision, original, blob, number),
-                        "kind": kind,
-                        "path": original,
-                        "revision": revision,
-                        "artifact": artifact,
-                        "omitted": f"Line {number} exceeds bounded material byte limit",
-                        "links": links or [],
-                        "bytes": length,
-                    }
-                )
+                try:
+                    start_byte = sum(len(part.encode("utf-8")) for part in lines[: number - 1])
+                    rendered = review_projection.render(line, start_byte)
+                    target = f"projections/{stable_id(artifact, blob, number)}.txt"
+                    if not (packet / target).exists():
+                        if projection_bytes + len(rendered) > review_projection.MAX_PACKET_BYTES:
+                            raise ValueError("Packet exceeds bounded projection byte limit")
+                        (packet / "projections").mkdir(exist_ok=True)
+                        (packet / target).write_bytes(rendered)
+                        projection_bytes += len(rendered)
+                    add(
+                        target,
+                        kind,
+                        original=original,
+                        revision=revision,
+                        links=links,
+                        projection={
+                            "schema_version": review_projection.VERSION,
+                            "source_artifact": artifact,
+                            "source_sha256": blob,
+                            "source_line": number,
+                            "start_byte": start_byte,
+                            "end_byte": start_byte + length,
+                            "sha256": hashlib.sha256(rendered).hexdigest(),
+                        },
+                    )
+                except ValueError as exc:
+                    required.append(
+                        {
+                            "id": stable_id(kind, revision, original, blob, number),
+                            "kind": kind,
+                            "path": original,
+                            "revision": revision,
+                            "artifact": artifact,
+                            "omitted": f"Line {number}: {exc}",
+                            "links": links or [],
+                            "bytes": length,
+                        }
+                    )
                 start, size = number + 1, 0
                 continue
             if size and (number - start >= MATERIAL_LINES or size + length > MATERIAL_BYTES):
@@ -535,9 +577,13 @@ def build(repo, packet, head, ancestor, head_index, base_index, context, cfg, pr
                 # Legacy prior-source has only a trustworthy snapshot digest.
                 source_commit = (
                     metadata["head_sha"]
-                    if old_artifact and old_artifact.startswith("source/")
+                    if old_artifact
+                    and old.get("projection", {}).get("source_artifact", old_artifact).startswith("source/")
                     else metadata["merge_base_sha"]
-                    if old_artifact and old_artifact.startswith("base-source/")
+                    if old_artifact
+                    and old.get("projection", {})
+                    .get("source_artifact", old_artifact)
+                    .startswith("base-source/")
                     else None
                 )
                 provenance = {
@@ -568,6 +614,13 @@ def build(repo, packet, head, ancestor, head_index, base_index, context, cfg, pr
                     target = f"prior-source/{len(copied):06d}.txt"
                     (packet / target).write_bytes((previous / "packet" / old_artifact).read_bytes())
                     copied[old_artifact] = target
+                if old.get("projection"):
+                    source_artifact = old["projection"]["source_artifact"]
+                    if source_artifact not in copied:
+                        target = f"prior-source/{len(copied):06d}.txt"
+                        (packet / target).write_bytes((previous / "packet" / source_artifact).read_bytes())
+                        copied[source_artifact] = target
+                    carried["projection"] = {**old["projection"], "source_artifact": copied[source_artifact]}
                 required.append({**carried, "artifact": copied[old_artifact]})
     text_artifact(
         "cross-boundary.txt",
@@ -626,7 +679,10 @@ def build(repo, packet, head, ancestor, head_index, base_index, context, cfg, pr
         artifact = f"scopes/{scope['id']}.json"
         write_json(packet / artifact, {**scope, "material": [lookup[key] for key in scope["required_ids"]]})
         scope["artifact"] = artifact
-    write_json(packet / "required-material.json", {"schema_version": 2, "required": required})
+    write_json(
+        packet / "required-material.json",
+        {"schema_version": 3 if any("projection" in item for item in required) else 2, "required": required},
+    )
     (packet / "inventory-sha256.txt").write_text(
         hashlib.sha256((packet / "required-material.json").read_bytes()).hexdigest() + "\n", encoding="utf-8"
     )
@@ -663,6 +719,7 @@ def build(repo, packet, head, ancestor, head_index, base_index, context, cfg, pr
             else ""
         )
         + "Use scopes.json and scopes/*.json to navigate every entry in required-material.json. Full diff.txt, source-index.json and base-source-index.json remain available.\n"
+        "Projection version 1 rows are JSON [absolute UTF-8 start byte, exclusive end byte, exact text] chunks of one oversized raw line. Their inventory binding names the original source snapshot, line and SHA-256. Read every assigned projection range; decoded text concatenates without separators. Raw snapshots remain unchanged. Projection evidence credits only returned projection ranges, never inferred raw-line reads.\n"
         "Read each required range through view(path, view_range=[start,end]) using 1-based inclusive positions. If the end is blank, extend through a following nonblank line when available. At EOF, view only the nonblank prefix and use grep pattern ^\\s*$ with actual numbered matches for the blank tail; for all-blank ranges use grep alone. Never infer or reconstruct omitted output. Grep only credits actual returned matching lines, glob only proves discovery.\n"
         "Return compact JSON matching report-schema.json: copy inventory-sha256.txt into inventory_sha256, list only positively inspected IDs in reviewed, and group specific incomplete reasons in incomplete. Omitted IDs remain unread and block readiness; do not repeat an unread row for each ID. Explain general limits once in limitations. Do not assert budget exhaustion without a provider signal. Never infer execution from static inspection.\n",
         encoding="utf-8",
@@ -688,7 +745,7 @@ def build(repo, packet, head, ancestor, head_index, base_index, context, cfg, pr
         for directory in ("source", "base-source", "prior-source")
         for p in (packet / directory).glob("*.txt")
     )
-    if source_bytes > cfg["max_snapshot_bytes"]:
+    if source_bytes + projection_bytes > cfg["max_snapshot_bytes"]:
         raise WorkflowError(
             "Full head/base/prior source exceeds snapshot budget; required material was not reduced"
         )

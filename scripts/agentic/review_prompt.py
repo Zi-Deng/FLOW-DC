@@ -7,6 +7,13 @@ from pathlib import Path
 from review_coverage import read_json
 from workflow import WorkflowError
 
+PROJECTION_GUIDANCE = (
+    "Inventory projection version 1 rows are JSON [absolute UTF-8 start byte, exclusive end byte, exact text] "
+    "chunks of one oversized original line. Their binding identifies the unchanged raw snapshot, source line "
+    "and hashes. Inspect every assigned projection range; decoded chunk text joins without separators. "
+    "Credit is for actual returned projection ranges, never inferred raw-line inspection. "
+)
+
 
 def native(directory, meta):
     probe = read_json(Path(directory) / "packet/capability.json")
@@ -43,6 +50,7 @@ def native(directory, meta):
         "report genuine failures as incomplete. Never reuse another invocation probe or invent calls. "
         "Read START.txt, review-policy.txt, repository-policy.txt, domain-policy.txt and report-schema.json as context. "
         + scope
+        + PROJECTION_GUIDANCE
         + "Inspection suggestions use 1-based inclusive start/end; for Read convert to offset=start, limit=end-start+1. "
         "For blank-ended ranges extend through a following nonblank line where available. At EOF read the "
         "nonblank prefix and obtain actual numbered Grep matches for the blank tail. Suggestions grant no credit. "

@@ -772,6 +772,8 @@ def assess(packet, body, diagnostics, policy=None):
     inventory = read_json(packet / "required-material.json")
     required = inventory["required"]
     reasons = list(diagnostics["reasons"])
+    if type(inventory.get("schema_version")) is not int or inventory["schema_version"] not in {1, 2, 3}:
+        reasons.append("unsupported_inventory_version")
 
     def binding_bytes(artifact):
         if not isinstance(artifact, str):
@@ -781,7 +783,7 @@ def assess(packet, body, diagnostics, policy=None):
         except OSError:
             return None
 
-    if inventory.get("schema_version") == 2:
+    if inventory.get("schema_version") in {2, 3}:
         indexes = {
             revision: {row["path"]: row for row in read_json(packet / name)}
             for revision, name in (("head", "source-index.json"), ("base", "base-source-index.json"))
@@ -790,10 +792,20 @@ def assess(packet, body, diagnostics, policy=None):
             if item.get("omitted"):
                 continue
             revision, artifact = item["revision"], item.get("artifact")
+            source_artifact = artifact
+            if "projection" in item:
+                import review_projection
+
+                if inventory.get("schema_version") != 3 or not review_projection.validate(packet, item):
+                    reasons.append("projection_source_binding_mismatch")
+                else:
+                    source_artifact = item["projection"]["source_artifact"]
+            elif (artifact or "").startswith("projections/"):
+                reasons.append("projection_source_binding_mismatch")
             if revision in indexes and item["kind"] in {"changed-source", "test", "prior-material"}:
                 expected = indexes[revision].get(item["path"], {}).get("snapshot")
                 if not expected or (
-                    artifact != expected
+                    source_artifact != expected
                     and not ((artifact or "").startswith("empty/") and binding_bytes(expected) == b"")
                 ):
                     reasons.append("source_revision_binding_mismatch")
