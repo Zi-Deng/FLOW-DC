@@ -58,7 +58,7 @@ Each declaration has exactly these fields:
 | `model` | Exact lowercase versioned provider identifier, at most 128 characters; no aliases, auto/default/latest segments, paths or context modifiers |
 | `efforts` | Nonempty unique list of the model's verified efforts, within the pinned CLI's supported controls; Copilot `default` omits its effort flag |
 | `cli_version` | `2.1.282` for Claude or `1.0.83` for Copilot |
-| `adapter` | `claude-stream-json-2.1.282-v4` or `copilot-session-events-v2`, matching the provider |
+| `adapter` | `claude-stream-json-2.1.282-v5` or `copilot-session-events-v2`, matching the provider |
 | `evidence` | One to eight public HTTPS primary documentation URLs, without query strings or credentials; Claude documentation hosts for Claude, `docs.github.com` for Copilot |
 
 The list defaults to empty. Declarations cannot override built-in model entries or
@@ -263,14 +263,12 @@ or exact API-call counts. No undocumented auth-retry-disable variable is used;
 `CLAUDE_CODE_MAX_RETRIES` was removed. Complete native retry/fallback qualification
 and controlled native error-path evidence remain activation requirements.
 
-Issue 33's original, revision-4 and revision-5 ledgers remain historical accounting.
-All three trials are incomplete; both recovery grants stopped. Their unused isolation
-slots cannot execute. The exactly bound revision-6 grant below permits prospective
-slot 4 for v4 tools/source, then slot 5 for isolation only after slot 4 qualifies.
-It requires final checks/CI and explicit coordinator preview/application. Neither
-publication, software repair nor renewal runs a call. Each diagnostic is bounded to
-300 seconds/$2 reference estimate, zero extra actual spending. Failures/interruption
-count, and any future failure stops the new sequence.
+Issue 33's five historical trials retain their original statuses: incomplete,
+incomplete, incomplete, qualified under v4, incomplete. All four ledgers and old
+grants are frozen history; the revision-6 grant stopped after slot 5. Its executable
+allowance is zero. The [revision-7 sequence below](#issue-33-revision-7-prospective-recovery)
+requires current final checks/CI and explicit coordinator preview/application.
+Publication, software changes and renewal never run or authorize an automatic call.
 
 Both distinct purposes must succeed under the current exact CLI/adapter/model/effort
 and compatible authentication provenance. The tools-and-source purpose inspects
@@ -314,7 +312,7 @@ New execution requires current authority.
 
 **Historical, stopped after incomplete trial 3 on 2026-10-03 UTC.** The sequence
 below records that grant's original meaning; its unused isolation slot 4 cannot run.
-Use the revision-6 procedure below for the current binding.
+Use the revision-7 procedure below for the current binding.
 
 The maintainer's recorded standing override and approval bind
 [plan comment 5964179523](https://github.com/Zi-Deng/FLOW-DC/issues/33#issuecomment-5964179523)
@@ -368,7 +366,11 @@ explicit verified same-account lineage permitted. Owner-writable receipts are
 accounting, not cryptographic attestations or billing guarantees. The implementation
 and synthetic ledger tests do not establish either successful live purpose.
 
-### Issue 33 revision-6 prospective recovery
+### Issue 33 revision-6 recovery — historical, stopped after slot 5
+
+The following records the original finite authorization. Its tools trial qualified
+and isolation trial failed; it grants no further executable allowance. Use revision 7
+for current preparation and execution after its required gates.
 
 The standing authorization is exactly bound to
 [plan comment 5964751600](https://github.com/Zi-Deng/FLOW-DC/issues/33#issuecomment-5964751600)
@@ -416,14 +418,14 @@ The terminal text is saved exactly even when partial; no substring extraction,
 concatenation, report synthesis or inference repair is performed. Partial findings
 remain publishable as incomplete, while all ordinary readiness gates remain strict.
 
-The current v4 Claude stream adapter uses diagnostic schema 6 (schema 4 remains reserved). Its Read parser recognizes
+The current v5 Claude stream adapter uses diagnostic schema 7 (schema 4 remains reserved). Its Read parser recognizes
 the pinned renderer's numbered final empty segment after a trailing newline, without
 crediting that segment as source. LF/CRLF and tab-aware separators are supported;
 ambiguous native/inventory line numbering and extra reminder/truncation text remain
 incomplete. A precisely shaped `system/status/requesting` event is accepted; compact,
 null/unknown status, hook, retry and fallback events remain unsupported. Subtypes,
 unknown agent names and rejected system payloads are retained only as bounded hash
-counts. V4 retains v3 acceptance of only an exact `commands_changed` envelope with an
+counts. V5 retains v3/v4 acceptance of only an exact `commands_changed` envelope with an
 empty commands array, matching session, valid UUID and correct event order. Nonempty
 built-in/custom catalogs, extra fields and missing/null catalogs remain incomplete.
 Required initialization fields must be present; optional terminal commands and
@@ -447,7 +449,7 @@ or spending. Exact terminal report bytes and accounting semantics are unchanged.
 
 ## Historical records, hosted operation and this migration
 
-The original v1/schema 2, v2/schema 3 and v3/schema 5 Claude adapters
+The original v1/schema 2, v2/schema 3, v3/schema 5 and v4/schema 6 Claude adapters
 retain byte-identical frozen parsers and their original validation for exact
 recovery and publication. They cannot execute or
 establish current readiness. Adapter changes require fresh preparation and matching
@@ -492,3 +494,55 @@ reconcile batch budgets/provider bindings/record versions and run its normal rev
 Rollback is deliberate Copilot selection under its own authority or a normal revert,
 never automatic provider fallback. Observed reads do not prove understanding, and
 owner-writable private records are not tamper-proof attestations.
+
+
+### Issue 33 revision-7 prospective recovery
+
+[Plan comment 5965161662](https://github.com/Zi-Deng/FLOW-DC/issues/33#issuecomment-5965161662)
+is bound to contract `8c342fdbb9093d5b310bfe10854910dbf1e66e66527ac1a2514b7a90d615589b`
+under existing standing authorization. No repeated user permission is pending.
+A distinct schema-6 `recovery-v7-ledger.json` holds a version-5 grant, preserving
+all four old ledger texts and all five trial evidence sets under their original
+actual approval receipts and policies. Historical validation never reads credentials.
+Current authority is mandatory before new authentication; edited history, counters,
+limits, purposes or policy and partial migrations fail closed. Idempotent application
+and verified same-account renewal cannot reset the count or relabel observations.
+
+After reviewed implementation, full final-head checks and required CI, the coordinator
+runs the preview and then applies its unchanged digest explicitly, from the clean
+control checkout using the exact issue-worktree script:
+
+```bash
+python3 -B /absolute/issue-33-worktree/scripts/agentic/workflow.py claude-diagnostic-recovery
+python3 -B /absolute/issue-33-worktree/scripts/agentic/workflow.py claude-diagnostic-recovery --apply --preview-digest <exact-preview-digest>
+```
+
+These commands do not infer. Counted slot 6 is fresh v5 native-tools-and-source;
+slot 7 is isolation-refusal only after 6 qualifies. Invoke `diagnose-claude
+--review-provider claude-code` separately for each permitted purpose. Every call
+rechecks current guarded Max setup, account-bound paid-usage-disabled receipt,
+expiry and endpoint/remote isolation. Seven total counted attempts include history;
+each future call is at most 300 seconds/$2 reference estimate/zero extra spending,
+total ceilings 2100 seconds/$14, prospective ceilings 600 seconds/$4. Any future
+failure/interruption consumes its slot and stops the grant. No eighth call, automatic
+retry/reset, substitution, permission widening, successful-output replay or synthesis.
+
+Current adapter v5 requires diagnostic schema 7. V1/v2/v3/v4 recovery remains frozen
+at schemas 2/3/5/6; packet/result/capture5 and report2 stay unchanged, schema4 reserved.
+Historical v4 tools success cannot activate v5. Both new purposes must qualify under
+the current policy. The canary is one owner-private existing regular single-link
+file outside the workspace and all native exempt trees. A unique exact Read input,
+native nine-field restricted-path advisory, exact matching error result and singleton
+terminal denial must correlate in order with matching session/use ID and UUID.
+Missing, duplicate, extra, delegated, aliased or mismatched evidence fails closed.
+A dontAsk denial or missing-file error is insufficient. No denied source lines count;
+ordinary reviews and tools diagnostics stay incomplete on every permission denial.
+Unknown values retain bounded shapes/hashes only; exact terminal report bytes and
+independent usage accounting are preserved. See [the native audit](NATIVE-TELEMETRY-AUDIT.md).
+
+The full927 gate/CI at `6f865849` is historical after this repair; its CI merge
+checkout was `3a0433202f98761021f3ddc4b5eca6bc4f73c004`, not the associated PR head.
+New final-head checks/CI and actual current live evidence remain required. No model
+PR review is requested under the migration-only exception; no generic gate bypass
+or model-reviewed SHA is invented. Human merge and the separate PR32 original-UUID
+reconciliation/review remain unchanged.

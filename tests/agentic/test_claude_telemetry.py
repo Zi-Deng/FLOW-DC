@@ -316,7 +316,7 @@ class ClaudeTelemetryTests(GitFixture):
         self.rows[0]["agents"].append("custom-unknown")
         self.assertFalse(self.evaluate(self.rows)[0]["qualified"])
 
-    def test_expected_refusal_is_only_diagnostic_evidence_and_never_normal_coverage(self):
+    def test_unmatched_legacy_refusal_never_proves_current_diagnostic_coverage(self):
         outside = str(self.parent / "harmless-outside.txt")
         call = {
             "type": "assistant",
@@ -345,14 +345,26 @@ class ClaudeTelemetryTests(GitFixture):
         rows = self.rows[:-1] + [call, result] + self.rows[-1:]
         raw = "\n".join(json.dumps(row) for row in rows)
         body, diag = telemetry.capture(
-            raw, self.packet, self.packet, self.policy, "fixture-session", refusal_path=outside
+            raw,
+            self.packet,
+            self.packet,
+            self.policy,
+            "fixture-session",
+            refusal_path=outside,
+            diagnostic_purpose="isolation-refusal",
         )
-        self.assertEqual(diag["telemetry"]["controlled_refusals"], 1)
+        self.assertEqual(diag["telemetry"]["controlled_refusals"], 0)
         self.assertFalse(coverage.assess(self.packet, body, diag, policy=self.policy)["qualified"])
         result["message"]["content"][0]["content"] = "File does not exist"
         raw = "\n".join(json.dumps(row) for row in rows)
         _, diag = telemetry.capture(
-            raw, self.packet, self.packet, self.policy, "fixture-session", refusal_path=outside
+            raw,
+            self.packet,
+            self.packet,
+            self.policy,
+            "fixture-session",
+            refusal_path=outside,
+            diagnostic_purpose="isolation-refusal",
         )
         self.assertEqual(diag["telemetry"]["controlled_refusals"], 0)
         self.assertIn("controlled_refusal_not_observed", diag["reasons"])

@@ -1,0 +1,297 @@
+{
+  "provenance": {
+    "binary_sha256": "3afe8535c0cc33f0e24f7b25dab7a1727b8b592196f8496a8bc302ba2161eed3",
+    "method": "Exact extracted pure functions and a labeled dontAsk early-return prefix; synthetic paths, registry/context, resolver/availability/permission dependency stubs. Caller ranges audited only. No native CLI, auth, network, actual plugins or provider execution. Not live evidence."
+  },
+  "ranges": [
+    {
+      "label": "Read permission method",
+      "start": 202154074,
+      "end": 202154443,
+      "sha256": "2e501cf918011503bbbbda34e9136ef469c10502e879a0ae88d1a389974d0720"
+    },
+    {
+      "label": "read permission function",
+      "start": 198116837,
+      "end": 198118763,
+      "sha256": "6285feed1fa80b8f92d02826cef24f7629d344475a8c671dca3f42cc48b42f72"
+    },
+    {
+      "label": "restricted path decision",
+      "start": 198099558,
+      "end": 198100021,
+      "sha256": "ea313d6b0500cb038351bf9d3c04a8f907707efac1cae48e3fdd446dcdac21c0"
+    },
+    {
+      "label": "working directories",
+      "start": 198098488,
+      "end": 198098567,
+      "sha256": "c1643f1909d11e9ad38754c008888c9a303ea47b117da3d29b5c1a62b7d42b9d"
+    },
+    {
+      "label": "read exceptions",
+      "start": 198125198,
+      "end": 198126866,
+      "sha256": "a67ca4119827c0e6ed3d84df1d34cbf992adf04d33e6efa5642d10f7b7d87cde"
+    },
+    {
+      "label": "allow result",
+      "start": 198126866,
+      "end": 198126962,
+      "sha256": "ee3ed059d86aafb5a7cad5703f332a5b090c5da7ecaf841ee888aa8c81bdd4d1"
+    },
+    {
+      "label": "restricted reason constants",
+      "start": 198099266,
+      "end": 198099558,
+      "sha256": "6a148203e5bbc795f2c8f9c3b02602eff32363add529f58559f60c26a54d82d2"
+    },
+    {
+      "label": "permission decision ordering",
+      "start": 203973927,
+      "end": 203976823,
+      "sha256": "2f8949cb91bf2d6bf245808fa2a4f72b1aab4a623c7157daacc2fd1bbf029942"
+    },
+    {
+      "label": "pre-ask decision wrapper",
+      "start": 203943932,
+      "end": 203944079,
+      "sha256": "919020cf2ac79a2bf5f14ccb2ea4f03cc89e33af81cb153787d568a6d2dd3fd8"
+    },
+    {
+      "label": "permission modes incl dontAsk",
+      "start": 203944259,
+      "end": 203966319,
+      "sha256": "d18af403c90f39a41d6db3e2f5a823d1d5d0988b35e59ea05c27580d6bced6ce"
+    },
+    {
+      "label": "decision message decoration",
+      "start": 202813913,
+      "end": 202814031,
+      "sha256": "e10b61c51e93da42ac6f1354f2da2938092ddab1ee231d19da4dcb3e0c8344d3"
+    },
+    {
+      "label": "rule message decoration",
+      "start": 202813646,
+      "end": 202813913,
+      "sha256": "b633b57041395f4023d00f2dbf10481d63e11c17c4b623f45f30c1027d04794f"
+    },
+    {
+      "label": "deny-preserving transform",
+      "start": 202817645,
+      "end": 202817892,
+      "sha256": "3ca5f8037700b9f29569580ac45d690da54e24a37cd9fd518b042b9c3dfec28f"
+    },
+    {
+      "label": "advisory eligibility",
+      "start": 194520793,
+      "end": 194520898,
+      "sha256": "d00bd9b2a3008e49c3c61782dd2bb634dcfdad657939c96c6ddd63be134e5fa3"
+    },
+    {
+      "label": "finite reason code",
+      "start": 194524095,
+      "end": 194524575,
+      "sha256": "1ee2d39ca1e8d448a06629f3eefea079d57b464d925913568047cfc174f49c9a"
+    },
+    {
+      "label": "optional reason projection",
+      "start": 202814306,
+      "end": 202814663,
+      "sha256": "b2b177ddd93d36eddd5117dd6e5ef0ad95862dbdd4274d593a2dfd10152c9649"
+    },
+    {
+      "label": "dontAsk renderer dependencies",
+      "start": 205016691,
+      "end": 205018440,
+      "sha256": "fce0cba2489d3008fba75d0c2128129196511de7855bdafecc2a45b28b96e8d6"
+    },
+    {
+      "label": "dontAsk renderer",
+      "start": 205018511,
+      "end": 205018631,
+      "sha256": "dd4600c79a65d37edb23c131e0f81c58059e92396cd99c5c806432e1c169cb64"
+    },
+    {
+      "label": "terminal denial collection",
+      "start": 210064021,
+      "end": 210064151,
+      "sha256": "be5ac2fd3cc0b205c14e132174f98484d8f4bd020cab1e9e400d66255410e000"
+    },
+    {
+      "label": "denial advisory producer",
+      "start": 210064170,
+      "end": 210064550,
+      "sha256": "4e1d80a9249a0634dbe3a882b46453eaa0a40574ac1bf31763df1cfd944f6d05"
+    },
+    {
+      "label": "bounded queue and drain",
+      "start": 210061446,
+      "end": 210061724,
+      "sha256": "770647b9638175e1a856d5623ad931ce63897381193236257363ba86276ccb4c"
+    },
+    {
+      "label": "stream envelope",
+      "start": 210060785,
+      "end": 210060869,
+      "sha256": "35d3ce981be3e49b057a648fb5c793ea8bd03ef5ee12cf5c2ddf18a5a21eb9aa"
+    },
+    {
+      "label": "model-facing denial result",
+      "start": 202865101,
+      "end": 202865340,
+      "sha256": "b1e0f476fe0465c093bfd195cfdff8542d6c85f5b419d878dbdd23064ff7552d"
+    },
+    {
+      "label": "terminal framing",
+      "start": 195911539,
+      "end": 195911696,
+      "sha256": "f77a7fd29fbf673236472324433f64f832e5e7529846844da305e39fb08f6ac8"
+    },
+    {
+      "label": "terminal tool name mapping",
+      "start": 210038085,
+      "end": 210038120,
+      "sha256": "e2f02714cc936fb27f36bc9225b238ae651a2086093d708fb4d0e940f8cb62c2"
+    },
+    {
+      "label": "Read path getter",
+      "start": 202153209,
+      "end": 202153248,
+      "sha256": "ceab7b47f6786a79a37fe379ea2db9ab5b51b28e2f342c35fc68e8ece9bed3d7"
+    },
+    {
+      "label": "drain before yielded message",
+      "start": 210067118,
+      "end": 210067143,
+      "sha256": "b371b2f0b0fa9f851b9d47a9967121fdb1675ec19772f309f6ef67c0c8e78ec5"
+    },
+    {
+      "label": "terminal denied list binding",
+      "start": 210073278,
+      "end": 210073542,
+      "sha256": "ed9b7a3937bcccfda736a58917d6b57151cb2be9602c1d4471b12945291e0b16"
+    },
+    {
+      "label": "terminal drains pending frames",
+      "start": 210074575,
+      "end": 210074601,
+      "sha256": "99f3978d851068896855138e148ec49a71e975f219e9fa5671d5d1de7f8973be"
+    },
+    {
+      "label": "alternate advisory emitter",
+      "start": 218645635,
+      "end": 218645914,
+      "sha256": "09fd07962f0718b32352271a9f04a17be9d68bdeeb781ac394e3da97e2436e83"
+    },
+    {
+      "label": "permission result callback",
+      "start": 202863239,
+      "end": 202863350,
+      "sha256": "2fdb89cd00c52aa754a01787909069819b3bba61e64170f271894c28a3899feb"
+    },
+    {
+      "label": "outer terminal aggregation",
+      "start": 219224954,
+      "end": 219225040,
+      "sha256": "00f9da87f754b9e408eba4e7fd5e6a2a745645b09c3ba64f19dd6583705f1ca6"
+    }
+  ],
+  "positive": {
+    "tool": {
+      "type": "assistant",
+      "session_id": "fixture-session",
+      "message": {
+        "model": "claude-opus-5-5",
+        "content": [
+          {
+            "type": "tool_use",
+            "id": "canary-call",
+            "name": "Read",
+            "input": {
+              "file_path": "/synthetic/outside-canary.txt"
+            }
+          }
+        ]
+      }
+    },
+    "advisory": {
+      "type": "system",
+      "subtype": "permission_denied",
+      "tool_name": "Read",
+      "tool_use_id": "canary-call",
+      "decision_reason_type": "other",
+      "decision_reason": "--restricted: path outside the working directory",
+      "message": "/synthetic/outside-canary.txt is outside /synthetic/workspace; --restricted confines the file tools to the working directory.",
+      "session_id": "fixture-session",
+      "uuid": "12345678-1234-4234-8234-000000000001"
+    },
+    "result": {
+      "type": "user",
+      "session_id": "fixture-session",
+      "message": {
+        "content": [
+          {
+            "type": "tool_result",
+            "content": "/synthetic/outside-canary.txt is outside /synthetic/workspace; --restricted confines the file tools to the working directory.",
+            "is_error": true,
+            "tool_use_id": "canary-call"
+          }
+        ]
+      }
+    },
+    "denials": [
+      {
+        "tool_name": "Read",
+        "tool_use_id": "canary-call",
+        "tool_input": {
+          "file_path": "/synthetic/outside-canary.txt"
+        }
+      }
+    ]
+  },
+  "mode": {
+    "type": "system",
+    "subtype": "permission_denied",
+    "tool_name": "Read",
+    "tool_use_id": "mode-call",
+    "decision_reason_type": "mode",
+    "message": "Permission to use Read has been denied because Claude Code is running in don't ask mode. IMPORTANT: You *may* attempt to accomplish this action using other tools that might naturally be used to accomplish this goal, e.g. using head instead of cat. But you *should not* attempt to work around this denial in malicious ways, e.g. do not use your ability to run tests to execute non-test actions. You should only try to work around this restriction in reasonable ways that do not attempt to bypass the intent behind this denial. If you believe this capability is essential to complete the user's request, STOP and explain to the user what you were trying to do and why you need this permission. Let the user decide how to proceed.",
+    "session_id": "fixture-session",
+    "uuid": "12345678-1234-4234-8234-000000000003"
+  },
+  "outsideBlock": {
+    "type": "system",
+    "subtype": "permission_denied",
+    "tool_name": "Read",
+    "tool_use_id": "blocked-call",
+    "decision_reason_type": "other",
+    "decision_reason_code": "outside_reads_blocked",
+    "decision_reason": "outside reads synthetic",
+    "message": "/synthetic/outside-canary.txt is outside /synthetic/workspace; --restricted confines the file tools to the working directory.",
+    "session_id": "fixture-session",
+    "uuid": "12345678-1234-4234-8234-000000000004"
+  },
+  "delegated": {
+    "type": "system",
+    "subtype": "permission_denied",
+    "tool_name": "Read",
+    "tool_use_id": "child-call",
+    "agent_id": "synthetic-child",
+    "decision_reason_type": "other",
+    "decision_reason": "--restricted: path outside the working directory",
+    "message": "/synthetic/outside-canary.txt is outside /synthetic/workspace; --restricted confines the file tools to the working directory.",
+    "session_id": "fixture-session",
+    "uuid": "12345678-1234-4234-8234-000000000005"
+  },
+  "unresolved": {
+    "behavior": "deny",
+    "message": "unresolved synthetic; --restricted confines the file tools to the working directory.",
+    "decisionReason": {
+      "type": "other",
+      "reason": "--restricted: path outside the working directory"
+    }
+  },
+  "terminal_report_exact": "synthetic exact terminal text\r\n",
+  "queue_drained": true
+}

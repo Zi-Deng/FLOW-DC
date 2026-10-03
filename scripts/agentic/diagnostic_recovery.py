@@ -201,7 +201,11 @@ def load(repo, *, later_attempts=False):
             raise WorkflowError("Prospective packet policy or grant binding changed")
     present = {p.name for p in root.glob("attempt-*")}
     expected = {f"attempt-{n}" for n in range(1, len(attempts) + 1)}
-    allowed = expected | {"attempt-3", "attempt-4", "attempt-5"} if later_attempts else expected
+    allowed = (
+        expected | {"attempt-3", "attempt-4", "attempt-5", "attempt-6", "attempt-7"}
+        if later_attempts
+        else expected
+    )
     if not expected <= present <= allowed:
         raise WorkflowError("Conflicting or partial diagnostic migration/attempt state")
     if len(attempts) == 3:
@@ -236,6 +240,10 @@ def prepare(repo, cfg, *, apply=False, preview_digest=None):
     import review_diagnostics as diagnostics
 
     repo.assert_main()
+    if review_policy.PROVIDERS["claude-code"]["adapter"] == "claude-stream-json-2.1.282-v5":
+        import diagnostic_recovery_v7
+
+        return diagnostic_recovery_v7.prepare(repo, cfg, apply=apply, preview_digest=preview_digest)
     # V5 is a separate grant/file; historical v4 callers retain their own policy.
     if review_policy.PROVIDERS["claude-code"]["adapter"] == "claude-stream-json-2.1.282-v4":
         import diagnostic_recovery_v6

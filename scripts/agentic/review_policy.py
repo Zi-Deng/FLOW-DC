@@ -57,7 +57,7 @@ PROVIDERS = {
             "manifest_sha256": "041abb14aba47e7dd31f8ba83d8102e54b6350d099382cb1def7ab10add415ed",
             "signing_fingerprint": "31DDDE24DDFAB679F42D7BD2BAA929FF1A7ECACE",
         },
-        "adapter": "claude-stream-json-2.1.282-v4",
+        "adapter": "claude-stream-json-2.1.282-v5",
         "billing_mode": "included-max-subscription-only",
     },
 }
@@ -222,6 +222,7 @@ def validate_policy(value):
         "claude-stream-json-2.1.282-v1",
         "claude-stream-json-2.1.282-v2",
         "claude-stream-json-2.1.282-v3",
+        "claude-stream-json-2.1.282-v4",
     }
     cfg = {}
     if "model_compatibility" in value:

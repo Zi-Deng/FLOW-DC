@@ -88,9 +88,11 @@ def ledger(repo):
     import diagnostic_recovery
     import diagnostic_recovery_v5
     import diagnostic_recovery_v6
+    import diagnostic_recovery_v7
 
     return (
-        diagnostic_recovery_v6.load(repo)
+        diagnostic_recovery_v7.load(repo)
+        or diagnostic_recovery_v6.load(repo)
         or diagnostic_recovery_v5.load(repo)
         or diagnostic_recovery.load(repo)
         or legacy_ledger(repo)
@@ -101,10 +103,13 @@ def ledger_path(repo, state):
     from diagnostic_recovery import FILENAME
     from diagnostic_recovery_v5 import FILENAME as V5_FILENAME
     from diagnostic_recovery_v6 import FILENAME as V6_FILENAME
+    from diagnostic_recovery_v7 import FILENAME as V7_FILENAME
 
     return (
         state_directory(repo)
-        / {1: "ledger.json", 2: FILENAME, 3: V5_FILENAME, 5: V6_FILENAME}[state["schema_version"]]
+        / {1: "ledger.json", 2: FILENAME, 3: V5_FILENAME, 5: V6_FILENAME, 6: V7_FILENAME}[
+            state["schema_version"]
+        ]
     )
 
 
@@ -112,14 +117,20 @@ def recovery_module(state):
     import diagnostic_recovery
     import diagnostic_recovery_v5
     import diagnostic_recovery_v6
+    import diagnostic_recovery_v7
 
-    return {2: diagnostic_recovery, 3: diagnostic_recovery_v5, 5: diagnostic_recovery_v6}.get(
-        state["schema_version"]
-    )
+    return {
+        2: diagnostic_recovery,
+        3: diagnostic_recovery_v5,
+        5: diagnostic_recovery_v6,
+        6: diagnostic_recovery_v7,
+    }.get(state["schema_version"])
 
 
 def execution_authority(repo, state, policy):
     module = recovery_module(state)
+    if policy["adapter"] == "claude-stream-json-2.1.282-v5" and state["schema_version"] != 6:
+        raise WorkflowError("Current v5 diagnostics require the exact revision-7 grant before authentication")
     if policy["adapter"] == "claude-stream-json-2.1.282-v4" and state["schema_version"] != 5:
         raise WorkflowError("Current v4 diagnostics require the exact revision-6 grant before authentication")
     if module:
@@ -215,13 +226,13 @@ def require_activation(repo, policy):
     state = ledger(repo)
     verified = set()
     observed = []
-    recovery = state if state["schema_version"] in {2, 3, 5} else None
+    recovery = state if state["schema_version"] in {2, 3, 5, 6} else None
     execution_authority(repo, state, policy)
     if recovery:
         from diagnostic_recovery import match_policy
 
         match_policy(state["grant"]["policy"], policy)
-    start = {1: 0, 2: 1, 3: 2, 5: 3}[state["schema_version"]]
+    start = {1: 0, 2: 1, 3: 2, 5: 3, 6: 5}[state["schema_version"]]
     for entry in state["attempts"][start:]:
         if entry["status"] == "qualified":
             try:
@@ -258,7 +269,7 @@ def run(repo, cfg, **overrides):
         state = ledger(repo)
         module = execution_authority(repo, state, selected)
         selected = bind(selected)
-        recovery = state if state["schema_version"] in {2, 3, 5} else None
+        recovery = state if state["schema_version"] in {2, 3, 5, 6} else None
         if recovery:
             number, purpose = module.next_slot(repo, state, selected)
             maximum = state["grant"]["max_total_attempts"]

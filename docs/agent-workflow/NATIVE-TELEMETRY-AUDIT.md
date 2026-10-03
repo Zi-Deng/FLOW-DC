@@ -274,3 +274,74 @@ and other unretained details are unknown. No source fixture reconstructs them or
 changes any trial assessment. All three failed-trial evidence sets and original/stopped
 ledgers remain exact. Only fresh v4 live tools/source and isolation purposes can
 establish activation after required validation and explicit coordinator grant application.
+
+
+## Restricted denial correlation / v5 — 2026-10-03 UTC
+
+The same signed native 2.1.282 binary has SHA-256
+`3afe8535c0cc33f0e24f7b25dab7a1727b8b592196f8496a8bc302ba2161eed3`.
+`tests/agentic/fixtures/claude-refusal-2.1.282-v5.json` records 32 source ranges/hashes
+and synthetic outputs; its `.mjs` companion executes exact extracted functions with
+explicit local dependency stubs. It never executes native auth/CLI/plugins/network.
+These fixtures are conditional source evidence, not reconstruction of trial5 or live
+capability. Trial5's retained key/subtype hashes do not recover its unretained values.
+
+Read.checkPermissions (202154074) dispatches dE (198116837), which checks deny rules
+and then the restricted fence before broader allows. kl (198099558) produces deny,
+decisionReason type `other`, reason `--restricted: path outside the working directory`.
+For one canonical ordinary outside path and one workspace its full message is
+`<path> is outside <workspace>; --restricted confines the file tools to the working directory.`
+vZ (198125198) has native session-plan/tool-result/scratchpad/background/project-temp/
+bundled-reference exceptions. The wrapper uses a private ordinary sibling canary
+outside fresh native state; it does not claim all outside paths are refused.
+
+x0t preserves direct deny; u$o, Q6, mZ and aZ preserve it and stamp pre-ask. An ASK
+converted under dontAsk instead has type `mode`, and is not restricted-fence proof.
+The fixture runs exact direct-deny functions and an explicitly labeled dontAsk
+early-return prefix; resolver, context, rules, policy, availability and other native
+runtime dependencies are synthetic stubs. It does not execute the whole engine.
+
+et (210064319) collects non-allow through Gn, emits a permission_denied advisory for
+deny plus RMr(pre-ask); Ve/J queue/drain (210061567) and Le add session/UUID. lle
+(194524095) and MSe (202814306) omit undefined code/agent fields for the main-process
+restricted branch. JSON null is different. This branch has exactly nine fields:
+type/subtype/session_id/uuid/tool_name/tool_use_id/decision_reason_type/decision_reason/message.
+Mode/rule may omit reason; outside-reads-block adds a code; delegated adds agent_id.
+Those branches do not qualify. The alternate transport emitter (218645734) has the
+same projection but is not separate authorization. Queue overflow can drop frames;
+caller ordering is source-audited, never assumed from process success.
+
+The model-facing error renderer (202865...) copies the complete native message into
+one is_error tool_result with the original use ID; hook branches remain excluded.
+Terminal common fields (210073...) pass Dn to S5; an outer loop can prepend other
+denials (219224...), so exact singleton matching matters. Current v5 requires init,
+unique exact canary Read/file_path, advisory, matching error result, terminal singleton
+in order; supported unrelated events may interleave. Missing/extra/delegated/null,
+wrong categories, IDs, inputs, paths, wrappers or messages and canary exposure remain
+incomplete. Only a fully correlated immutable isolation diagnostic can remove its
+one controlled-refusal marker; no source lines are credited. Ordinary denials never
+qualify. Report bytes and usage accounting remain independent and unchanged.
+
+Conservative wrapper limits are 256 UTF-8 bytes/use ID,4096/path,16384/message.
+Persist only fixed reasons, bounded field presence/type/length and hashes (eight
+shapes/64 hashes plus capped overflow), no raw provider paths/messages/reasons/IDs.
+V4 bytes remain frozen at schema6; current v5 schema7 cannot requalify old records.
+
+A preparation harness initially aliased S5's mutable supplied Dn list. Subsequent
+negative fixtures changed the exported positive ID after its initial assertion.
+The corrected fixture snapshots that list before negatives, and an independent test
+checks the final exported call/advisory/error/terminal records. The faulty private
+preparation export was preserved; no historical live record or native function was
+changed. Both meaningful base regressions failed before repair: native restricted
+correlation was unrecognized, while an unmatched legacy message alone was counted.
+
+
+The supplementary `claude-read-input-2.1.282.json` records five exact source ranges
+and hashes for the input boundary. The getter at202152746 returns kCn (202147454):
+file_path is a string; offset/limit are optional SH numeric preprocessors, pages is
+optional, and A4 (198078397) returns an empty extension. SH/uEe (201315176) convert
+numeric strings but leave undefined unchanged; these expressions insert no defaults.
+$Pn (202145280) repairs supplied offset/limit/length only and returns null without a
+repair. This is read-only source reasoning for the sole-file_path contract. The main
+pure fixture deliberately stubs inputSchema.parse as identity; neither the native
+schema engine nor actual historical slot5 input was executed or reconstructed.

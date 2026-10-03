@@ -11,11 +11,9 @@ import math
 import re
 from pathlib import Path
 
-import claude_refusal
 import claude_telemetry_v1 as legacy
 import claude_telemetry_v2 as previous
 import claude_telemetry_v3 as frozen_v3
-import claude_telemetry_v4 as frozen_v4
 import review_coverage as coverage
 from workflow import WorkflowError
 
@@ -24,7 +22,7 @@ KINDS = {"system", "assistant", "user", "result", "rate_limit_event"}
 # Pinned built-in declarations are not delegation permission. Agent is absent
 # from the tool list and actual delegated messages remain forbidden.
 BUILTIN_AGENTS = {*legacy.BUILTIN_AGENTS, "claude-code-guide"}
-ADAPTER = "claude-stream-json-2.1.282-v5"
+ADAPTER = "claude-stream-json-2.1.282-v4"
 LEGACY_ADAPTER = "claude-stream-json-2.1.282-v1"
 
 
@@ -43,7 +41,7 @@ CONTROL_FIELDS = {
     )
 } | {"system.commands", "system.status", "system.keys"}
 NUMERIC_FIELDS = {"system.estimated_tokens", "system.estimated_tokens_delta"}
-CONTROL_FIELDS |= NUMERIC_FIELDS | {"refusal." + key for key in claude_refusal.OBSERVATIONS}
+CONTROL_FIELDS |= NUMERIC_FIELDS
 MAX_THINKING_ESTIMATE = 9007199254740991
 NUMERIC_VALIDITY = {"missing", "wrong_type", "out_of_range", "valid"}
 FIELD_TYPES = {"missing", "null", "boolean", "number", "string", "array", "object"}
@@ -51,7 +49,7 @@ FIELD_TYPES = {"missing", "null", "boolean", "number", "string", "array", "objec
 
 def validate_summary(value):
     if not isinstance(value, dict) or "control_fields" not in value:
-        raise WorkflowError("Invalid Claude v5 control summary")
+        raise WorkflowError("Invalid Claude v4 control summary")
     previous.validate_summary({k: v for k, v in value.items() if k != "control_fields"})
     fields = value["control_fields"]
     if not isinstance(fields, dict) or set(fields) - CONTROL_FIELDS:
@@ -300,25 +298,11 @@ def observation(tool, args, content, workspace, files):
     return coverage.tool_observation("glob", args, content, workspace, files)
 
 
-def capture(
-    raw,
-    packet,
-    workspace,
-    policy,
-    session_id,
-    *,
-    exit_code=0,
-    failure=None,
-    refusal_path=None,
-    diagnostic_purpose=None,
-):
-    if policy["adapter"] in {LEGACY_ADAPTER, previous.ADAPTER, frozen_v3.ADAPTER, frozen_v4.ADAPTER}:
-        frozen = {
-            LEGACY_ADAPTER: legacy,
-            previous.ADAPTER: previous,
-            frozen_v3.ADAPTER: frozen_v3,
-            frozen_v4.ADAPTER: frozen_v4,
-        }[policy["adapter"]]
+def capture(raw, packet, workspace, policy, session_id, *, exit_code=0, failure=None, refusal_path=None):
+    if policy["adapter"] in {LEGACY_ADAPTER, previous.ADAPTER, frozen_v3.ADAPTER}:
+        frozen = {LEGACY_ADAPTER: legacy, previous.ADAPTER: previous, frozen_v3.ADAPTER: frozen_v3}[
+            policy["adapter"]
+        ]
         return frozen.capture(
             raw,
             packet,
@@ -358,15 +342,7 @@ def capture(
     pending, seen, records = {}, set(), []
     message_usage, assistant_envelopes = {}, set()
     step_usage_unknown = False
-    valid_initialization = False
-    refusal = claude_refusal.Correlation(
-        workspace,
-        refusal_path,
-        diagnostic_purpose,
-        session_id,
-        reasons,
-        lambda field, event, key: observe_control(summary, field, event, key),
-    )
+    refused_ids = set()
     count, report, usage = 0, "", {"status": "unknown", "counters": {}, "models": {}}
     try:
         if isinstance(raw, bytes):
@@ -387,16 +363,6 @@ def capture(
             event = coverage.strict_json(line)
             if not isinstance(event, dict) or not isinstance(event.get("type"), str):
                 raise ValueError
-            if refusal.enabled:
-                stack = [event]
-                while stack:
-                    value = stack.pop()
-                    if isinstance(value, str) and "HARMLESS_OUTSIDE_CANARY_" + session_id in value:
-                        refusal.fail("restricted_workspace_canary_exposed")
-                    elif isinstance(value, dict):
-                        stack.extend(value.values())
-                    elif isinstance(value, list):
-                        stack.extend(value)
             kind = event["type"]
             if kind not in KINDS:
                 key = coverage.checksum(kind)
@@ -418,13 +384,6 @@ def capture(
                 reasons.add("delegated_or_mcp_event")
             if kind == "system":
                 count_hash(summary["system_subtypes"], event.get("subtype"))
-                if event.get("subtype") == "permission_denied":
-                    refusal.advisory(
-                        event,
-                        valid_initialization and summary["init_count"] == 1,
-                        summary["terminal_count"] != 0,
-                    )
-                    continue
                 if event.get("subtype") != "init":
                     observe_control(summary, "system.commands", event, "commands")
                     observe_control(summary, "system.status", event, "status")
@@ -478,7 +437,6 @@ def capture(
                     or event.get("claude_code_version") != policy["cli"]["version"]
                 ):
                     reasons.add("unexpected_initialization_controls")
-                valid_initialization = summary["init_count"] == 1 and not reasons
             elif kind == "assistant":
                 message = event.get("message")
                 if (
@@ -491,12 +449,6 @@ def capture(
                 summary["model_verified"] = True
                 fingerprint = coverage.checksum(json.dumps(message, sort_keys=True, ensure_ascii=False))
                 if fingerprint in assistant_envelopes:
-                    if refusal.enabled and any(
-                        isinstance(b, dict) and b.get("id") == refusal.identifier
-                        for b in message.get("content", [])
-                        if isinstance(message.get("content"), list)
-                    ):
-                        refusal.fail("controlled_refusal_duplicate_call")
                     continue
                 assistant_envelopes.add(fingerprint)
                 identifier, step = message.get("id"), message.get("usage")
@@ -524,12 +476,6 @@ def capture(
                     if block.get("type") != "tool_use":
                         reasons.add("unsupported_assistant_block")
                         continue
-                    refusal.call(
-                        event,
-                        block,
-                        valid_initialization and summary["init_count"] == 1,
-                        summary["terminal_count"] != 0,
-                    )
                     identifier, tool, args = block.get("id"), block.get("name"), block.get("input")
                     if not isinstance(identifier, str) or identifier in seen or not isinstance(args, dict):
                         raise ValueError
@@ -555,13 +501,21 @@ def capture(
                         raise ValueError
                     tool, args = pending.pop(identifier)
                     content = block.get("content")
-                    if refusal.result(
-                        event,
-                        block,
-                        valid_initialization and summary["init_count"] == 1,
-                        summary["terminal_count"] != 0,
+                    if (
+                        refusal_path is not None
+                        and tool == "Read"
+                        and args.get("file_path") == str(refusal_path)
                     ):
-                        continue  # Provisional: counted only after the terminal binding.
+                        if (
+                            block.get("is_error") is True
+                            and isinstance(content, str)
+                            and "Permission to use Read has been denied" in content
+                        ):
+                            summary["controlled_refusals"] += 1
+                            refused_ids.add(identifier)
+                            reasons.add("controlled_refusal_diagnostic_only")
+                            continue
+                        reasons.add("controlled_refusal_not_observed")
                     success = block.get("is_error", False) is False and isinstance(content, str)
                     spans, paths, reason = [], [], "tool_failed_or_unsupported_content"
                     if success:
@@ -592,7 +546,18 @@ def capture(
                     if event.get("subtype") == "error_max_budget_usd":
                         reasons.add("reference_cost_limit_reached")
                 denials = event.get("permission_denials")
-                expected_denials = refusal.terminal(event)
+                expected_denials = (
+                    refusal_path is not None
+                    and isinstance(denials, list)
+                    and all(
+                        isinstance(item, dict)
+                        and item.get("tool_name") == "Read"
+                        and item.get("tool_use_id") in refused_ids
+                        and isinstance(item.get("tool_input"), dict)
+                        and item["tool_input"].get("file_path") == str(refusal_path)
+                        for item in denials
+                    )
+                )
                 if denials and not expected_denials:
                     reasons.add("permission_denied")
                 if event.get("structured_output") is not None:
@@ -622,9 +587,6 @@ def capture(
                     reasons.add("subscription_quota_exhausted")
         except (ValueError, TypeError, KeyError, IndexError):
             reasons.add("malformed_or_uncorrelated_event")
-    if refusal.complete():
-        summary["controlled_refusals"] = 1
-        reasons.add("controlled_refusal_diagnostic_only")
     if pending:
         reasons.add("missing_tool_completion")
     if summary["init_count"] != 1 or summary["terminal_count"] != 1 or not summary["model_verified"]:
@@ -642,7 +604,7 @@ def capture(
     # Missing step counters mean unknown. Native num_turns is not exact API-call
     # accounting; output tokens come only from terminal usage, never placeholders.
     diagnostics = {
-        "schema_version": 7,
+        "schema_version": 6,
         "adapter": policy["adapter"],
         "cli_version": policy["cli"]["version"],
         "exit_code": exit_code,

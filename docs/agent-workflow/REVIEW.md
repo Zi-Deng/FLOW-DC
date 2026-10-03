@@ -263,7 +263,7 @@ V3 is frozen byte-identically for diagnostic schema 5 recovery; all three failed
 trials and their old grants remain incomplete and unchanged. Progress estimates do
 not establish usage or source inspection. Static fixtures are conditional evidence.
 
-The [current operating sequence](PROVIDERS.md#issue-33-revision-6-prospective-recovery)
+The [historical revision-6 sequence](PROVIDERS.md#issue-33-revision-6-recovery--historical-stopped-after-slot-5)
 requires final-head checks/CI and explicit coordinator grant application before
 counted slot 4 tools/source, then slot 5 isolation only after 4 qualifies. Five total
 attempts include history; no sixth under this grant, and any failure stops it.
@@ -276,3 +276,24 @@ base `72e23c47ce40911f64cce5a7b9159a0cd51cdb72`. Those checks are historical aft
 v4 changes. Record final-head CI association separately from its tested checkout.
 The migration-only model PR-review exemption remains; ordinary gates are unchanged,
 no model-reviewed SHA is claimed, and only the human may merge. PR #32 is untouched.
+
+
+## Revision-7 refusal correlation — 2026-10-03 UTC
+
+[Revision 7](https://github.com/Zi-Deng/FLOW-DC/issues/33#issuecomment-5965161662)
+is exactly bound under standing authorization. V4 trial4 qualified; trial5 remained
+incomplete. All five historical records and four ledgers retain their exact original
+meaning and bytes. V4 is now frozen for schema6 recovery; current v5 uses schema7.
+The diagnostic canary requires the exact native restricted Read call, nine-field
+advisory, error result and singleton terminal denial in order. A message substring,
+dontAsk denial or absence of exposure cannot replace positive correlation. Ordinary
+reviews remain incomplete on all denials. No report synthesis or replay occurs.
+
+Use the [current revision-7 sequence](PROVIDERS.md#issue-33-revision-7-prospective-recovery):
+final-head checks/CI, explicit coordinator grant application, slot6 current tools/source,
+then slot7 isolation only if6 qualifies. Seven total including history; each300s/$2
+reference/zero extra spending; total2100s/$14, prospective600s/$4, failure-stop/no8.
+The old grant is stopped. No repeated approval question or automatic call follows.
+Prior927 tests and CI associated with6f865849 (actual checkout3a043320) are historical
+for changed source. Both current live purposes remain necessary. Migration-only model
+PR-review exemption, strict normal gates, human merge and untouched PR32 still apply.

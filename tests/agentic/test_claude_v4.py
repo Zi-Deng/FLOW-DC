@@ -43,7 +43,7 @@ class ClaudeV4Tests(GitFixture):
             self.rows.insert(-1, {**event, "session_id": "fixture-session"})
         assessment, diag, body = self.evaluate(self.rows)
         self.assertTrue(assessment["qualified"])
-        self.assertEqual(diag["schema_version"], 6)
+        self.assertEqual(diag["schema_version"], 7)
         self.assertEqual(diag["usage"], expected[1]["usage"])
         self.assertEqual(diag["events"], expected[1]["events"])
         self.assertEqual(body.encode(), expected[2].encode())
