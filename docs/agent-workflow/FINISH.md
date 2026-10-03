@@ -1,6 +1,6 @@
 # Human merge, archival and cleanup
 
-Current issue-31 batch records use metadata/capture 6, plan 5 and ledger 2; see
+Current issue-31 batch records use metadata/capture 6, plan 6 and ledger 2 (saved plan 5 remains reproducible); see
 [provider-aware bounded batches](COVERAGE.md#provider-aware-bounded-batches-current)
 for typed allocations, named authorization, exact-report publication and recovery-only
 history. Single-review schema 5 remains eligible under its original provider checks.
