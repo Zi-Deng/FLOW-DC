@@ -281,12 +281,19 @@ class RevisionFiveTests(unittest.TestCase):
         ):
             f.run_diagnostic()
         (f.root_state / "attempt-3/report.txt").write_bytes(b"changed")
-        with patch.object(review_claude, "execute") as execute:
-            with self.assertRaises(workflow.WorkflowError):
+        with (
+            patch.object(
+                review_claude, "preflight", side_effect=AssertionError("Invalid evidence reached preflight")
+            ) as preflight,
+            patch.object(review_claude, "execute") as execute,
+        ):
+            with self.assertRaisesRegex(workflow.WorkflowError, "Diagnostic report bytes changed"):
                 f.run_diagnostic()
-            with self.assertRaises(workflow.WorkflowError):
+            with self.assertRaisesRegex(workflow.WorkflowError, "activation requires matching"):
                 diagnostics.require_activation(f.repo, self.policy())
+            preflight.assert_not_called()
             execute.assert_not_called()
+        self.assertEqual(len(diagnostics.ledger(f.repo)["attempts"]), 3)
         self.assert_preserved()
 
     def test_verified_same_account_renewal_preserves_grant_and_observed_generations(self):
@@ -333,11 +340,16 @@ class RevisionFiveTests(unittest.TestCase):
         with (
             patch.object(claude_native_auth, "current_binding", return_value=changed),
             patch.object(claude_native_auth, "capability_lineage", return_value=False),
+            patch.object(
+                review_claude, "preflight", side_effect=AssertionError("Invalid lineage reached preflight")
+            ) as preflight,
             patch.object(review_claude, "execute") as execute,
         ):
-            with self.assertRaises(workflow.WorkflowError):
+            with self.assertRaisesRegex(workflow.WorkflowError, "verified authentication lineage changed"):
                 f.run_diagnostic()
+            preflight.assert_not_called()
             execute.assert_not_called()
+        self.assertEqual(len(diagnostics.ledger(f.repo)["attempts"]), 2)
         with (f.root_state / "ledger.lock").open("a") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             with self.assertRaisesRegex(workflow.WorkflowError, "already in progress"):

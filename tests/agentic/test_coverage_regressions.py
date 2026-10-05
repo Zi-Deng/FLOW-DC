@@ -7,13 +7,18 @@ from unittest.mock import patch
 
 import test_pipeline
 import test_review_recovery
+from review_fixtures import store
 from test_workflow import GitFixture, review, workflow
 
 
 class CoverageRegressionTests(GitFixture):
     def test_plain_comment_and_green_checks_cannot_satisfy_preflight(self):
         self.commit_task()
-        self.reviews = [{"commit_id": self.head, "state": "COMMENTED", "body": "Looks fine"}]
+        directory = review.prepare(self.repo, 31, 12, 1234)
+        store(self.repo, directory)
+        self.reviews = [
+            {"commit_id": self.head, "state": "COMMENTED", "body": review.publication_body(directory)}
+        ]
         original = workflow.run
 
         def checks(args, **kwargs):
@@ -24,8 +29,14 @@ class CoverageRegressionTests(GitFixture):
             return original(args, **kwargs)
 
         with patch.object(workflow, "run", side_effect=checks):
-            with self.assertRaises(workflow.WorkflowError):
-                workflow.merge_preflight(self.repo, 31, self.head)
+            result = workflow.merge_preflight(self.repo, 31, self.head, directory)
+            self.assertIn("--match-head-commit " + self.head, result["command"])
+            self.reviews[0]["body"] = "Looks fine"
+            with self.assertRaisesRegex(
+                workflow.WorkflowError, "No unique published coverage-qualified review"
+            ):
+                workflow.merge_preflight(self.repo, 31, self.head, directory)
+        self.assertFalse(self.pr_data["merged"])
 
     def test_exact_model_output_is_not_stripped_or_prefixed(self):
         case = test_review_recovery.ReviewRecoveryTests()

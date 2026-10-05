@@ -116,9 +116,18 @@ class CredentialTests(unittest.TestCase):
         ordinary.mkdir()
         login = ordinary / ".credentials.json"
         login.write_text("ordinary-login-fixture")
-        with patch.object(credentials.Path, "home", return_value=self.root):
-            self.setup_token()
+        with (
+            patch.object(credentials.Path, "home", return_value=self.root),
+            patch.object(credentials.sys.stdin, "isatty", return_value=True),
+            patch.object(credentials.getpass, "getpass", return_value=TOKEN),
+        ):
+            credentials.setup(paid_usage_disabled=True)
+            dedicated = self.root / ".config/flowdc-agentic/claude-review-token"
+            self.assertEqual(credentials.read(dedicated), TOKEN)
+            self.assertTrue(credentials.receipt_path(dedicated).is_file())
         self.assertEqual(login.read_text(), "ordinary-login-fixture")
+        self.assertEqual(list(ordinary.iterdir()), [login])
+        self.assertFalse(self.path.exists())
 
     def test_api_key_and_whitespace_are_rejected(self):
         for value in [b"sk-ant-api03-fake-api-key", b"arbitrary-secret", TOKEN.encode() + b"\n", b"\xff"]:

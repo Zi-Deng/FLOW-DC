@@ -119,14 +119,24 @@ class DiagnosticTests(GitFixture):
             patch.object(review_claude, "preflight"),
             patch.object(review_claude, "execute", side_effect=self.execute),
         ):
-            self.run_diagnostic()
+            self.assertEqual(self.run_diagnostic()["status"], "qualified")
+            self.assertEqual(self.run_diagnostic()["status"], "qualified")
+        policy = {**diagnostics.DEFAULT_POLICY, "authentication": AUTHENTICATION}
+        self.assertTrue(diagnostics.require_activation(self.repo, policy)["current_generation_live_tested"])
         directory = diagnostics.state_directory(self.repo) / "attempt-1"
-        report = directory / "report.txt"
-        report.write_bytes(report.read_bytes() + b"\n")
-        with self.assertRaises(workflow.WorkflowError):
-            diagnostics.require_activation(
-                self.repo, {**diagnostics.DEFAULT_POLICY, "authentication": AUTHENTICATION}
-            )
+        for path in (directory / "report.txt", directory / "packet/capability/fixture.txt"):
+            with self.subTest(artifact=path.relative_to(directory)):
+                original = path.read_bytes()
+                try:
+                    path.write_bytes(original + b"\n")
+                    with self.assertRaisesRegex(workflow.WorkflowError, "activation requires matching"):
+                        diagnostics.require_activation(self.repo, policy)
+                finally:
+                    path.write_bytes(original)
+                self.assertTrue(
+                    diagnostics.require_activation(self.repo, policy)["current_generation_live_tested"]
+                )
+        self.assertEqual(len(diagnostics.ledger(self.repo)["attempts"]), 2)
 
     def test_packet_inventory_ids_obey_the_supplied_report_schema(self):
         import json
