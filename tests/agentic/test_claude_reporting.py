@@ -391,6 +391,16 @@ console.log('pinned-source-synthetic-only');
         rows[6]["message"]["content"][0]["input"]["limitations"] = ["normalized"]
         self.assertFalse(capture(reporting.native_projection(rows, session_id="session"))["accepted"])
 
+    def test_native_projection_does_not_normalize_invalid_block_indexes(self):
+        for index in (5, 7):
+            for value in (False, 0.0):
+                rows = self.native_rows()
+                rows[index]["event"]["index"] = value
+                with self.subTest(index=index, value=value):
+                    self.assertFalse(
+                        capture(reporting.native_projection(rows, session_id="session"))["accepted"]
+                    )
+
     def test_saved_proof_is_recomputed_and_arbitrary_fields_are_not_retained(self):
         result = capture()
         for field, value in (

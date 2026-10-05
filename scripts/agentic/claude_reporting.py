@@ -462,10 +462,10 @@ def native_projection(events, *, session_id):
                     ):
                         yield {"kind": "invalid_event"}
                     else:
-                        yield row("fragment", index=reporting_index, text=delta["partial_json"])
+                        yield row("fragment", index=event.get("index"), text=delta["partial_json"])
             elif subkind == "content_block_stop" and active:
                 if event.get("index") == reporting_index:
-                    yield row("block_stop", index=reporting_index)
+                    yield row("block_stop", index=event.get("index"))
             elif subkind == "message_stop":
                 if active:
                     yield row("message_stop")
