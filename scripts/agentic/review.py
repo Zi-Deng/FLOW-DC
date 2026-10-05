@@ -176,11 +176,11 @@ def prepare(
     from claude_native_auth import bind
 
     selection["policy"] = bind(selection["policy"])
-    if reporting is not None:
-        from claude_reporting_policy import build
+    from claude_reporting_policy import build
+    from claude_reporting_policy import selection as reporting_selection
 
-        if type(reporting) is not dict or set(reporting) != {"max_turns", "limits"}:
-            raise WorkflowError("Explicit reporting turn and retention limits are required")
+    reporting = reporting_selection(selection["policy"], cfg, reporting)
+    if reporting is not None:
         selection["policy"] = build(selection["policy"], **reporting)
     pr = repo.pr(number)
     head, base = sha(pr["head"]["sha"]), sha(pr["base"]["sha"])
@@ -307,6 +307,7 @@ def prepare(
     )
     files = {str(p.relative_to(packet)): digest(p) for p in packet.rglob("*") if p.is_file()}
     metadata = {
+        **({"reporting_readiness_version": 1} if reporting is not None else {}),
         "schema_version": 7 if reporting is not None else 6,
         "kind": "single",
         "review_policy": selection["policy"],
@@ -594,6 +595,10 @@ def qualification(directory, *, require=False):
         raise WorkflowError(
             "Review coverage is incomplete; observed capability and every required material are necessary"
         )
+    if require and meta["schema_version"] == 7:
+        from reporting_admission import require_packet
+
+        require_packet(directory, meta)
     return assessment
 
 
@@ -603,6 +608,13 @@ def coverage_ready(directory):
     meta = verify_packet(directory)
     if "reporting_activation" in meta:
         return False
+    if meta.get("schema_version") == 7:
+        from reporting_admission import require_packet
+
+        try:
+            require_packet(directory, meta)
+        except (WorkflowError, OSError, ValueError, KeyError):
+            return False
     if meta.get("review_policy", {}).get("provider") == "claude-code":
         from claude_native_auth import validate_binding
 
@@ -875,8 +887,21 @@ def publication_body(directory):
         complete = review_batch.unit_assessment(parent, planned, meta["batch_unit"]["unit"])["complete"]
         label = "assigned material complete" if complete else "INCOMPLETE static inspection — not ready"
         label = f"batch unit {meta['batch_unit']['unit']['id']} — {label}; parent readiness requires aggregate qualification"
-    if meta["schema_version"] == 7:
+    if meta["schema_version"] == 7 and meta.get("reporting_readiness_version") != 1:
         label = "INCOMPLETE prospective reporting evidence — activation unavailable; not ready"
+    elif meta["schema_version"] == 7:
+        from claude_reporting_execution import retained
+        from reporting_activation import read
+        from reporting_admission import FILENAME
+
+        try:
+            record = read(Path(directory) / FILENAME)
+            execution = retained(directory, meta)
+            admitted = execution is not None and execution.get("admission_digest") == value_digest(record)
+        except (WorkflowError, OSError, ValueError, KeyError):
+            admitted = False
+        if not admitted:
+            label = "INCOMPLETE prospective reporting evidence — missing dispatch admission; not ready"
     provider_label = "Copilot CLI"
     if meta["schema_version"] in {5, 6, 7} and meta["review_policy"]["provider"] == "claude-code":
         provider_label = "Claude Code"
@@ -1010,6 +1035,7 @@ def main():
     prep.add_argument("--expected-head")
     prep.add_argument("--output")
     prep.add_argument("--prior-review")
+    prep.add_argument("--reporting-policy", help="JSON with explicit max_turns and retention limits")
     review_policy.add_arguments(prep)
     for name in [
         "run",
@@ -1032,6 +1058,8 @@ def main():
         repo = Repo()
         repo.assert_main()
         if args.command == "prepare":
+            from claude_reporting_policy import read_selection
+
             result = prepare(
                 repo,
                 args.pr,
@@ -1043,6 +1071,7 @@ def main():
                 review_provider=args.review_provider,
                 review_model=args.review_model,
                 review_effort=args.review_effort,
+                reporting=read_selection(args.reporting_policy),
             )
         elif args.command == "batch-preview":
             result = review_batch.preview(

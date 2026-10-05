@@ -348,6 +348,7 @@ def review_task(
     review_model=None,
     review_effort=None,
     batch_authorization=None,
+    reporting=None,
 ):
     if batch_limits is not None and not batch:
         raise WorkflowError("Budget flags require explicit --batch selection")
@@ -366,7 +367,9 @@ def review_task(
         }
         previous = rounds[-1] if rounds else None
         same_head = previous and all(previous.get(k) == v for k, v in binding.items())
-        overrides = any(value is not None for value in (review_provider, review_model, review_effort))
+        overrides = any(
+            value is not None for value in (review_provider, review_model, review_effort, reporting)
+        )
         legacy_recovery = same_head and not fresh and not overrides and "review_policy" not in previous
         if (
             same_head
@@ -389,6 +392,12 @@ def review_task(
             from claude_native_auth import bind
 
             selection["policy"] = bind(selection["policy"])
+            from claude_reporting_policy import build
+            from claude_reporting_policy import selection as reporting_selection
+
+            reporting = reporting_selection(selection["policy"], configuration(repo.root), reporting)
+            if reporting is not None:
+                selection["policy"] = build(selection["policy"], **reporting)
         if not legacy_recovery:
             binding["review_policy_digest"] = digest(selection["policy"])
             if (
@@ -420,6 +429,7 @@ def review_task(
                 review_provider=review_provider,
                 review_model=review_model,
                 review_effort=review_effort,
+                reporting=reporting,
             )
             if independent.verify_packet(directory)["review_policy"] != selection["policy"]:
                 raise WorkflowError("Review selection changed during preparation; prepare a fresh packet")
@@ -576,6 +586,7 @@ def add_commands(sub):
         "--batch-authorization", help="Named authorization JSON bound to final executable preview"
     )
     review_policy.add_arguments(review_parser)
+    review_parser.add_argument("--reporting-policy", help="JSON with explicit max_turns and retention limits")
 
 
 def dispatch(repo, args):
@@ -588,6 +599,8 @@ def dispatch(repo, args):
     if args.command == "respond":
         return respond(repo, args.issue, args.key, args.body_file, args.retry_confirmed_absent)
     if args.command == "task-review":
+        from claude_reporting_policy import read_selection
+
         return review_task(
             repo,
             args.issue,
@@ -609,5 +622,6 @@ def dispatch(repo, args):
             independent.coverage.read_json(plain_path(args.batch_authorization))
             if args.batch_authorization
             else None,
+            read_selection(args.reporting_policy),
         )
     raise WorkflowError("Unknown pipeline operation")

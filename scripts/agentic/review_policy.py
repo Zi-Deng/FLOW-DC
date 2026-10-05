@@ -360,12 +360,23 @@ def status(repo, cfg, **overrides):
         native = claude_native_auth.status(result["policy"]["budget"]["timeout_seconds"])
         result["native_authentication"] = native
         blockers.extend(native["blockers"])
+        if cfg.get("review_reporting") is not None and "authentication" in native:
+            from claude_reporting_policy import build, selection
+
+            result["policy"] = build(
+                {**result["policy"], "authentication": native["authentication"]},
+                **selection(result["policy"], cfg),
+            )
         try:
             managed_controls()
         except (WorkflowError, OSError):
             blockers.append("managed_controls_require_verification")
         try:
-            result["native_capability"] = review_diagnostics.require_activation(
+            if result["policy"].get("schema_version") == 2:
+                from reporting_admission import check as activation_check
+            else:
+                activation_check = review_diagnostics.require_activation
+            result["native_capability"] = activation_check(
                 repo,
                 {
                     **result["policy"],
@@ -388,6 +399,10 @@ def status(repo, cfg, **overrides):
 
 def require_current_adapter(value):
     validate_policy(value)
+    if value.get("schema_version") == 2:
+        # Structural recognition only. Current readiness/dispatch separately
+        # require both native reporting qualifications and the bound harness.
+        return
     if value["adapter"] != PROVIDERS[value["provider"]]["adapter"]:
         raise WorkflowError("Historical review adapter is recovery-only; prepare a fresh packet")
 

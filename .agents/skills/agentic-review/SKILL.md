@@ -5,6 +5,15 @@ description: "Run and publish an independent static review of a GitHub pull requ
 
 # Review Pull Request
 
+Explicit v7 preparation accepts `--reporting-policy FILE` with finite turn and
+retention limits. Ordinary admission requires both actual purpose10/11 execution
+and completion records under matching qualified bindings; storage-only success
+does not activate it. The pure StructuredOutput tool earns no inspection credit.
+Preserve exact argument fragments and separate auxiliary terminal text. The
+coordinator must finish all implementation and final source/local/hosted gates
+before applying or invoking the separate two-purpose allowance. No automatic
+retry, grant reset, extra slot, or transfer of changed-head review credit follows.
+
 Coordinate independent review; the implementation model must not substitute its own review for the selected provider/model process. Read [the skill operating contract](../../../docs/agent-workflow/SKILLS.md) and [the complete review procedure](../../../docs/agent-workflow/REVIEW.md).
 
 Resolve the PR, issue, designated approved plan and task record. From the clean trusted control checkout, verify current head/base and gather the public contract, PR discussion, reviews, inline comments, diff, checks and source/rubric through the existing snapshot helper. Use trusted control instructions. Do not pass the executor's conversation, private memory, credentials, or active PR-supplied settings to the reviewer.

@@ -15,6 +15,24 @@ SCHEMA_SHA256 = "67c4666ee2d1eb2dc5b74c71512e5bf8538845b116930f570847546239058af
 TOOLS = ["Read", "Grep", "Glob", "StructuredOutput"]
 
 
+def selection(policy, cfg, explicit=None):
+    """Explicit finite configuration; Copilot never inherits native reporting."""
+    value = explicit if explicit is not None else cfg.get("review_reporting")
+    if policy["provider"] != "claude-code":
+        if explicit is not None:
+            raise WorkflowError("Structured reporting requires explicit Claude Code selection")
+        return None
+    if value is not None and (type(value) is not dict or set(value) != {"max_turns", "limits"}):
+        raise WorkflowError("Explicit reporting turn and retention limits are required")
+    return copy.deepcopy(value)
+
+
+def read_selection(path):
+    from reporting_activation import read
+
+    return read(path) if path is not None else None
+
+
 def binding(max_turns, limits, schema_text):
     if type(max_turns) is not int or not 0 < max_turns <= 4000:
         raise WorkflowError("Reporting requires an explicit positive turn limit at most 4000")

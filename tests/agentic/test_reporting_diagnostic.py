@@ -29,7 +29,7 @@ from test_claude_v6 import FIXTURE
 EXECUTE = review_claude.execute
 
 
-class ReportingDiagnosticTests(GitFixture):
+class ReportingDiagnosticFixture(GitFixture):
     preview = journal_tests.ReportingActivationTests.preview
     apply = journal_tests.ReportingActivationTests.apply
 
@@ -145,6 +145,8 @@ class ReportingDiagnosticTests(GitFixture):
         ):
             yield preflight
 
+
+class ReportingDiagnosticTests(ReportingDiagnosticFixture):
     def test_both_purposes_dispatch_once_and_recover_exact_bytes(self):
         with self.isolated() as preflight:
             first = diagnostic.run(self.repo, number=10)

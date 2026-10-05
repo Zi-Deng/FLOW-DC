@@ -14,9 +14,11 @@ FILENAME = "reporting-execution.json"
 
 
 def require_activation(repo, meta):
-    # Deliberately closed until the separate purpose-10/11 lifecycle is wired.
-    # The old nine-attempt ledger must never authorize this reporting policy.
-    raise WorkflowError("Prospective v7 dispatch requires the separate reporting activation implementation")
+    from reporting_admission import check
+
+    if meta.get("schema_version") != 7 or "reporting_activation" in meta:
+        raise WorkflowError("Ordinary reporting admission requires a schema-7 review")
+    return check(repo, meta["review_policy"])
 
 
 def binding(directory, meta, session_id, prompt, *, diagnostic=None):
@@ -47,7 +49,16 @@ def binding(directory, meta, session_id, prompt, *, diagnostic=None):
         or prompt != expected_prompt
     ):
         raise WorkflowError("Reporting invocation identity or prompt differs")
+    admission = {}
+    if diagnostic is None:
+        from reporting_activation import read
+        from reporting_admission import FILENAME as ADMISSION
+
+        path = plain_path(Path(directory) / ADMISSION)
+        if path.exists():
+            admission["admission_digest"] = digest(read(path))
     return {
+        **admission,
         **(
             {
                 "reservation_digest": diagnostic["reservation_digest"],

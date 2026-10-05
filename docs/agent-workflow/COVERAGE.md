@@ -1,5 +1,15 @@
 # Coverage evidence and operator migration
 
+Schema7 ordinary reviews can use explicitly configured structured reporting after
+both actual purpose10/11 records independently qualify. Shared current readiness
+requires the immutable dispatch admission/execution binding and matching current
+harness/policy; synthetic storage success alone remains incomplete. Exact model
+argument fragments and separate auxiliary text retain their existing representation.
+New publication envelopes distinguish admitted dispatch from storage-only evidence
+without rewording historical envelopes. Recovery stays storage-only. The v7 batch
+and same-revision continuation path is not yet delivered; no old v6/c303 report
+acquires changed-head credit through this single-review admission path.
+
 Coverage qualification means the wrapper observed successful read-only tool results
 for the required packet material and validated the model's accounting of that material.
 It does not prove understanding, defect detection, acceptance correctness or scientific
@@ -376,8 +386,8 @@ into the capture. A reserved invocation without capture cannot be repeated; a
 durable capture recovers without inference, even with empty malformed reporting.
 Offline schema-7 fixtures without this record retain storage-only interpretation.
 Full source/probe validation remains mandatory. The new stored assessment is not
-current readiness: dispatch/activation and managed adoption remain disabled at this
-checkpoint, and prospective publications are labeled incomplete. Native schema-6
+current readiness: ordinary dispatch additionally requires both actual purposes and
+the retained admission binding. Earlier prospective publications remain incomplete. Native schema-6
 assessment dependencies are frozen in `review_coverage_v6.py`,
 `review_telemetry_v6.py` and `claude_telemetry_v6.py`. Existing historical captures,
 reports, grants and stopped batches are never converted to prospective records.
@@ -686,8 +696,8 @@ Every outcome read re-evaluates the retained capture; outcome 11 also rechecks 1
 The shared readiness and publication entrypoints reject metadata containing
 `reporting_activation`, even if the adapter is later admitted for normal reviews.
 Synthetic journal fixtures test state transitions and exact storage only. Actual
-native dispatch, CLI/managed admission, same-revision continuation and full current
-review qualification remain unfinished. The old c303c46 result stays 60/776
+activation and same-revision continuation remain unfinished; native dispatch and
+CLI/managed admission now have explicit gated implementations. The old c303c46 result stays 60/776
 incomplete and cannot contribute changed-head or changed-contract credit. See the
 [prospective journal limits](PROVIDERS.md#prospective-reporting-activation-journal-issue-31).
 
@@ -698,5 +708,7 @@ Its durable completion record binds report/proof/diagnostic hashes and wall plus
 monotonic timing. Recovery never invokes a provider or fetches PR state. Purpose
 11 additionally requires purpose 10's actual execution/completion representation;
 a storage-only schema-1 execution fixture cannot authorize the successor. Ordinary
-v7 review admission and same-revision continuation remain unfinished; synthetic
-runner tests establish neither live activation nor review readiness.
+v7 admission additionally replays both purposes, requires matching source/policy
+and verified credential lineage, and binds the receipt into execution. Same-revision
+continuation remains unfinished; synthetic runner tests establish neither live
+activation nor review readiness.

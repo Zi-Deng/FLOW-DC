@@ -353,7 +353,9 @@ console.log('synthetic pinned source only');
         ):
             self.assertEqual(review.main(), 1)
             qualify.assert_called_once_with(str(self.directory), require=True)
-            self.assertIn("Historical review adapter is recovery-only", errors.getvalue())
+            self.assertIn(
+                "Missing reporting dispatch admission; storage-only evidence is not ready", errors.getvalue()
+            )
 
     def test_tool_schema_resolves_in_pinned_ajv_dialect_without_changing_report_contract(self):
         import hashlib

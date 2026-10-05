@@ -1,5 +1,36 @@
 # Reviewer providers and activation
 
+The explicit v7 path now requires both purpose10/11 native execution and completion
+records, independently re-evaluated on admission. Offline captures remain recoverable
+but cannot activate ordinary review. Use `review.py prepare --reporting-policy FILE`
+or managed `task-review --reporting-policy FILE`; the bounded JSON contains exactly
+`max_turns` and `limits`. A trusted optional `review_reporting` config supplies the
+same fields for native selection only. Explicit Copilot selection keeps its original
+policy. Preparation creates no activation grant or provider call.
+
+`reporting_cli.py` exposes separate coordinator operations: `preview`, `apply`,
+`prepare --number 10|11`, `run --number 10|11`, `recover --number 10|11`, and `status`.
+Preview requires an exact authenticated policy, tested harness head, explicit name
+and expiry. Apply requires the exact saved preview digest; run dispatches only the
+named purpose. No command chains purposes or resets an uncertain slot. Actual
+application/calls remain prohibited until all issue31 implementation and final
+source/local/hosted gates finish; this implementation is not live qualification.
+
+Admission preserves the original grant and accepts credential generation renewal
+only through the existing separately verified same-account capability lineage.
+The model, effort, CLI, reporting schema/tools/retry/turn/retention bindings must
+match exactly. Per-review wall/reference allocations remain separately enforced.
+Changed harness bytes require new qualification; unchanged bytes at a later commit
+require verified PR32 merge/head identity and real Git merge-commit ancestry.
+This source continuity never transfers review coverage to a changed PR head/base.
+
+An immutable dispatch admission record binds the execution and capture. Current
+readiness rechecks its exact purpose evidence and harness; historical assessment
+and storage recovery do not require current activation. Publication envelopes are
+bound to the saved report/admission representation and stay unchanged if later
+admission fails. Local owner-writable records are not authenticity or billing
+attestations. Same-revision batch continuation remains a separate unfinished path.
+
 Current issue-31 batch records use metadata/capture 6, plan 6 and ledger 2 (saved plan 5 remains reproducible); see
 [provider-aware bounded batches](COVERAGE.md#provider-aware-bounded-batches-current)
 for typed allocations, named authorization, exact-report publication and recovery-only
@@ -39,9 +70,9 @@ and all three probes remain independently required. StructuredOutput earns no
 inspection credit. Missing, duplicated, reordered, malformed, ambiguous, masked or
 oversized evidence stays incomplete; no prose extraction or historical salvage exists.
 
-An explicit Python preparation option binds policy version 2 and metadata/capture/
-result version 7 for prospective **single** packets. The default selection and CLI
-preparation still produce existing v6 policies/schema-6 packets. Policy version 2
+Explicit Python, CLI and managed preparation bind policy version 2 and metadata/capture/
+result version 7 for **single** packets. Without an explicit reporting profile or
+trusted `review_reporting` configuration, preparation retains existing v6 policies/schema-6 packets. Policy version 2
 fixes the approved CLI/model/effort/binary/authentication, exact schema-2 schema text
 and hash, four-tool allowlist, stream/partial flags, one reporting retry attempt,
 an explicit positive turn limit (at most 4,000), and retention bounds. That turn
@@ -67,11 +98,12 @@ is retained. Owner-writable hashes are not independent attestations.
 V6 native assessment and telemetry dependencies are frozen separately. Existing
 schema-5/6 capture, recovery and publication interpretations are unchanged. A v7
 report cannot be inserted into older metadata. Copilot retains its explicit selection
-and original semantics. Publication of prospective v7 evidence is always labeled
-incomplete and describes the fragment representation; auxiliary terminal prose is
-not substituted into the report.
+and original semantics. Historical prospective v7 publication envelopes retain their
+incomplete label. New envelopes require the dispatch admission/execution binding
+before reporting qualified static inspection; auxiliary terminal prose is never
+substituted into the report. Current readiness separately rechecks activation.
 
-**V7 dispatch and current readiness remain disabled.** The prospective execution
+**V7 dispatch and readiness require both actual qualified purposes.** The execution
 path now carries the four-tool command, schema, finite turn/stream limits and
 `MAX_STRUCTURED_OUTPUT_RETRIES=1` through the isolated snapshot environment. Its
 prompt requires exactly one StructuredOutput report and retains all three probes
@@ -87,12 +119,12 @@ without capture, remains uncertain and cannot be repeated. This is one wrapper
 invocation, not an API-request count or independent attestation. Earlier offline
 schema-7 fixtures without execution records retain their storage-only meaning.
 
-Both the shared runner and native entrypoint still refuse v7 through an explicit
-closed activation gate, and native preflight independently rejects it before
-current credential inspection or process launch. No existing grant is consulted
-as v7 authority. The
-separate purpose-10/11 activation and same-revision continuation machinery remain
-implementation work. The old nine-attempt grant cannot activate these bindings.
+Both the shared runner and native entrypoint require the separate v7 admission
+gate. Native preflight independently rechecks that gate before inspecting the
+binary or launching any process. The old nine-attempt grant cannot activate v7.
+Same-revision continuation remains unfinished; no implementation fixture counts
+as actual activation or independent review.
+
 The approved additional sequence is prospective: two processes, each 300 seconds/
 2 reference USD, total 600 seconds/4 reference USD, zero paid extra; purpose 11 only
 after 10 qualifies, failure-stop and no twelfth slot. No grant is applied here.
@@ -100,8 +132,8 @@ after 10 qualifies, failure-stop and no twelfth slot. No grant is applied here.
 Synthetic transport, full-stream, storage/recovery and pinned-source expression
 tests establish local software properties only. Static binary/source checks do not
 prove actual reporting admission, Max access, isolation, model completion or
-independent review. Finite activation, diagnostic execution integration, continuation,
-CLI/managed adoption, final-head gates and live qualification remain required by
+independent review. Same-revision continuation, final skill delivery, final-head gates
+and actual live qualification remain required by
 [the approved amendment](https://github.com/Zi-Deng/FLOW-DC/issues/31#issuecomment-6001819615).
 
 ## Inspect or deliberately select
@@ -728,12 +760,11 @@ repeat. Both purposes still require actual probes/source, and purpose 11 require
 the complete correlated refusal. Rehashing a smaller packet cannot change the fixed
 diagnostic scope.
 
-This remains a dependency implementation with synthetic execution tests. Current
-ordinary v7 admission and CLI/managed adoption remain closed/unwired, and actual
-activation is unqualified. Only the diagnostic preflight has an explicit v7 policy
-path; it does not activate ordinary review. The journal functions do not invoke a
-provider; the runner is a separate coordinator-owned action after **all** remaining
-implementation and final gates. No grant has been applied by implementation.
-Final adoption, continuation, CLI/skill guidance and live qualification remain
-separate work under the approved plan. Owner-writable records are accounting and
-provenance, not cryptographic or billing attestations.
+The diagnostic and ordinary admission paths have synthetic execution tests. Actual
+activation remains unqualified. The separate CLI exposes explicit coordinator
+operations, and ordinary CLI/managed preparation accepts a finite reporting profile.
+No command applies or runs diagnostics as a side effect of review preparation.
+The journal itself never invokes a provider. All remaining continuation implementation,
+final gates and skill delivery must finish before coordinator-owned live qualification.
+No grant has been applied by implementation. Owner-writable records are accounting
+and provenance, not cryptographic or billing attestations.

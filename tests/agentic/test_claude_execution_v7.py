@@ -84,6 +84,7 @@ class ClaudeExecutionV7Tests(GitFixture):
                 side_effect=AssertionError("old grant cannot activate v7"),
             ),
             patch("claude_reporting_execution.require_activation"),
+            patch("reporting_admission.check", return_value={"synthetic_execution_boundary": True}),
             patch.object(claude_native_auth, "snapshot", side_effect=snapshot),
             patch.object(review_claude.review_cli, "executable", return_value="/verified/claude"),
             patch.object(review_claude.review_process, "capture", side_effect=process),

@@ -201,6 +201,10 @@ def preflight(repo, policy, *, reporting_diagnostic=False):
         validate_policy(policy)
     else:
         require_current_adapter(policy)
+        if policy.get("schema_version") == 2:
+            from reporting_admission import check
+
+            check(repo, policy)
     claude_native_auth.validate_binding(policy.get("authentication"))
     managed_controls()
     binary = review_cli.executable(repo, "claude-code")
@@ -359,7 +363,10 @@ def execute(repo, directory, meta, *, diagnostic=False, dispatch_context=None):
         from claude_reporting_execution import FILENAME
         from claude_reporting_execution import require_activation as require_reporting_activation
 
-        if any(plain_path(Path(directory) / name).exists() for name in ("attempt.json", FILENAME)):
+        if any(
+            plain_path(Path(directory) / name).exists()
+            for name in ("attempt.json", FILENAME, "reporting-admission.json")
+        ):
             raise WorkflowError("Prior reporting attempt cannot be repeated; use storage-only recovery")
         if diagnostic:
             from reporting_diagnostic import Dispatch
@@ -369,6 +376,9 @@ def execute(repo, directory, meta, *, diagnostic=False, dispatch_context=None):
             dispatch_context.claim(repo, directory, meta)
         else:
             require_reporting_activation(repo, meta)
+            from reporting_admission import retain
+
+            retain(repo, directory, meta)
     if diagnostic:
         import diagnostic_tool_contract
 
@@ -470,6 +480,10 @@ def execute(repo, directory, meta, *, diagnostic=False, dispatch_context=None):
         recheck_auth()
         if refusal_path is not None:
             validate_canary(refusal_path, workspace, root, env)
+        if structured and not diagnostic:
+            from reporting_admission import require_packet
+
+            require_packet(directory, meta, repo=repo)
         from review_batch import dispatch_timeout
 
         timeout = (
