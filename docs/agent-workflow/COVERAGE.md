@@ -690,3 +690,13 @@ native dispatch, CLI/managed admission, same-revision continuation and full curr
 review qualification remain unfinished. The old c303c46 result stays 60/776
 incomplete and cannot contribute changed-head or changed-contract credit. See the
 [prospective journal limits](PROVIDERS.md#prospective-reporting-activation-journal-issue-31).
+
+
+The prospective native reporting diagnostic runner now binds each invocation to
+its fixed synthetic packet, exact canary prompt, immutable reservation and session.
+Its durable completion record binds report/proof/diagnostic hashes and wall plus
+monotonic timing. Recovery never invokes a provider or fetches PR state. Purpose
+11 additionally requires purpose 10's actual execution/completion representation;
+a storage-only schema-1 execution fixture cannot authorize the successor. Ordinary
+v7 review admission and same-revision continuation remain unfinished; synthetic
+runner tests establish neither live activation nor review readiness.

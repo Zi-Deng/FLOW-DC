@@ -19,21 +19,44 @@ def require_activation(repo, meta):
     raise WorkflowError("Prospective v7 dispatch requires the separate reporting activation implementation")
 
 
-def binding(directory, meta, session_id, prompt):
+def binding(directory, meta, session_id, prompt, *, diagnostic=None):
     from claude_reporting_policy import validate
     from review import RESULT_FIELDS
     from review_prompt import native
 
     validate(meta["review_policy"])
+    expected_prompt = native(directory, meta)
+    if diagnostic is not None:
+        from reporting_diagnostic import PURPOSE
+        from reporting_diagnostic import prompt as diagnostic_prompt
+
+        if (
+            meta.get("purpose") != PURPOSE
+            or type(diagnostic) is not dict
+            or set(diagnostic) != {"reservation_digest", "refusal_path"}
+            or not isinstance(diagnostic["reservation_digest"], str)
+            or len(diagnostic["reservation_digest"]) != 64
+            or any(c not in "0123456789abcdef" for c in diagnostic["reservation_digest"])
+        ):
+            raise WorkflowError("Invalid reporting diagnostic execution binding")
+        expected_prompt = diagnostic_prompt(directory, meta, diagnostic["refusal_path"])
     if (
         meta.get("schema_version") != 7
         or type(session_id) is not str
         or str(uuid.UUID(session_id)) != session_id
-        or prompt != native(directory, meta)
+        or prompt != expected_prompt
     ):
         raise WorkflowError("Reporting invocation identity or prompt differs")
     return {
-        "schema_version": 1,
+        **(
+            {
+                "reservation_digest": diagnostic["reservation_digest"],
+                "refusal_path": diagnostic["refusal_path"],
+            }
+            if diagnostic is not None
+            else {}
+        ),
+        "schema_version": 2 if diagnostic is not None else 1,
         "input_digest": digest({k: v for k, v in meta.items() if k not in RESULT_FIELDS}),
         "policy_digest": digest(meta["review_policy"]),
         "reporting_digest": digest(meta["review_policy"]["reporting"]),
@@ -63,8 +86,8 @@ def exclusive(path, value, *, limit=10000):
         os.close(parent)
 
 
-def reserve(directory, meta, session_id, prompt, attempt):
-    record = binding(directory, meta, session_id, prompt)
+def reserve(directory, meta, session_id, prompt, attempt, *, diagnostic=None):
+    record = binding(directory, meta, session_id, prompt, diagnostic=diagnostic)
     # The first exclusive file is the dispatch claim. Failure between writes
     # leaves it consumed/uncertain, never a new available invocation.
     exclusive(Path(directory) / FILENAME, record)
@@ -83,7 +106,17 @@ def retained(directory, meta):
         return None
     try:
         record = strict_json(exact_reporting_bytes(path, 10000).decode("utf-8"))
-        expected = binding(directory, meta, record.get("session_id"), native(directory, meta))
+        diagnostic = None
+        prompt = native(directory, meta)
+        if record.get("schema_version") == 2:
+            from reporting_diagnostic import prompt as diagnostic_prompt
+
+            diagnostic = {
+                "reservation_digest": record.get("reservation_digest"),
+                "refusal_path": record.get("refusal_path"),
+            }
+            prompt = diagnostic_prompt(directory, meta, diagnostic["refusal_path"])
+        expected = binding(directory, meta, record.get("session_id"), prompt, diagnostic=diagnostic)
         if digest(record) != digest(expected):
             raise ValueError
     except (ValueError, TypeError, KeyError, AttributeError):

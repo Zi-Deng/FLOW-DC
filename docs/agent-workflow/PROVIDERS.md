@@ -717,10 +717,23 @@ schema-7 immutable capture/replay path and its execution binding, retain consume
 reservations, and recheck both successes when reading outcome 11. Diagnostic records
 are explicitly excluded from PR readiness and model-review publication.
 
-This is a dependency implementation with synthetic tests. Native diagnostic runner,
-canary-prompt execution binding, CLI/managed admission and actual activation remain
-unavailable; the existing v7 dispatch gate and preflight remain closed. The journal
-functions do not invoke a provider. No grant has been applied by implementation.
+The native diagnostic runner in `reporting_diagnostic.py` now prepares a fixed inert
+packet and dispatches one explicitly selected, freshly reserved purpose. It binds the
+exact prompt (including the wrapper-owned canary path), native session, reservation,
+report fragments, auxiliary text and sanitized diagnostics. A final context and
+deadline check precedes launch; preparation time reduces the process timeout.
+Durable completion timing includes a monotonic elapsed bound. Saved captures recover
+without authentication, PR fetches or inference; missing or uncertain calls never
+repeat. Both purposes still require actual probes/source, and purpose 11 requires
+the complete correlated refusal. Rehashing a smaller packet cannot change the fixed
+diagnostic scope.
+
+This remains a dependency implementation with synthetic execution tests. Current
+ordinary v7 admission and CLI/managed adoption remain closed/unwired, and actual
+activation is unqualified. Only the diagnostic preflight has an explicit v7 policy
+path; it does not activate ordinary review. The journal functions do not invoke a
+provider; the runner is a separate coordinator-owned action after **all** remaining
+implementation and final gates. No grant has been applied by implementation.
 Final adoption, continuation, CLI/skill guidance and live qualification remain
 separate work under the approved plan. Owner-writable records are accounting and
 provenance, not cryptographic or billing attestations.

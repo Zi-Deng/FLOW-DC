@@ -629,7 +629,12 @@ def recover_review(repo, directory):
     meta = verify_packet(directory)
     if repo.name != meta["repository"]:
         raise WorkflowError("Review packet belongs to another repository")
-    current_pr(repo, meta["pr"], meta["head_sha"], meta["base_sha"])
+    from reporting_diagnostic import PURPOSE, identity
+
+    if meta.get("purpose") == PURPOSE:
+        identity(repo, directory, meta)
+    else:
+        current_pr(repo, meta["pr"], meta["head_sha"], meta["base_sha"])
     if not result_path.exists():
         inputs = {key: value for key, value in meta.items() if key not in RESULT_FIELDS}
         capture = read_result_artifact(directory, "review-capture.json", meta)

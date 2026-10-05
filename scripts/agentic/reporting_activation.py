@@ -379,6 +379,17 @@ def evaluate(repo, grant, reservation, finished):
     capture = review.read_result_artifact(directory, "review-capture.json", meta)
     if "execution" not in capture:
         raise WorkflowError("Reporting diagnostic lacks its actual execution binding")
+    from reporting_diagnostic import PURPOSE, completion, identity
+
+    timing_qualified = True
+    if meta.get("purpose") == PURPOSE:
+        identity(repo, directory, meta)
+        if number == 11:
+            previous_directory = root(repo) / "evidence-10"
+            identity(repo, previous_directory, review.verify_packet(previous_directory))
+        timing, timing_qualified = completion(directory, capture, reservation)
+        if finished != timing["finished"]:
+            raise WorkflowError("Reporting outcome completion time differs from execution")
     diagnostics = copy.deepcopy(capture["diagnostics"])
     if diagnostics["telemetry"].get("diagnostic") != {
         "purpose": SEQUENCE[number],
@@ -405,7 +416,8 @@ def evaluate(repo, grant, reservation, finished):
         "assessment_digest": digest(assessment),
         "finished": finished,
         "qualified": (
-            assessment["qualified"]
+            timing_qualified
+            and assessment["qualified"]
             and capture["reporting"]["accepted"]
             and finished <= reservation["deadline"]
             and diagnostics["usage"]["counters"].get("duration_ms", float("inf")) <= 300000

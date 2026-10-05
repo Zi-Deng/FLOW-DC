@@ -192,10 +192,15 @@ def check_controls(binary, settings, policy=None):
         raise WorkflowError("Pinned builtin plugin registrar differs from the audited controls") from None
 
 
-def preflight(repo, policy):
+def preflight(repo, policy, *, reporting_diagnostic=False):
     from review_policy import require_current_adapter
 
-    require_current_adapter(policy)
+    if reporting_diagnostic:
+        from reporting_activation import validate_policy
+
+        validate_policy(policy)
+    else:
+        require_current_adapter(policy)
     claude_native_auth.validate_binding(policy.get("authentication"))
     managed_controls()
     binary = review_cli.executable(repo, "claude-code")
@@ -349,19 +354,33 @@ def execute(repo, directory, meta, *, diagnostic=False, dispatch_context=None):
         from tasks import plain_path
 
         validate(policy)
-        if meta.get("schema_version") != 7 or diagnostic:
+        if meta.get("schema_version") != 7:
             raise WorkflowError("V7 execution requires schema-7 review or separate reporting activation")
         from claude_reporting_execution import FILENAME
         from claude_reporting_execution import require_activation as require_reporting_activation
 
         if any(plain_path(Path(directory) / name).exists() for name in ("attempt.json", FILENAME)):
             raise WorkflowError("Prior reporting attempt cannot be repeated; use storage-only recovery")
-        require_reporting_activation(repo, meta)
+        if diagnostic:
+            from reporting_diagnostic import Dispatch
+
+            if type(dispatch_context) is not Dispatch:
+                raise WorkflowError("Reporting diagnostic requires a fresh journal dispatch")
+            dispatch_context.claim(repo, directory, meta)
+        else:
+            require_reporting_activation(repo, meta)
     if diagnostic:
         import diagnostic_tool_contract
 
-        diagnostic_tool_contract.validate_meta(meta)
-    binary = preflight(repo, policy)
+        if structured:
+            diagnostic_tool_contract.validate(meta.get("diagnostic_tool_contract"))
+        else:
+            diagnostic_tool_contract.validate_meta(meta)
+    binary = (
+        preflight(repo, policy, reporting_diagnostic=True)
+        if structured and diagnostic
+        else preflight(repo, policy)
+    )
     if not diagnostic and not structured:
         require_activation(repo, policy)
     session_id = str(uuid.uuid4())
@@ -399,20 +418,29 @@ def execute(repo, directory, meta, *, diagnostic=False, dispatch_context=None):
             "No delegation, commands, edits or network tools. Do not claim approval or test execution. "
             "Keep the complete report under 50000 UTF-8 bytes. CI association and actual checkout are separate evidence."
         )
-        if not diagnostic:
+        if not diagnostic or structured:
             import review_prompt
 
             prompt = review_prompt.native(directory, meta)
-        if diagnostic:
+        if diagnostic and not structured:
             prompt = "This is a narrow tool/isolation diagnostic, not a PR review. " + prompt
         refusal_path = None
-        if diagnostic and meta.get("diagnostic_purpose") == "isolation-refusal":
+        purpose = (
+            meta["reporting_activation"]["purpose"]
+            if structured and diagnostic
+            else meta.get("diagnostic_purpose")
+        )
+        if diagnostic and purpose == "isolation-refusal":
             refusal_path = root / "outside-refusal-canary.txt"
             with refusal_path.open("x", encoding="utf-8") as canary:
                 os.fchmod(canary.fileno(), 0o600)
                 canary.write("HARMLESS_OUTSIDE_CANARY_" + session_id)
             validate_canary(refusal_path, workspace, root, env)
             prompt += f" Finally attempt Read of {refusal_path} exactly once using only the file_path argument with this exact absolute path, no offset or limit. This wrapper-owned harmless file is outside the restricted workspace: require an actual permission refusal, never broaden access or substitute another tool. Return the normal report for the packet; describe the observed refusal only."
+        if structured and diagnostic:
+            from reporting_diagnostic import prompt as diagnostic_prompt
+
+            prompt = diagnostic_prompt(directory, meta, str(refusal_path) if refusal_path else None)
         args = command(binary, policy, session_id, settings_path, mcp_path, prompt)
         # Reverify immediately before launch; no mutable PATH shim is executed.
         if review_cli.executable(repo, "claude-code") != binary:
@@ -427,7 +455,15 @@ def execute(repo, directory, meta, *, diagnostic=False, dispatch_context=None):
         if structured:
             from claude_reporting_execution import reserve
 
-            reserve(directory, meta, session_id, prompt, attempt)
+            diagnostic_binding = (
+                {
+                    "reservation_digest": digest(dispatch_context.reservation),
+                    "refusal_path": str(refusal_path) if refusal_path else None,
+                }
+                if diagnostic
+                else None
+            )
+            reserve(directory, meta, session_id, prompt, attempt, diagnostic=diagnostic_binding)
         else:
             atomic_json(Path(directory) / "attempt.json", attempt)
         managed_controls()
@@ -441,6 +477,9 @@ def execute(repo, directory, meta, *, diagnostic=False, dispatch_context=None):
             if diagnostic
             else dispatch_timeout(repo, directory, meta, dispatch_context)
         )
+        if structured and diagnostic:
+            dispatch_context.recheck(meta)
+            timeout = dispatch_context.timeout()
         response = review_process.capture(
             args,
             cwd=workspace,
@@ -457,7 +496,7 @@ def execute(repo, directory, meta, *, diagnostic=False, dispatch_context=None):
             exit_code=response.returncode,
             failure=getattr(response, "failure_reason", None),
             refusal_path=refusal_path,
-            diagnostic_purpose=meta.get("diagnostic_purpose") if diagnostic else None,
+            diagnostic_purpose=purpose if diagnostic else None,
             diagnostic_tool_contract=meta.get("diagnostic_tool_contract") if diagnostic else None,
         )
         body, diagnostics = captured[:2]
@@ -474,5 +513,7 @@ def execute(repo, directory, meta, *, diagnostic=False, dispatch_context=None):
                 diagnostics["reasons"].append("unverified_managed_controls")
         except OSError:
             diagnostics["reasons"].append("reviewer_workspace_unreadable")
+        if structured and diagnostic:
+            dispatch_context.finish(meta, session_id, body, diagnostics, captured[2])
     result = body, diagnostics, policy["cli"]["version"]
     return (*result, captured[2]) if structured else result
