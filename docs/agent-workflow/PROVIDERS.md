@@ -28,6 +28,35 @@ Max credentials, a current billing receipt, verified reviewer controls and both
 successful native diagnostics. Neither a workstation login, binary inspection nor
 synthetic tests establish isolated tool capability or included-usage billing.
 
+## Structured reporting dependency checkpoint (not activated)
+
+`claude_reporting.py` supplies a bounded reporting-only projection and exact-fragment
+validator for the prospective native transport. It preserves native envelope UUIDs,
+message/block/tool identities, model-returned JSON fragments and separate auxiliary
+terminal text. A report needs one completed assistant call, its successful tool
+acknowledgement and a matching terminal structured object. Object serialization is
+used only for proof storage/comparison, never to manufacture report bytes. Missing,
+duplicate, malformed, ambiguous or over-limit evidence remains incomplete. Retained
+prefixes are explicitly marked incomplete; no prose extraction or historical salvage
+is available. Proof replay is storage-only and requires external immutable capture
+bindings; owner-writable hashes are not independent attestations.
+
+This dependency is **not connected to provider dispatch, policy selection, captures,
+activation, publication or readiness**. The existing v6 interpretation and tool policy
+remain unchanged. The forthcoming v7 adapter must validate the entire original stream
+and all Read/Grep/Glob evidence independently; this reporting projection deliberately
+omits inspection payloads and earns no source or capability credit. Its 60,000-byte
+hard report ceiling is an implementation maximum, not an authorization: the caller
+must supply the smaller immutable assignment limit (for example 10,000 bytes).
+
+`test_claude_reporting.py` exercises synthetic native envelopes and four exact embedded
+source excerpts from the pinned 2.1.282 binary. These checks establish local transport
+properties, not actual model behavior, subscription access, isolation or successful
+review. Versioned v7 policy/capture/recovery integration, finite reporting retry/turn
+controls, separate purpose-10/11 activation machinery, continuation, and final
+qualification are still required by [the approved amendment](https://github.com/Zi-Deng/FLOW-DC/issues/31#issuecomment-6001819615).
+No new provider invocation or grant application is enabled by this checkpoint.
+
 ## Inspect or deliberately select
 
 From the trusted control checkout:

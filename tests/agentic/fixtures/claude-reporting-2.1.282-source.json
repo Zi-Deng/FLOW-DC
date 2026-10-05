@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "cli_version": "2.1.282",
+  "binary_sha256": "3afe8535c0cc33f0e24f7b25dab7a1727b8b592196f8496a8bc302ba2161eed3",
+  "scope": "Exact embedded source excerpts; synthetic execution is not live capability.",
+  "excerpts": {
+    "envelope": {
+      "start_byte": 210060788,
+      "end_byte": 210060869,
+      "sha256": "e69ec90c47e3b21a7c38c3cfabab2213db85524f5da3bbd4d79669b00902c4ac",
+      "source": "(D)=>({...D,session_id:Dt,uuid:\"uuid\"in D&&typeof D.uuid===\"string\"?D.uuid:uc()})"
+    },
+    "stream-envelope": {
+      "start_byte": 219108914,
+      "end_byte": 219109074,
+      "sha256": "58cb391c4cdacb9826d7f598c685a9b446cfa0a7ee168c2948136f330b769123",
+      "source": "function Jf(e,r){return{type:\"stream_event\",event:e.event,session_id:r.session_id,parent_tool_use_id:null,uuid:r.uuid,...e.ttftMs!==void 0&&{ttft_ms:e.ttftMs}}}"
+    },
+    "report-tool": {
+      "start_byte": 199565579,
+      "end_byte": 199566605,
+      "sha256": "83f8c68345970e75f1847679593573740973f99c42fb526f4ad1f1bf5813cc0e",
+      "source": "function fe(e={},n=()=>{}){return Dt({...e,isMcp:!1,isEnabled(){return!0},isConcurrencySafe(){return!0},isReadOnly(){return!0},isOpenWorld(){return!1},name:ui,searchHint:\"return the final response as structured JSON\",backgrounding:\"never\",maxResultSizeChars:1e5,async description(){return\"Return structured output in the requested format\"},async prompt(){return\"Use this tool to return your final response in the requested structured format. You MUST call this tool exactly once at the end of your response to provide the structured output.\"},get inputSchema(){return Ze()},get outputSchema(){return en()},create(){return{async call(r){return n(r),{data:\"Structured output provided successfully\",structured_output:r,endsTurn:!0}}}},renderToolUseMessage(r){let s=Object.keys(r);if(s.length===0)return null;if(s.length<=3)return s.map((p)=>`${p}: ${S(r[p])}`).join(\", \");return`${s.length} fields: ${s.slice(0,3).join(\", \")}\\u2026`},mapToolResultToToolResultBlockParam(r,s){return{tool_use_id:s,type:\"tool_result\",content:r}}})}"
+    },
+    "fragment-append": {
+      "start_byte": 203373393,
+      "end_byte": 203373418,
+      "sha256": "5e7e664c1c418c06ca4cb0ad11cf2aed861e328aab30b4988f01b9f0f911e2ed",
+      "source": "bi.input+=Ua.partial_json"
+    }
+  }
+}
