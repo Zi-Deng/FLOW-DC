@@ -4,6 +4,7 @@ import hashlib
 import json
 from pathlib import Path
 
+import packet_tree
 import review_projection
 from workflow import WorkflowError
 
@@ -98,18 +99,11 @@ def windows(packet, artifact):
 
 def packet_files(root, *, originals_only=False):
     """Walk once; generated navigation is read separately during validation."""
-    root = Path(root)
-    for parent, directories, names in root.walk(follow_symlinks=False):
-        relative = parent.relative_to(root)
-        prefix = "" if parent == root else relative.as_posix() + "/"
-        if originals_only and parent == root:
-            directories[:] = [name for name in directories if name != "navigation"]
-        for name in names:
-            if originals_only and parent == root and name in {"navigation", "assignment.json"}:
-                continue
-            path = parent / name
-            if path.is_file():
-                yield prefix + name, path
+    yield from packet_tree.files(
+        root,
+        exclude_root_directories=("navigation",) if originals_only else (),
+        exclude_root_files=("navigation", "assignment.json") if originals_only else (),
+    )
 
 
 def render(packet, unit, report_limit):

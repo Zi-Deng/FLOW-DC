@@ -14,6 +14,7 @@ import uuid
 from pathlib import Path, PurePosixPath
 
 import ci_evidence
+import packet_tree
 import review_batch
 import review_coverage as coverage
 import review_coverage_v1 as legacy_coverage
@@ -363,15 +364,8 @@ def verify_packet(directory):
     ):
         raise WorkflowError("Structured reporting cannot reinterpret historical metadata")
     packet = directory / "packet"
-    actual, has_symlink = {}, False
-    for parent, directories, names in packet.walk(follow_symlinks=False):
-        prefix = "" if parent == packet else parent.relative_to(packet).as_posix() + "/"
-        has_symlink |= any((parent / name).is_symlink() for name in directories + names)
-        for name in names:
-            path = parent / name
-            if path.is_file():
-                actual[prefix + name] = digest(path)
-    if has_symlink or actual != metadata["files"]:
+    actual = {name: digest(path) for name, path in packet_tree.files(packet)}
+    if actual != metadata["files"]:
         raise WorkflowError("Review packet changed after preparation")
     return metadata
 
