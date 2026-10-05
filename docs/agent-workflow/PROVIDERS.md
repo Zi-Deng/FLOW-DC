@@ -28,34 +28,58 @@ Max credentials, a current billing receipt, verified reviewer controls and both
 successful native diagnostics. Neither a workstation login, binary inspection nor
 synthetic tests establish isolated tool capability or included-usage billing.
 
-## Structured reporting dependency checkpoint (not activated)
+## Structured reporting integration checkpoint (not activated)
 
-`claude_reporting.py` supplies a bounded reporting-only projection and exact-fragment
-validator for the prospective native transport. It preserves native envelope UUIDs,
-message/block/tool identities, model-returned JSON fragments and separate auxiliary
-terminal text. A report needs one completed assistant call, its successful tool
-acknowledgement and a matching terminal structured object. Object serialization is
-used only for proof storage/comparison, never to manufacture report bytes. Missing,
-duplicate, malformed, ambiguous or over-limit evidence remains incomplete. Retained
-prefixes are explicitly marked incomplete; no prose extraction or historical salvage
-is available. Proof replay is storage-only and requires external immutable capture
-bindings; owner-writable hashes are not independent attestations.
+The prospective v7 adapter combines full native event validation with the bounded
+`claude_reporting.py` projection. Native UUIDs, message/block/tool identities, exact
+JSON argument fragments, a completed assistant input, the successful tool result
+and the terminal structured object must agree. Object serialization stores proof;
+it never supplies replacement model report bytes. Read/Grep/Glob source evidence
+and all three probes remain independently required. StructuredOutput earns no
+inspection credit. Missing, duplicated, reordered, malformed, ambiguous, masked or
+oversized evidence stays incomplete; no prose extraction or historical salvage exists.
 
-This dependency is **not connected to provider dispatch, policy selection, captures,
-activation, publication or readiness**. The existing v6 interpretation and tool policy
-remain unchanged. The forthcoming v7 adapter must validate the entire original stream
-and all Read/Grep/Glob evidence independently; this reporting projection deliberately
-omits inspection payloads and earns no source or capability credit. Its 60,000-byte
-hard report ceiling is an implementation maximum, not an authorization: the caller
-must supply the smaller immutable assignment limit (for example 10,000 bytes).
+An explicit Python preparation option binds policy version 2 and metadata/capture/
+result version 7 for prospective **single** packets. The default selection and CLI
+preparation still produce existing v6 policies/schema-6 packets. Policy version 2
+fixes the approved CLI/model/effort/binary/authentication, exact schema-2 schema text
+and hash, four-tool allowlist, stream/partial flags, one reporting retry attempt,
+an explicit positive turn limit (at most 4,000), and retention bounds. That turn
+ceiling is a local maximum, not a funded allocation or an exact API-request count.
+Every invocation still needs a feasible assignment and finite named authorization.
 
-`test_claude_reporting.py` exercises synthetic native envelopes and four exact embedded
-source excerpts from the pinned 2.1.282 binary. These checks establish local transport
-properties, not actual model behavior, subscription access, isolation or successful
-review. Versioned v7 policy/capture/recovery integration, finite reporting retry/turn
-controls, separate purpose-10/11 activation machinery, continuation, and final
-qualification are still required by [the approved amendment](https://github.com/Zi-Deng/FLOW-DC/issues/31#issuecomment-6001819615).
-No new provider invocation or grant application is enabled by this checkpoint.
+`review.md` is the exact concatenation of reporting fragments. Auxiliary terminal
+text is separately retained as `terminal.txt`, and `reporting-proof.json` contains
+only bounded reporting evidence. Both are bound into the immutable capture and
+assessment version 4; recovery replays the proof without inference. Even an empty
+or malformed report is retained as incomplete. Capture JSON is bounded to 8 MB;
+raw streams to 16 MB/20,000 events, reporting proof to at most 2 MB, and report/text
+to at most 60,000 bytes each, with smaller explicit per-packet limits. These are
+storage limits, not model context or completion guarantees. No raw provider session
+is retained. Owner-writable hashes are not independent attestations.
+
+V6 native assessment and telemetry dependencies are frozen separately. Existing
+schema-5/6 capture, recovery and publication interpretations are unchanged. A v7
+report cannot be inserted into older metadata. Copilot retains its explicit selection
+and original semantics. Publication of prospective v7 evidence is always labeled
+incomplete and describes the fragment representation; auxiliary terminal prose is
+not substituted into the report.
+
+**V7 dispatch and current readiness remain disabled.** Command/environment builders
+bind the prospective flags and `MAX_STRUCTURED_OUTPUT_RETRIES=1`, but the native
+preflight rejects v7 before current credential inspection or process launch. The
+separate purpose-10/11 activation and same-revision continuation machinery remain
+implementation work. The old nine-attempt grant cannot activate these bindings.
+The approved additional sequence is prospective: two processes, each 300 seconds/
+2 reference USD, total 600 seconds/4 reference USD, zero paid extra; purpose 11 only
+after 10 qualifies, failure-stop and no twelfth slot. No grant is applied here.
+
+Synthetic transport, full-stream, storage/recovery and pinned-source expression
+tests establish local software properties only. Static binary/source checks do not
+prove actual reporting admission, Max access, isolation, model completion or
+independent review. Final execution integration, finite activation, continuation,
+CLI/managed adoption, final-head gates and live qualification remain required by
+[the approved amendment](https://github.com/Zi-Deng/FLOW-DC/issues/31#issuecomment-6001819615).
 
 ## Inspect or deliberately select
 

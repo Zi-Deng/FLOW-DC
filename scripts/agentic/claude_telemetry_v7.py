@@ -1,348 +1,162 @@
-"""Strict native stream-json adapter. UI metadata and assistant assertions earn no reads.
+"""Prospective v7 native evaluation: full controls plus exact reporting proof.
 
-Fixtures test the pinned renderer contract; only an actual successful invocation can
-establish live capability. Unknown shapes preserve incomplete, sanitized diagnostics.
+No activation is implied. Reporting events earn no inspection credit. Only the
+bounded reporting projection survives; all other native payloads are discarded.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
-import math
 import re
 from pathlib import Path
 
 import claude_refusal_v6 as claude_refusal
-import claude_telemetry_v1 as legacy
-import claude_telemetry_v2 as previous
-import claude_telemetry_v3 as frozen_v3
-import claude_telemetry_v4 as frozen_v4
-import claude_telemetry_v5 as frozen_v5
+import claude_reporting
+import claude_reporting_policy as reporting_policy
+import claude_telemetry_v6 as frozen
 import diagnostic_tool_contract as tool_contract
 import review_coverage as coverage
+from claude_telemetry_v6 import (
+    BUILTIN_AGENTS,
+    TOOLS,
+    count_hash,
+    empty_catalog,
+    numerical,
+    observation,
+    observe_control,
+    request_start,
+    thinking_tokens,
+    usage_projection,
+)
+from tasks import digest
 from workflow import WorkflowError
 
-TOOLS = {"Read": "view", "Grep": "grep", "Glob": "glob"}
-KINDS = {"system", "assistant", "user", "result", "rate_limit_event"}
-# Pinned built-in declarations are not delegation permission. Agent is absent
-# from the tool list and actual delegated messages remain forbidden.
-BUILTIN_AGENTS = {*legacy.BUILTIN_AGENTS, "claude-code-guide"}
-ADAPTER = "claude-stream-json-2.1.282-v6"
-LEGACY_ADAPTER = "claude-stream-json-2.1.282-v1"
+ADAPTER = reporting_policy.ADAPTER
+KINDS = frozen.KINDS | {"stream_event"}
 
 
-CONTROL_FIELDS = {
-    "init." + name
-    for name in (
-        "mcp_servers",
-        "plugins",
-        "skills",
-        "agents",
-        "slash_commands",
-        "terminal_slash_commands",
-        "plugin_errors",
-        "plugin_warnings",
-        "mcp_server_errors",
-    )
-} | {"system.commands", "system.status", "system.keys"}
-NUMERIC_FIELDS = {"system.estimated_tokens", "system.estimated_tokens_delta"}
-CONTROL_FIELDS |= NUMERIC_FIELDS | {"refusal." + key for key in claude_refusal.OBSERVATIONS}
-GREP_PREDICATES = {
-    "mode",
-    "line_numbers",
-    "path",
-    "glob",
-    "head_limit",
-    "input",
-    "rendered_lines",
-    "path_line_text",
-    "line_text",
-    "empty_result",
-}
-PREDICATE_FIELDS = {"call." + key for key in claude_refusal.CALL_PREDICATES} | {
-    "grep." + key for key in GREP_PREDICATES
-}
-CONTROL_FIELDS |= (
-    PREDICATE_FIELDS
-    | {"call." + key for key in claude_refusal.CALL_FIELDS}
-    | {"grep.input_shape", "call.block"}
-)
-MAX_THINKING_ESTIMATE = 9007199254740991
-NUMERIC_VALIDITY = {"missing", "wrong_type", "out_of_range", "valid"}
-FIELD_TYPES = {"missing", "null", "boolean", "number", "string", "array", "object"}
+def reporting_summary(proof):
+    return {
+        "proof_sha256": digest(proof),
+        "report_sha256": coverage.checksum(proof["report"]),
+        "terminal_sha256": coverage.checksum(proof["terminal_text"]),
+        "accepted": proof["accepted"],
+        "report_complete": proof["report_complete"],
+    }
 
 
 def validate_summary(value):
-    if not isinstance(value, dict) or "control_fields" not in value:
-        raise WorkflowError("Invalid Claude v6 control summary")
-    previous.validate_summary({k: v for k, v in value.items() if k != "control_fields"})
-    fields = value["control_fields"]
-    if not isinstance(fields, dict) or set(fields) - CONTROL_FIELDS:
-        raise WorkflowError("Unsafe control field names")
-    for field_name, field in fields.items():
-        if (
-            not isinstance(field, dict)
-            or set(field) != {"observations", "overflow"}
-            or type(field["overflow"]) is not int
-            or not 0 <= field["overflow"] <= coverage.MAX_EVENTS
-            or not isinstance(field["observations"], list)
-            or len(field["observations"]) > 8
-        ):
-            raise WorkflowError("Unsafe control field observations")
-        for item in field["observations"]:
-            if (
-                not isinstance(item, dict)
-                or set(item)
-                != (
-                    {"present", "type", "length", "value_hashes", "name_hashes", "count"}
-                    | ({"numeric_validity"} if field_name in NUMERIC_FIELDS else set())
-                    | ({"predicate"} if field_name in PREDICATE_FIELDS else set())
-                )
-                or (
-                    field_name in NUMERIC_FIELDS
-                    and (
-                        not isinstance(item.get("numeric_validity"), str)
-                        or item["numeric_validity"] not in NUMERIC_VALIDITY
-                    )
-                )
-                or (field_name in PREDICATE_FIELDS and type(item.get("predicate")) is not bool)
-                or type(item["present"]) is not bool
-                or not isinstance(item["type"], str)
-                or item["type"] not in FIELD_TYPES
-                or item["present"] != (item["type"] != "missing")
-                or (
-                    item["length"] is not None
-                    and (
-                        type(item["length"]) is not int
-                        or not 0 <= item["length"] <= coverage.MAX_STREAM_BYTES
-                    )
-                )
-                or type(item["count"]) is not int
-                or not 0 < item["count"] <= coverage.MAX_EVENTS
-            ):
-                raise WorkflowError("Unsafe control field shape")
-            for name in ("value_hashes", "name_hashes"):
-                counts = item[name]
-                if (
-                    not isinstance(counts, dict)
-                    or len(counts) > 65
-                    or any(
-                        not isinstance(key, str)
-                        or (key != "overflow" and re.fullmatch(r"[a-f0-9]{64}", key) is None)
-                        or type(count) is not int
-                        or not 0 < count <= coverage.MAX_EVENTS
-                        for key, count in counts.items()
-                    )
-                ):
-                    raise WorkflowError("Unsafe control field hashes")
-
-
-def observe_control(summary, field, event, key):
-    """Retain bounded shapes and hashes, never raw customization/account/path data."""
-    present = key in event
-    value = event.get(key)
-    kind = (
-        "missing"
-        if not present
-        else "null"
-        if value is None
-        else "boolean"
-        if type(value) is bool
-        else "number"
-        if type(value) in {int, float}
-        else "string"
-        if isinstance(value, str)
-        else "array"
-        if isinstance(value, list)
-        else "object"
-    )
-    item = {
-        "present": present,
-        "type": kind,
-        "length": len(value) if isinstance(value, (str, list, dict)) else None,
-        "value_hashes": {},
-        "name_hashes": {},
-    }
-    if field in PREDICATE_FIELDS:
-        item["predicate"] = value is True
-    if field in NUMERIC_FIELDS:
-        item["numeric_validity"] = (
-            "missing"
-            if not present
-            else "wrong_type"
-            if type(value) not in {int, float}
-            else "valid"
-            if thinking_number(value)
-            else "out_of_range"
+    if type(value) is not dict or "reporting" not in value or type(value.get("types")) is not dict:
+        raise WorkflowError("Missing v7 reporting summary")
+    report = value["reporting"]
+    if (
+        type(report) is not dict
+        or set(report) != {"proof_sha256", "report_sha256", "terminal_sha256", "accepted", "report_complete"}
+        or any(type(report[k]) is not bool for k in ("accepted", "report_complete"))
+        or any(
+            not isinstance(report[k], str) or re.fullmatch(r"[a-f0-9]{64}", report[k]) is None
+            for k in ("proof_sha256", "report_sha256", "terminal_sha256")
         )
-    if field.startswith(("call.", "grep.", "refusal.")):
-        # No nested provider dump or unbounded hash input. The stream itself is bounded;
-        # values beyond these conservative wrapper limits contribute shape only.
-        def safe(v, depth=0, key=None):
-            if depth > 3:
-                return False
-            if isinstance(v, str):
-                return claude_refusal.bounded(v, 256 if key in {"id", "tool_use_id"} else 4096) or v == ""
-            if isinstance(v, dict):
-                return len(v) <= 64 and all(
-                    safe(k, depth + 1) and safe(item, depth + 1, k) for k, item in v.items()
-                )
-            if isinstance(v, list):
-                return len(v) <= 64 and all(safe(x, depth + 1) for x in v)
-            return v is None or type(v) in {bool, int, float}
-
-        limit = 256 if field in {"call.id", "refusal.tool_use_id"} else 4096
-        if not safe(value) or (isinstance(value, str) and len(value.encode("utf-8")) > limit):
-            value = None
-    values = value if isinstance(value, list) else [value] if present else []
-    for entry in values[:64]:
-        count_hash(item["value_hashes"], entry)
-        name = entry.get("name") if isinstance(entry, dict) else entry if isinstance(entry, str) else None
-        if name is not None:
-            count_hash(item["name_hashes"], name)
-    if len(values) > 64:
-        item["value_hashes"]["overflow"] = min(len(values) - 64, coverage.MAX_EVENTS)
-    target = summary["control_fields"].setdefault(field, {"observations": [], "overflow": 0})
-    for old in target["observations"]:
-        if {k: v for k, v in old.items() if k != "count"} == item:
-            old["count"] = min(old["count"] + 1, coverage.MAX_EVENTS)
-            return
-    if len(target["observations"]) < 8:
-        target["observations"].append({**item, "count": 1})
-    else:
-        target["overflow"] = min(target["overflow"] + 1, coverage.MAX_EVENTS)
-
-
-def thinking_number(value):
-    # Bound before isfinite so hostile huge JSON integers cannot overflow it.
-    return type(value) in {int, float} and 0 <= value <= MAX_THINKING_ESTIMATE and math.isfinite(value)
-
-
-def thinking_tokens(event):
-    return (
-        set(event) == {"type", "subtype", "estimated_tokens", "estimated_tokens_delta", "session_id", "uuid"}
-        and event.get("type") == "system"
-        and event.get("subtype") == "thinking_tokens"
-        and thinking_number(event.get("estimated_tokens"))
-        and thinking_number(event.get("estimated_tokens_delta"))
-        and event["estimated_tokens_delta"] <= event["estimated_tokens"]
-        and isinstance(event.get("uuid"), str)
-        and re.fullmatch(r"[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}", event["uuid"]) is not None
-    )
-
-
-def empty_catalog(event):
-    return (
-        set(event) == {"type", "subtype", "commands", "session_id", "uuid"}
-        and event.get("subtype") == "commands_changed"
-        and event.get("commands") == []
-        and isinstance(event.get("uuid"), str)
-        and re.fullmatch(r"[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}", event["uuid"]) is not None
-    )
-
-
-def count_hash(counts, value):
-    # Never retain arbitrary provider subtype, agent name or payload strings.
-    key = coverage.checksum(json.dumps(value, sort_keys=True, ensure_ascii=False))
-    if key not in counts and len(counts) >= 64:
-        key = "overflow"
-    counts[key] = min(counts.get(key, 0) + 1, coverage.MAX_EVENTS)
-
-
-def request_start(event):
-    return (
-        set(event) == {"type", "subtype", "status", "session_id", "uuid"}
-        and event.get("subtype") == "status"
-        and event.get("status") == "requesting"
-        and isinstance(event.get("uuid"), str)
-        and re.fullmatch(r"[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}", event["uuid"]) is not None
-    )
-
-
-def numerical(value):
-    return type(value) in {int, float} and math.isfinite(value) and value >= 0
-
-
-def usage_projection(event, policy):
-    result = {}
-    for field, name in (
-        ("total_cost_usd", "estimated_usd"),
-        ("duration_ms", "duration_ms"),
-        ("num_turns", "num_turns"),
     ):
-        if numerical(event.get(field)):
-            result[name] = event[field]
-    usage = event.get("usage")
-    if isinstance(usage, dict):
-        for name in (
-            "input_tokens",
-            "output_tokens",
-            "cache_read_input_tokens",
-            "cache_creation_input_tokens",
-        ):
-            if numerical(usage.get(name)):
-                result[name] = usage[name]
-    models = {}
-    native_models = event.get("modelUsage")
-    if isinstance(native_models, dict) and isinstance(native_models.get(policy["model"]), dict):
-        mapping = {
-            "inputTokens": "input_tokens",
-            "outputTokens": "output_tokens",
-            "cacheReadInputTokens": "cache_read_input_tokens",
-            "cacheCreationInputTokens": "cache_creation_input_tokens",
-            "costUSD": "estimated_usd",
+        raise WorkflowError("Invalid reporting summary")
+    types = value["types"]
+    if "stream_event" in types and (
+        type(types["stream_event"]) is not int or not 0 < types["stream_event"] <= coverage.MAX_EVENTS
+    ):
+        raise WorkflowError("Invalid partial stream count")
+    # The shared controls retain their frozen validator. Only v7 admits partial
+    # stream counters and this bounded reporting binding; v6 remains unchanged.
+    frozen.validate_summary(
+        {
+            **{k: v for k, v in value.items() if k != "reporting"},
+            "types": {k: v for k, v in types.items() if k != "stream_event"},
         }
-        models[policy["model"]] = {
-            target: native_models[policy["model"]][source]
-            for source, target in mapping.items()
-            if numerical(native_models[policy["model"]].get(source))
-        }
-    return {
-        "status": "observed" if "estimated_usd" in result else "unknown",
-        "counters": result,
-        "models": models,
-    }
+    )
 
 
-def observation(tool, args, content, workspace, files):
-    if tool == "Read":
-        path = coverage.packet_path(args.get("file_path"), workspace, files)
-        if path is None:
-            return [], [], "unsafe_or_unknown_path"
-        source = files[path].splitlines()
-        # Lcn splits only LF; h2n removes one terminal CR. Refuse text whose
-        # native numbering differs from the inventory's splitlines convention.
-        native = [line.removesuffix("\r") for line in files[path].split("\n")]
-        eof = bool(files[path]) and files[path].endswith("\n")
-        if (native[:-1] if eof else native) != source:
-            return [], [], "unsupported_native_line_boundaries"
-        start = args.get("offset", 1)
-        limit = args.get("limit", len(native))
-        if type(start) is not int or type(limit) is not int or start < 1 or limit < 1:
-            return [], [], "unsupported_range"
-        end = min(start + limit - 1, len(native))
-        numbers, seen = [], set()
-        for line in content.split("\n"):
-            match = re.fullmatch(r"([1-9][0-9]*)(?:\t|:)(.*)", line)
-            if not match:
-                return [], [], "unsupported_native_read_rendering"
-            number = int(match[1])
-            if not start <= number <= end or number in seen or match[2] != native[number - 1]:
-                return [], [], "native_read_differs_from_source"
-            seen.add(number)
-            if number <= len(source):
-                numbers.append(number)
-            elif not eof:
-                return [], [], "native_read_differs_from_source"
-        spans = [
-            {"artifact": path, "start_line": a, "end_line": b, "sha256": coverage.line_digest(source, a, b)}
-            for a, b in coverage.ranges(numbers)
-        ]
-        return spans, [], None if spans else "unrecognized_or_empty_tool_result"
-    if tool == "Grep":
-        if args.get("output_mode") != "content" or args.get("-n") is not True:
-            return [], [], "unrecognized_or_empty_tool_result"
-        return coverage.tool_observation("grep", args, content, workspace, files)
-    return coverage.tool_observation("glob", args, content, workspace, files)
+def call_predicates(event, block, session, initialized, terminal):
+    result = claude_refusal.call_predicates(event, block, session, initialized, terminal)
+    result["tool_name"] = block.get("name") in reporting_policy.TOOLS
+    return result
+
+
+class PartialStream:
+    """Validate partial-message framing without treating partial reads as evidence."""
+
+    def __init__(self, model, reasons):
+        self.model, self.reasons = model, reasons
+        self.active = None
+        self.messages, self.blocks = set(), {}
+
+    def observe(self, event):
+        try:
+            if type(event) is not dict:
+                raise ValueError
+            kind = event.get("type")
+            if kind == "message_start":
+                message = event.get("message")
+                if (
+                    self.active is not None
+                    or type(message) is not dict
+                    or not claude_reporting._identifier(message.get("id"))
+                    or message["id"] in self.messages
+                    or message.get("model") != self.model
+                ):
+                    raise ValueError
+                self.active = message["id"]
+                self.messages.add(self.active)
+                self.blocks = {}
+                return
+            if self.active is None:
+                raise ValueError
+            if kind in {"content_block_start", "content_block_delta", "content_block_stop"}:
+                index = event.get("index")
+                if type(index) is not int or not 0 <= index < coverage.MAX_EVENTS:
+                    raise ValueError
+                if kind == "content_block_start":
+                    block = event.get("content_block")
+                    if index in self.blocks or type(block) is not dict:
+                        raise ValueError
+                    block_type = block.get("type")
+                    if block_type == "tool_use":
+                        if (
+                            block.get("name") not in reporting_policy.TOOLS
+                            or not claude_reporting._identifier(block.get("id"))
+                            or block.get("input") != {}
+                        ):
+                            raise ValueError
+                    elif block_type not in {"text", "thinking", "redacted_thinking"}:
+                        raise ValueError
+                    self.blocks[index] = block_type
+                elif index not in self.blocks or self.blocks[index] is None:
+                    raise ValueError
+                elif kind == "content_block_stop":
+                    self.blocks[index] = None
+                else:
+                    delta = event.get("delta")
+                    if type(delta) is not dict:
+                        raise ValueError
+                    allowed = {
+                        "tool_use": {"input_json_delta": "partial_json"},
+                        "text": {"text_delta": "text"},
+                        "thinking": {"thinking_delta": "thinking", "signature_delta": "signature"},
+                        "redacted_thinking": {},
+                    }[self.blocks[index]]
+                    field = allowed.get(delta.get("type"))
+                    if field is None or set(delta) != {"type", field} or not isinstance(delta[field], str):
+                        raise ValueError
+            elif kind == "message_delta":
+                if type(event.get("delta")) is not dict or type(event.get("usage")) is not dict:
+                    raise ValueError
+            elif kind == "message_stop":
+                if any(v is not None for v in self.blocks.values()):
+                    raise ValueError
+                self.active = None
+            else:
+                raise ValueError
+        except (ValueError, TypeError, KeyError):
+            self.reasons.add("unsupported_partial_stream")
 
 
 def capture(
@@ -358,54 +172,11 @@ def capture(
     diagnostic_purpose=None,
     diagnostic_tool_contract=None,
 ):
-    if policy.get("adapter") == "claude-stream-json-2.1.282-v7":
-        from claude_telemetry_v7 import capture as capture_v7
-
-        return capture_v7(
-            raw,
-            packet,
-            workspace,
-            policy,
-            session_id,
-            exit_code=exit_code,
-            failure=failure,
-            refusal_path=refusal_path,
-            diagnostic_purpose=diagnostic_purpose,
-            diagnostic_tool_contract=diagnostic_tool_contract,
+    reporting_policy.validate(policy)
+    if diagnostic_purpose is not None or refusal_path is not None or diagnostic_tool_contract is not None:
+        raise WorkflowError(
+            "Prospective reporting diagnostics require their separate activation implementation"
         )
-    if policy["adapter"] == frozen_v5.ADAPTER:
-        return frozen_v5.capture(
-            raw,
-            packet,
-            workspace,
-            policy,
-            session_id,
-            exit_code=exit_code,
-            failure=failure,
-            refusal_path=refusal_path,
-            diagnostic_purpose=diagnostic_purpose,
-        )
-    if policy["adapter"] in {LEGACY_ADAPTER, previous.ADAPTER, frozen_v3.ADAPTER, frozen_v4.ADAPTER}:
-        frozen = {
-            LEGACY_ADAPTER: legacy,
-            previous.ADAPTER: previous,
-            frozen_v3.ADAPTER: frozen_v3,
-            frozen_v4.ADAPTER: frozen_v4,
-        }[policy["adapter"]]
-        return frozen.capture(
-            raw,
-            packet,
-            workspace,
-            policy,
-            session_id,
-            exit_code=exit_code,
-            failure=failure,
-            refusal_path=refusal_path,
-        )
-    if policy["adapter"] != ADAPTER:
-        raise WorkflowError("Unsupported Claude stream adapter")
-    if diagnostic_purpose is not None:
-        tool_contract.validate(diagnostic_tool_contract)
     files, reasons = {}, set()
     grep_calls = 0
     for path in Path(packet).rglob("*"):
@@ -432,6 +203,8 @@ def capture(
         "controlled_refusals": 0,
     }
     pending, seen, records = {}, set(), []
+    decoded = []
+    stream = PartialStream(policy["model"], reasons)
     message_usage, assistant_envelopes = {}, set()
     step_usage_unknown = False
     valid_initialization = False
@@ -443,7 +216,7 @@ def capture(
         reasons,
         lambda field, event, key: observe_control(summary, field, event, key),
     )
-    count, report, usage = 0, "", {"status": "unknown", "counters": {}, "models": {}}
+    count, usage = 0, {"status": "unknown", "counters": {}, "models": {}}
     try:
         if isinstance(raw, bytes):
             raw = raw.decode("utf-8")
@@ -463,6 +236,7 @@ def capture(
             event = coverage.strict_json(line)
             if not isinstance(event, dict) or not isinstance(event.get("type"), str):
                 raise ValueError
+            decoded.append(event)
             if refusal.enabled:
                 stack = [event]
                 while stack:
@@ -494,6 +268,9 @@ def capture(
                 k in event for k in claude_refusal.DELEGATION
             ):
                 reasons.add("delegated_or_mcp_event")
+            if kind == "stream_event":
+                stream.observe(event.get("event"))
+                continue
             if kind == "system":
                 count_hash(summary["system_subtypes"], event.get("subtype"))
                 if event.get("subtype") == "permission_denied":
@@ -520,10 +297,10 @@ def capture(
                 summary["init_count"] += 1
                 if event.get("model") != policy["model"]:
                     reasons.add("unexpected_model_identity")
-                if event.get("tools") != ["Read", "Grep", "Glob"] and (
+                if event.get("tools") != reporting_policy.TOOLS and (
                     not isinstance(event.get("tools"), list)
-                    or set(event["tools"]) != set(TOOLS)
-                    or len(event["tools"]) != 3
+                    or set(event["tools"]) != set(reporting_policy.TOOLS)
+                    or len(event["tools"]) != 4
                 ):
                     reasons.add("unexpected_tools")
                 agents = event.get("agents", [])
@@ -571,7 +348,7 @@ def capture(
                             "thinking",
                             "redacted_thinking",
                         }:
-                            predicates = claude_refusal.call_predicates(
+                            predicates = call_predicates(
                                 event,
                                 candidate,
                                 session_id,
@@ -648,7 +425,7 @@ def capture(
                         valid_initialization and summary["init_count"] == 1,
                         summary["terminal_count"] != 0,
                     )
-                    predicates = claude_refusal.call_predicates(
+                    predicates = call_predicates(
                         event,
                         block,
                         session_id,
@@ -682,7 +459,7 @@ def capture(
                     if not isinstance(identifier, str) or identifier in seen or not isinstance(args, dict):
                         raise ValueError
                     seen.add(identifier)
-                    if tool not in TOOLS:
+                    if tool not in reporting_policy.TOOLS:
                         reasons.add("forbidden_tool")
                         continue
                     if len(pending) + len(records) >= coverage.MAX_TOOL_RECORDS:
@@ -703,6 +480,10 @@ def capture(
                         raise ValueError
                     tool, args = pending.pop(identifier)
                     content = block.get("content")
+                    if tool == "StructuredOutput":
+                        if block.get("is_error", False) is not False or content != claude_reporting.TOOL_ACK:
+                            reasons.add("reporting_tool_failed")
+                        continue  # Pure reporting produces no inspection record or probe.
                     if refusal.result(
                         event,
                         block,
@@ -748,8 +529,6 @@ def capture(
                         records.append(record)
             elif kind == "result":
                 summary["terminal_count"] += 1
-                if summary["terminal_count"] == 1 and isinstance(event.get("result"), str):
-                    report = event["result"]  # Exact terminal text, even for a partial report.
                 if event.get("subtype") != "success" or event.get("is_error") is not False:
                     reasons.add("provider_terminal_failure")
                     if event.get("subtype") == "error_max_budget_usd":
@@ -758,8 +537,9 @@ def capture(
                 expected_denials = refusal.terminal(event)
                 if denials and not expected_denials:
                     reasons.add("permission_denied")
-                if event.get("structured_output") is not None:
-                    reasons.add("unsupported_structured_output")
+                turns = event.get("num_turns")
+                if type(turns) is not int or not 0 < turns <= policy["reporting"]["max_turns"]:
+                    reasons.add("invalid_or_exhausted_turn_limit")
                 models = event.get("modelUsage")
                 if not isinstance(models, dict) or set(models) != {policy["model"]}:
                     reasons.add("unexpected_usage_models")
@@ -806,8 +586,18 @@ def capture(
             )
     # Missing step counters mean unknown. Native num_turns is not exact API-call
     # accounting; output tokens come only from terminal usage, never placeholders.
+    if stream.active is not None:
+        reasons.add("incomplete_partial_stream")
+    proof = claude_reporting.capture(
+        claude_reporting.native_projection(decoded, session_id=session_id),
+        model=policy["model"],
+        inventory_sha256=hashlib.sha256((Path(packet) / "required-material.json").read_bytes()).hexdigest(),
+        limits=policy["reporting"]["limits"],
+    )
+    reasons.update("reporting_" + reason for reason in proof["reasons"])
+    summary["reporting"] = reporting_summary(proof)
     diagnostics = {
-        "schema_version": 8,
+        "schema_version": 9,
         "adapter": policy["adapter"],
         "cli_version": policy["cli"]["version"],
         "exit_code": exit_code,
@@ -818,4 +608,4 @@ def capture(
         "usage": usage,
         "telemetry": summary,
     }
-    return report, diagnostics
+    return proof["report"], diagnostics, proof

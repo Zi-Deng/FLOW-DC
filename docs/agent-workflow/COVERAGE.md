@@ -368,6 +368,17 @@ Current readiness and managed designation accept eligible schema-5 singles or sc
 singles/complete parents under their bound provider policies. Model reports remain schema 2;
 current unit assessments are version 3 and aggregate assessments version 5. Schema-4
 batches and their children reproduce historical evidence only, never current readiness.
+Prospective v7 singles use metadata/capture/result 7, policy 2, diagnostic summary 9
+and assessment 4; report syntax remains 2. They bind exact StructuredOutput argument
+fragments plus a separate auxiliary terminal artifact and replayable reporting proof.
+Full source/probe validation remains mandatory. The new stored assessment is not
+current readiness: dispatch/activation and managed adoption remain disabled at this
+checkpoint, and prospective publications are labeled incomplete. Native schema-6
+assessment dependencies are frozen in `review_coverage_v6.py`,
+`review_telemetry_v6.py` and `claude_telemetry_v6.py`. Existing historical captures,
+reports, grants and stopped batches are never converted to prospective records.
+See [the reporting checkpoint](PROVIDERS.md#structured-reporting-integration-checkpoint-not-activated).
+
 Never rewrite a historical journal or retrofit new claims. A new packet/authorized
 invocation is needed for current evidence. `verify-publication` remains byte-exact.
 

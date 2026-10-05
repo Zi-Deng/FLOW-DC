@@ -19,6 +19,7 @@ import review_coverage as coverage
 import review_coverage_v1 as legacy_coverage
 import review_coverage_v2 as schema3_coverage
 import review_coverage_v5 as schema5_coverage
+import review_coverage_v6 as schema6_coverage
 import review_issue31_v3 as issue31_history
 import review_packet
 import review_policy
@@ -164,6 +165,7 @@ def prepare(
     review_provider=None,
     review_model=None,
     review_effort=None,
+    reporting=None,
 ):
     number, issue_number, plan_comment = map(positive, (number, issue_number, plan_comment))
     cfg = configuration(repo.root)
@@ -173,6 +175,12 @@ def prepare(
     from claude_native_auth import bind
 
     selection["policy"] = bind(selection["policy"])
+    if reporting is not None:
+        from claude_reporting_policy import build
+
+        if type(reporting) is not dict or set(reporting) != {"max_turns", "limits"}:
+            raise WorkflowError("Explicit reporting turn and retention limits are required")
+        selection["policy"] = build(selection["policy"], **reporting)
     pr = repo.pr(number)
     head, base = sha(pr["head"]["sha"]), sha(pr["base"]["sha"])
     if expected_head and head != sha(expected_head):
@@ -298,7 +306,7 @@ def prepare(
     )
     files = {str(p.relative_to(packet)): digest(p) for p in packet.rglob("*") if p.is_file()}
     metadata = {
-        "schema_version": 6,
+        "schema_version": 7 if reporting is not None else 6,
         "kind": "single",
         "review_policy": selection["policy"],
         "selection_sources": selection["sources"],
@@ -329,6 +337,7 @@ def verify_packet(directory):
         4,
         5,
         6,
+        7,
     }:
         raise WorkflowError("Unsupported review packet schema")
     if metadata["schema_version"] == 6 and metadata.get("kind") not in {
@@ -339,10 +348,20 @@ def verify_packet(directory):
         raise WorkflowError("Unsupported schema-6 packet kind")
     if metadata["schema_version"] == 4 and (metadata.get("kind") or metadata.get("review_policy")):
         raise WorkflowError("Historical schema-4 packet has prospective fields")
-    if metadata["schema_version"] in {5, 6}:
+    if metadata["schema_version"] in {5, 6, 7}:
         review_policy.validate_policy(metadata.get("review_policy"))
         if metadata.get("requested_model") != metadata["review_policy"]["model"]:
             raise WorkflowError("Packet model differs from immutable review policy")
+    if metadata["schema_version"] == 7:
+        if metadata.get("kind") != "single" or metadata["review_policy"].get("schema_version") != 2:
+            raise WorkflowError("Prospective reporting currently requires a schema-7 single packet")
+        expected = metadata["review_policy"]["reporting"]["schema_sha256"]
+        if metadata["files"].get("report-schema.json") != expected:
+            raise WorkflowError("Packet reporting schema differs from its policy")
+    elif metadata.get("review_policy", {}).get("schema_version") == 2 or any(
+        key in metadata for key in ("reporting_sha256", "terminal_sha256")
+    ):
+        raise WorkflowError("Structured reporting cannot reinterpret historical metadata")
     packet = directory / "packet"
     actual, has_symlink = {}, False
     for parent, directories, names in packet.walk(follow_symlinks=False):
@@ -363,6 +382,8 @@ RESULT_FIELDS = {
     "provider_version",
     "diagnostics_sha256",
     "coverage_sha256",
+    "reporting_sha256",
+    "terminal_sha256",
 }
 
 
@@ -380,10 +401,10 @@ def historical_child(directory, meta):
 
 
 def version_field(meta):
-    return "provider_version" if meta["schema_version"] in {5, 6} else "copilot_version"
+    return "provider_version" if meta["schema_version"] in {5, 6, 7} else "copilot_version"
 
 
-def assess_result(directory, meta, body, diagnostics):
+def assess_result(directory, meta, body, diagnostics, *, reporting=None):
     if meta["schema_version"] == 2:
         return legacy_coverage.assess(Path(directory) / "packet", body, diagnostics)
     if meta["schema_version"] == 3 and meta.get("batch_unit"):
@@ -392,49 +413,127 @@ def assess_result(directory, meta, body, diagnostics):
     if meta["schema_version"] == 3:
         return schema3_coverage.assess(Path(directory) / "packet", body, diagnostics)
     evaluator = schema5_coverage if meta["schema_version"] == 5 else coverage
+    if meta["schema_version"] == 6 and meta["review_policy"]["provider"] == "claude-code":
+        evaluator = schema6_coverage
+    if meta["schema_version"] == 7:
+        validate_reporting(directory, meta, body, diagnostics, reporting)
     result = evaluator.assess(Path(directory) / "packet", body, diagnostics, policy=meta["review_policy"])
-    if meta["schema_version"] == 6:
+    if meta["schema_version"] in {6, 7}:
         result = {
             **result,
-            "schema_version": 3,
+            "schema_version": 4 if meta["schema_version"] == 7 else 3,
             "policy_digest": value_digest(meta["review_policy"]),
             "input_digest": value_digest({k: v for k, v in meta.items() if k not in RESULT_FIELDS}),
         }
+    if meta["schema_version"] == 7:
+        result["reporting_sha256"] = value_digest(reporting)
+        result["qualified"] = result["qualified"] and reporting["accepted"]
     return result
 
 
+def validate_reporting(directory, meta, body, diagnostics, reporting):
+    import claude_reporting
+    from claude_telemetry_v7 import reporting_summary
+
+    try:
+        replay = claude_reporting.replay(reporting)
+        expected = meta["review_policy"]["reporting"]
+        if (
+            replay["model"] != meta["review_policy"]["model"]
+            or value_digest(replay["limits"]) != value_digest(expected["limits"])
+            or replay["inventory_sha256"] != digest(Path(directory) / "packet/required-material.json")
+            or replay["report"] != body
+            or diagnostics["telemetry"]["reporting"] != reporting_summary(replay)
+            or not set("reporting_" + reason for reason in replay["reasons"]).issubset(diagnostics["reasons"])
+        ):
+            raise ValueError
+    except (ValueError, TypeError, KeyError, UnicodeError, RecursionError):
+        raise WorkflowError("Reporting proof changed or differs from its capture bindings") from None
+
+
+def exact_reporting_bytes(path, limit):
+    try:
+        with plain_path(path).open("rb") as stream:
+            raw = stream.read(limit + 1)
+        if len(raw) > limit:
+            raise ValueError
+        return raw
+    except (OSError, ValueError):
+        raise WorkflowError("Missing or oversized exact reporting artifact") from None
+
+
+def read_result_artifact(directory, name, meta):
+    path = plain_path(Path(directory) / name)
+    if meta["schema_version"] != 7:
+        return coverage.read_json(path)
+    try:
+        with path.open("rb") as stream:
+            raw = stream.read(meta["review_policy"]["reporting"]["capture_bytes"] + 1)
+        if len(raw) > meta["review_policy"]["reporting"]["capture_bytes"]:
+            raise ValueError
+        return coverage.strict_json(raw.decode("utf-8"))
+    except (OSError, ValueError, RecursionError):
+        raise WorkflowError("Missing, oversized or malformed reporting artifact") from None
+
+
+def write_result_artifact(directory, name, meta, value):
+    path = plain_path(Path(directory) / name)
+    if meta["schema_version"] != 7:
+        atomic_json(path, value)
+        return
+    import claude_reporting
+
+    try:
+        raw = claude_reporting._json_bytes(value, meta["review_policy"]["reporting"]["capture_bytes"])
+    except (ValueError, UnicodeError, RecursionError):
+        raise WorkflowError("Reporting artifact exceeds its immutable capture bound") from None
+    atomic_text(path, raw.decode("utf-8"))
+
+
 def stored_result(directory, meta):
-    result = coverage.read_json(plain_path(Path(directory) / "review-result.json"))
+    result = read_result_artifact(directory, "review-result.json", meta)
     inputs = {key: value for key, value in meta.items() if key not in RESULT_FIELDS}
     if (
         not isinstance(result, dict)
         or type(result.get("schema_version")) is not int
         or result["schema_version"] != meta.get("schema_version")
-        or result["schema_version"] not in {1, 2, 3, 5, 6}
+        or result["schema_version"] not in {1, 2, 3, 5, 6, 7}
         or result.get("input_digest") != value_digest(inputs)
         or not isinstance(result.get("body"), str)
-        or not result["body"].strip()
+        or (meta["schema_version"] != 7 and not result["body"].strip())
         or not isinstance(result.get(version_field(meta)), str)
         or not result[version_field(meta)].strip()
         or coverage.checksum(result["body"]) != result.get("review_sha256")
     ):
         raise WorkflowError("Saved review result changed or belongs to another packet")
-    if result["schema_version"] in {5, 6} and result.get("policy_digest") != value_digest(
+    if result["schema_version"] in {5, 6, 7} and result.get("policy_digest") != value_digest(
         meta["review_policy"]
     ):
         raise WorkflowError("Saved review policy binding changed")
-    if result["schema_version"] in {2, 3, 5, 6}:
+    if result["schema_version"] in {2, 3, 5, 6, 7}:
         diagnostics = result.get("diagnostics")
         if value_digest(diagnostics) != result.get("diagnostics_sha256"):
             raise WorkflowError("Saved diagnostics changed")
-        assessment = assess_result(directory, meta, result["body"], diagnostics)
+        assessment = assess_result(
+            directory, meta, result["body"], diagnostics, reporting=result.get("reporting")
+        )
+        if meta["schema_version"] == 7 and (
+            result.get("reporting_sha256") != value_digest(result.get("reporting"))
+            or result.get("terminal_sha256") != coverage.checksum(result["reporting"]["terminal_text"])
+        ):
+            raise WorkflowError("Reporting capture hashes changed")
         if value_digest(assessment) != result.get("coverage_sha256"):
             raise WorkflowError("Saved coverage changed")
     else:
         assessment = {"qualified": False, "reasons": ["legacy_report_without_coverage"]}
-    if result["schema_version"] in {3, 5, 6}:
-        capture = coverage.read_json(plain_path(Path(directory) / "review-capture.json"))
-        if capture != {key: value for key, value in result.items() if key != "coverage_sha256"}:
+    if result["schema_version"] in {3, 5, 6, 7}:
+        capture = read_result_artifact(directory, "review-capture.json", meta)
+        expected_capture = {key: value for key, value in result.items() if key != "coverage_sha256"}
+        if (
+            value_digest(capture) != value_digest(expected_capture)
+            if meta["schema_version"] == 7
+            else capture != expected_capture
+        ):
             raise WorkflowError("Exact review capture changed or is missing")
     return result, assessment
 
@@ -453,14 +552,38 @@ def qualification(directory, *, require=False):
         raise WorkflowError("A batch unit cannot independently qualify its parent")
     result, assessment = stored_result(directory, meta)
     for name, key in (("review.md", "review_sha256"),):
-        if not (directory / name).is_file() or digest(plain_path(directory / name)) != meta.get(key):
+        observed = (
+            hashlib.sha256(
+                exact_reporting_bytes(
+                    directory / name, meta["review_policy"]["reporting"]["limits"]["report_bytes"]
+                )
+            ).hexdigest()
+            if meta["schema_version"] == 7
+            else digest(plain_path(directory / name))
+            if (directory / name).is_file()
+            else None
+        )
+        if observed != meta.get(key):
             raise WorkflowError("Review report changed or is incomplete")
-    if result["schema_version"] in {2, 3, 5, 6}:
+    if result["schema_version"] in {2, 3, 5, 6, 7}:
         for name, key in (("diagnostics.json", "diagnostics_sha256"), ("coverage.json", "coverage_sha256")):
-            value = coverage.read_json(plain_path(directory / name))
+            value = read_result_artifact(directory, name, meta)
             if value_digest(value) != result[key] or meta.get(key) != result[key]:
                 raise WorkflowError("Coverage or diagnostics changed or are missing")
-    if require and result["schema_version"] not in {5, 6}:
+    if meta["schema_version"] == 7:
+        if (
+            hashlib.sha256(
+                exact_reporting_bytes(
+                    directory / "terminal.txt", meta["review_policy"]["reporting"]["limits"]["terminal_bytes"]
+                )
+            ).hexdigest()
+            != result["terminal_sha256"]
+            or value_digest(read_result_artifact(directory, "reporting-proof.json", meta))
+            != result["reporting_sha256"]
+            or any(meta.get(key) != result[key] for key in ("reporting_sha256", "terminal_sha256"))
+        ):
+            raise WorkflowError("Reporting proof or auxiliary terminal artifact changed")
+    if require and result["schema_version"] not in {5, 6, 7}:
         raise WorkflowError("Legacy review policy cannot establish current coverage readiness")
     if require and meta.get("review_policy", {}).get("provider") == "claude-code":
         from claude_native_auth import validate_binding
@@ -486,7 +609,7 @@ def coverage_ready(directory):
             validate_binding(meta["review_policy"].get("authentication"))
         except WorkflowError:
             return False
-    return meta.get("schema_version") in {5, 6} and not meta.get("batch_unit") and assessment["qualified"]
+    return meta.get("schema_version") in {5, 6, 7} and not meta.get("batch_unit") and assessment["qualified"]
 
 
 def recover_review(repo, directory):
@@ -507,9 +630,9 @@ def recover_review(repo, directory):
     current_pr(repo, meta["pr"], meta["head_sha"], meta["base_sha"])
     if not result_path.exists():
         inputs = {key: value for key, value in meta.items() if key not in RESULT_FIELDS}
-        capture = coverage.read_json(capture_path)
+        capture = read_result_artifact(directory, "review-capture.json", meta)
         if (
-            meta.get("schema_version") not in {3, 5, 6}
+            meta.get("schema_version") not in {3, 5, 6, 7}
             or not isinstance(capture, dict)
             or capture.get("input_digest") != value_digest(inputs)
         ):
@@ -520,6 +643,7 @@ def recover_review(repo, directory):
             capture.get("body"),
             capture.get("diagnostics"),
             capture.get(version_field(meta)),
+            reporting=capture.get("reporting"),
         )
     result, assessment = stored_result(directory, meta)
     report = plain_path(directory / "review.md")
@@ -532,22 +656,34 @@ def recover_review(repo, directory):
         qualification(directory)
         return report
     atomic_text(report, result["body"])
-    if result["schema_version"] in {2, 3, 5, 6}:
+    if result["schema_version"] in {2, 3, 5, 6, 7}:
         atomic_json(directory / "diagnostics.json", result["diagnostics"])
         atomic_json(directory / "coverage.json", assessment)
         meta.update(
             diagnostics_sha256=result["diagnostics_sha256"], coverage_sha256=result["coverage_sha256"]
         )
+    if meta["schema_version"] == 7:
+        atomic_text(directory / "terminal.txt", result["reporting"]["terminal_text"])
+        write_result_artifact(directory, "reporting-proof.json", meta, result["reporting"])
+        meta.update(reporting_sha256=result["reporting_sha256"], terminal_sha256=result["terminal_sha256"])
     meta.update(review_sha256=result["review_sha256"])
     meta[version_field(meta)] = result[version_field(meta)]
     atomic_json(directory / "metadata.json", meta)
     return report
 
 
-def save_result(directory, meta, body, diagnostics, version):
+def save_result(directory, meta, body, diagnostics, version, *, reporting=None):
     directory = Path(directory)
-    if meta.get("schema_version") not in {3, 5, 6} or not isinstance(body, str) or not body.strip():
+    if (
+        meta.get("schema_version") not in {3, 5, 6, 7}
+        or not isinstance(body, str)
+        or (meta.get("schema_version") != 7 and not body.strip())
+    ):
         raise WorkflowError("New results require a current packet and exact nonempty report")
+    if meta["schema_version"] == 7:
+        validate_reporting(directory, meta, body, diagnostics, reporting)
+    elif reporting is not None:
+        raise WorkflowError("Historical capture cannot contain prospective reporting evidence")
     capture = {
         "schema_version": meta["schema_version"],
         "input_digest": value_digest(meta),
@@ -557,20 +693,33 @@ def save_result(directory, meta, body, diagnostics, version):
         "diagnostics": diagnostics,
         "diagnostics_sha256": value_digest(diagnostics),
     }
-    if meta["schema_version"] in {5, 6}:
+    if meta["schema_version"] in {5, 6, 7}:
         capture["policy_digest"] = value_digest(meta["review_policy"])
+    if meta["schema_version"] == 7:
+        capture.update(
+            reporting=reporting,
+            reporting_sha256=value_digest(reporting),
+            terminal_sha256=coverage.checksum(reporting["terminal_text"]),
+        )
     capture_path = plain_path(directory / "review-capture.json")
     if capture_path.exists():
-        if coverage.read_json(capture_path) != capture:
+        previous_capture = read_result_artifact(directory, "review-capture.json", meta)
+        if (
+            value_digest(previous_capture) != value_digest(capture)
+            if meta["schema_version"] == 7
+            else previous_capture != capture
+        ):
             raise WorkflowError("Pending exact review capture changed")
     else:
         # Durable before assessment reads any packet file. A transient storage
         # failure can be recovered without another paid provider invocation.
-        atomic_json(capture_path, capture)
+        write_result_artifact(directory, "review-capture.json", meta, capture)
     if meta.get("kind") == "batch-unit":
         review_batch.captured(directory, meta)
-    assessment = assess_result(directory, meta, body, diagnostics)
-    atomic_json(directory / "review-result.json", {**capture, "coverage_sha256": value_digest(assessment)})
+    assessment = assess_result(directory, meta, body, diagnostics, reporting=reporting)
+    write_result_artifact(
+        directory, "review-result.json", meta, {**capture, "coverage_sha256": value_digest(assessment)}
+    )
 
 
 def review(repo, directory, *, dispatch_context=None):
@@ -583,12 +732,12 @@ def review(repo, directory, *, dispatch_context=None):
         if not (directory / "diagnostics.json").exists() and (directory / "packet/capability.json").is_file():
             meta = coverage.read_json(directory / "metadata.json")
             if (
-                meta.get("schema_version") in {5, 6}
+                meta.get("schema_version") in {5, 6, 7}
                 and meta.get("review_policy", {}).get("provider") == "claude-code"
             ):
                 import claude_telemetry
 
-                _, diagnostics = claude_telemetry.capture(
+                _, diagnostics, *_ = claude_telemetry.capture(
                     b"",
                     directory / "packet",
                     directory / "packet",
@@ -622,6 +771,10 @@ def run_review(repo, directory, *, dispatch_context=None):
     recovered = recover_review(repo, directory)
     if recovered is not None:
         return recovered
+    if meta.get("schema_version") == 7:
+        raise WorkflowError(
+            "Prospective v7 dispatch requires the separate reporting activation implementation"
+        )
     if meta.get("schema_version") not in {5, 6}:
         raise WorkflowError("Legacy packets cannot run a coverage review; prepare a fresh packet")
     if (directory / "attempt.json").exists():
@@ -676,7 +829,13 @@ def publication_body(directory):
         return issue31_history.publication_body(directory)
     if meta.get("kind") == "batch-parent":
         return review_batch.publication_body(directory)
-    body = (Path(directory) / "review.md").read_bytes().decode("utf-8")
+    body = (
+        exact_reporting_bytes(
+            Path(directory) / "review.md", meta["review_policy"]["reporting"]["limits"]["report_bytes"]
+        )
+        if meta["schema_version"] == 7
+        else (Path(directory) / "review.md").read_bytes()
+    ).decode("utf-8")
     if meta["schema_version"] == 1:
         if coverage.checksum(body) != meta.get("review_sha256"):
             raise WorkflowError("Legacy report bytes changed")
@@ -693,8 +852,10 @@ def publication_body(directory):
         complete = review_batch.unit_assessment(parent, planned, meta["batch_unit"]["unit"])["complete"]
         label = "assigned material complete" if complete else "INCOMPLETE static inspection — not ready"
         label = f"batch unit {meta['batch_unit']['unit']['id']} — {label}; parent readiness requires aggregate qualification"
+    if meta["schema_version"] == 7:
+        label = "INCOMPLETE prospective reporting evidence — activation unavailable; not ready"
     provider_label = "Copilot CLI"
-    if meta["schema_version"] in {5, 6} and meta["review_policy"]["provider"] == "claude-code":
+    if meta["schema_version"] in {5, 6, 7} and meta["review_policy"]["provider"] == "claude-code":
         provider_label = "Claude Code"
     header = (
         f"## Independent {provider_label} review\n\nPR #{meta['pr']} · reviewed head `{meta['head_sha']}` "
@@ -703,6 +864,12 @@ def publication_body(directory):
         "This is not human approval. The reviewer executed no tests. CI association and tested checkout "
         "are separately recorded in validation.json; unknown execution details remain unknown.\n\n"
     )
+    if meta["schema_version"] == 7:
+        header += (
+            "Report representation: exact StructuredOutput JSON argument fragments. "
+            "Auxiliary terminal text is retained separately in the immutable capture; "
+            "it is not substituted for this report.\n\n"
+        )
     marker = report_marker(meta)
     binding = f"<!-- agentic-coverage:v{1 if meta['schema_version'] < 3 else 2}:{value_digest(assessment)}:{meta.get('diagnostics_sha256', 'legacy')} -->"
     return header + body + "\n\n" + marker + "\n" + binding

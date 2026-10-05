@@ -215,6 +215,10 @@ def policy(selection, cfg, *, diagnostic=False):
 def validate_policy(value):
     if not isinstance(value, dict):
         raise WorkflowError("Missing immutable review policy")
+    if type(value.get("schema_version")) is int and value["schema_version"] == 2:
+        from claude_reporting_policy import validate
+
+        return validate(value)
     if type(value.get("schema_version")) is not int or value["schema_version"] != 1:
         raise WorkflowError("Unsupported review policy version")
     selected = {key: value.get(key) for key in ("provider", "model", "effort")}

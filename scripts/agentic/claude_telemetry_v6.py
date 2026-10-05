@@ -18,7 +18,7 @@ import claude_telemetry_v3 as frozen_v3
 import claude_telemetry_v4 as frozen_v4
 import claude_telemetry_v5 as frozen_v5
 import diagnostic_tool_contract as tool_contract
-import review_coverage as coverage
+import review_coverage_v6 as coverage
 from workflow import WorkflowError
 
 TOOLS = {"Read": "view", "Grep": "grep", "Glob": "glob"}
@@ -358,21 +358,6 @@ def capture(
     diagnostic_purpose=None,
     diagnostic_tool_contract=None,
 ):
-    if policy.get("adapter") == "claude-stream-json-2.1.282-v7":
-        from claude_telemetry_v7 import capture as capture_v7
-
-        return capture_v7(
-            raw,
-            packet,
-            workspace,
-            policy,
-            session_id,
-            exit_code=exit_code,
-            failure=failure,
-            refusal_path=refusal_path,
-            diagnostic_purpose=diagnostic_purpose,
-            diagnostic_tool_contract=diagnostic_tool_contract,
-        )
     if policy["adapter"] == frozen_v5.ADAPTER:
         return frozen_v5.capture(
             raw,

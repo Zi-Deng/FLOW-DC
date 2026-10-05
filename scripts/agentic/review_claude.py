@@ -153,6 +153,10 @@ def check_controls(binary, settings, policy=None):
     if any(value is not False for value in settings["enabledPlugins"].values()):
         raise WorkflowError("Builtin plugin controls require exact false values")
     data = Path(binary).read_bytes()
+    if policy is not None and policy.get("schema_version") == 2:
+        from claude_reporting_policy import validate_controls
+
+        validate_controls(data, policy)
     # The signed binary binds this pinned supported-schema subset. The native
     # help hides --permission-prompts; verify its actual option declaration too.
     if any(flag.encode() not in data for flag in FLAGS):
@@ -217,12 +221,17 @@ def preflight(repo, policy):
     return binary
 
 
-def environment(home, *, config=None):
+def environment(home, *, config=None, policy=None):
     env = {
         **FIXED_ENV,
         "HOME": str(home),
         "CLAUDE_CONFIG_DIR": str(config or home / "claude"),
     }
+    if policy is not None and policy.get("schema_version") == 2:
+        from claude_reporting_policy import validate
+
+        validate(policy)
+        env["MAX_STRUCTURED_OUTPUT_RETRIES"] = str(policy["reporting"]["retry_limit"])
     for key in ("XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME"):
         env[key] = str(home / key.lower())
     for key in ("CLAUDE_CONFIG_DIR", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME"):
@@ -231,15 +240,29 @@ def environment(home, *, config=None):
 
 
 def command(binary, policy, session_id, settings_path, mcp_path, prompt):
+    tools = "Read,Grep,Glob"
+    reporting_flags = []
+    if policy.get("schema_version") == 2:
+        from claude_reporting_policy import validate
+
+        validate(policy)
+        tools = ",".join(policy["reporting"]["tools"])
+        reporting_flags = [
+            "--json-schema",
+            policy["reporting"]["schema_text"],
+            "--include-partial-messages",
+            "--max-turns",
+            str(policy["reporting"]["max_turns"]),
+        ]
     return [
         binary,
         "-p",
         "--safe-mode",
         "--restricted",
         "--tools",
-        "Read,Grep,Glob",
+        tools,
         "--allowedTools",
-        "Read,Grep,Glob",
+        tools,
         "--permission-mode",
         "dontAsk",
         "--permission-prompts",
@@ -264,6 +287,7 @@ def command(binary, policy, session_id, settings_path, mcp_path, prompt):
         session_id,
         "--max-budget-usd",
         str(policy["budget"]["estimated_usd"]),
+        *reporting_flags,
         prompt,
     ]
 

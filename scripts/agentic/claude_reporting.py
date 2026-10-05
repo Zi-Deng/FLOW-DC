@@ -2,8 +2,9 @@
 
 This is a prospective transport primitive, not a native stream adapter. A caller
 must project actual native events, preserving their identities and order, and
-independently validate the full stream, policy, tools, usage and packet. No caller
-uses this module for readiness yet. A successful proof alone earns no coverage.
+independently validate the full stream, policy, tools, usage and packet. The v7
+adapter and schema-7 storage perform those checks; activation is still unavailable.
+A successful proof alone earns no coverage.
 
 Proof events contain only reporting fragments, their correlation fields, completed
 report objects and auxiliary terminal text. They never contain inspection inputs,
@@ -221,7 +222,7 @@ def capture(events, *, model, inventory_sha256, limits):
     """Capture bounded projected reporting events. No tools or inference run here.
 
     Event IDs must be actual unique transport identities, not generated counters.
-    The forthcoming native adapter must establish that mapping before adoption.
+    The native adapter must establish that mapping before storage or adoption.
     An omitted/over-limit payload stays incomplete; retained text is never labeled
     a complete report in that case. Auxiliary terminal text cannot replace it.
     """
