@@ -522,6 +522,10 @@ def stored_result(directory, meta):
             or result.get("terminal_sha256") != coverage.checksum(result["reporting"]["terminal_text"])
         ):
             raise WorkflowError("Reporting capture hashes changed")
+        if meta["schema_version"] == 7:
+            from claude_reporting_execution import validate_capture
+
+            validate_capture(directory, meta, result)
         if value_digest(assessment) != result.get("coverage_sha256"):
             raise WorkflowError("Saved coverage changed")
     else:
@@ -701,6 +705,11 @@ def save_result(directory, meta, body, diagnostics, version, *, reporting=None):
             reporting_sha256=value_digest(reporting),
             terminal_sha256=coverage.checksum(reporting["terminal_text"]),
         )
+        from claude_reporting_execution import retained
+
+        execution = retained(directory, meta)
+        if execution is not None:
+            capture["execution"] = execution
     capture_path = plain_path(directory / "review-capture.json")
     if capture_path.exists():
         previous_capture = read_result_artifact(directory, "review-capture.json", meta)
@@ -772,10 +781,10 @@ def run_review(repo, directory, *, dispatch_context=None):
     if recovered is not None:
         return recovered
     if meta.get("schema_version") == 7:
-        raise WorkflowError(
-            "Prospective v7 dispatch requires the separate reporting activation implementation"
-        )
-    if meta.get("schema_version") not in {5, 6}:
+        from claude_reporting_execution import require_activation
+
+        require_activation(repo, meta)
+    if meta.get("schema_version") not in {5, 6, 7}:
         raise WorkflowError("Legacy packets cannot run a coverage review; prepare a fresh packet")
     if (directory / "attempt.json").exists():
         raise WorkflowError(
@@ -788,18 +797,26 @@ def run_review(repo, directory, *, dispatch_context=None):
         from review_copilot import execute
     else:
         from review_claude import execute
-    body, diagnostics, version = execute(
+    captured = execute(
         repo,
         directory,
         meta,
         **({"dispatch_context": dispatch_context} if dispatch_context is not None else {}),
     )
+    body, diagnostics, version = captured[:3]
     # Save sanitized diagnostics on failure too. Provider homes and raw stdout /
     # stderr are discarded; only exact final model output survives separately.
-    if body.strip():
+    if meta["schema_version"] == 7:
+        save_result(directory, meta, body, diagnostics, version, reporting=captured[3])
+    elif body.strip():
         save_result(directory, meta, body, diagnostics, version)
     atomic_json(directory / "diagnostics.json", diagnostics)
     atomic_json(directory / "usage.json", diagnostics["usage"])
+    execution_binding = {}
+    if meta["schema_version"] == 7:
+        from claude_reporting_execution import retained
+
+        execution_binding = {"execution_sha256": value_digest(retained(directory, meta))}
     atomic_json(
         directory / "attempt.json",
         {
@@ -810,9 +827,10 @@ def run_review(repo, directory, *, dispatch_context=None):
             "status": "finished",
             "requests": 1,
             "reasons": diagnostics["reasons"],
+            **execution_binding,
         },
     )
-    if not body.strip():
+    if not body.strip() and meta["schema_version"] != 7:
         raise WorkflowError(
             "Reviewer returned no recoverable final report; see sanitized diagnostics.json (no automatic retry)"
         )

@@ -371,6 +371,10 @@ batches and their children reproduce historical evidence only, never current rea
 Prospective v7 singles use metadata/capture/result 7, policy 2, diagnostic summary 9
 and assessment 4; report syntax remains 2. They bind exact StructuredOutput argument
 fragments plus a separate auxiliary terminal artifact and replayable reporting proof.
+Prospective native execution also binds an exclusive session/prompt/policy record
+into the capture. A reserved invocation without capture cannot be repeated; a
+durable capture recovers without inference, even with empty malformed reporting.
+Offline schema-7 fixtures without this record retain storage-only interpretation.
 Full source/probe validation remains mandatory. The new stored assessment is not
 current readiness: dispatch/activation and managed adoption remain disabled at this
 checkpoint, and prospective publications are labeled incomplete. Native schema-6

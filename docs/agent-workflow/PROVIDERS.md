@@ -71,9 +71,26 @@ and original semantics. Publication of prospective v7 evidence is always labeled
 incomplete and describes the fragment representation; auxiliary terminal prose is
 not substituted into the report.
 
-**V7 dispatch and current readiness remain disabled.** Command/environment builders
-bind the prospective flags and `MAX_STRUCTURED_OUTPUT_RETRIES=1`, but the native
-preflight rejects v7 before current credential inspection or process launch. The
+**V7 dispatch and current readiness remain disabled.** The prospective execution
+path now carries the four-tool command, schema, finite turn/stream limits and
+`MAX_STRUCTURED_OUTPUT_RETRIES=1` through the isolated snapshot environment. Its
+prompt requires exactly one StructuredOutput report and retains all three probes
+and source/test obligations. Synthetic execution returns the exact fragment proof
+through the shared capture/recovery path, including an empty incomplete report;
+it never substitutes auxiliary terminal text.
+
+An exclusive, synchronized `reporting-execution.json` binds the session, immutable
+inputs/policy/reporting configuration and prompt hash before dispatch. The exact
+capture retains that record; recovery checks its bytes' meaning and the started or
+finished attempt binding. A crash between claim and attempt, or a started attempt
+without capture, remains uncertain and cannot be repeated. This is one wrapper
+invocation, not an API-request count or independent attestation. Earlier offline
+schema-7 fixtures without execution records retain their storage-only meaning.
+
+Both the shared runner and native entrypoint still refuse v7 through an explicit
+closed activation gate, and native preflight independently rejects it before
+current credential inspection or process launch. No existing grant is consulted
+as v7 authority. The
 separate purpose-10/11 activation and same-revision continuation machinery remain
 implementation work. The old nine-attempt grant cannot activate these bindings.
 The approved additional sequence is prospective: two processes, each 300 seconds/
@@ -83,7 +100,7 @@ after 10 qualifies, failure-stop and no twelfth slot. No grant is applied here.
 Synthetic transport, full-stream, storage/recovery and pinned-source expression
 tests establish local software properties only. Static binary/source checks do not
 prove actual reporting admission, Max access, isolation, model completion or
-independent review. Final execution integration, finite activation, continuation,
+independent review. Finite activation, diagnostic execution integration, continuation,
 CLI/managed adoption, final-head gates and live qualification remain required by
 [the approved amendment](https://github.com/Zi-Deng/FLOW-DC/issues/31#issuecomment-6001819615).
 
