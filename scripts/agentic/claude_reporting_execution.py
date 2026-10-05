@@ -43,11 +43,11 @@ def binding(directory, meta, session_id, prompt):
     }
 
 
-def exclusive(path, value):
+def exclusive(path, value, *, limit=10000):
     """No replacement even after a crash or competing entrypoint's reservation."""
     from claude_reporting import _json_bytes
 
-    raw = _json_bytes(value, 10000)
+    raw = _json_bytes(value, limit)
     try:
         fd = os.open(plain_path(path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     except FileExistsError:

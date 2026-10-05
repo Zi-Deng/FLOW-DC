@@ -685,3 +685,42 @@ final-head checks/CI and obtain both current live purposes before activation. Pu
 Node fixtures establish conditional source behavior only. The migration-only model
 PR-review exception, strict ordinary gates, human merge and separate PR32 original-UUID
 reconciliation remain unchanged.
+
+### Prospective reporting activation journal (issue 31)
+
+`reporting_activation.py` now provides a separate, versioned local journal for the
+approved purpose 10/11 allowance. It does not extend or rewrite the old nine-attempt
+ledger. Preview binds the exact current issue-31 approval, a clean imported harness
+commit and complete workflow/test/config file hashes, the supplied tested head,
+the complete v7 policy (including schema/tool/retry/turn/retention settings), the
+current native Max registration/generation and all nine re-evaluated historical
+attempts. The tested-head argument is an operator assertion, not evidence of CI.
+The coordinator must verify final-head checks, inspected source and current auth
+facts before any actual application; no intermediate implementation head should
+consume these two slots.
+
+The named grant has an explicit window of 600 seconds to one day. Application
+requires the unchanged reviewed preview digest and fresh matching context. An
+exclusive application claim precedes the grant write; an interrupted application
+cannot be repeated, renamed or repaired by reclaiming the allowance. Reservations
+are exclusive and immutable: 10 then 11, each 300 seconds / 2 reference USD, total
+600 seconds / 4 reference USD, included Max only and zero paid-extra/API. The
+aggregate execution deadline starts with attempt 10. Reservations do not refund
+unused time/cost, and an uncertain attempt cannot be repeated. Attempt 11 requires
+independent re-evaluation of the exact successful attempt-10 capture. Failure,
+interruption, expiry or clock rollback stops progress; there is no twelfth slot.
+
+V7 diagnostic parsing retains exact report fragments and auxiliary text, requires
+all actual inspection probes, and correlates the complete outside-path refusal for
+purpose 11. Reporting earns zero inspection credit. Outcome checks use the existing
+schema-7 immutable capture/replay path and its execution binding, retain consumed
+reservations, and recheck both successes when reading outcome 11. Diagnostic records
+are explicitly excluded from PR readiness and model-review publication.
+
+This is a dependency implementation with synthetic tests. Native diagnostic runner,
+canary-prompt execution binding, CLI/managed admission and actual activation remain
+unavailable; the existing v7 dispatch gate and preflight remain closed. The journal
+functions do not invoke a provider. No grant has been applied by implementation.
+Final adoption, continuation, CLI/skill guidance and live qualification remain
+separate work under the approved plan. Owner-writable records are accounting and
+provenance, not cryptographic or billing attestations.

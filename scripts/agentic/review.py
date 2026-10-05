@@ -540,6 +540,8 @@ def qualification(directory, *, require=False):
     """Shared gate used by recovery, publication, managed designation and preflight."""
     directory = plain_path(directory)
     meta = verify_packet(directory)
+    if require and "reporting_activation" in meta:
+        raise WorkflowError("Reporting diagnostic evidence is not a PR review")
     if meta["schema_version"] == 4:
         if require:
             raise WorkflowError("Historical batches cannot establish current readiness")
@@ -599,6 +601,8 @@ def coverage_ready(directory):
     """Current-policy readiness, distinct from an immutable historical assessment."""
     assessment = qualification(directory)
     meta = verify_packet(directory)
+    if "reporting_activation" in meta:
+        return False
     if meta.get("review_policy", {}).get("provider") == "claude-code":
         from claude_native_auth import validate_binding
 
@@ -835,6 +839,8 @@ def run_review(repo, directory, *, dispatch_context=None):
 
 def publication_body(directory):
     meta = verify_packet(directory)
+    if "reporting_activation" in meta:
+        raise WorkflowError("Reporting diagnostic evidence cannot be published as a PR review")
     if meta["schema_version"] == 4 or (meta["schema_version"] == 3 and meta.get("batch_unit")):
         if meta.get("batch_unit"):
             historical_child(directory, meta)

@@ -671,3 +671,22 @@ historical qualification, and trial 7 remains incomplete. See the
 The revision-8 paragraph describes its preparation history. Retained successful v6
 purposes 8 and 9 now satisfy that capability prerequisite under their exact bindings;
 all nine attempts remain historical, with no tenth attempt authorized.
+
+### Prospective diagnostic evidence is not PR coverage
+
+The issue-31 reporting activation journal stores new purpose-10/11 reservations
+and outcomes separately from historical diagnostic ledgers. It uses exact schema-7
+captures, model JSON fragments, auxiliary terminal bytes and execution bindings.
+The v7 summary explicitly identifies a diagnostic purpose and its tool contract;
+ordinary review telemetry cannot substitute for that diagnostic evidence.
+A successful reporting tool supplies no source or capability credit. Purpose 11
+still needs the complete correlated permission refusal and all required inspection.
+Every outcome read re-evaluates the retained capture; outcome 11 also rechecks 10.
+
+The shared readiness and publication entrypoints reject metadata containing
+`reporting_activation`, even if the adapter is later admitted for normal reviews.
+Synthetic journal fixtures test state transitions and exact storage only. Actual
+native dispatch, CLI/managed admission, same-revision continuation and full current
+review qualification remain unfinished. The old c303c46 result stays 60/776
+incomplete and cannot contribute changed-head or changed-contract credit. See the
+[prospective journal limits](PROVIDERS.md#prospective-reporting-activation-journal-issue-31).

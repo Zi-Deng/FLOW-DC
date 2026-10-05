@@ -49,6 +49,15 @@ def reporting_summary(proof):
 def validate_summary(value):
     if type(value) is not dict or "reporting" not in value or type(value.get("types")) is not dict:
         raise WorkflowError("Missing v7 reporting summary")
+    if "diagnostic" in value:
+        diagnostic = value["diagnostic"]
+        if (
+            type(diagnostic) is not dict
+            or set(diagnostic) != {"purpose", "tool_contract_digest"}
+            or diagnostic.get("purpose") not in {"native-tools-and-source", "isolation-refusal"}
+            or diagnostic.get("tool_contract_digest") != digest(tool_contract.contract())
+        ):
+            raise WorkflowError("Invalid reporting diagnostic summary")
     report = value["reporting"]
     if (
         type(report) is not dict
@@ -69,7 +78,7 @@ def validate_summary(value):
     # stream counters and this bounded reporting binding; v6 remains unchanged.
     frozen.validate_summary(
         {
-            **{k: v for k, v in value.items() if k != "reporting"},
+            **{k: v for k, v in value.items() if k not in {"reporting", "diagnostic"}},
             "types": {k: v for k, v in types.items() if k != "stream_event"},
         }
     )
@@ -173,10 +182,14 @@ def capture(
     diagnostic_tool_contract=None,
 ):
     reporting_policy.validate(policy)
-    if diagnostic_purpose is not None or refusal_path is not None or diagnostic_tool_contract is not None:
-        raise WorkflowError(
-            "Prospective reporting diagnostics require their separate activation implementation"
-        )
+    if diagnostic_purpose is not None:
+        if diagnostic_purpose not in {"native-tools-and-source", "isolation-refusal"}:
+            raise WorkflowError("Unsupported reporting diagnostic purpose")
+        tool_contract.validate(diagnostic_tool_contract)
+        if (diagnostic_purpose == "isolation-refusal") != (refusal_path is not None):
+            raise WorkflowError("Reporting refusal path differs from diagnostic purpose")
+    elif refusal_path is not None or diagnostic_tool_contract is not None:
+        raise WorkflowError("Reporting diagnostic inputs require an explicit purpose")
     files, reasons = {}, set()
     grep_calls = 0
     for path in Path(packet).rglob("*"):
@@ -202,6 +215,11 @@ def capture(
         "session_verified": True,
         "controlled_refusals": 0,
     }
+    if diagnostic_purpose is not None:
+        summary["diagnostic"] = {
+            "purpose": diagnostic_purpose,
+            "tool_contract_digest": digest(tool_contract.contract()),
+        }
     pending, seen, records = {}, set(), []
     decoded = []
     stream = PartialStream(policy["model"], reasons)
