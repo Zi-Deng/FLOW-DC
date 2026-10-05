@@ -355,7 +355,7 @@ def verify_packet(directory):
     if metadata["schema_version"] == 7:
         if metadata.get("kind") != "single" or metadata["review_policy"].get("schema_version") != 2:
             raise WorkflowError("Prospective reporting currently requires a schema-7 single packet")
-        expected = metadata["review_policy"]["reporting"]["schema_sha256"]
+        expected = metadata["review_policy"]["reporting"]["report_schema_sha256"]
         if metadata["files"].get("report-schema.json") != expected:
             raise WorkflowError("Packet reporting schema differs from its policy")
     elif metadata.get("review_policy", {}).get("schema_version") == 2 or any(

@@ -47,6 +47,12 @@ and hash, four-tool allowlist, stream/partial flags, one reporting retry attempt
 an explicit positive turn limit (at most 4,000), and retention bounds. That turn
 ceiling is a local maximum, not a funded allocation or an exact API-request count.
 Every invocation still needs a feasible assignment and finite named authorization.
+The pinned tool uses Ajv draft-07 and rejects the repository schema's draft-2020-12
+URI. Its separately bound tool schema changes only that URI to draft-07; all report
+keywords/constraints remain identical, and the original packet schema/hash remain
+unchanged. Both texts are bound. Extracted full-bundle compilation confirms the
+original rejection and compatible positive/negative validation; this is not a live
+provider invocation or reporting activation.
 
 `review.md` is the exact concatenation of reporting fragments. Auxiliary terminal
 text is separately retained as `terminal.txt`, and `reporting-proof.json` contains

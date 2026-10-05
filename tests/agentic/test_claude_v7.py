@@ -354,3 +354,48 @@ console.log('synthetic pinned source only');
             self.assertEqual(review.main(), 1)
             qualify.assert_called_once_with(str(self.directory), require=True)
             self.assertIn("Historical review adapter is recovery-only", errors.getvalue())
+
+    def test_tool_schema_resolves_in_pinned_ajv_dialect_without_changing_report_contract(self):
+        import hashlib
+        import shutil
+        import subprocess
+        from pathlib import Path
+
+        fixture = json.loads(
+            (Path(__file__).parent / "fixtures/claude-reporting-schema-2.1.282-source.json").read_text()
+        )
+        excerpts = fixture["excerpts"]
+        for row in excerpts.values():
+            self.assertEqual(hashlib.sha256(row["source"].encode()).hexdigest(), row["sha256"])
+        # Exact pinned registration/dispatch methods; the validator behind the
+        # registered dialect is a stub. Full bundled compilation is separately
+        # exercised in the retained source audit, never by invoking Claude.
+        script = "const assert=require('node:assert/strict'); let " + excerpts["dialect-uri"]["source"] + ";"
+        script += """
+const Dh={default:class {
+ constructor(){this.refs={};this.schemas={};this.opts={meta:true};this.logger=console;}
+ _addDefaultMetaSchema(){} defaultMeta(){} addMetaSchema(schema,id){this.schemas[id]=()=>true;}
+ getSchema(id){return this.schemas[id.replace(/#$/,'')];}
+}}, Vh={default:[]},zh={},ka={},Uh=[];
+"""
+        script += excerpts["dialect-class"]["source"]
+        script += (
+            "\nObject.assign(_t.prototype,{"
+            + excerpts["validate"]["source"]
+            + ","
+            + excerpts["validate-schema"]["source"]
+            + "});"
+        )
+        script += "\nconst validator=new _t();validator._addDefaultMetaSchema();\n"
+        original = json.loads((self.packet / "report-schema.json").read_bytes())
+        tool = json.loads(self.policy["reporting"]["schema_text"])
+        self.assertEqual(
+            {k: v for k, v in original.items() if k != "$schema"},
+            {k: v for k, v in tool.items() if k != "$schema"},
+        )
+        script += "const original=" + json.dumps(original) + ";const tool=" + json.dumps(tool) + ";"
+        script += "assert.throws(()=>validator.validateSchema(original),/no schema with key or ref/);assert.equal(validator.validateSchema(tool),true);"
+        node = shutil.which("node")
+        self.assertIsNotNone(node)
+        result = subprocess.run([node, "-e", script], capture_output=True, text=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr)

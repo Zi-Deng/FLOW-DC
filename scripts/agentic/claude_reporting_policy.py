@@ -10,7 +10,8 @@ import claude_reporting
 from workflow import WorkflowError
 
 ADAPTER = "claude-stream-json-2.1.282-v7"
-SCHEMA_SHA256 = "0c2b71cc9d004931a6fed6ff2234f4b8f61251cd923592ecfd155aa2f0a25cbf"
+REPORT_SCHEMA_SHA256 = "0c2b71cc9d004931a6fed6ff2234f4b8f61251cd923592ecfd155aa2f0a25cbf"
+SCHEMA_SHA256 = "67c4666ee2d1eb2dc5b74c71512e5bf8538845b116930f570847546239058af4"
 TOOLS = ["Read", "Grep", "Glob", "StructuredOutput"]
 
 
@@ -31,6 +32,7 @@ def binding(max_turns, limits, schema_text):
         "diagnostic_bytes": 2000000,
         "schema_text": schema_text,
         "schema_sha256": SCHEMA_SHA256,
+        "report_schema_sha256": REPORT_SCHEMA_SHA256,
         "tool": "StructuredOutput",
         "tools": TOOLS.copy(),
         "output_format": "stream-json",
@@ -60,6 +62,15 @@ def build(base, *, max_turns, limits):
         (Path(__file__).resolve().parents[2] / ".agentic/schemas/review-report.json")
         .read_bytes()
         .decode("utf-8")
+    )
+    if hashlib.sha256(schema_text.encode()).hexdigest() != REPORT_SCHEMA_SHA256:
+        raise WorkflowError("Repository report schema changed")
+    # The pinned reporting tool instantiates Ajv draft-07. Every keyword in this
+    # report contract is supported by draft-07; only the dialect declaration
+    # differs. Bind both texts independently; never edit the packet's schema or
+    # use object serialization to replace model report bytes.
+    schema_text = schema_text.replace(
+        "https://json-schema.org/draft/2020-12/schema", "http://json-schema.org/draft-07/schema#"
     )
     return {
         **copy.deepcopy(base),
