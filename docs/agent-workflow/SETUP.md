@@ -72,6 +72,32 @@ a defining test module stay together, preserving their module/class fixtures and
 occurrence order. Workers have separate temporary directories and process-local
 mocks; the product suite remains separate.
 
+Scheduling uses the fixed `fixture-group-lpt-ms-v1` seed embedded in the runner:
+all 71 groups from the complete local `44eeac9` run, with source, request, both
+worker-journal and summary digests. These historical millisecond estimates are
+not runtime bounds or evidence of current execution. The seed is reviewed code,
+not operator configuration; malformed fields, types, provenance or entries refuse
+execution. There is no runtime learning, profile download or timing retuning.
+
+A group fingerprint binds its complete ordered occurrence metadata (excluding
+only the top-level ordinal) and actual defining TestCase module source hashes.
+Changed, new or unsupported origins receive an explicit unmatched estimate of
+1000 milliseconds per occurrence; empty groups receive zero. Every occurrence
+still executes. Shared-module contiguous intervals remain indivisible. Intervals
+are assigned longest-estimate first, with original-index and worker-index ties;
+each worker executes its groups in original order. The direct unweighted
+`assign(suite, rows, jobs)` API retains count-based compatibility.
+
+The parent and each fresh worker independently derive the entire closed
+`assignment_policy` from full discovery, current source and the literal seed.
+Fingerprints, match reasons, weights, intervals, loads and assignments are bound
+in the request digest and compared before execution. The summary retains this
+descriptor. Historical source hashes never replace current hashing, and weights
+never establish eligibility, completion or fixture credit. Result protocol 2 and
+its fixture semantics remain unchanged. Full serial and two-worker validation
+must agree on complete occurrence identities, states and ordered outcomes, with
+fixture traces compared within their actual module/class intervals.
+
 The runner prints a private temporary evidence directory with source/checkout
 hashes, ordered occurrences, assignments, per-worker JSON records, exact logs and
 an aggregate summary. Retain it with command/exit receipts when diagnosing a gate;
