@@ -28,3 +28,14 @@ def validate(policy):
 
 def validate_controls(data, policy):
     return version(policy).validate_controls(data, policy)
+
+
+def validate_diagnostic(policy):
+    """Route preflight controls without changing historical grant semantics."""
+    selected = version(policy)
+    if selected is v7:
+        from reporting_activation import validate_policy
+    else:  # version() accepts only the exact v7/v8 identities above.
+        from reporting_activation_v4 import validate_policy
+
+    validate_policy(policy)

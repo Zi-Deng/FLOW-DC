@@ -196,9 +196,9 @@ def preflight(repo, policy, *, reporting_diagnostic=False):
     from review_policy import require_current_adapter
 
     if reporting_diagnostic:
-        from reporting_activation import validate_policy
+        from claude_reporting_versions import validate_diagnostic
 
-        validate_policy(policy)
+        validate_diagnostic(policy)
     else:
         require_current_adapter(policy)
         if policy.get("schema_version") == 2:
