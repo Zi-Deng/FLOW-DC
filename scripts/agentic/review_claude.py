@@ -504,7 +504,6 @@ def execute(repo, directory, meta, *, diagnostic=False, dispatch_context=None):
         )
         if structured and diagnostic:
             dispatch_context.recheck(meta, owned_auth=owned_auth)
-            recheck_auth()
             timeout = dispatch_context.timeout()
         response = review_process.capture(
             args,
