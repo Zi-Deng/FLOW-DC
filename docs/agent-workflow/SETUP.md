@@ -71,8 +71,18 @@ but do not copy FLOW-DC's growing documentation into every synthetic review cont
 bytes, checks complete policy ranges, and rejects changed packet and navigation bytes.
 Dedicated large-diff, large-scope and lossless-navigation tests retain their explicit
 large inputs. This fixture separation changes no production review inventory or
-coverage requirement; tests still recompute evidence and run within the existing CI
-deadline.
+coverage requirement; tests still recompute evidence.
+
+The disposable hosted `agentic-quality` job has a finite 15-minute deadline. Two
+issue #31 runs reached the former 10-minute limit without an observed assertion
+failure, including 576 of 643 test outputs after the fixture improvement. This
+additional CI runner time preserves the complete test suite and required checks.
+It does not extend reviewer execution: ordinary native review remains capped at
+900 seconds / $10 reference, and the separate reporting activation remains two
+processes of 300 seconds / $2 reference each (600 seconds / $4 total), with purpose
+11 only after qualified purpose 10, failure-stop and no twelfth slot. Included Max,
+zero paid-extra/API spending, product CI limits and other workflow budgets remain
+unchanged. A new head still needs successful current-head CI and independent review.
 
 ### Validate the native Codex sandbox
 
