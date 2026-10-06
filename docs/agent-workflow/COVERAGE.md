@@ -813,3 +813,28 @@ all nine original diagnostics and historical approval/report bytes. No skill act
 implicitly applies the new grant or invokes either purpose. Recovery stays offline;
 a changed head needs fresh qualification, full independent review and hosted receipts
 with PR head association distinguished from the actual tested checkout.
+
+### V7 partial-stream rejection observations
+
+Future v7 captures optionally retain `telemetry.partial_stream`, nested schema 1.
+It records only predefined failing predicate names, rejection counts capped at
+20,000, the first 32 correlation samples and explicit sample/count overflow flags.
+Each sample has boolean message-active, valid/known/open-index and evaluation-error
+fields. An evaluation error identifies the predicate being evaluated, not an inferred
+payload type. No event values, text, thinking, signatures, arguments, identifiers,
+paths, arbitrary keys or their hashes are retained. These observations earn no
+inspection or admission credit and do not alter framing or rejection rules.
+
+The exact nested validator rejects unknown fields, invalid types/counts and
+inconsistent correlations/reasons. Existing capture/result/diagnostic hashes bind
+the record through failure storage and offline recovery. Owner-writable hashes are
+not independent attestations. The existing capture byte ceiling still applies;
+there is no new raw-session archive or unbounded failure log.
+
+Older v7 captures may lack this field and retain their original interpretation.
+Recovery never synthesizes observations or rewrites old reports. Frozen v6 schemas
+and validators do not accept the new field. In particular, the stopped actual v2
+purpose 13 has only `unsupported_partial_stream`; its rejected event and exact guard
+were not retained. Reporting proof covers the accepted reporting call, not every
+partial event. It cannot reconstruct the missing shape or justify accepting it.
+See [the stopped recovery status](PROVIDERS.md#stopped-reporting-recovery-v2).

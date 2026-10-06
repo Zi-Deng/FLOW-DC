@@ -651,6 +651,10 @@ def validate_diagnostics(diagnostics, packet, policy=None):
     else:
         from review_telemetry import validate_summary
     validate_summary(diagnostics["telemetry"])
+    if policy and policy["adapter"] == "claude-stream-json-2.1.282-v7":
+        from claude_partial_observation import validate_reasons
+
+        validate_reasons(diagnostics["telemetry"], diagnostics["reasons"])
     if policy and diagnostics["cli_version"] != policy["cli"]["version"]:
         raise WorkflowError("Diagnostic CLI identity differs from the packet")
     ids = set()

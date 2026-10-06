@@ -65,6 +65,91 @@ class ClaudeV7Tests(GitFixture):
         self.assertNotIn("StructuredOutput", [e["tool"] for e in diagnostic["events"]])
         self.assertTrue(coverage.assess(self.packet, body, diagnostic, policy=self.policy)["qualified"])
 
+    def test_partial_observation_failure_survives_capture_recovery_and_tampering_refuses(self):
+        rows = copy.deepcopy(self.rows)
+        rows.insert(
+            1,
+            {
+                "type": "stream_event",
+                "uuid": "bad_partial",
+                "session_id": "session",
+                "event": {"type": "unknown-private-kind", "private": "not-retained"},
+            },
+        )
+        body, diagnostic, proof = self.evaluate(rows)
+        observed = diagnostic["telemetry"]["partial_stream"]
+        self.assertEqual(observed["counts"], {"message_active": 1})
+        self.assertTrue(proof["accepted"])
+        self.assertEqual(diagnostic["reasons"], ["unsupported_partial_stream"])
+        telemetry.validate_summary(diagnostic["telemetry"])
+        self.assertFalse(coverage.assess(self.packet, body, diagnostic, policy=self.policy)["qualified"])
+        review.save_result(self.directory, self.meta, body, diagnostic, "2.1.282", reporting=proof)
+        capture_path = self.directory / "review-capture.json"
+        original = capture_path.read_bytes()
+        (self.directory / "review-result.json").unlink()
+        with patch("review_claude.execute", side_effect=AssertionError("no inference")):
+            review.recover_review(self.repo, self.directory)
+        self.assertEqual(capture_path.read_bytes(), original)
+        self.assertEqual(json.loads((self.directory / "diagnostics.json").read_bytes()), diagnostic)
+        self.assertEqual((self.directory / "review.md").read_bytes(), body.encode())
+        self.assertFalse(review.qualification(self.directory)["qualified"])
+        # Even a structurally valid changed observation must fail the existing
+        # capture/result diagnostic hash, not silently become new evidence.
+        for name in ("review-capture.json", "review-result.json", "diagnostics.json"):
+            path = self.directory / name
+            raw = path.read_bytes()
+            changed = json.loads(raw)
+            target = changed if name == "diagnostics.json" else changed["diagnostics"]
+            target["telemetry"]["partial_stream"]["samples"][0]["evaluation_error"] = True
+            path.write_text(json.dumps(changed))
+            with self.subTest(name=name), self.assertRaises(workflow.WorkflowError):
+                review.qualification(self.directory)
+            path.write_bytes(raw)
+        changed = copy.deepcopy(diagnostic)
+        changed["reasons"] = []
+        with self.assertRaises(workflow.WorkflowError):
+            coverage.assess(self.packet, body, changed, policy=self.policy)
+        changed = copy.deepcopy(diagnostic)
+        changed["telemetry"]["partial_stream"]["samples"][0]["private"] = "private"
+        with self.assertRaises(workflow.WorkflowError):
+            coverage.assess(self.packet, body, changed, policy=self.policy)
+
+    def test_old_optional_absence_retains_assessment_and_new_empty_record_earns_no_credit(self):
+        for rows in (self.rows, [self.rows[0], self.rows[-1]]):
+            body, diagnostic, _ = self.evaluate(rows)
+            original = coverage.assess(self.packet, body, diagnostic, policy=self.policy)
+            old = copy.deepcopy(diagnostic)
+            del old["telemetry"]["partial_stream"]
+            self.assertEqual(coverage.assess(self.packet, body, old, policy=self.policy), original)
+        # Unknown-stream acceptance remains unchanged, also without the new field.
+        rows = copy.deepcopy(self.rows)
+        rows.insert(
+            1,
+            {
+                "type": "stream_event",
+                "uuid": "unknown",
+                "session_id": "session",
+                "event": {"type": "unknown"},
+            },
+        )
+        body, diagnostic, proof = self.evaluate(rows)
+        old = copy.deepcopy(diagnostic)
+        del old["telemetry"]["partial_stream"]
+        self.assertEqual(
+            coverage.assess(self.packet, body, old, policy=self.policy),
+            coverage.assess(self.packet, body, diagnostic, policy=self.policy),
+        )
+        self.assertFalse(coverage.assess(self.packet, body, old, policy=self.policy)["qualified"])
+        review.save_result(self.directory, self.meta, body, old, "2.1.282", reporting=proof)
+        original_capture = (self.directory / "review-capture.json").read_bytes()
+        (self.directory / "review-result.json").unlink()
+        with patch("review_claude.execute", side_effect=AssertionError("no inference")):
+            review.recover_review(self.repo, self.directory)
+        self.assertEqual((self.directory / "review-capture.json").read_bytes(), original_capture)
+        self.assertNotIn(
+            "partial_stream", json.loads((self.directory / "diagnostics.json").read_bytes())["telemetry"]
+        )
+
     def test_successful_reporting_alone_never_earns_inspection(self):
         rows = [self.rows[0]] + self.rows[-8:]
         body, diagnostic, proof = self.evaluate(rows)

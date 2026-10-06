@@ -271,6 +271,53 @@ class GuardedRecoveryFixture(RecoveryFixture):
 
 
 class GuardedRecoveryTests(GuardedRecoveryFixture):
+    def test_guarded_partial_failure_completion_retains_observation_and_stops(self):
+        def process(*args, **kwargs):
+            with self.assertRaisesRegex(workflow.WorkflowError, "registration is busy"):
+                with STORE(self.native.root):
+                    self.fail("Capture must retain the real registration lock")
+            result = self.response(*args, **kwargs)
+            if self.calls == 2:
+                rows = [json.loads(row) for row in result.stdout.splitlines()]
+                rows.insert(
+                    1,
+                    {
+                        "type": "stream_event",
+                        "uuid": "bad-partial",
+                        "session_id": rows[0]["session_id"],
+                        "event": {"type": "private-unknown", "text": "PRIVATE-NOT-RETAINED"},
+                    },
+                )
+                result.stdout = "\n".join(json.dumps(row) for row in rows).encode()
+            return result
+
+        with self.isolated(process=process):
+            self.assertTrue(diagnostic.run(self.repo, number=12)["qualified"])
+            result = diagnostic.run(self.repo, number=13)
+            self.assertFalse(result["qualified"])
+        directory = activation.root(self.repo) / "evidence-13"
+        capture = old.read(directory / "review-capture.json")
+        observed = capture["diagnostics"]["telemetry"]["partial_stream"]
+        self.assertEqual(observed["counts"], {"message_active": 1})
+        self.assertTrue(capture["reporting"]["accepted"])
+        self.assertEqual(capture["diagnostics"]["telemetry"]["controlled_refusals"], 1)
+        self.assertTrue((directory / diagnostic.FINISHED).is_file())
+        before = {str(p): p.read_bytes() for p in activation.root(self.repo).rglob("*") if p.is_file()}
+        with (
+            patch.object(auth, "store", side_effect=AssertionError("Offline recovery")),
+            patch.object(activation, "context", side_effect=AssertionError("No live context")),
+        ):
+            self.assertEqual(diagnostic.recover(self.repo, number=13), result)
+            self.assertEqual(diagnostic.run(self.repo, number=13), result)
+            with self.assertRaises(workflow.WorkflowError):
+                diagnostic.run(self.repo, number=14)
+        self.assertEqual(
+            before, {str(p): p.read_bytes() for p in activation.root(self.repo).rglob("*") if p.is_file()}
+        )
+        self.assertNotIn(b"PRIVATE-NOT-RETAINED", b"".join(before.values()))
+        self.assertEqual(self.calls, 2)
+        self.assertEqual(self.old_bytes(), self.before)
+
     def test_guarded_pair_ordinary_and_renewal_keep_lock_and_full_window(self):
         def process(*args, **kwargs):
             with self.assertRaisesRegex(workflow.WorkflowError, "registration is busy"):

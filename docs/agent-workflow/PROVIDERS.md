@@ -850,3 +850,25 @@ contract/head/base packet, separately named finite complete-review grant, feasib
 integration input and full credential window, exact component/integration reports,
 publication reconciliation, finding dispositions and human merge remain separate.
 Prior planning packets and c303's incomplete 60/776 coverage are historical only.
+
+### Stopped reporting recovery v2
+
+At `fb632e476351e3f62f41f962ea952ad82b50654c`, the coordinator applied the named v2
+grant once. Purpose 12 qualified; purpose 13 remained incomplete with
+`unsupported_partial_stream`. Both retained actual native Read/Grep/Glob, both
+required diagnostic ranges, exact structured reporting and completion; purpose 13
+also retained the expected controlled refusal. This does not demonstrate a quota,
+authentication or isolation-refusal failure. Native durations were 13.987 and 15.467
+seconds; combined observed reference cost was $0.1783528, with zero paid-extra/API
+spending authorized. These are diagnostic observations, not complete PR review.
+
+The grant is stopped: no purpose 14, replay, refund or full review under it. The
+prior v1 purpose 10 remains consumed with unknown usage and unavailable 11; all
+nine original diagnostics remain historical. Current-source changes invalidate the
+old harness eligibility. The [v7 structural observations](COVERAGE.md#v7-partial-stream-rejection-observations)
+help classify future rejected events but cannot explain the missing historical
+shape, change purpose 13 to qualified or authorize another invocation. Any future
+trial requires its own published prospective amendment, new namespace/purposes,
+finite request/time/reference limits, final-head local/hosted gates and fresh native
+prerequisites. Capability qualification, complete independent review and human merge
+remain separate obligations.
