@@ -173,3 +173,21 @@ class ReportingBatchTests(ReportingBatchFixture):
                 batch.execute(self.repo, self.directory, clock=iter([1000, 999]).__next__)
         self.assertIsNotNone(batch.state_for(self.directory, batch.load(self.directory))["stop_reason"])
         self.assertEqual(self.calls, 2)
+
+    def test_interrupted_grant_selection_cannot_overwrite_immutable_record(self):
+        auth = batch_fixtures.authorize(self.repo, self.directory, self.bounds)
+        original = batch.atomic_json
+
+        def interrupted(path, value):
+            if path.name == "metadata.json":
+                raise OSError("interrupted application metadata")
+            return original(path, value)
+
+        with patch.object(batch, "atomic_json", side_effect=interrupted):
+            with self.assertRaises(OSError):
+                batch.select(self.directory, self.bounds, auth)
+        recorded = (self.directory / "batch.json").read_bytes()
+        with self.assertRaises(workflow.WorkflowError):
+            batch.select(self.directory, self.bounds, {**auth, "name": "replacement grant"})
+        self.assertEqual((self.directory / "batch.json").read_bytes(), recorded)
+        self.assertEqual(self.calls, 2)

@@ -593,7 +593,9 @@ def select(directory, limits, authorization=None):
         if authorization["name"] == old["authorization"]["name"]:
             raise WorkflowError("Successor requires a separately named finite grant")
     record = {**executable, "authorization": authorization}
-    atomic_json(directory / "batch.json", record)
+    from claude_reporting_execution import exclusive
+
+    exclusive(directory / "batch.json", record, limit=8_000_000)
     meta.update(kind="batch-parent", batch_sha256=digest(record))
     atomic_json(directory / "metadata.json", meta)
     return record
