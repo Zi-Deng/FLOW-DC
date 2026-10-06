@@ -649,10 +649,10 @@ def recover_review(repo, directory):
     meta = verify_packet(directory)
     if repo.name != meta["repository"]:
         raise WorkflowError("Review packet belongs to another repository")
-    from reporting_diagnostic import PURPOSE, identity
+    from reporting_versions import diagnostic as version
 
-    if meta.get("purpose") == PURPOSE:
-        identity(repo, directory, meta)
+    if "reporting_activation" in meta and meta.get("purpose") is not None:
+        version(meta).identity(repo, directory, meta)
     else:
         current_pr(repo, meta["pr"], meta["head_sha"], meta["base_sha"])
     if not result_path.exists():

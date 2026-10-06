@@ -31,6 +31,10 @@ EXECUTE = review_claude.execute
 
 
 class ReportingDiagnosticFixture(GitFixture):
+    legacy_admission = True
+    response_activation = activation
+    first_number = 10
+
     preview = journal_tests.ReportingActivationTests.preview
     apply = journal_tests.ReportingActivationTests.apply
 
@@ -39,6 +43,12 @@ class ReportingDiagnosticFixture(GitFixture):
         self.repo._info["nameWithOwner"] = "Zi-Deng/FLOW-DC"
         self.commit_task()
         self.addCleanup(patch.stopall)
+        if self.legacy_admission:
+            # These retained 10/11 fixtures test the original admission contract.
+            # Production admission now requires 12/13; v2 tests do not patch it.
+            import reporting_admission_v1
+
+            patch("reporting_admission.check", side_effect=reporting_admission_v1.check).start()
         patch.object(claude_native_auth, "current_binding", return_value=AUTHENTICATION).start()
         patch.object(claude_native_auth, "store", side_effect=AssertionError("No real credentials")).start()
         patch("review_claude.execute", side_effect=AssertionError("No provider process")).start()
@@ -89,15 +99,15 @@ class ReportingDiagnosticFixture(GitFixture):
         self.assertEqual(kw["env"]["MAX_STRUCTURED_OUTPUT_RETRIES"], "1")
         self.assertEqual(args[args.index("--tools") + 1], "Read,Grep,Glob,StructuredOutput")
         session = args[args.index("--session-id") + 1]
-        number = 10 if self.calls == 1 else 11
-        packet = activation.root(self.repo) / f"evidence-{number}" / "packet"
+        number = self.first_number if self.calls == 1 else self.first_number + 1
+        packet = self.response_activation.root(self.repo) / f"evidence-{number}" / "packet"
         rows = native_events(packet, kw["cwd"], session)
         for row in rows:
             for block in row.get("message", {}).get("content", []):
                 if block.get("name") == "Grep":
                     block["input"] = copy.deepcopy(diagnostic.diagnostic_tool_contract.GREP)
         self.prompts.append(args[-1])
-        if number == 11:
+        if number == self.first_number + 1:
             outside = kw["cwd"].parent / "outside-refusal-canary.txt"
             self.assertTrue(outside.is_file())
             self.assertIn(str(outside), args[-1])

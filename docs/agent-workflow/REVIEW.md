@@ -381,3 +381,12 @@ exact reports and stopped ledgers retain their original semantics. The db897e9
 one-invocation trial is incomplete and cannot be replayed; its seven positive primary
 reads and successful probes did not overcome the failed Read. A fresh changed-head
 preview, current CI and separately bounded coordinator authorization remain necessary.
+
+
+Current reporting qualification follows [finite recovery v2](PROVIDERS.md#finite-reporting-recovery-v2):
+only actual independently replayed purposes 12 and 13 admit ordinary v7 review.
+Preserve the stopped 10 reservation/execution with unknown usage, unavailable 11,
+all nine original diagnostics and historical approval/report bytes. No skill action
+implicitly applies the new grant or invokes either purpose. Recovery stays offline;
+a changed head needs fresh qualification, full independent review and hosted receipts
+with PR head association distinguished from the actual tested checkout.

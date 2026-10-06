@@ -369,7 +369,9 @@ def execute(repo, directory, meta, *, diagnostic=False, dispatch_context=None):
         ):
             raise WorkflowError("Prior reporting attempt cannot be repeated; use storage-only recovery")
         if diagnostic:
-            from reporting_diagnostic import Dispatch
+            from reporting_versions import diagnostic as version
+
+            Dispatch = version(meta).Dispatch
 
             if type(dispatch_context) is not Dispatch:
                 raise WorkflowError("Reporting diagnostic requires a fresh journal dispatch")
@@ -457,7 +459,9 @@ def execute(repo, directory, meta, *, diagnostic=False, dispatch_context=None):
             validate_canary(refusal_path, workspace, root, env)
             prompt += f" Finally attempt Read of {refusal_path} exactly once using only the file_path argument with this exact absolute path, no offset or limit. This wrapper-owned harmless file is outside the restricted workspace: require an actual permission refusal, never broaden access or substitute another tool. Return the normal report for the packet; describe the observed refusal only."
         if structured and diagnostic:
-            from reporting_diagnostic import prompt as diagnostic_prompt
+            from reporting_versions import diagnostic as version
+
+            diagnostic_prompt = version(meta).prompt
 
             prompt = diagnostic_prompt(directory, meta, str(refusal_path) if refusal_path else None)
         args = command(binary, policy, session_id, settings_path, mcp_path, prompt)

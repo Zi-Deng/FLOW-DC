@@ -327,7 +327,7 @@ prior consumption, identical reviewed identity/inventory/assignments/harness and
 separately named finite authorization. Integration requires every exact component
 report. The initial successor format does not chain a further successor. Validate
 reviewed model-input capacity and current credential lifetime before execution.
-Historical v6/c303 evidence acquires no changed-head credit. Both actual purpose10/11
+Historical v6/c303 evidence acquires no changed-head credit. Both actual purpose12/13
 records, final tested implementation/harness and current hosted gates are separate
 prerequisites; no skill invocation implicitly applies or spends either allowance.
 
@@ -336,3 +336,12 @@ full remaining credential/receipt window distinct from the integer per-process
 reader/lineage timeout. Integration previews separate mandatory exact input from
 available archive storage and bind optional source/navigation/protocol allowances
 plus a separately reviewed token estimate. A byte envelope is not a token guarantee.
+
+
+Current reporting qualification follows [finite recovery v2](PROVIDERS.md#finite-reporting-recovery-v2):
+only actual independently replayed purposes 12 and 13 admit ordinary v7 review.
+Preserve the stopped 10 reservation/execution with unknown usage, unavailable 11,
+all nine original diagnostics and historical approval/report bytes. No skill action
+implicitly applies the new grant or invokes either purpose. Recovery stays offline;
+a changed head needs fresh qualification, full independent review and hosted receipts
+with PR head association distinguished from the actual tested checkout.

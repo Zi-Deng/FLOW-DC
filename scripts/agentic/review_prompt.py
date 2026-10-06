@@ -44,7 +44,9 @@ def native(directory, meta):
     probe = read_json(Path(directory) / "packet/capability.json")
     diagnostic = meta.get("reporting_activation")
     if diagnostic is not None:
-        from reporting_activation import SEQUENCE
+        from reporting_versions import sequence
+
+        SEQUENCE = sequence(meta)
 
         if (
             meta.get("schema_version") != 7

@@ -59,16 +59,16 @@ class ReportingConsumerTests(PipelineFixture):
             claude_reporting_policy.read_selection(path)
 
     def test_diagnostic_cli_requires_one_explicit_number_and_never_chains(self):
-        args = reporting_cli.parser().parse_args(["run", "--number", "10"])
+        args = reporting_cli.parser().parse_args(["run", "--number", "12"])
         with (
             patch.object(self.repo, "assert_main") as guard,
             patch.object(reporting_cli.reporting_diagnostic, "run", return_value={"qualified": True}) as run,
         ):
             self.assertEqual(reporting_cli.dispatch(self.repo, args), {"qualified": True})
             guard.assert_called_once_with()
-            run.assert_called_once_with(self.repo, number=10)
+            run.assert_called_once_with(self.repo, number=12)
         with self.assertRaises(SystemExit):
-            reporting_cli.parser().parse_args(["run", "--number", "12"])
+            reporting_cli.parser().parse_args(["run", "--number", "14"])
 
     def test_cli_apply_needs_exact_preview_digest_and_does_not_run_diagnostics(self):
         path = self.parent / "preview.json"

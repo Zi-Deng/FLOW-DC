@@ -29,8 +29,10 @@ def binding(directory, meta, session_id, prompt, *, diagnostic=None):
     validate(meta["review_policy"])
     expected_prompt = native(directory, meta)
     if diagnostic is not None:
-        from reporting_diagnostic import PURPOSE
-        from reporting_diagnostic import prompt as diagnostic_prompt
+        from reporting_versions import diagnostic as version
+
+        module = version(meta)
+        PURPOSE, diagnostic_prompt = module.PURPOSE, module.prompt
 
         if (
             meta.get("purpose") != PURPOSE
@@ -120,7 +122,9 @@ def retained(directory, meta):
         diagnostic = None
         prompt = native(directory, meta)
         if record.get("schema_version") == 2:
-            from reporting_diagnostic import prompt as diagnostic_prompt
+            from reporting_versions import diagnostic as version
+
+            diagnostic_prompt = version(meta).prompt
 
             diagnostic = {
                 "reservation_digest": record.get("reservation_digest"),

@@ -1,6 +1,6 @@
 # Reviewer providers and activation
 
-The explicit v7 path now requires both purpose10/11 native execution and completion
+The explicit v7 path now requires both purpose12/13 native execution and completion
 records, independently re-evaluated on admission. Offline captures remain recoverable
 but cannot activate ordinary review. Use `review.py prepare --reporting-policy FILE`
 or managed `task-review --reporting-policy FILE`; the bounded JSON contains exactly
@@ -9,7 +9,7 @@ same fields for native selection only. Explicit Copilot selection keeps its orig
 policy. Preparation creates no activation grant or provider call.
 
 `reporting_cli.py` exposes separate coordinator operations: `preview`, `apply`,
-`prepare --number 10|11`, `run --number 10|11`, `recover --number 10|11`, and `status`.
+`prepare --number 12|13`, `run --number 12|13`, `recover --number 12|13`, and `status`.
 Preview requires an exact authenticated policy, tested harness head, explicit name
 and expiry. Apply requires the exact saved preview digest; run dispatches only the
 named purpose. No command chains purposes or resets an uncertain slot. Actual
@@ -719,7 +719,11 @@ reconciliation remain unchanged.
 
 ### Prospective reporting activation journal (issue 31)
 
-`reporting_activation.py` now provides a separate, versioned local journal for the
+**Historical v1 only:** the following describes the unchanged 10/11 allowance.
+Purpose 10 is consumed/uncertain after the guarded-lock failure; 11 is unavailable.
+Current admission uses [recovery v2](#finite-reporting-recovery-v2).
+
+`reporting_activation.py` provides a separate, versioned local journal for the
 approved purpose 10/11 allowance. It does not extend or rewrite the old nine-attempt
 ledger. Preview binds the exact current issue-31 approval, a clean imported harness
 commit and complete workflow/test/config file hashes, the supplied tested head,
@@ -774,7 +778,7 @@ The frozen native reader still accepts only integer per-process timeouts of 1–
 seconds. Batch totals and fractional remaining deadlines never enter that interface;
 renewal lineage also uses the per-process bound. See [integration capacity and batch
 lifetime](COVERAGE.md) for separately bound source/navigation allowances and byte/token
-uncertainty. These local checks do not establish actual purpose10/11 activation.
+uncertainty. These local checks do not establish actual purpose12/13 activation.
 
 ### V7 owned authentication verification
 
@@ -793,6 +797,56 @@ The frozen v6 native reader and historical interpretation remain unchanged.
 A prelaunch failure still consumes its durable reservation. The stopped purpose
 10 at head `6090992` has no capture/completion/outcome; absence of capture is not
 usage attestation. Software repair does not reset that grant or authorize a new
-slot. Any prospective recovery allowance needs a public amendment with explicit
-standing-authorization provenance, preserved stopped evidence, finite new bounds
-and fresh source/local/hosted gates before application or dispatch.
+slot. The separately amended [v2 recovery](#finite-reporting-recovery-v2) preserves that
+stopped evidence and requires its own finite authority and fresh source/local/hosted
+gates before application or dispatch.
+
+
+## Finite reporting recovery v2
+
+The [approved amendment](https://github.com/Zi-Deng/FLOW-DC/issues/31#issuecomment-6008093895)
+uses `reporting_activation_v2.py` and `reporting_diagnostic_v2.py` with a separate
+`.agentic-local/claude-reporting-activation-v2` journal. Grant, reservation, outcome,
+completion and admission records use version 2; the exact schema-7 capture and
+schema-2 diagnostic execution representation remain unchanged. Explicit metadata
+purpose selects the evaluator. Unknown versions refuse; there is no fallback.
+`reporting_admission_v1.py` retains original interpretation for compatibility tests
+and historical analysis. Current ordinary admission always requires v2, including
+under the exclusive owned authentication snapshot and verified same-account renewal.
+
+Only new purposes **12 then 13** are available, each 300 seconds / 2 reference USD,
+prospective total 600 seconds / 4 reference USD and at most two wrapper processes.
+Purpose 12 requires actual tools/source and exact reporting; 13 additionally requires
+the exact controlled refusal and independently replayed successful 12. No 14, wrapper
+retry, automatic chain, provider switch, paid-extra or API spending is authorized.
+The native included-Max policy, bounded native same-token 401 handling, 400 turns,
+10,000 report bytes, other reporting/stream/retry limits and ordinary 900-second /
+10-reference-USD policy remain unchanged. CI's 15-minute job deadline is separate.
+
+Preview binds the exact amendment approval, clean tested harness, complete policy,
+fresh registration/generation/account and disabled-paid receipt, all nine original
+diagnostics and every stopped v1 file. The old grant must match its exact retained
+historical approval and original diagnostic history. Its purpose-10 reservation,
+started attempt and execution claim remain consumed/uncertain: **usage is unknown**,
+not zero. Missing capture/completion/outcome cannot qualify or free a slot; unstarted
+11 remains unavailable. Neither old approvals nor old successful reports activate
+changed source. `recover-v1 --number 10|11` is storage-only and refuses missing capture.
+
+Preview is read-only. Application requires the unchanged reviewed canonical digest,
+fresh context, an explicit finite window and an exclusive durable application claim;
+a torn application cannot be repeated or renamed. Each `run --number 12|13` is an
+individual coordinator action after final-head local and both hosted gates, source
+inspection and fresh actual auth/receipt/lifetime prerequisites. Final launch repeats
+those bindings under the owned lock without reacquisition and checks the remaining
+deadline after preparation. Failure, interruption, expiry, clock rollback, changed
+bindings, unknown usage or incomplete/masked/unsupported reports stop the sequence.
+Saved captures recover without authentication or inference. All old bytes remain.
+
+Synthetic tests establish software behavior only. Actual 12/13 are unapplied and
+unexecuted by implementation. An expired login requires the user's private-terminal
+renewal and fresh disabled-paid-usage observation before coordinator application.
+Two qualified diagnostics still do not establish PR inspection. A fresh full public
+contract/head/base packet, separately named finite complete-review grant, feasible
+integration input and full credential window, exact component/integration reports,
+publication reconciliation, finding dispositions and human merge remain separate.
+Prior planning packets and c303's incomplete 60/776 coverage are historical only.

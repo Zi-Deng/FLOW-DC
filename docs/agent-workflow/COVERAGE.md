@@ -1,7 +1,7 @@
 # Coverage evidence and operator migration
 
 Schema7 ordinary reviews can use explicitly configured structured reporting after
-both actual purpose10/11 records independently qualify. Shared current readiness
+both actual purpose12/13 records independently qualify. Shared current readiness
 requires the immutable dispatch admission/execution binding and matching current
 harness/policy; synthetic storage success alone remains incomplete. Exact model
 argument fragments and separate auxiliary text retain their existing representation.
@@ -101,11 +101,11 @@ The coordinator must establish actual model, usage and credential-window feasibi
 before applying any full-review authorization. No truncation, lowered report limits,
 summary substitution or extra integration invocation follows failure.
 
-These paths have synthetic execution tests. They do not establish actual purpose10/11
+These paths have synthetic execution tests. They do not establish actual purpose12/13
 activation or a complete review. The stopped c303 aggregate remains 60/776 incomplete;
 its nineteen successes are historical after changed head/contract. Final source/local
 and hosted gates, inspected harness and fresh authentication/billing facts precede
-coordinator-owned purpose10 then11. The two-process allowance is never consumed at an
+coordinator-owned purpose12 then13. The two-process allowance is never consumed at an
 intermediate implementation head. Full review remains separately authorized.
 
 ## Provider-aware bounded batches (current)
@@ -776,7 +776,7 @@ all nine attempts remain historical, with no tenth attempt authorized.
 
 ### Prospective diagnostic evidence is not PR coverage
 
-The issue-31 reporting activation journal stores new purpose-10/11 reservations
+The historical issue-31 v1 reporting activation journal stores purpose-10/11 reservations
 and outcomes separately from historical diagnostic ledgers. It uses exact schema-7
 captures, model JSON fragments, auxiliary terminal bytes and execution bindings.
 The v7 summary explicitly identifies a diagnostic purpose and its tool contract;
@@ -804,3 +804,12 @@ v7 admission additionally replays both purposes, requires matching source/policy
 and verified credential lineage, and binds the receipt into execution. Same-revision
 continuation remains unfinished; synthetic runner tests establish neither live
 activation nor review readiness.
+
+
+Current reporting qualification follows [finite recovery v2](PROVIDERS.md#finite-reporting-recovery-v2):
+only actual independently replayed purposes 12 and 13 admit ordinary v7 review.
+Preserve the stopped 10 reservation/execution with unknown usage, unavailable 11,
+all nine original diagnostics and historical approval/report bytes. No skill action
+implicitly applies the new grant or invokes either purpose. Recovery stays offline;
+a changed head needs fresh qualification, full independent review and hosted receipts
+with PR head association distinguished from the actual tested checkout.
