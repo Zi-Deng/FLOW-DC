@@ -2,7 +2,7 @@
 
 import unittest
 
-import claude_telemetry_v7 as telemetry
+import claude_telemetry_v7_observed as telemetry
 
 
 class PartialObservationTests(unittest.TestCase):

@@ -817,6 +817,9 @@ with PR head association distinguished from the actual tested checkout.
 ### V7 partial-stream rejection observations
 
 Future v7 captures optionally retain `telemetry.partial_stream`, nested schema 1.
+The original v7 evaluator remains byte-frozen and decides acceptance. A separate
+wrapper makes a second bounded pass over the same partial events for observations;
+it neither patches frozen globals nor retains those event payloads.
 It records only predefined failing predicate names, rejection counts capped at
 20,000, the first 32 correlation samples and explicit sample/count overflow flags.
 Each sample has boolean message-active, valid/known/open-index and evaluation-error

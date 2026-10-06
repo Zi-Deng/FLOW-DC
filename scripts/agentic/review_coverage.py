@@ -645,7 +645,7 @@ def validate_diagnostics(diagnostics, packet, policy=None):
         elif policy["adapter"] == "claude-stream-json-2.1.282-v5":
             from claude_telemetry_v5 import validate_summary
         elif policy["adapter"] == "claude-stream-json-2.1.282-v7":
-            from claude_telemetry_v7 import validate_summary
+            from claude_telemetry_v7_observed import validate_summary
         else:
             from claude_telemetry_v6 import validate_summary
     else:

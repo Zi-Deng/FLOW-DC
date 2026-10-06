@@ -8,7 +8,7 @@ from test_workflow import GitFixture, review, workflow
 
 # isort: split
 import claude_native_auth
-import claude_telemetry_v7 as telemetry
+import claude_telemetry_v7_observed as telemetry
 import review_coverage as coverage
 import test_claude_reporting as reporting_fixtures
 from claude_fixtures import AUTHENTICATION, native_events
@@ -64,6 +64,42 @@ class ClaudeV7Tests(GitFixture):
         self.assertEqual(diagnostic["schema_version"], 9)
         self.assertNotIn("StructuredOutput", [e["tool"] for e in diagnostic["events"]])
         self.assertTrue(coverage.assess(self.packet, body, diagnostic, policy=self.policy)["qualified"])
+
+    def test_observation_wrapper_preserves_every_frozen_capture_field_and_bound(self):
+        import claude_telemetry_v7 as frozen
+
+        raw = "\n".join(json.dumps(row) for row in self.rows)
+        partial = {
+            "type": "stream_event",
+            "session_id": "foreign",
+            "parent_tool_use_id": "delegated",
+            "event": {"type": "message_start", "message": {"id": "private", "model": "wrong"}},
+        }
+        variants = [raw, json.dumps(partial) + "\n" + raw, "{\n" + raw, b"\xff", "\ud800", 123]
+        for value in variants:
+            for events, size in ((coverage.MAX_EVENTS, coverage.MAX_STREAM_BYTES), (5, 1000)):
+                with (
+                    self.subTest(events=events, size=size),
+                    patch.object(coverage, "MAX_EVENTS", events),
+                    patch.object(coverage, "MAX_STREAM_BYTES", size),
+                ):
+                    expected = frozen.capture(value, self.packet, self.packet, self.policy, "session")
+                    body, diagnostics, proof = telemetry.capture(
+                        value, self.packet, self.packet, self.policy, "session"
+                    )
+                    observed = diagnostics["telemetry"].pop("partial_stream")
+                    self.assertEqual((body, diagnostics, proof), expected)
+                    self.assertEqual(
+                        observed["total"] > 0, "unsupported_partial_stream" in diagnostics["reasons"]
+                    )
+        # Unknown/delegated outer controls still allow partial validation to
+        # observe the same inner event while independently refusing the envelope.
+        body, diagnostics, proof = telemetry.capture(
+            json.dumps(partial) + "\n" + raw, self.packet, self.packet, self.policy, "session"
+        )
+        self.assertEqual(diagnostics["telemetry"]["partial_stream"]["counts"], {"message_model": 1})
+        self.assertIn("unexpected_session_identity", diagnostics["reasons"])
+        self.assertIn("delegated_or_mcp_event", diagnostics["reasons"])
 
     def test_partial_observation_failure_survives_capture_recovery_and_tampering_refuses(self):
         rows = copy.deepcopy(self.rows)

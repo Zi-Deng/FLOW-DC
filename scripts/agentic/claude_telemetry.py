@@ -359,7 +359,7 @@ def capture(
     diagnostic_tool_contract=None,
 ):
     if policy.get("adapter") == "claude-stream-json-2.1.282-v7":
-        from claude_telemetry_v7 import capture as capture_v7
+        from claude_telemetry_v7_observed import capture as capture_v7
 
         return capture_v7(
             raw,

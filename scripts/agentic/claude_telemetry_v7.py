@@ -11,7 +11,6 @@ import json
 import re
 from pathlib import Path
 
-import claude_partial_observation
 import claude_refusal_v6 as claude_refusal
 import claude_reporting
 import claude_reporting_policy as reporting_policy
@@ -75,13 +74,11 @@ def validate_summary(value):
         type(types["stream_event"]) is not int or not 0 < types["stream_event"] <= coverage.MAX_EVENTS
     ):
         raise WorkflowError("Invalid partial stream count")
-    if "partial_stream" in value:
-        claude_partial_observation.validate(value["partial_stream"], types.get("stream_event", 0))
     # The shared controls retain their frozen validator. Only v7 admits partial
     # stream counters and this bounded reporting binding; v6 remains unchanged.
     frozen.validate_summary(
         {
-            **{k: v for k, v in value.items() if k not in {"reporting", "diagnostic", "partial_stream"}},
+            **{k: v for k, v in value.items() if k not in {"reporting", "diagnostic"}},
             "types": {k: v for k, v in types.items() if k != "stream_event"},
         }
     )
@@ -99,120 +96,76 @@ class PartialStream:
     def __init__(self, model, reasons):
         self.model, self.reasons = model, reasons
         self.active = None
-        self._observation = claude_partial_observation.Observation()
         self.messages, self.blocks = set(), {}
 
-    def observation(self):
-        return self._observation.record()
-
     def observe(self, event):
-        # Set the fixed predicate BEFORE evaluating it: TypeError/KeyError must
-        # identify the evaluation boundary without rendering the offending value.
-        guard = "event_object"
         try:
             if type(event) is not dict:
                 raise ValueError
             kind = event.get("type")
             if kind == "message_start":
                 message = event.get("message")
-                guard = "message_inactive"
-                if self.active is not None:
-                    raise ValueError
-                guard = "message_object"
-                if type(message) is not dict:
-                    raise ValueError
-                guard = "message_id"
-                if not claude_reporting._identifier(message.get("id")):
-                    raise ValueError
-                guard = "message_unique"
-                if message["id"] in self.messages:
-                    raise ValueError
-                guard = "message_model"
-                if message.get("model") != self.model:
+                if (
+                    self.active is not None
+                    or type(message) is not dict
+                    or not claude_reporting._identifier(message.get("id"))
+                    or message["id"] in self.messages
+                    or message.get("model") != self.model
+                ):
                     raise ValueError
                 self.active = message["id"]
                 self.messages.add(self.active)
                 self.blocks = {}
                 return
-            guard = "message_active"
             if self.active is None:
                 raise ValueError
-            guard = "event_kind"
             if kind in {"content_block_start", "content_block_delta", "content_block_stop"}:
                 index = event.get("index")
-                guard = "block_index"
                 if type(index) is not int or not 0 <= index < coverage.MAX_EVENTS:
                     raise ValueError
                 if kind == "content_block_start":
                     block = event.get("content_block")
-                    guard = "block_unique"
-                    if index in self.blocks:
-                        raise ValueError
-                    guard = "block_object"
-                    if type(block) is not dict:
+                    if index in self.blocks or type(block) is not dict:
                         raise ValueError
                     block_type = block.get("type")
                     if block_type == "tool_use":
-                        guard = "tool_name"
-                        if block.get("name") not in reporting_policy.TOOLS:
+                        if (
+                            block.get("name") not in reporting_policy.TOOLS
+                            or not claude_reporting._identifier(block.get("id"))
+                            or block.get("input") != {}
+                        ):
                             raise ValueError
-                        guard = "tool_id"
-                        if not claude_reporting._identifier(block.get("id")):
-                            raise ValueError
-                        guard = "tool_input"
-                        if block.get("input") != {}:
-                            raise ValueError
-                    else:
-                        guard = "block_kind"
-                        if block_type not in {"text", "thinking", "redacted_thinking"}:
-                            raise ValueError
-                    self.blocks[index] = block_type
-                else:
-                    guard = "block_open"
-                    if index not in self.blocks or self.blocks[index] is None:
+                    elif block_type not in {"text", "thinking", "redacted_thinking"}:
                         raise ValueError
-                    if kind == "content_block_stop":
-                        self.blocks[index] = None
-                    else:
-                        delta = event.get("delta")
-                        guard = "delta_object"
-                        if type(delta) is not dict:
-                            raise ValueError
-                        allowed = {
-                            "tool_use": {"input_json_delta": "partial_json"},
-                            "text": {"text_delta": "text"},
-                            "thinking": {"thinking_delta": "thinking", "signature_delta": "signature"},
-                            "redacted_thinking": {},
-                        }[self.blocks[index]]
-                        guard = "delta_kind"
-                        field = allowed.get(delta.get("type"))
-                        if field is None:
-                            raise ValueError
-                        guard = "delta_fields"
-                        if set(delta) != {"type", field}:
-                            raise ValueError
-                        guard = "delta_text"
-                        if not isinstance(delta[field], str):
-                            raise ValueError
-            elif kind == "message_delta":
-                guard = "message_delta_object"
-                if type(event.get("delta")) is not dict:
+                    self.blocks[index] = block_type
+                elif index not in self.blocks or self.blocks[index] is None:
                     raise ValueError
-                guard = "message_usage_object"
-                if type(event.get("usage")) is not dict:
+                elif kind == "content_block_stop":
+                    self.blocks[index] = None
+                else:
+                    delta = event.get("delta")
+                    if type(delta) is not dict:
+                        raise ValueError
+                    allowed = {
+                        "tool_use": {"input_json_delta": "partial_json"},
+                        "text": {"text_delta": "text"},
+                        "thinking": {"thinking_delta": "thinking", "signature_delta": "signature"},
+                        "redacted_thinking": {},
+                    }[self.blocks[index]]
+                    field = allowed.get(delta.get("type"))
+                    if field is None or set(delta) != {"type", field} or not isinstance(delta[field], str):
+                        raise ValueError
+            elif kind == "message_delta":
+                if type(event.get("delta")) is not dict or type(event.get("usage")) is not dict:
                     raise ValueError
             elif kind == "message_stop":
-                guard = "message_blocks_closed"
                 if any(v is not None for v in self.blocks.values()):
                     raise ValueError
                 self.active = None
             else:
                 raise ValueError
-        except (ValueError, TypeError, KeyError) as exc:
+        except (ValueError, TypeError, KeyError):
             self.reasons.add("unsupported_partial_stream")
-            self._observation.reject(
-                guard, type(exc) in {TypeError, KeyError}, self.active, self.blocks, event
-            )
 
 
 def capture(
@@ -661,7 +614,6 @@ def capture(
     )
     reasons.update("reporting_" + reason for reason in proof["reasons"])
     summary["reporting"] = reporting_summary(proof)
-    summary["partial_stream"] = stream.observation()
     diagnostics = {
         "schema_version": 9,
         "adapter": policy["adapter"],
