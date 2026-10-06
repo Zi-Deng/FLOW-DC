@@ -355,8 +355,11 @@ def verify_packet(directory):
         if metadata.get("requested_model") != metadata["review_policy"]["model"]:
             raise WorkflowError("Packet model differs from immutable review policy")
     if metadata["schema_version"] == 7:
-        if metadata.get("kind") != "single" or metadata["review_policy"].get("schema_version") != 2:
-            raise WorkflowError("Prospective reporting currently requires a schema-7 single packet")
+        if (
+            metadata.get("kind") not in {"single", "batch-parent", "batch-unit"}
+            or metadata["review_policy"].get("schema_version") != 2
+        ):
+            raise WorkflowError("Structured reporting requires a schema-7 packet and native policy")
         expected = metadata["review_policy"]["reporting"]["report_schema_sha256"]
         if metadata["files"].get("report-schema.json") != expected:
             raise WorkflowError("Packet reporting schema differs from its policy")
@@ -608,7 +611,7 @@ def coverage_ready(directory):
     meta = verify_packet(directory)
     if "reporting_activation" in meta:
         return False
-    if meta.get("schema_version") == 7:
+    if meta.get("schema_version") == 7 and meta.get("kind") != "batch-parent":
         from reporting_admission import require_packet
 
         try:
@@ -622,6 +625,11 @@ def coverage_ready(directory):
             review_policy.require_current_adapter(meta["review_policy"])
             validate_binding(meta["review_policy"].get("authentication"))
         except WorkflowError:
+            return False
+    if meta.get("schema_version") == 7 and meta.get("kind") == "batch-parent":
+        try:
+            review_batch.qualification(directory, require=True)
+        except (WorkflowError, OSError, ValueError, KeyError):
             return False
     return meta.get("schema_version") in {5, 6, 7} and not meta.get("batch_unit") and assessment["qualified"]
 
@@ -1037,6 +1045,12 @@ def main():
     prep.add_argument("--prior-review")
     prep.add_argument("--reporting-policy", help="JSON with explicit max_turns and retention limits")
     review_policy.add_arguments(prep)
+    successor = sub.add_parser("batch-continue-prepare")
+    successor.add_argument("ancestor")
+    successor.add_argument("directory")
+    successor.add_argument(
+        "--authentication-binding", help="Sanitized separately verified same-account renewal binding"
+    )
     for name in [
         "run",
         "publish",
@@ -1072,6 +1086,17 @@ def main():
                 review_model=args.review_model,
                 review_effort=args.review_effort,
                 reporting=read_selection(args.reporting_policy),
+            )
+        elif args.command == "batch-continue-prepare":
+            import review_continuation
+
+            result = review_continuation.prepare(
+                repo,
+                args.ancestor,
+                args.directory,
+                authentication=coverage.read_json(plain_path(args.authentication_binding))
+                if args.authentication_binding
+                else None,
             )
         elif args.command == "batch-preview":
             result = review_batch.preview(

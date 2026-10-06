@@ -1,4 +1,4 @@
-"""Provider-bound sequential batches; historical evidence is recovery-only."""
+"""Version-seven native reporting batches; version-six records never enter this evaluator."""
 
 import contextlib
 import fcntl
@@ -15,7 +15,7 @@ import review_policy
 from tasks import atomic_json, atomic_text, digest, plain_path
 from workflow import WorkflowError
 
-SCHEMA = 6
+SCHEMA = 7
 BINDING = (
     "repository",
     "pr",
@@ -34,19 +34,16 @@ def api():
     return review
 
 
-def plan(directory, *, version=None):
+def plan(directory, *, version=7, continuation=True):
     """Deterministic scope partition with explicit linked navigation context."""
-    if _reporting(directory):
-        import review_batch_v7
-
-        return review_batch_v7.plan(directory, version=7 if version is None else version)
-    version = 6 if version is None else version
-    if type(version) is not int or version not in {5, 6}:
+    if type(version) is not int or version != 7:
         raise WorkflowError("Unsupported batch plan version")
     directory = Path(directory)
     meta = api().verify_packet(directory)
-    if meta["schema_version"] != 6 or meta.get("kind") not in {"single", "batch-parent"}:
+    if meta["schema_version"] != 7 or meta.get("kind") not in {"single", "batch-parent"}:
         raise WorkflowError("Batch planning requires a current parent packet")
+    if meta["review_policy"].get("schema_version") != 2:
+        raise WorkflowError("V7 batches require the exact native reporting policy")
     packet = directory / "packet"
     inventory = coverage.read_json(packet / "required-material.json")["required"]
     lookup = {item["id"]: item for item in inventory}
@@ -120,7 +117,7 @@ def plan(directory, *, version=None):
         return stem
 
     for unit in units:
-        if version == 6:
+        if version == 7:
             primary_paths = {lookup[key]["path"] for key in unit["required_ids"]}
             stems = {family_stem(path) for path in primary_paths}
             related_paths = {item["path"] for item in inventory if family_stem(item["path"]) in stems}
@@ -156,7 +153,7 @@ def plan(directory, *, version=None):
                     item["end_line"] - item["start_line"] + 1 for item in entries if not item.get("omitted")
                 ),
             }
-    return {
+    result = {
         "schema_version": version,
         "binding": {key: meta[key] for key in BINDING},
         "files": meta["files"],
@@ -175,7 +172,7 @@ def plan(directory, *, version=None):
                         "max_bytes_per_unit": review_navigation.MAX_NAVIGATION_BYTES,
                     }
                 }
-                if version == 6
+                if version == 7
                 else {}
             ),
             "context_bytes": sum(item.get("bytes", 0) for item in inventory),
@@ -186,22 +183,46 @@ def plan(directory, *, version=None):
         "note": "Assignments are navigation, not inspection. Full original inventory and surrounding context remain required.",
     }
 
+    if continuation:
+        import review_continuation
+
+        value = review_continuation.validate(directory, result)
+        if value is not None:
+            result["continuation"] = value
+    return result
+
+
+def work_units(batch):
+    imports = batch.get("continuation", {}).get("snapshot", {}).get("imports", [])
+    return [unit for unit in batch["units"] if unit["id"] not in imports]
+
+
+def imported(directory, unit):
+    import review_continuation
+
+    value = review_continuation.manifest(directory)
+    if value and unit["id"] in value["snapshot"]["imports"]:
+        return plain_path(value["snapshot"]["ancestor"])
+    return None
+
 
 def unit_path(directory, unit):
-    if _reporting(directory):
-        import review_batch_v7
-
-        return review_batch_v7.unit_path(directory, unit)
-    return plain_path(Path(directory) / "units" / unit["id"])
+    ancestor = imported(directory, unit)
+    return plain_path((ancestor or Path(directory)) / "units" / unit["id"])
 
 
 def report_binding(directory):
-    if _reporting(directory):
-        import review_batch_v7
-
-        return review_batch_v7.report_binding(directory)
     meta = api().verify_packet(directory)
-    return {key: meta[key] for key in ("review_sha256", "diagnostics_sha256", "coverage_sha256")}
+    return {
+        key: meta[key]
+        for key in (
+            "review_sha256",
+            "diagnostics_sha256",
+            "coverage_sha256",
+            "reporting_sha256",
+            "terminal_sha256",
+        )
+    }
 
 
 def material_for_report(packet, artifact, body, *, version=4):
@@ -263,10 +284,6 @@ def inspection_suggestions(packet, items, *, version=3):
 
 
 def prepare_unit(directory, batch, unit, reservation):
-    if _reporting(directory):
-        import review_batch_v7
-
-        return review_batch_v7.prepare_unit(directory, batch, unit, reservation)
     parent = Path(directory)
     target = unit_path(parent, unit)
     if target.exists():
@@ -321,7 +338,7 @@ def prepare_unit(directory, batch, unit, reservation):
             ],
             version=batch["schema_version"],
         )
-    if batch["schema_version"] == 6:
+    if batch["schema_version"] == 7:
         assignment["max_report_bytes"] = batch["budget"]["max_report_bytes"]
         assignment["navigation"] = review_navigation.materialize(
             packet, {**unit, "required_ids": assignment["required_ids"]}, assignment["max_report_bytes"]
@@ -332,10 +349,11 @@ def prepare_unit(directory, batch, unit, reservation):
         key: value for key, value in meta.items() if key not in api().RESULT_FIELDS | {"batch_sha256"}
     }
     child_meta.update(
-        schema_version=6,
+        schema_version=7,
         kind="batch-unit",
         review_policy=batch["unit_policy"],
         reservation_digest=digest(reservation["binding"]),
+        claim_digest=digest(reservation["claim"]),
         authorization_digest=digest(batch["authorization"]),
         batch_unit=assignment,
         files={p.relative_to(packet).as_posix(): api().digest(p) for p in packet.rglob("*") if p.is_file()},
@@ -346,10 +364,12 @@ def prepare_unit(directory, batch, unit, reservation):
 
 
 def unit_assessment(directory, batch, unit):
-    if _reporting(directory):
-        import review_batch_v7
+    ancestor = imported(directory, unit)
+    if ancestor:
+        import review_continuation
 
-        return review_batch_v7.unit_assessment(directory, batch, unit)
+        review_continuation.validate(directory)
+        return unit_assessment(ancestor, load(ancestor), unit)
     target = unit_path(directory, unit)
     meta = api().verify_packet(target)
     assignment = coverage.read_json(target / "packet/assignment.json")
@@ -416,13 +436,29 @@ def unit_assessment(directory, batch, unit):
         not reservation
         or meta["review_policy"] != batch["unit_policy"]
         or meta.get("reservation_digest") != digest(reservation["binding"])
+        or meta.get("claim_digest") != digest(reservation.get("claim"))
         or meta.get("authorization_digest") != digest(batch["authorization"])
         or assignment.get("policy_digest") != digest(batch["unit_policy"])
         or assignment.get("authorization_digest") != digest(batch["authorization"])
         or reservation.get("assignment_digest") != digest(assignment)
     ):
         raise WorkflowError("Unit policy or reservation binding changed")
+    import review_claims
+
+    claim = reservation.get("claim")
+    if type(claim) is not dict or digest(claim) != digest(
+        review_claims.record(batch, unit, reservation["binding"], claim.get("previous_digest"))
+    ):
+        raise WorkflowError("Unit lost its exact global material claim")
     assessment = api().qualification(target)
+    from claude_reporting_execution import retained
+    from reporting_activation import read
+    from reporting_admission import FILENAME
+
+    admission = read(target / FILENAME)
+    execution = retained(target, meta)
+    if execution is None or execution.get("admission_digest") != digest(admission):
+        raise WorkflowError("Batch unit lacks its admitted native execution")
     if (target / "review.md").stat().st_size > batch["budget"]["max_report_bytes"]:
         raise WorkflowError("Unit report exceeds authorized output bound")
     selected = [row for row in assessment["material"] if row["id"] in ids]
@@ -464,10 +500,6 @@ def current_contract(repo, directory, meta):
 
 
 def publication_body(directory):
-    if _reporting(directory):
-        import review_batch_v7
-
-        return review_batch_v7.publication_body(directory)
     result = qualification(directory)
     meta = api().verify_packet(directory)
     label = "coverage-qualified" if result["qualified"] else "INCOMPLETE — not ready"
@@ -478,9 +510,22 @@ def publication_body(directory):
         f"PR #{meta['pr']} · head `{meta['head_sha']}` · base `{meta['base_sha']}`",
         "Exact unit reports are published separately with their report hashes. This aggregate is coordinator bookkeeping, not model output or human approval. Static reviewers ran no tests. CI head association and tested checkout remain separate in validation.json.",
     ]
+    continuation = load(directory).get("continuation")
     for unit in result["units"]:
+        receipt = (continuation or {}).get("publications", {}).get(unit["id"])
+        origin = (
+            f"imported exact COMMENT https://github.com/{meta['repository']}/pull/{meta['pr']}#pullrequestreview-{receipt['review_id']}"
+            if receipt
+            else "new allocation"
+        )
         lines.append(
-            f"- {unit['id']}: {unit['state']}; exact report `{unit.get('review_sha256', 'unavailable')}`"
+            f"- {unit['id']}: {unit['state']}; {origin}; exact report `{unit.get('review_sha256', 'unavailable')}`"
+        )
+    if continuation:
+        lines.append(
+            f"Prior consumed reservations: {continuation['snapshot']['consumed']['reservations']}; "
+            f"new reservations: {len(result['reservations'])}. Prior stops and usage remain in the bound ancestor; "
+            "imported observations are counted only in prior consumption, never refunded."
         )
     lines.extend(
         [
@@ -494,22 +539,17 @@ def publication_body(directory):
 
 
 def publish_units(repo, directory):
-    if _reporting(directory):
-        import review_batch_v7
-
-        return review_batch_v7.publish_units(repo, directory)
     batch = load(directory)
     result = qualification(directory)
     for unit, record in zip(batch["units"], result["units"], strict=True):
+        if imported(directory, unit):
+            api().verify_publication(repo, unit_path(directory, unit))
+            continue
         if "review_sha256" in record:
             api().publish(repo, unit_path(directory, unit))
 
 
 def verify_unit_publications(repo, directory, complete_only=True):
-    if _reporting(directory):
-        import review_batch_v7
-
-        return review_batch_v7.verify_unit_publications(repo, directory, complete_only)
     batch = load(directory)
     records = qualification(directory)["units"]
     for unit, record in zip(batch["units"], records, strict=True):
@@ -518,17 +558,21 @@ def verify_unit_publications(repo, directory, complete_only=True):
 
 
 def select(directory, limits, authorization=None):
-    if _reporting(directory):
-        import review_batch_v7
-
-        return review_batch_v7.select(directory, limits, authorization)
     directory = plain_path(directory)
     meta = api().verify_packet(directory)
     preview = plan(
-        directory, version=load(directory)["schema_version"] if meta.get("kind") == "batch-parent" else 6
+        directory, version=load(directory)["schema_version"] if meta.get("kind") == "batch-parent" else 7
     )
-    limits, policy = review_policy.batch_budget(limits, meta["review_policy"], len(preview["units"]))
-    executable = {**preview, "budget": limits, "unit_policy": policy}
+    limits, policy = review_policy.batch_budget(limits, meta["review_policy"], len(work_units(preview)))
+    validate_capacity(preview, limits, policy)
+    import review_capacity
+
+    executable = {
+        **preview,
+        "budget": limits,
+        "unit_policy": policy,
+        "integration_capacity_estimate": review_capacity.estimate(directory, preview, limits),
+    }
     if meta.get("kind") == "batch-parent":
         existing = load(directory)
         if {k: v for k, v in existing.items() if k != "authorization"} != executable:
@@ -542,6 +586,12 @@ def select(directory, limits, authorization=None):
     ):
         raise WorkflowError("Attempted single review cannot become a batch")
     validate_authorization(authorization, executable)
+    if executable.get("continuation"):
+        old = load(executable["continuation"]["snapshot"]["ancestor"])
+        if any(authorization[k] != old["authorization"][k] for k in ("harness_commit", "harness_files")):
+            raise WorkflowError("Continuation harness changed")
+        if authorization["name"] == old["authorization"]["name"]:
+            raise WorkflowError("Successor requires a separately named finite grant")
     record = {**executable, "authorization": authorization}
     atomic_json(directory / "batch.json", record)
     meta.update(kind="batch-parent", batch_sha256=digest(record))
@@ -550,7 +600,7 @@ def select(directory, limits, authorization=None):
 
 
 def validate_authorization(auth, executable):
-    keys = {"name", "preview_digest", "harness_commit", "harness_files", "expires_at"}
+    keys = {"name", "preview_digest", "harness_commit", "harness_files", "expires_at", "integration_capacity"}
     if (
         not isinstance(auth, dict)
         or set(auth) != keys
@@ -559,6 +609,9 @@ def validate_authorization(auth, executable):
         or auth["preview_digest"] != digest(executable)
     ):
         raise WorkflowError("Named finite authorization must bind the executable preview")
+    import review_capacity
+
+    review_capacity.validate(auth, executable)
     from workflow import sha
 
     sha(auth["harness_commit"])
@@ -573,17 +626,24 @@ def validate_authorization(auth, executable):
 
 
 def load(directory):
-    if _reporting(directory):
-        import review_batch_v7
-
-        return review_batch_v7.load(directory)
     directory = plain_path(directory)
     meta = api().verify_packet(directory)
     saved = coverage.read_json(directory / "batch.json")
     if meta.get("kind") != "batch-parent" or digest(saved) != meta.get("batch_sha256"):
         raise WorkflowError("Batch binding changed")
-    limits, policy = review_policy.batch_budget(saved["budget"], meta["review_policy"], len(saved["units"]))
-    expected = {**plan(directory, version=saved["schema_version"]), "budget": limits, "unit_policy": policy}
+    limits, policy = review_policy.batch_budget(
+        saved["budget"], meta["review_policy"], len(work_units(saved))
+    )
+    planned = plan(directory, version=saved["schema_version"])
+    validate_capacity(planned, limits, policy)
+    import review_capacity
+
+    expected = {
+        **planned,
+        "budget": limits,
+        "unit_policy": policy,
+        "integration_capacity_estimate": review_capacity.estimate(directory, planned, limits),
+    }
     validate_authorization(saved["authorization"], expected)
     if saved != {**expected, "authorization": saved["authorization"]}:
         raise WorkflowError("Batch plan, provider or allocation changed")
@@ -591,10 +651,6 @@ def load(directory):
 
 
 def state_for(directory, batch):
-    if _reporting(directory):
-        import review_batch_v7
-
-        return review_batch_v7.state_for(directory, batch)
     path = Path(directory) / "batch-state.json"
     if not path.exists():
         return None
@@ -613,7 +669,7 @@ def state_for(directory, batch):
             "stop_reason",
         }
         or type(state.get("schema_version")) is not int
-        or state.get("schema_version") != 2
+        or state.get("schema_version") != 3
         or state.get("batch_sha256") != digest(batch)
         or state.get("authorization_digest") != digest(batch["authorization"])
     ):
@@ -629,7 +685,7 @@ def state_for(directory, batch):
     if state["stop_reason"] not in {None, "execution_incomplete_or_interrupted"}:
         raise WorkflowError("Invalid durable stop state")
     rows = state.get("reservations")
-    if not isinstance(rows, list) or len(rows) > min(batch["budget"]["requests"], len(batch["units"])):
+    if not isinstance(rows, list) or len(rows) > min(batch["budget"]["requests"], len(work_units(batch))):
         raise WorkflowError("Invalid batch reservations")
     for index, row in enumerate(rows):
         if not isinstance(row, dict) or row.get("status") not in {
@@ -653,7 +709,7 @@ def state_for(directory, batch):
                 "allocation",
             }
             or type(binding.get("slot")) is not int
-            or binding.get("unit") != batch["units"][index]["id"]
+            or binding.get("unit") != work_units(batch)[index]["id"]
             or binding.get("slot") != index + 1
             or binding.get("policy_digest") != digest(batch["unit_policy"])
             or binding.get("authorization_digest") != digest(batch["authorization"])
@@ -699,10 +755,6 @@ def observed_usage(target, policy):
 
 def captured(directory, meta):
     """Record durable capture before assessment; recovery never reclaims its slot."""
-    if _reporting(directory):
-        import review_batch_v7
-
-        return review_batch_v7.captured(directory, meta)
     parent = Path(directory).parent.parent
     batch = load(parent)
     state = state_for(parent, batch)
@@ -714,7 +766,7 @@ def captured(directory, meta):
     )
     if (
         row is None
-        or unit_path(parent, batch["units"][row["binding"]["slot"] - 1]) != Path(directory)
+        or unit_path(parent, work_units(batch)[row["binding"]["slot"] - 1]) != Path(directory)
         or row.get("assignment_digest") != digest(meta.get("batch_unit"))
     ):
         raise WorkflowError("Capture reservation changed")
@@ -725,10 +777,6 @@ def captured(directory, meta):
 
 def dispatch_timeout(repo, directory, meta, context, *, clock=time.time):
     """Called again inside the adapter, after preflight and immediately before spawn."""
-    if _reporting(directory):
-        import review_batch_v7
-
-        return review_batch_v7.dispatch_timeout(repo, directory, meta, context, clock=clock)
     if meta.get("kind") != "batch-unit":
         if context is not None:
             raise WorkflowError("Single review received batch dispatch context")
@@ -741,7 +789,7 @@ def dispatch_timeout(repo, directory, meta, context, *, clock=time.time):
     if not state or state["stop_reason"] is not None:
         raise WorkflowError("Batch is stopped or unreserved")
     row = state["reservations"][-1]
-    unit = batch["units"][row["binding"]["slot"] - 1]
+    unit = work_units(batch)[row["binding"]["slot"] - 1]
     if (
         unit_path(parent, unit) != Path(directory)
         or row["binding"]["dispatch_id"] != context["dispatch_id"]
@@ -752,11 +800,22 @@ def dispatch_timeout(repo, directory, meta, context, *, clock=time.time):
         or meta["review_policy"] != batch["unit_policy"]
     ):
         raise WorkflowError("Dispatch context or child binding changed")
+    import review_claims
+
+    review_claims.verify(repo, batch, unit, row)
+    import review_continuation
+
+    review_continuation.verify_live(repo, parent, batch)
+    review_continuation.owner(repo, parent, batch)
     api().verify_packet(directory)
     validate_navigation(directory, batch, unit, meta["batch_unit"])
+    if unit["kind"] == "integration":
+        import review_capacity
+
+        review_capacity.actual(directory, batch)
     api().current_pr(repo, meta["pr"], meta["head_sha"], meta["base_sha"])
     current_contract(repo, parent, meta)
-    for prior in batch["units"][: row["binding"]["slot"] - 1]:
+    for prior in work_units(batch)[: row["binding"]["slot"] - 1]:
         if not unit_assessment(parent, batch, prior)["complete"]:
             raise WorkflowError("Prior component is incomplete")
         use = observed_usage(unit_path(parent, prior), batch["unit_policy"])
@@ -778,10 +837,6 @@ def dispatch_timeout(repo, directory, meta, context, *, clock=time.time):
 
 
 def execute(repo, directory, *, resume=False, recover_only=False, clock=time.time):
-    if _reporting(directory):
-        import review_batch_v7
-
-        return review_batch_v7.execute(repo, directory, resume=resume, recover_only=recover_only, clock=clock)
     directory = plain_path(directory)
     if api().verify_packet(directory)["schema_version"] == 4:
         from review_batch_v4 import execute as historical_execute
@@ -794,6 +849,18 @@ def execute(repo, directory, *, resume=False, recover_only=False, clock=time.tim
             meta = api().verify_packet(directory)
             api().current_pr(repo, meta["pr"], meta["head_sha"], meta["base_sha"])
             current_contract(repo, directory, meta)
+            from claude_native_auth import current_binding
+
+            required_window = (
+                batch["budget"]["seconds"] if state is None else max(1, state["deadline"] - clock())
+            )
+            if current_binding(required_window) != batch["policy"]["authentication"]:
+                raise WorkflowError("Batch authentication generation or remaining lifetime differs")
+            import review_continuation
+
+            review_continuation.verify_live(repo, directory, batch)
+            if state:
+                review_continuation.owner(repo, directory, batch)
         if recover_only:
             saved_meta = api().verify_packet(directory)
             if saved_meta.get("review_sha256"):
@@ -802,7 +869,7 @@ def execute(repo, directory, *, resume=False, recover_only=False, clock=time.tim
                 ) != coverage.read_json(directory / "coverage.json"):
                     raise WorkflowError("Completed aggregate bytes changed")
             if state:
-                for unit in batch["units"][: len(state["reservations"])]:
+                for unit in work_units(batch)[: len(state["reservations"])]:
                     target = unit_path(directory, unit)
                     if target.exists():
                         api().recover_review(repo, target)
@@ -819,10 +886,13 @@ def execute(repo, directory, *, resume=False, recover_only=False, clock=time.tim
             if (directory / "units").exists() or (directory / "review.md").exists():
                 raise WorkflowError("Missing ledger cannot reset existing execution")
             now = clock()
-            if now >= batch["authorization"]["expires_at"]:
-                raise WorkflowError("Authorization expired before batch start")
+            if (
+                now + len(work_units(batch)) * batch["budget"]["unit_seconds"]
+                > batch["authorization"]["expires_at"]
+            ):
+                raise WorkflowError("Authorization cannot fund the full remaining time allocation")
             state = {
-                "schema_version": 2,
+                "schema_version": 3,
                 "batch_sha256": digest(batch),
                 "authorization_digest": digest(batch["authorization"]),
                 "started": now,
@@ -831,8 +901,14 @@ def execute(repo, directory, *, resume=False, recover_only=False, clock=time.tim
                 "reservations": [],
                 "stop_reason": None,
             }
+        if not (directory / "batch-state.json").exists():
+            # The exclusive owner is consumed before the first ledger write.
+            # A crash in between cannot obtain another successor allocation.
+            import review_continuation
+
+            review_continuation.owner(repo, directory, batch, create=True)
         try:
-            for index, unit in enumerate(batch["units"]):
+            for index, unit in enumerate(work_units(batch)):
                 target = unit_path(directory, unit)
                 if index < len(state["reservations"]):
                     if not target.exists() or api().recover_review(repo, target) is None:
@@ -862,6 +938,16 @@ def execute(repo, directory, *, resume=False, recover_only=False, clock=time.tim
                         "assignment_digest": None,
                     }
                     state["reservations"].append(row)
+                    atomic_json(directory / "batch-state.json", state)
+                    import review_claims
+
+                    row["claim"] = review_claims.reserve(
+                        repo,
+                        batch,
+                        unit,
+                        row["binding"],
+                        successor=directory if batch.get("continuation") else None,
+                    )
                     atomic_json(directory / "batch-state.json", state)
                     target = prepare_unit(directory, batch, unit, row)
                     row["assignment_digest"] = digest(api().verify_packet(target)["batch_unit"])
@@ -896,23 +982,25 @@ def execute(repo, directory, *, resume=False, recover_only=False, clock=time.tim
 
 
 def assessment(directory):
-    if _reporting(directory):
-        import review_batch_v7
-
-        return review_batch_v7.assessment(directory)
     batch = load(directory)
     state = state_for(directory, batch)
     selected, units, findings, usage, reasons = {}, [], [], [], []
     reservations = state["reservations"] if state else []
-    for index, unit in enumerate(batch["units"]):
+    for unit in batch["units"]:
         target = unit_path(directory, unit)
-        if index >= len(reservations):
+        if not imported(directory, unit) and unit["id"] not in {r["binding"]["unit"] for r in reservations}:
             units.append({"id": unit["id"], "state": "never-started"})
             continue
-        actual = observed_usage(target, batch["unit_policy"])
+        actual = observed_usage(
+            target,
+            api().verify_packet(target)["review_policy"]
+            if imported(directory, unit)
+            else batch["unit_policy"],
+        )
         usage.append(
             {
                 "unit": unit["id"],
+                "origin": "imported" if imported(directory, unit) else "new",
                 "kind": batch["budget"]["kind"],
                 "amount": str(actual) if actual is not None else None,
             }
@@ -968,7 +1056,7 @@ def assessment(directory):
     if state and state["stop_reason"]:
         reasons.append(state["stop_reason"])
     return {
-        "schema_version": 5,
+        "schema_version": 6,
         "qualified": not reasons and all(u["state"] == "complete" for u in units),
         "reasons": sorted(set(reasons)),
         "material": material,
@@ -981,6 +1069,14 @@ def assessment(directory):
         "authorization_digest": digest(batch["authorization"]),
         "budget": batch["budget"],
         "usage": usage,
+        "prior_consumption": batch.get("continuation", {}).get("snapshot", {}).get("consumed"),
+        "combined_consumption": {
+            "wrapper_reservations": len(reservations)
+            + batch.get("continuation", {}).get("snapshot", {}).get("consumed", {}).get("reservations", 0),
+            "prior": batch.get("continuation", {}).get("snapshot", {}).get("consumed", {}).get("usage", []),
+            "new": [row for row in usage if row["origin"] == "new"],
+            "note": "Imported observations occur only in prior consumption; unknown new usage is not zero or refundable.",
+        },
         "reservations": reservations,
         "started": state["started"] if state else None,
         "deadline": state["deadline"] if state else None,
@@ -989,10 +1085,6 @@ def assessment(directory):
 
 
 def finalize(directory):
-    if _reporting(directory):
-        import review_batch_v7
-
-        return review_batch_v7.finalize(directory)
     result = assessment(directory)
     atomic_json(Path(directory) / "coverage.json", result)
     atomic_json(Path(directory) / "review.md", result)
@@ -1003,10 +1095,6 @@ def finalize(directory):
 
 
 def qualification(directory, require=False):
-    if _reporting(directory):
-        import review_batch_v7
-
-        return review_batch_v7.qualification(directory, require)
     result = assessment(directory)
     meta = api().verify_packet(directory)
     if (
@@ -1016,13 +1104,38 @@ def qualification(directory, require=False):
     ):
         raise WorkflowError("Aggregate changed or requires saved-result recovery")
     if require:
+        if not result["qualified"]:
+            raise WorkflowError("Batch coverage incomplete; every component and integration required")
         review_policy.require_current_adapter(meta["review_policy"])
         if meta["review_policy"]["provider"] == "claude-code":
             from claude_native_auth import validate_binding
 
             validate_binding(meta["review_policy"].get("authentication"))
-        if not result["qualified"]:
-            raise WorkflowError("Batch coverage incomplete; every component and integration required")
+        from reporting_admission import require_packet
+
+        for unit in load(directory)["units"]:
+            target = unit_path(directory, unit)
+            if imported(directory, unit):
+                from review_continuation import require_import
+                from workflow import Repo
+
+                require_import(Repo(directory), directory, load(directory), unit)
+            else:
+                require_packet(target, api().verify_packet(target))
+            import review_claims
+            from workflow import Repo
+
+            batch = load(directory)
+            state = state_for(directory, batch)
+            ancestor = imported(directory, unit)
+            origin = load(ancestor) if ancestor else batch
+            ledger = state_for(ancestor, origin) if ancestor else state
+            row = next(row for row in ledger["reservations"] if row["binding"]["unit"] == unit["id"])
+            review_claims.verify(Repo(directory), origin, unit, row)
+        import review_continuation
+
+        review_continuation.verify_live(Repo(directory), directory, batch)
+        review_continuation.owner(Repo(directory), directory, batch)
     return result
 
 
@@ -1071,15 +1184,19 @@ def contract_digest(meta, context):
 
 
 def preview(directory, limits=None):
-    if _reporting(directory):
-        import review_batch_v7
-
-        return review_batch_v7.preview(directory, limits)
     planned = plan(directory)
     if limits is None:
         return planned
-    limits, policy = review_policy.batch_budget(limits, planned["policy"], len(planned["units"]))
-    return {**planned, "budget": limits, "unit_policy": policy}
+    limits, policy = review_policy.batch_budget(limits, planned["policy"], len(work_units(planned)))
+    validate_capacity(planned, limits, policy)
+    import review_capacity
+
+    return {
+        **planned,
+        "budget": limits,
+        "unit_policy": policy,
+        "integration_capacity_estimate": review_capacity.estimate(directory, planned, limits),
+    }
 
 
 def verify_harness(authorization):
@@ -1096,7 +1213,7 @@ def verify_harness(authorization):
 
 
 def validate_navigation(directory, batch, unit, assignment):
-    if batch["schema_version"] == 6:
+    if batch["schema_version"] == 7:
         limit = batch["budget"]["max_report_bytes"]
         if assignment.get("max_report_bytes") != limit:
             raise WorkflowError("Unit report bound changed")
@@ -1108,6 +1225,15 @@ def validate_navigation(directory, batch, unit, assignment):
         )
 
 
-def _reporting(directory):
-    path = plain_path(Path(directory) / "metadata.json")
-    return path.is_file() and coverage.read_json(path).get("schema_version") == 7
+def validate_capacity(planned, limits, policy):
+    if planned.get("continuation"):
+        old = load(planned["continuation"]["snapshot"]["ancestor"])
+        if any(
+            limits[k] != old["budget"][k]
+            for k in ("kind", "unit_cost", "unit_seconds", "max_report_bytes", "max_integration_bytes")
+        ):
+            raise WorkflowError("Continuation changes original per-unit/report constraints")
+    if limits["max_report_bytes"] != policy["reporting"]["limits"]["report_bytes"]:
+        raise WorkflowError("Batch report limit differs from qualified reporting policy")
+    if (len(planned["units"]) - 1) * limits["max_report_bytes"] > limits["max_integration_bytes"]:
+        raise WorkflowError("Integration allocation cannot retain every worst-case exact report")

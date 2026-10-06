@@ -6,15 +6,77 @@ requires the immutable dispatch admission/execution binding and matching current
 harness/policy; synthetic storage success alone remains incomplete. Exact model
 argument fragments and separate auxiliary text retain their existing representation.
 New publication envelopes distinguish admitted dispatch from storage-only evidence
-without rewording historical envelopes. Recovery stays storage-only. The v7 batch
-and same-revision continuation path is not yet delivered; no old v6/c303 report
-acquires changed-head credit through this single-review admission path.
+without rewording historical envelopes. Recovery stays storage-only. V7 batches use plan 7, ledger 3 and aggregate assessment 6.
+No old v6/c303 report acquires changed-head credit through this path.
 
 Coverage qualification means the wrapper observed successful read-only tool results
 for the required packet material and validated the model's accounting of that material.
 It does not prove understanding, defect detection, acceptance correctness or scientific
 validity. The owner can rewrite private records and their hashes. These records detect
 accidental changes; they are not a cryptographic attestation against their owner.
+
+
+## Same-revision native continuation
+
+V7 batches require explicit reporting selection and actual admitted native dispatch
+for every new component and integration. All original inventory, source/test links,
+findings and integration obligations remain in the deterministic plan. Each reserved
+unit claims its original material globally under `.agentic-local/review-claims-v1`;
+an independently prepared packet or different grant cannot dispatch the same work.
+Partial claim writes and missing ledgers remain consumed/uncertain, never reset.
+
+`review.py batch-continue-prepare ANCESTOR NEW_DIRECTORY` prepares a separate immutable
+`continuation.json`, without inference or applying a grant. The initial format accepts
+one stopped first-attempt v7 ancestor; a stopped successor cannot automatically or
+manually chain another successor through this format. The ancestor must retain all
+reservations, known usage, exact reports/captures/diagnostics/admission/execution and
+matching assignments. Every imported complete component must have one exact current
+head COMMENT publication. Preparation preserves the original stop, deadlines, costs,
+failed reports and grant bytes. Unknown execution is not reattemptable. The manifest
+explicitly names each known incomplete reattempt and every never-started obligation.
+
+Only an identical repository/issue/designated plan/contract/head/base/merge-base,
+full inventory/assignments and tested harness can continue. V6/v7 imports cannot mix.
+An optional `--authentication-binding FILE` contains only the sanitized binding from
+separately verified same-account renewal. That exception requires retained lineage;
+it never alters old authentication records or permits a source/policy change.
+
+Preview the new directory with the explicit remaining budget. Select a separately
+named authorization bound to that exact preview and original tested harness. The
+new allocation funds only remaining units, with the original per-unit/report bounds;
+old reservations and usage are disclosed separately and never refunded. An exclusive
+successor claim is consumed before the new ledger starts. Competing proposals,
+uncertain application or partial persistence cannot start another successor. A new
+failure stops this ledger too. `batch-recover` remains storage-only; `batch-resume`
+cannot clear either stop. Integration requires every exact imported/new component
+report, freshly rechecks dependencies/publications, and grants no pooled partial-unit
+or probe credit. New publications reference imported COMMENTs without reposting them.
+
+Managed adoption uses `task-review --batch --fresh --approved-continuation
+--continue-reason REASON --batch-successor NEW_DIRECTORY` and explicit matching
+`--reporting-policy FILE`. It accepts only a proposal extending the designated stopped
+round at the identical reviewed revision. Preparation is separate from the later
+explicit finite grant and `--execute`. The normal round authorization gate still applies.
+
+V7 executable previews disclose retained report bytes, worst remaining report bytes,
+original source/test context, finite navigation ceiling, schema/prompt bytes, proof
+storage and integration time/reference allocation. The named authorization additionally
+requires `integration_capacity` with exact `model`, positive `input_utf8_bytes`,
+`protocol_overhead_bytes`, `output_utf8_bytes`, and a nonempty `evidence` reference to
+the coordinator's independently reviewed capacity calculation. No live capacity value
+is supplied by the implementation. A conservative full-navigation envelope must fit;
+the actual materialized integration is checked again before dispatch. A byte ceiling
+is not a tokenizer/context guarantee, reference cost is not billing, and finite time
+cannot guarantee eventual completion. The coordinator must establish actual model,
+usage and credential-window feasibility before applying any full-review authorization.
+No truncation, lowered report limits or extra integration invocation follows failure.
+
+These paths have synthetic execution tests. They do not establish actual purpose10/11
+activation or a complete review. The stopped c303 aggregate remains 60/776 incomplete;
+its nineteen successes are historical after changed head/contract. Final source/local
+and hosted gates, inspected harness and fresh authentication/billing facts precede
+coordinator-owned purpose10 then11. The two-process allowance is never consumed at an
+intermediate implementation head. Full review remains separately authorized.
 
 ## Provider-aware bounded batches (current)
 

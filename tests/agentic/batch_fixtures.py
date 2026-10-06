@@ -26,6 +26,19 @@ def limits():
 def authorize(repo, directory, bounds):
     preview = batch.preview(directory, bounds)
     return {
+        **(
+            {
+                "integration_capacity": {
+                    "model": preview["policy"]["model"],
+                    "input_utf8_bytes": 100_000_000,
+                    "protocol_overhead_bytes": 100_000,
+                    "output_utf8_bytes": bounds["max_report_bytes"],
+                    "evidence": "Synthetic capacity fixture; no live model capacity claim",
+                }
+            }
+            if preview["schema_version"] == 7
+            else {}
+        ),
         "name": "synthetic-test-only",
         "preview_digest": digest(preview),
         "harness_commit": repo.git("rev-parse", "HEAD"),

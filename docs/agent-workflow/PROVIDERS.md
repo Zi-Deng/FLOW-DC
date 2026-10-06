@@ -29,9 +29,9 @@ readiness rechecks its exact purpose evidence and harness; historical assessment
 and storage recovery do not require current activation. Publication envelopes are
 bound to the saved report/admission representation and stay unchanged if later
 admission fails. Local owner-writable records are not authenticity or billing
-attestations. Same-revision batch continuation remains a separate unfinished path.
+attestations. Same-revision native batches and explicit successors are described in [COVERAGE](COVERAGE.md#same-revision-native-continuation).
 
-Current issue-31 batch records use metadata/capture 6, plan 6 and ledger 2 (saved plan 5 remains reproducible); see
+Historical issue-31 batch records use metadata/capture 6, plan 6 and ledger 2 (saved plan 5 remains reproducible); see
 [provider-aware bounded batches](COVERAGE.md#provider-aware-bounded-batches-current)
 for typed allocations, named authorization, exact-report publication and recovery-only
 history. Single-review schema 5 remains eligible under its original provider checks.
@@ -122,8 +122,8 @@ schema-7 fixtures without execution records retain their storage-only meaning.
 Both the shared runner and native entrypoint require the separate v7 admission
 gate. Native preflight independently rechecks that gate before inspecting the
 binary or launching any process. The old nine-attempt grant cannot activate v7.
-Same-revision continuation remains unfinished; no implementation fixture counts
-as actual activation or independent review.
+Same-revision continuation preserves stopped evidence under a separate finite grant;
+no implementation fixture counts as actual activation or independent review.
 
 The approved additional sequence is prospective: two processes, each 300 seconds/
 2 reference USD, total 600 seconds/4 reference USD, zero paid extra; purpose 11 only
@@ -132,8 +132,7 @@ after 10 qualifies, failure-stop and no twelfth slot. No grant is applied here.
 Synthetic transport, full-stream, storage/recovery and pinned-source expression
 tests establish local software properties only. Static binary/source checks do not
 prove actual reporting admission, Max access, isolation, model completion or
-independent review. Same-revision continuation, final skill delivery, final-head gates
-and actual live qualification remain required by
+independent review. Final-head gates and actual live qualification remain required by
 [the approved amendment](https://github.com/Zi-Deng/FLOW-DC/issues/31#issuecomment-6001819615).
 
 ## Inspect or deliberately select
@@ -764,7 +763,7 @@ The diagnostic and ordinary admission paths have synthetic execution tests. Actu
 activation remains unqualified. The separate CLI exposes explicit coordinator
 operations, and ordinary CLI/managed preparation accepts a finite reporting profile.
 No command applies or runs diagnostics as a side effect of review preparation.
-The journal itself never invokes a provider. All remaining continuation implementation,
-final gates and skill delivery must finish before coordinator-owned live qualification.
+The journal itself never invokes a provider. Final implementation, source/local/hosted
+gates and inspected harness must precede coordinator-owned live qualification.
 No grant has been applied by implementation. Owner-writable records are accounting
 and provenance, not cryptographic or billing attestations.

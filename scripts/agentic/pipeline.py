@@ -264,7 +264,7 @@ def report_record(repo, state, round_record):
         raise WorkflowError("Review metadata differs from the registered pipeline round")
     if round_record["contract_digest"] != digest(state["approval"]["contract"]):
         raise WorkflowError("Review used a superseded contract")
-    if meta.get("schema_version") in {5, 6} and (
+    if meta.get("schema_version") in {5, 6, 7} and (
         meta.get("review_policy") != round_record.get("review_policy")
         or digest(meta["review_policy"]) != round_record.get("review_policy_digest")
     ):
@@ -349,7 +349,12 @@ def review_task(
     review_effort=None,
     batch_authorization=None,
     reporting=None,
+    batch_successor=None,
 ):
+    if batch_successor is not None and not (
+        batch and fresh and approved_continuation and (continue_reason or "").strip()
+    ):
+        raise WorkflowError("Prepared successor requires --batch --fresh and explicit reason/continuation")
     if batch_limits is not None and not batch:
         raise WorkflowError("Budget flags require explicit --batch selection")
     if batch_resume and not (batch and execute):
@@ -419,18 +424,32 @@ def review_task(
         if approved_continuation and not (continue_reason or "").strip():
             raise WorkflowError("Explicit continuation requires a concrete reason")
         if record is None:
-            directory = independent.prepare(
-                repo,
-                state["pr"],
-                number,
-                state["approval"]["plan_comment"],
-                expected_head=binding["head_sha"],
-                prior_review=prior_review,
-                review_provider=review_provider,
-                review_model=review_model,
-                review_effort=review_effort,
-                reporting=reporting,
-            )
+            if batch_successor is not None:
+                import review_continuation
+
+                directory = plain_path(batch_successor)
+                proposal = review_continuation.validate(directory)
+                if (
+                    not same_head
+                    or proposal is None
+                    or plain_path(proposal["snapshot"]["ancestor"]) != plain_path(previous["directory"])
+                ):
+                    raise WorkflowError("Successor does not extend the exact designated stopped round")
+                if independent.verify_packet(directory).get("kind") != "single":
+                    raise WorkflowError("Managed successor must be unselected and unattempted")
+            else:
+                directory = independent.prepare(
+                    repo,
+                    state["pr"],
+                    number,
+                    state["approval"]["plan_comment"],
+                    expected_head=binding["head_sha"],
+                    prior_review=prior_review,
+                    review_provider=review_provider,
+                    review_model=review_model,
+                    review_effort=review_effort,
+                    reporting=reporting,
+                )
             if independent.verify_packet(directory)["review_policy"] != selection["policy"]:
                 raise WorkflowError("Review selection changed during preparation; prepare a fresh packet")
             record = {
@@ -586,6 +605,9 @@ def add_commands(sub):
         "--batch-authorization", help="Named authorization JSON bound to final executable preview"
     )
     review_policy.add_arguments(review_parser)
+    review_parser.add_argument(
+        "--batch-successor", help="Prepared exact same-revision continuation directory"
+    )
     review_parser.add_argument("--reporting-policy", help="JSON with explicit max_turns and retention limits")
 
 
@@ -623,5 +645,6 @@ def dispatch(repo, args):
             if args.batch_authorization
             else None,
             read_selection(args.reporting_policy),
+            args.batch_successor,
         )
     raise WorkflowError("Unknown pipeline operation")

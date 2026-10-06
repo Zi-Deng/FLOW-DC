@@ -315,3 +315,18 @@ Keep the exact model response separate from its publication envelope, retain san
 failure diagnostics and do not republish raw provider session files. Known numerical
 usage is recorded without inferred currency conversions. Full migration and exact
 historical comparison commands are in the runbook.
+
+## V7 reporting batch continuation
+
+The review skill's coverage procedure now includes explicit native plan-7 batches
+and same-revision successors. Follow [the complete continuation procedure](COVERAGE.md#same-revision-native-continuation).
+Global material claims prevent independent grants from dispatching the same work.
+Never clear a stopped ledger, reclaim an uncertain reservation or reuse its grant.
+A separately prepared successor requires exact published complete imports, known
+prior consumption, identical reviewed identity/inventory/assignments/harness and a
+separately named finite authorization. Integration requires every exact component
+report. The initial successor format does not chain a further successor. Validate
+reviewed model-input capacity and current credential lifetime before execution.
+Historical v6/c303 evidence acquires no changed-head credit. Both actual purpose10/11
+records, final tested implementation/harness and current hosted gates are separate
+prerequisites; no skill invocation implicitly applies or spends either allowance.
