@@ -991,12 +991,22 @@ No full batch, campaign, scientific claim or human merge is funded by this allow
 
 ## Finite reporting recovery v5
 
-The [reconciled approved plan6012492318](https://github.com/Zi-Deng/FLOW-DC/issues/31#issuecomment-6012492318)
-uses separate `reporting_activation_v5.py`, `reporting_diagnostic_v5.py`,
+The [original V5 plan6012492318](https://github.com/Zi-Deng/FLOW-DC/issues/31#issuecomment-6012492318)
+introduced separate `reporting_activation_v5.py`, `reporting_diagnostic_v5.py`,
 `reporting_recovery_history_v5.py` and `.agentic-local/claude-reporting-activation-v5`.
 Grant/reservation/completion/outcome and current admission are version5. The v8
 policy/parser/preflight, metadata/capture/result7, diagnostic10, report/proof/execution2,
 observation2 and every acceptance/privacy/tool control above remain unchanged.
+
+Current authority is bound to the exact
+[reconciliation6014789492](https://github.com/Zi-Deng/FLOW-DC/issues/31#issuecomment-6014789492)
+and its prospectively recorded standing authorization. Generation10 authorized the
+scheduler repair and deliberately retained the older native binding; it cannot
+authorize this application. The original approval remains historical. Matching the
+new literal contract is only one prerequisite: final-source local, installed and
+hosted gates, a fresh reviewed preview, application,18 and conditional19 remain
+separate coordinator actions. A task receipt, software pass or renewed credential
+alone supplies no native qualification or grant.
 
 **18 isolation-refusal first; 19 native-tools-and-source only after independently
 replayed actual18 qualifies.** Each proves native Read/Grep/Glob, both required source
@@ -1034,7 +1044,10 @@ unchanged margins must fit fresh actual credential/receipt windows before applic
 The first reservation starts the unchanged600-second aggregate clock; checks consume
 elapsed time. An infeasible window stops before application, without caches or waivers.
 
-Protocol2 workflow runner and all prior770 occurrences remain fixed: two processes,
+The historical770-occurrence baseline and all810 occurrences at8bb1abb remain
+preserved; complete discovery includes the new standalone authority tests and records
+the actual total. Existing defining test modules and the fixed scheduling seed stay
+unchanged. The protocol2 workflow runner retains two processes,
 840seconds,32MiB text/16MiB evidence per worker and unchanged15-minute CI job. New
 software tests establish no live qualification. After actual18/19, full original PR
 component plus integration inspection/publication still needs a distinct populated

@@ -22,11 +22,11 @@ from workflow import WorkflowError
 
 CONTRACT = {
     "issue": 31,
-    "plan_comment": 6012492318,
+    "plan_comment": 6014789492,
     "issue_digest": "1875464d1340e35cd90fae86ad70e87be1b13108587ef138ce8130cc9263c03f",
-    "plan_digest": "c0dbb09a3b7a03176988263aee50059c905af6750ef42de8042ff386e65b8461",
+    "plan_digest": "e2fe530795df6701f43de54bb869032cd5375e92c9ecf543fa4e5a7d7830fb84",
 }
-CONTRACT_DIGEST = "ccd923cdd69de80f1f27653d9265aee2b3cec77499f039538b59447c9480b4b8"
+CONTRACT_DIGEST = "980ea11c7ec6a2b3b1f3488c475ef9013957f525ef0f3cd115b87490f6fafec0"
 SEQUENCE = {18: "isolation-refusal", 19: "native-tools-and-source"}
 LIMITS = {"processes": 2, "seconds": 600, "reference_usd": 4, "paid_extra_usd": 0, "api_usd": 0}
 MAX_RECORD_BYTES = 2_000_000
@@ -50,7 +50,7 @@ def authorization(repo):
         or type(approval.get("issue")) is not int
         or approval["issue"] != 31
         or type(approval.get("plan_comment")) is not int
-        or approval["plan_comment"] != 6012492318
+        or approval["plan_comment"] != 6014789492
         or not isinstance(approval.get("source"), str)
         or not approval["source"].strip()
         or not isinstance(approval.get("recorded_at"), str)
