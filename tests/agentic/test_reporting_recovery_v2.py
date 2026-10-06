@@ -15,9 +15,12 @@ import reporting_admission as admission
 import reporting_diagnostic as old_diagnostic
 import reporting_diagnostic_v2 as diagnostic
 import reporting_recovery_history as history
+import review_batch_v7 as batch
+import review_lifetime
 import test_claude_native_auth as native_tests
 import test_reporting_admission as admission_tests
 import test_reporting_owned_auth as guarded_tests
+import test_review_batch_v7 as fixtures
 from tasks import atomic_json, digest
 from test_reporting_diagnostic import ReportingDiagnosticFixture
 from test_reporting_owned_auth import BINDING, SNAPSHOT, STORE
@@ -482,8 +485,6 @@ class CurrentBatchTests(GuardedRecoveryFixture):
     def test_current_v2_batch_integration_requires_every_exact_component_report(self):
         import batch_fixtures
         import review_batch
-        import review_batch_v7 as batch
-        import test_review_batch_v7 as fixtures
 
         self.qualify()
         self.directory = review.prepare(
@@ -509,8 +510,6 @@ class CurrentBatchTests(GuardedRecoveryFixture):
         )
         # Same complete integration/material assertions as the retained v1 suite,
         # now through real current admission (no compatibility evaluator patch).
-        import review_lifetime
-
         lifetime = review_lifetime.current_binding
         timeout = batch.dispatch_timeout
         # Inject the same synthetic clock into default-bound clock parameters;
