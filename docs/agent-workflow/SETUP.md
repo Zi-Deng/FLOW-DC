@@ -64,6 +64,16 @@ Configuration validation checks every required model, rubric, check-name and pos
 
 `make check` runs both suites, scoped lint/format checks and skills/configuration/schema/workflow/link validation. It does not run a dataset campaign or HPC job. Individual targets are `test-flowdc`, `test-agentic`, `check-agentic`, `lint` and `check-clean`. Override `PYTHON` and `RUFF` explicitly when using a prepared environment outside the worktree; never install editable project code into a shared environment.
 
+Generic workflow tests create a fixed synthetic project policy in real temporary Git
+repositories. They use the current configuration, report schema and provider profile,
+but do not copy FLOW-DC's growing documentation into every synthetic review contract.
+`test_workflow_fixture` separately prepares all live workflow documentation and policy
+bytes, checks complete policy ranges, and rejects changed packet and navigation bytes.
+Dedicated large-diff, large-scope and lossless-navigation tests retain their explicit
+large inputs. This fixture separation changes no production review inventory or
+coverage requirement; tests still recompute evidence and run within the existing CI
+deadline.
+
 ### Validate the native Codex sandbox
 
 For the installed Codex 0.154.0, the direct smoke command is:
