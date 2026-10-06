@@ -21,6 +21,14 @@ class ReportingBatchFixture(ReportingDiagnosticFixture):
 
     def setUp(self):
         super().setUp()
+        # Native storage is simulated in this orchestration fixture. Dedicated
+        # lifetime regressions exercise the real reader against synthetic stores.
+        import claude_native_auth
+
+        patch(
+            "review_lifetime.current_binding",
+            side_effect=lambda unit, window: claude_native_auth.current_binding(unit),
+        ).start()
         self.qualify()
         self.directory = review.prepare(
             self.repo,
@@ -80,6 +88,26 @@ class ReportingBatchTests(ReportingBatchFixture):
             self.assertFalse(review.coverage_ready(child))
         ledger = review_batch.state_for(self.directory, review_batch.load(self.directory))
         self.assertEqual(ledger["schema_version"], 3)
+        import copy
+
+        import review_capacity
+        import review_prompt
+
+        saved = review_batch.load(self.directory)
+        review_capacity.actual(integration, saved)
+        usage = review_capacity.observed(integration, saved)
+        self.assertGreater(usage["optional_source_bytes"], 0)
+        self.assertIn(
+            "never substitute summaries", review_prompt.native(integration, review.verify_packet(integration))
+        )
+        for key in ("optional_source_bytes", "input_utf8_bytes"):
+            altered = copy.deepcopy(saved)
+            altered["authorization"]["integration_capacity"][key] = 1
+            with self.subTest(bound=key), self.assertRaises(workflow.WorkflowError):
+                if key == "input_utf8_bytes":
+                    review_capacity.actual(integration, altered)
+                else:
+                    review_capacity.observed(integration, altered)
 
     def test_capacity_and_v6_namespace_refuse_before_dispatch(self):
         with self.assertRaises(workflow.WorkflowError):
@@ -121,6 +149,45 @@ class ReportingBatchTests(ReportingBatchFixture):
             review_claims.reserve(self.repo, second, unit2, {"dispatch_id": "second"}, previous=digest(value))
         self.assertEqual(self.calls, 2)
 
+    def test_optional_input_overrun_retains_report_and_stops_without_retry(self):
+        authorization = batch_fixtures.authorize(self.repo, self.directory, self.bounds)
+        authorization["integration_capacity"]["optional_source_bytes"] = 1
+        batch.select(self.directory, self.bounds, authorization)
+        with (
+            patch.object(batch_fixtures, "authorize", return_value=authorization),
+            self.assertRaisesRegex(workflow.WorkflowError, "Incomplete unit"),
+        ):
+            self.execute_batch()
+        state = batch.state_for(self.directory, batch.load(self.directory))
+        self.assertIsNotNone(state["stop_reason"])
+        self.assertEqual(state["reservations"][-1]["status"], "assessed-incomplete")
+        final = self.children[-1]
+        before = (final / "review.md").read_bytes()
+        calls = self.calls
+        with patch.object(review, "review", side_effect=AssertionError("Recovery cannot infer")):
+            batch.execute(self.repo, self.directory, recover_only=True)
+        self.assertEqual((final / "review.md").read_bytes(), before)
+        self.assertEqual(self.calls, calls)
+        self.assertFalse(batch.qualification(self.directory)["qualified"])
+
+    def test_integration_input_does_not_require_available_archive_or_navigation_storage(self):
+        import review_capacity
+        import review_navigation
+
+        planned = batch.plan(self.directory)
+        estimate = review_capacity.estimate(self.directory, planned, self.bounds)
+        mandatory = planned["units"][-1]["required_volume"]["bytes"]
+        expected = (
+            mandatory
+            + estimate["mandatory_guidance_bytes"]
+            + estimate["integration_report_bytes"]
+            + estimate["schema_bytes"]
+            + estimate["prompt_bytes"]
+        )
+        self.assertEqual(estimate["input_envelope_bytes"], expected)
+        self.assertGreater(planned["resources"]["context_bytes"], mandatory)
+        self.assertGreater(review_navigation.MAX_NAVIGATION_BYTES, expected)
+
     def test_reviewed_model_capacity_is_required_and_bound(self):
         import copy
 
@@ -132,12 +199,18 @@ class ReportingBatchTests(ReportingBatchFixture):
             (len(preview["units"]) - 1) * self.bounds["max_report_bytes"],
         )
         auth = batch_fixtures.authorize(self.repo, self.directory, self.bounds)
-        for mutation in ("missing", "input", "output", "model"):
+        for mutation in ("missing", "input", "output", "model", "tokens", "oversized", "optional"):
             altered = copy.deepcopy(auth)
             if mutation == "missing":
                 del altered["integration_capacity"]
             elif mutation == "model":
                 altered["integration_capacity"]["model"] = "another-model"
+            elif mutation == "tokens":
+                altered["integration_capacity"]["estimated_input_tokens"] = 1_000_000
+            elif mutation == "oversized":
+                altered["integration_capacity"]["input_utf8_bytes"] = 100_000_000
+            elif mutation == "optional":
+                altered["integration_capacity"]["optional_source_bytes"] = 4_000_000
             else:
                 altered["integration_capacity"][mutation + "_utf8_bytes"] = 1
             with self.subTest(mutation=mutation), self.assertRaises(workflow.WorkflowError):

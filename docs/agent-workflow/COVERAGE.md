@@ -58,18 +58,48 @@ Managed adoption uses `task-review --batch --fresh --approved-continuation
 round at the identical reviewed revision. Preparation is separate from the later
 explicit finite grant and `--execute`. The normal round authorization gate still applies.
 
-V7 executable previews disclose retained report bytes, worst remaining report bytes,
-original source/test context, finite navigation ceiling, schema/prompt bytes, proof
-storage and integration time/reference allocation. The named authorization additionally
-requires `integration_capacity` with exact `model`, positive `input_utf8_bytes`,
-`protocol_overhead_bytes`, `output_utf8_bytes`, and a nonempty `evidence` reference to
-the coordinator's independently reviewed capacity calculation. No live capacity value
-is supplied by the implementation. A conservative full-navigation envelope must fit;
-the actual materialized integration is checked again before dispatch. A byte ceiling
-is not a tokenizer/context guarantee, reference cost is not billing, and finite time
-cannot guarantee eventual completion. The coordinator must establish actual model,
-usage and credential-window feasibility before applying any full-review authorization.
-No truncation, lowered report limits or extra integration invocation follows failure.
+V7 executable previews separate mandatory cross-boundary ranges, trusted guidance,
+exact retained reports and worst-case remaining reports from the full available
+source/test archive and the navigation **storage** ceiling. All original inventory,
+assignments and accessible bytes remain unchanged. Integration does not need to reread
+every component's source to receive that component's exact report; it still must inspect
+all mandatory integration material and enough relevant context to assess interactions.
+
+The named `integration_capacity` binds exact `model`, positive `input_utf8_bytes`,
+`output_utf8_bytes`, `optional_source_bytes`, `navigation_input_bytes` and
+`protocol_overhead_bytes`. Mandatory bytes plus all three input allowances must fit.
+The materialized integration is checked again before dispatch. The prompt states the
+optional-read allowances, and retained source spans are checked after capture; repeated
+reads count again. Exceeding the allowance leaves integration incomplete. Original
+context stays accessible; inadequate allowances never authorize skipping an obligation.
+Protocol framing, unobserved internal context and tokenizer behavior are not measured
+by source spans. Proof storage is reported separately, not added to required model input.
+
+A separate reviewed token estimate binds `context_tokens` (1,000,000),
+`estimated_input_tokens`, `reserved_output_tokens` (at most 128,000), and a nonempty
+`evidence` reference documenting the coordinator's calculation and uncertainty. Input
+estimate plus reserved output must fit the context. The documented bounds come from
+[Opus 5.5 specifications](https://platform.claude.com/docs/en/models/opus-5-5/overview)
+and [paid-plan Claude Code context](https://support.claude.com/en/articles/8606394-how-large-is-the-context-window-on-paid-claude-plans),
+checked October 5. The 16,000,000-byte administrative ceiling is **not** a claim of
+16 MB model capacity. The implementation performs no tokenizer/provider call and
+reports `token_fit_verified: false`. Byte counts cannot prove token fit; estimates
+must include framing, thinking/output reserves and optional retrieval. No populated
+live capacity authorization is supplied by this implementation. A feasible arithmetic
+preview does not prove completion within the original time/reference allocation.
+
+V7 batch admission separately checks the full remaining credential and paid-usage
+receipt window, including the existing 300-second refresh margin and 60-second clock
+allowance. It rounds fractional remaining seconds up. The unchanged native reader
+and renewal-lineage check receive only the integer per-process timeout (1–900 seconds).
+Fresh registration, source hashes, account and disabled-paid-usage checks remain
+mandatory. The full-window check neither reads refresh material into a provider
+snapshot nor renews credentials or receipts. Insufficient lifetime stops before a
+reservation or process; recovery remains storage-only.
+
+The coordinator must establish actual model, usage and credential-window feasibility
+before applying any full-review authorization. No truncation, lowered report limits,
+summary substitution or extra integration invocation follows failure.
 
 These paths have synthetic execution tests. They do not establish actual purpose10/11
 activation or a complete review. The stopped c303 aggregate remains 60/776 incomplete;

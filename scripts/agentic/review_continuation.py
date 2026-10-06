@@ -151,7 +151,7 @@ def verify_live(repo, directory, batch):
     from claude_native_auth import capability_lineage
 
     if not capability_lineage(
-        old["policy"]["authentication"], batch["policy"]["authentication"], batch["budget"]["seconds"]
+        old["policy"]["authentication"], batch["policy"]["authentication"], batch["budget"]["unit_seconds"]
     ):
         raise WorkflowError("Continuation lacks verified same-account generation lineage")
     for unit in old["units"]:

@@ -30,8 +30,13 @@ def authorize(repo, directory, bounds):
             {
                 "integration_capacity": {
                     "model": preview["policy"]["model"],
-                    "input_utf8_bytes": 100_000_000,
+                    "input_utf8_bytes": 4_000_000,
                     "protocol_overhead_bytes": 100_000,
+                    "optional_source_bytes": 500_000,
+                    "navigation_input_bytes": 250_000,
+                    "context_tokens": 1_000_000,
+                    "estimated_input_tokens": 800_000,
+                    "reserved_output_tokens": 128_000,
                     "output_utf8_bytes": bounds["max_report_bytes"],
                     "evidence": "Synthetic capacity fixture; no live model capacity claim",
                 }

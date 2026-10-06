@@ -343,6 +343,8 @@ def prepare_unit(directory, batch, unit, reservation):
         assignment["navigation"] = review_navigation.materialize(
             packet, {**unit, "required_ids": assignment["required_ids"]}, assignment["max_report_bytes"]
         )
+    if unit["kind"] == "integration":
+        assignment["integration_capacity"] = batch["authorization"]["integration_capacity"]
     atomic_json(packet / "assignment.json", assignment)
     meta = api().verify_packet(parent)
     child_meta = {
@@ -461,6 +463,17 @@ def unit_assessment(directory, batch, unit):
         raise WorkflowError("Batch unit lacks its admitted native execution")
     if (target / "review.md").stat().st_size > batch["budget"]["max_report_bytes"]:
         raise WorkflowError("Unit report exceeds authorized output bound")
+    if unit["kind"] == "integration":
+        import review_capacity
+
+        try:
+            review_capacity.actual(target, batch)
+            review_capacity.observed(target, batch)
+        except review_capacity.IntegrationCapacityExceeded:
+            assessment = {
+                **assessment,
+                "reasons": [*assessment["reasons"], "integration_input_capacity_exceeded"],
+            }
     selected = [row for row in assessment["material"] if row["id"] in ids]
     complete = (
         not assessment["reasons"]
@@ -851,12 +864,13 @@ def execute(repo, directory, *, resume=False, recover_only=False, clock=time.tim
             meta = api().verify_packet(directory)
             api().current_pr(repo, meta["pr"], meta["head_sha"], meta["base_sha"])
             current_contract(repo, directory, meta)
-            from claude_native_auth import current_binding
+            from review_lifetime import current_binding
 
-            required_window = (
-                batch["budget"]["seconds"] if state is None else max(1, state["deadline"] - clock())
-            )
-            if current_binding(required_window) != batch["policy"]["authentication"]:
+            required_window = batch["budget"]["seconds"] if state is None else state["deadline"] - clock()
+            if (
+                current_binding(batch["budget"]["unit_seconds"], required_window)
+                != batch["policy"]["authentication"]
+            ):
                 raise WorkflowError("Batch authentication generation or remaining lifetime differs")
             import review_continuation
 
@@ -1215,6 +1229,9 @@ def verify_harness(authorization):
 
 
 def validate_navigation(directory, batch, unit, assignment):
+    expected = batch["authorization"]["integration_capacity"] if unit["kind"] == "integration" else None
+    if assignment.get("integration_capacity") != expected:
+        raise WorkflowError("Integration input allocation changed")
     if batch["schema_version"] == 7:
         limit = batch["budget"]["max_report_bytes"]
         if assignment.get("max_report_bytes") != limit:

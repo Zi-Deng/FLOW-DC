@@ -108,6 +108,7 @@ def native(directory, meta):
         "report genuine failures as incomplete. Never reuse another invocation probe or invent calls. "
         + navigation(meta)
         + scope
+        + integration_capacity(meta)
         + PROJECTION_GUIDANCE
         + "Inspection suggestions use 1-based inclusive start/end; for Read convert to offset=start, limit=end-start+1. "
         "For blank-ended ranges extend through a following nonblank line where available. At EOF read the "
@@ -117,4 +118,17 @@ def native(directory, meta):
         + "Place scope/capability notes in limitations. Copy required IDs exactly. No commands, delegation, editing "
         "or network tools. Claim no approval or test execution. CI head association and actual checkout differ. "
         f"Keep the complete report under {report_limit(meta)} UTF-8 bytes. Observed reads do not prove understanding."
+    )
+
+
+def integration_capacity(meta):
+    value = meta.get("batch_unit", {}).get("integration_capacity")
+    if value is None:
+        return ""
+    return (
+        f"Integration planning allows {value['optional_source_bytes']} UTF-8 bytes of optional source reads "
+        f"and {value['navigation_input_bytes']} UTF-8 bytes of navigation reads; repeated reads count again. "
+        "Read every mandatory cross-boundary range and every exact component report without truncation. "
+        "All original context remains accessible. If needed context exceeds these allowances, report "
+        "incomplete; never substitute summaries or skip an obligation. Byte allowances are not token guarantees. "
     )

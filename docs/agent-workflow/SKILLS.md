@@ -1,6 +1,6 @@
 # Use the Golden Path skills
 
-Current issue-31 batch records use metadata/capture 6, plan 6 and ledger 2 (saved plan 5 remains reproducible); see
+Default compatibility batch records use metadata/capture 6, plan 6 and ledger 2 (saved plan 5 remains reproducible); see
 [provider-aware bounded batches](COVERAGE.md#provider-aware-bounded-batches-current)
 for typed allocations, named authorization, exact-report publication and recovery-only
 history. Single-review schema 5 remains eligible under its original provider checks.
@@ -330,3 +330,9 @@ reviewed model-input capacity and current credential lifetime before execution.
 Historical v6/c303 evidence acquires no changed-head credit. Both actual purpose10/11
 records, final tested implementation/harness and current hosted gates are separate
 prerequisites; no skill invocation implicitly applies or spends either allowance.
+
+For v7 admission and continuation, the linked coverage procedure also requires a
+full remaining credential/receipt window distinct from the integer per-process
+reader/lineage timeout. Integration previews separate mandatory exact input from
+available archive storage and bind optional source/navigation/protocol allowances
+plus a separately reviewed token estimate. A byte envelope is not a token guarantee.

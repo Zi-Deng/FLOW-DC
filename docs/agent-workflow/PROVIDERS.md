@@ -767,3 +767,11 @@ The journal itself never invokes a provider. Final implementation, source/local/
 gates and inspected harness must precede coordinator-owned live qualification.
 No grant has been applied by implementation. Owner-writable records are accounting
 and provenance, not cryptographic or billing attestations.
+
+Prospective v7 batch lifetime admission uses a separate full-window check, including
+refresh/clock margins and the current account-bound disabled-paid-usage receipt.
+The frozen native reader still accepts only integer per-process timeouts of 1–900
+seconds. Batch totals and fractional remaining deadlines never enter that interface;
+renewal lineage also uses the per-process bound. See [integration capacity and batch
+lifetime](COVERAGE.md) for separately bound source/navigation allowances and byte/token
+uncertainty. These local checks do not establish actual purpose10/11 activation.
