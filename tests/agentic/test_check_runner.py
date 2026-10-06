@@ -478,3 +478,40 @@ class A(unittest.TestCase):
         ):
             with self.assertRaises(check_runner.RunnerError):
                 check_runner.run(self.root, **limits)
+
+    def test_interrupt_during_spawn_is_registered_before_cleanup(self):
+        self.good()
+        script = self.root / "interrupt-spawn.py"
+        script.write_text("""import os, signal, sys, subprocess
+from pathlib import Path
+from unittest.mock import patch
+import check_runner
+original = subprocess.Popen
+def launch(*args, **kwargs):
+ child = original(*args, **kwargs)
+ Path('spawned-pid').write_text(str(child.pid))
+ os.kill(os.getpid(), signal.SIGTERM)
+ return child
+with patch('check_runner.subprocess.Popen', side_effect=launch):
+ sys.exit(check_runner.run(Path.cwd()))
+""")
+        result = subprocess.run(
+            [sys.executable, "-B", str(script)],
+            cwd=self.root,
+            env={**os.environ, "PYTHONPATH": str(self.root / "scripts/agentic"), "TMPDIR": str(self.root)},
+            capture_output=True,
+            timeout=10,
+        )
+        pid = int((self.root / "spawned-pid").read_text())
+        try:
+            self.assertEqual(result.returncode, 1)
+            _, summary = self.evidence(result)
+            self.assertEqual(len(summary["process_exits"]), 1)
+            self.assertIsNotNone(summary["process_exits"][0])
+            with self.assertRaises(ProcessLookupError):
+                os.kill(pid, 0)
+        finally:
+            try:
+                os.killpg(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass

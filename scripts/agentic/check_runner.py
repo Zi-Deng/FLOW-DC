@@ -447,7 +447,9 @@ def run(root, jobs=2, *, output=None, seconds=SECONDS, text_limit=TEXT_BYTES, ev
         or not 0 < evidence_limit <= EVIDENCE_BYTES
     ):
         raise RunnerError("Invalid execution bounds")
-    if not hasattr(os, "killpg") or not hasattr(signal, "setitimer"):
+    if not all(hasattr(signal, name) for name in ("setitimer", "pthread_sigmask")) or not hasattr(
+        os, "killpg"
+    ):
         raise RunnerError("Process-group supervision unavailable")
     output = Path(output) if output else Path(tempfile.mkdtemp(prefix="agentic-check-"))
     output.mkdir(parents=True, exist_ok=True)
@@ -489,25 +491,30 @@ def run(root, jobs=2, *, output=None, seconds=SECONDS, text_limit=TEXT_BYTES, ev
             temporary.mkdir()
             log = (output / f"worker-{index}.log").open("xb")
             logs.append(log)
-            process = subprocess.Popen(
-                [
-                    sys.executable,
-                    "-B",
-                    str(Path(__file__).resolve()),
-                    "--worker",
-                    str(index),
-                    str(root),
-                    str(request_path),
-                    str(output / f"worker-{index}.jsonl"),
-                ],
-                cwd=root,
-                env={**os.environ, "TMPDIR": str(temporary)},
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                start_new_session=True,
-            )
-            processes.append(process)
-            selector.register(process.stdout, selectors.EVENT_READ, index)
+            # Defer cancellation until the new group is registered for cleanup.
+            mask = signal.pthread_sigmask(signal.SIG_BLOCK, set(old_handlers))
+            try:
+                process = subprocess.Popen(
+                    [
+                        sys.executable,
+                        "-B",
+                        str(Path(__file__).resolve()),
+                        "--worker",
+                        str(index),
+                        str(root),
+                        str(request_path),
+                        str(output / f"worker-{index}.jsonl"),
+                    ],
+                    cwd=root,
+                    env={**os.environ, "TMPDIR": str(temporary)},
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    start_new_session=True,
+                )
+                processes.append(process)
+                selector.register(process.stdout, selectors.EVENT_READ, index)
+            finally:
+                signal.pthread_sigmask(signal.SIG_SETMASK, mask)
         while selector.get_map() or any(p.poll() is None for p in processes):
             if time.monotonic() - started >= seconds:
                 raise RunnerError("Runner deadline")
@@ -573,4 +580,5 @@ def run(root, jobs=2, *, output=None, seconds=SECONDS, text_limit=TEXT_BYTES, ev
 if __name__ == "__main__":
     if len(sys.argv) != 6 or sys.argv[1] != "--worker" or sys.argv[2] not in ("0", "1"):
         raise SystemExit("Internal worker arguments required")
+    signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGALRM, signal.SIGTERM, signal.SIGINT})
     raise SystemExit(worker(Path(sys.argv[3]), Path(sys.argv[4]), int(sys.argv[2]), Path(sys.argv[5])))
