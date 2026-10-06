@@ -1,7 +1,7 @@
 # Coverage evidence and operator migration
 
 Schema7 ordinary reviews can use explicitly configured structured reporting after
-both actual purpose12/13 records independently qualify. Shared current readiness
+both actual purposes 14/15 records independently qualify. Shared current readiness
 requires the immutable dispatch admission/execution binding and matching current
 harness/policy; synthetic storage success alone remains incomplete. Exact model
 argument fragments and separate auxiliary text retain their existing representation.
@@ -101,11 +101,11 @@ The coordinator must establish actual model, usage and credential-window feasibi
 before applying any full-review authorization. No truncation, lowered report limits,
 summary substitution or extra integration invocation follows failure.
 
-These paths have synthetic execution tests. They do not establish actual purpose12/13
+These paths have synthetic execution tests. They do not establish actual purposes 14/15
 activation or a complete review. The stopped c303 aggregate remains 60/776 incomplete;
 its nineteen successes are historical after changed head/contract. Final source/local
 and hosted gates, inspected harness and fresh authentication/billing facts precede
-coordinator-owned purpose12 then13. The two-process allowance is never consumed at an
+coordinator-owned purpose 14 then 15. The two-process allowance is never consumed at an
 intermediate implementation head. Full review remains separately authorized.
 
 ## Provider-aware bounded batches (current)
@@ -806,9 +806,9 @@ continuation remains unfinished; synthetic runner tests establish neither live
 activation nor review readiness.
 
 
-Current reporting qualification follows [finite recovery v2](PROVIDERS.md#finite-reporting-recovery-v2):
-only actual independently replayed purposes 12 and 13 admit ordinary v7 review.
-Preserve the stopped 10 reservation/execution with unknown usage, unavailable 11,
+Current reporting qualification follows [finite recovery v3](PROVIDERS.md#finite-reporting-recovery-v3):
+only actual independently replayed purposes 14 and 15 admit ordinary v7 review.
+Preserve stopped v2 12/13 and the stopped 10 reservation/execution with unknown usage, unavailable 11,
 all nine original diagnostics and historical approval/report bytes. No skill action
 implicitly applies the new grant or invokes either purpose. Recovery stays offline;
 a changed head needs fresh qualification, full independent review and hosted receipts
@@ -816,7 +816,8 @@ with PR head association distinguished from the actual tested checkout.
 
 ### V7 partial-stream rejection observations
 
-Future v7 captures optionally retain `telemetry.partial_stream`, nested schema 1.
+Current v7 captures retain `telemetry.partial_stream`, nested schema 2. Older
+optional schema-1 and absent observations retain their original meaning.
 The original v7 evaluator remains byte-frozen and decides acceptance. A separate
 wrapper makes a second bounded pass over the same partial events for observations;
 it neither patches frozen globals nor retains those event payloads.
@@ -841,3 +842,22 @@ purpose 13 has only `unsupported_partial_stream`; its rejected event and exact g
 were not retained. Reporting proof covers the accepted reporting call, not every
 partial event. It cannot reconstruct the missing shape or justify accepting it.
 See [the stopped recovery status](PROVIDERS.md#stopped-reporting-recovery-v2).
+
+
+Schema 2 adds a closed `delta_shape` only at `delta_fields`; other guards record
+null. Fixed block/delta enums, three known-field-presence booleans, a capped count
+of other fields (8 plus explicit overflow), and a fixed estimated-token type/numeric
+class distinguish an estimated-only extension from unknown extras. No number, key
+name/hash, payload, or nested value is retained. Booleans are distinct from numbers;
+nonfinite, negative, above-safe (greater than 2^53-1), fractional and safe integers
+are descriptive classes, never permission to accept the event. Unavailable or
+sample/count/field overflow means incomplete structural evidence.
+
+The schema-2 maximum is 32,768 canonical UTF-8 bytes within unchanged diagnostic
+and capture ceilings. Strict validation projects existing count/correlation rules
+through the unchanged schema-1 codec and validates the closed new shape. The
+frozen parser remains authoritative: `estimated_tokens` still yields
+`unsupported_partial_stream`. This possible pinned-source shape is not established
+as the cause of historical purpose 13. V3 diagnostic captures require the schema-2
+record even at zero rejections; this protocol requirement earns no inspection
+credit. Capture, result and completion hashes bind the entire record on recovery.

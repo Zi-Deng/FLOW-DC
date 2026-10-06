@@ -5,9 +5,9 @@ import argparse
 import json
 import sys
 
-import reporting_activation_v3 as activation
+import reporting_activation_v2 as activation
 import reporting_admission
-import reporting_diagnostic_v3 as reporting_diagnostic
+import reporting_diagnostic_v2 as reporting_diagnostic
 from workflow import Repo, WorkflowError
 
 
@@ -24,11 +24,9 @@ def parser():
     apply.add_argument("--preview-digest", required=True)
     for name in ("prepare", "run", "recover"):
         command = commands.add_parser(name)
-        command.add_argument("--number", required=True, type=int, choices=(14, 15))
+        command.add_argument("--number", required=True, type=int, choices=(12, 13))
     legacy = commands.add_parser("recover-v1", help="Storage-only old 10/11 recovery; never retry")
     legacy.add_argument("--number", required=True, type=int, choices=(10, 11))
-    previous = commands.add_parser("recover-v2", help="Storage-only stopped 12/13 recovery; never retry")
-    previous.add_argument("--number", required=True, type=int, choices=(12, 13))
     status = commands.add_parser("status", help="Re-evaluate both actual purposes; no inference")
     status.add_argument("--policy", required=True)
     return value
@@ -36,10 +34,6 @@ def parser():
 
 def dispatch(repo, args):
     repo.assert_main()
-    if args.command == "recover-v2":
-        import reporting_diagnostic_v2 as legacy
-
-        return legacy.recover(repo, number=args.number)
     if args.command == "recover-v1":
         import reporting_diagnostic as legacy
 

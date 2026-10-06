@@ -1,6 +1,6 @@
 # Reviewer providers and activation
 
-The explicit v7 path now requires both purpose12/13 native execution and completion
+The explicit v7 path now requires both purposes 14/15 native execution and completion
 records, independently re-evaluated on admission. Offline captures remain recoverable
 but cannot activate ordinary review. Use `review.py prepare --reporting-policy FILE`
 or managed `task-review --reporting-policy FILE`; the bounded JSON contains exactly
@@ -9,7 +9,7 @@ same fields for native selection only. Explicit Copilot selection keeps its orig
 policy. Preparation creates no activation grant or provider call.
 
 `reporting_cli.py` exposes separate coordinator operations: `preview`, `apply`,
-`prepare --number 12|13`, `run --number 12|13`, `recover --number 12|13`, and `status`.
+`prepare --number 14|15`, `run --number 14|15`, `recover --number 14|15`, and `status`.
 Preview requires an exact authenticated policy, tested harness head, explicit name
 and expiry. Apply requires the exact saved preview digest; run dispatches only the
 named purpose. No command chains purposes or resets an uncertain slot. Actual
@@ -721,7 +721,7 @@ reconciliation remain unchanged.
 
 **Historical v1 only:** the following describes the unchanged 10/11 allowance.
 Purpose 10 is consumed/uncertain after the guarded-lock failure; 11 is unavailable.
-Current admission uses [recovery v2](#finite-reporting-recovery-v2).
+Current admission uses [recovery v3](#finite-reporting-recovery-v3).
 
 `reporting_activation.py` provides a separate, versioned local journal for the
 approved purpose 10/11 allowance. It does not extend or rewrite the old nine-attempt
@@ -778,7 +778,7 @@ The frozen native reader still accepts only integer per-process timeouts of 1–
 seconds. Batch totals and fractional remaining deadlines never enter that interface;
 renewal lineage also uses the per-process bound. See [integration capacity and batch
 lifetime](COVERAGE.md) for separately bound source/navigation allowances and byte/token
-uncertainty. These local checks do not establish actual purpose12/13 activation.
+uncertainty. These local checks do not establish actual purposes 14/15 activation.
 
 ### V7 owned authentication verification
 
@@ -811,10 +811,10 @@ completion and admission records use version 2; the exact schema-7 capture and
 schema-2 diagnostic execution representation remain unchanged. Explicit metadata
 purpose selects the evaluator. Unknown versions refuse; there is no fallback.
 `reporting_admission_v1.py` retains original interpretation for compatibility tests
-and historical analysis. Current ordinary admission always requires v2, including
-under the exclusive owned authentication snapshot and verified same-account renewal.
+and historical analysis. This historical evaluator preserves v2 meaning. Current ordinary admission requires
+v3 under the exclusive owned authentication snapshot and verified same-account renewal.
 
-Only new purposes **12 then 13** are available, each 300 seconds / 2 reference USD,
+The historical v2 allowance selected **12 then 13**, each 300 seconds / 2 reference USD,
 prospective total 600 seconds / 4 reference USD and at most two wrapper processes.
 Purpose 12 requires actual tools/source and exact reporting; 13 additionally requires
 the exact controlled refusal and independently replayed successful 12. No 14, wrapper
@@ -842,8 +842,8 @@ deadline after preparation. Failure, interruption, expiry, clock rollback, chang
 bindings, unknown usage or incomplete/masked/unsupported reports stop the sequence.
 Saved captures recover without authentication or inference. All old bytes remain.
 
-Synthetic tests establish software behavior only. Actual 12/13 are unapplied and
-unexecuted by implementation. An expired login requires the user's private-terminal
+Synthetic tests establish software behavior only. Implementation did not execute
+12/13; the later actual stopped outcomes are recorded below. An expired login requires the user's private-terminal
 renewal and fresh disabled-paid-usage observation before coordinator application.
 Two qualified diagnostics still do not establish PR inspection. A fresh full public
 contract/head/base packet, separately named finite complete-review grant, feasible
@@ -872,3 +872,51 @@ trial requires its own published prospective amendment, new namespace/purposes,
 finite request/time/reference limits, final-head local/hosted gates and fresh native
 prerequisites. Capability qualification, complete independent review and human merge
 remain separate obligations.
+
+
+## Finite reporting recovery v3
+
+The [exact approved amendment](https://github.com/Zi-Deng/FLOW-DC/issues/31#issuecomment-6009076812)
+uses separate `reporting_activation_v3.py`, `reporting_diagnostic_v3.py` and
+`.agentic-local/claude-reporting-activation-v3`. Current grant/reservation/completion/
+outcome/admission records use version 3; capture7, diagnostics9, report2 and execution2
+retain their existing meanings. Exact purpose dispatch preserves v1/v2 storage-only
+recovery; `recover-v1 --number 10|11` and `recover-v2 --number 12|13` never dispatch.
+Current `prepare`, `run` and `recover` accept only 14/15. There is no old-slot fallback.
+
+**14 isolation-refusal is first; 15 tools/source follows only qualified actual 14.**
+Each independently proves the complete two-range packet, actual native Read/Grep/Glob
+and exact StructuredOutput. 14 also requires exactly one recognized controlled refusal.
+Both actual purposes are required for current ordinary admission. Neither synthetic
+success nor old 12 transfers credit. Each call has one wrapper, 300 seconds/$2 reference;
+total 2 wrappers/600 seconds/$4 reference, Max included only, paid-extra/API0, no 16.
+Failure, uncertain execution/usage, incomplete reporting, expiry or changed bindings
+stops the grant permanently. No wrapper retry, fallback or automatic chaining follows.
+
+Read-only preview, digest-bound application and each explicit invocation are separate
+coordinator operations after final committed local/installed and both hosted gates,
+source inspection and fresh native registration/account/disabled-paid-setting/window
+prerequisites. Application consumes a durable exclusive claim; torn writes cannot be
+renamed or retried. Name/window rules remain 1–80 permitted characters, 600 seconds to
+one day; the aggregate deadline is capped by the first reservation plus 600 seconds.
+All preparation/replay time consumes that window. Owned authentication stays locked
+through final binding/window checks and capture; no credentials are copied back.
+
+The v3 grant binds current approval/head/harness/policy/auth and the fixed schema-2
+observation descriptor. It also hashes all original nine, stopped v1 unknown 10 and
+unavailable 11, stopped v2 exact 52 files (12 true/13 false), and the complete stopped c303
+inventory/ledger/reports/publication evidence through their existing evaluators.
+Known v2 usage and unknown v1 consumption remain separate. Complete bounded history
+manifests bind digest/count/bytes without expanding the grant ceiling. Local hashes
+are owner-writable bookkeeping, not provider attestation. Source changes invalidate
+old qualification. Schema 2 observations classify future failures but never accept
+an extension or reconstruct purpose 13.
+
+No new allowance is applied by implementation. Preserve every prior stop and exact
+report. Both new actual purposes, if qualified, establish capability only. A later
+separately populated full-review grant must fund every component plus integration,
+with current contract/head/base/CI/auth, full remaining credential/receipt window,
+exact report/context sizes and documented token-fit uncertainty before reservation.
+No batch/campaign, scientific result, publication readiness or human merge follows
+from this two-call allowance. Ordinary 900 seconds/$10, CI 15 minutes, provider/model/
+CLI/400 turns/report 10k/tools/schema/retry/isolation controls stay unchanged.

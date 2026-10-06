@@ -11,7 +11,7 @@ from test_workflow import workflow
 # isort: split
 import claude_reporting_policy
 import pipeline
-import reporting_cli
+import reporting_cli_v2 as reporting_cli
 import review
 from test_claude_reporting import LIMITS
 

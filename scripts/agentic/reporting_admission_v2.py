@@ -12,8 +12,8 @@ from pathlib import Path
 
 import claude_native_auth
 import claude_reporting_policy
-import reporting_activation_v3 as activation
-import reporting_diagnostic_v3 as diagnostic
+import reporting_activation_v2 as activation
+import reporting_diagnostic_v2 as diagnostic
 from tasks import digest
 from workflow import WorkflowError, run
 
@@ -77,7 +77,7 @@ def check(repo, policy, *, owned_auth=None):
     ):
         raise WorkflowError("Reporting policy or verified same-account capability lineage differs")
     outcomes = {}
-    for number in (14, 15):
+    for number in (12, 13):
         directory = activation.root(repo) / f"evidence-{number}"
         meta = review.verify_packet(directory)
         diagnostic.identity(repo, directory, meta)
@@ -89,7 +89,7 @@ def check(repo, policy, *, owned_auth=None):
             raise WorkflowError("Both actual reporting purposes must qualify independently")
         outcomes[str(number)] = digest(result)
     return {
-        "schema_version": 3,
+        "schema_version": 2,
         "grant_digest": digest(grant),
         "policy_digest": digest(policy),
         "harness": copy.deepcopy(bound["harness"]),

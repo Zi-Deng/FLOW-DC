@@ -5,7 +5,7 @@ capture. A second bounded scan classifies exactly its partial-event dispatches;
 no payload survives this pass. No mutation of frozen globals or closure state.
 """
 
-import claude_partial_observation_v2 as claude_partial_observation
+import claude_partial_observation
 import claude_reporting
 import claude_reporting_policy as reporting_policy
 import claude_telemetry_v7 as frozen

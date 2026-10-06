@@ -11,7 +11,7 @@ import claude_owned_auth as owned
 import claude_reporting_execution as execution
 import reporting_activation as old
 import reporting_activation_v2 as activation
-import reporting_admission as admission
+import reporting_admission_v2 as admission
 import reporting_diagnostic as old_diagnostic
 import reporting_diagnostic_v2 as diagnostic
 import reporting_recovery_history as history
@@ -37,6 +37,7 @@ class RecoveryFixture(ReportingDiagnosticFixture):
 
     def setUp(self):
         super().setUp()
+        patch("reporting_admission.check", side_effect=admission.check).start()
         # Produce the predecessor's real durable reservation/dispatch claim, but
         # interrupt the mocked process before any capture. No success or usage.
         with self.isolated(process=lambda *a, **kw: (_ for _ in ()).throw(OSError("synthetic stop"))):
