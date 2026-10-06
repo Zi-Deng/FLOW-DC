@@ -82,6 +82,13 @@ source drift, protocol mismatch or overflow fail the gate without retries or a
 serial fallback. Ordinary test failures let the remaining tests finish. Existing
 skip and expected-failure semantics remain visible; no tests are newly skipped.
 
+Result protocol 2 binds each module/class fixture callback to its ordered,
+half-open occurrence interval and callback sequence. A setup skip accounts only
+for that interval; an earlier skip cannot excuse missing execution in a later
+appearance of the same class or module. Teardown callbacks never excuse missing
+execution. Setup and cleanup errors remain failures. Protocol 1 records remain
+historical evidence and cannot establish success under the repaired protocol.
+
 The controller bounds discovery, execution and reconciliation to 840 seconds,
 with at most 32 MiB of text and 16 MiB of structured evidence per worker. Overflow
 retains an explicitly incomplete prefix. Process-group supervision requires the

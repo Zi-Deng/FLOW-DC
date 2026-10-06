@@ -515,3 +515,216 @@ with patch('check_runner.subprocess.Popen', side_effect=launch):
                 os.killpg(pid, signal.SIGKILL)
             except ProcessLookupError:
                 pass
+
+    def test_later_class_lifecycle_cannot_borrow_earlier_skip(self):
+        sys.path.insert(0, str(SOURCE / "scripts/agentic"))
+        import check_runner
+
+        self.module(
+            "test_fixture.py",
+            'import unittest\nclass A(unittest.TestCase):\n count = 0\n @classmethod\n def setUpClass(cls):\n  cls.count += 1\n  if cls.count == 1: raise unittest.SkipTest("first occurrence group only")\n def test_first(self): pass\n def test_second(self): pass\nclass B(unittest.TestCase):\n def test_middle(self): pass\ndef load_tests(loader, tests, pattern):\n return unittest.TestSuite([A("test_first"), B("test_middle"), A("test_second")])\n',
+        )
+        result = self.command()
+        self.assertEqual(result.returncode, 0, result.stdout.decode())
+        directory, summary = self.evidence(result)
+        rows = [r for w in summary["workers"] for r in w["occurrences"]]
+        self.assertEqual([r["state"] for r in rows], ["fixture_skip", "completed", "completed"])
+        request = json.loads((directory / "request.json").read_bytes())
+        path = directory / "worker-0.jsonl"
+        records = [json.loads(line) for line in path.read_bytes().splitlines()]
+        self.assertTrue(check_runner.reconcile(request, 0, path, 0)["successful"])
+        removed = rows[-1]["position"]
+        records = [r for r in records if r.get("position") != removed]
+        records[-1]["tests_run"] -= 1
+        path.write_bytes(b"\n".join(check_runner.canonical(r) for r in records))
+        try:
+            accepted = check_runner.reconcile(request, 0, path, 0)["successful"]
+        except check_runner.RunnerError:
+            accepted = False
+        self.assertFalse(accepted, "An earlier fixture skip must not credit the later A lifecycle")
+
+    def repeated_fixture(self, level, *, fault="skip", cleanup=False, teardown=False):
+        self.module(
+            "test_fixture.py",
+            f"""import sys, types, unittest
+from pathlib import Path
+level={level!r}; fault={fault!r}; cleanup={cleanup!r}; teardown={teardown!r}
+def note(text):
+ with Path("trace").open("a") as stream: stream.write(text+"\\n")
+def fail(): raise ValueError("cleanup error")
+class A(unittest.TestCase):
+ count=0
+ @classmethod
+ def setUpClass(cls):
+  note("A class setup")
+  if level == "class": setup()
+ @classmethod
+ def tearDownClass(cls):
+  note("A class teardown")
+  if level == "class" and teardown: raise unittest.SkipTest("teardown skip")
+ def test_repeat(self): note("A test")
+class B(unittest.TestCase):
+ def test_middle(self): note("B test")
+def setup():
+ A.count += 1
+ note("setup attempt "+str(A.count))
+ if A.count == 1 and fault != "none":
+  if cleanup:
+   if level == "class": A.addClassCleanup(fail)
+   else: unittest.addModuleCleanup(fail)
+  if fault == "skip": raise unittest.SkipTest("first interval only")
+  raise ValueError("first setup error")
+if level == "module":
+ a=types.ModuleType("fixture_a"); b=types.ModuleType("fixture_b")
+ sys.modules[a.__name__]=a; sys.modules[b.__name__]=b
+ A.__module__=a.__name__; B.__module__=b.__name__
+ a.setUpModule=setup
+ def finish():
+  note("A module teardown")
+  if teardown: raise unittest.SkipTest("teardown skip")
+ a.tearDownModule=finish
+def load_tests(loader, tests, pattern):
+ a=A("test_repeat")
+ return unittest.TestSuite([unittest.TestSuite([a]), unittest.TestSuite([B("test_middle")]), unittest.TestSuite([a])])
+""",
+        )
+
+    def records(self, result):
+        directory, summary = self.evidence(result)
+        request = json.loads((directory / "request.json").read_bytes())
+        path = directory / "worker-0.jsonl"
+        return request, path, [json.loads(x) for x in path.read_bytes().splitlines()], summary
+
+    def refused_records(self, request, path, records, exit_status=0):
+        import check_runner
+
+        path.write_bytes(b"\n".join(check_runner.canonical(r) for r in records))
+        try:
+            self.assertFalse(check_runner.reconcile(request, 0, path, exit_status)["successful"])
+        except check_runner.RunnerError:
+            pass
+
+    def test_module_and_duplicate_runs_match_standard_and_refuse_missing_later_lifecycle(self):
+        sys.path.insert(0, str(SOURCE / "scripts/agentic"))
+        import check_runner
+
+        for level in ("class", "module"):
+            with self.subTest(level=level):
+                self.repeated_fixture(level)
+                trace = self.root / "trace"
+                if trace.exists():
+                    trace.unlink()
+                reference = subprocess.run(
+                    [sys.executable, "-B", "-m", "unittest", "discover", "-s", "tests/agentic", "-v"],
+                    cwd=self.root,
+                    capture_output=True,
+                    timeout=10,
+                )
+                self.assertEqual(reference.returncode, 0, reference.stderr.decode())
+                expected_trace = trace.read_bytes()
+                for jobs in (1, 2):
+                    trace.unlink()
+                    result = self.command(jobs)
+                    self.assertEqual(result.returncode, 0, result.stdout.decode())
+                    self.assertEqual(trace.read_bytes(), expected_trace)
+                    request, path, records, summary = self.records(result)
+                    rows = [r for w in summary["workers"] for r in w["occurrences"]]
+                    self.assertEqual([r["state"] for r in rows], ["fixture_skip", "completed", "completed"])
+                    self.assertEqual(rows[0]["id"], rows[2]["id"])
+                    self.assertNotEqual(rows[0]["position"], rows[2]["position"])
+                    fixtures = [r for r in records if r["event"] == "fixture"]
+                    self.assertEqual(fixtures[0]["interval"], [0, 1])
+                    self.assertTrue(check_runner.reconcile(request, 0, path, 0)["successful"])
+                    changed = [r for r in records if r.get("position") != rows[-1]["position"]]
+                    changed[-1] = {**changed[-1], "tests_run": 1}
+                    self.refused_records(request, path, changed)
+
+    def test_fixture_intervals_refuse_forgery_misplacement_overlap_and_legacy_versions(self):
+        import copy
+
+        sys.path.insert(0, str(SOURCE / "scripts/agentic"))
+        import check_runner
+
+        for level in ("class", "module"):
+            self.repeated_fixture(level)
+            result = self.command()
+            self.assertEqual(result.returncode, 0, result.stdout.decode())
+            request, path, records, _ = self.records(result)
+            self.assertTrue(check_runner.reconcile(request, 0, path, 0)["successful"])
+            mutations = []
+            for field, value in (
+                ("interval", [0, 3]),
+                ("interval", [2, 3]),
+                ("interval", [-1, 1]),
+                ("interval", [True, 1]),
+                ("interval", None),
+                ("sequence", True),
+                ("sequence", None),
+                ("sequence", 1),
+                ("id", "setUpClass (foreign.A)"),
+                ("id", records[1]["id"].replace("setUp", "tearDown")),
+            ):
+                changed = copy.deepcopy(records)
+                changed[1][field] = value
+                mutations.append(changed)
+            changed = copy.deepcopy(records)
+            del changed[1]["interval"]
+            mutations.append(changed)
+            mutations.extend(
+                (
+                    records[:2] + records[1:],
+                    records[:1] + records[2:4] + records[1:2] + records[4:],
+                    records[:1] + records[2:-1] + records[1:2] + records[-1:],
+                )
+            )
+            for i, changed in enumerate(mutations):
+                with self.subTest(level=level, mutation=i):
+                    self.refused_records(request, path, changed)
+            old = copy.deepcopy(request)
+            old["version"] = 1
+            changed = copy.deepcopy(records)
+            changed[0]["version"] = 1
+            changed[0]["request"] = check_runner.digest(old)
+            self.refused_records(old, path, changed)
+
+    def test_setup_cleanup_and_teardown_callbacks_preserve_standard_outcomes(self):
+        for level in ("class", "module"):
+            for fault, cleanup, teardown, expected_exit in (
+                ("error", False, False, 1),
+                ("skip", True, False, 1),
+                ("none", False, True, 0),
+            ):
+                with self.subTest(level=level, fault=fault, cleanup=cleanup, teardown=teardown):
+                    self.repeated_fixture(level, fault=fault, cleanup=cleanup, teardown=teardown)
+                    trace = self.root / "trace"
+                    if trace.exists():
+                        trace.unlink()
+                    reference = subprocess.run(
+                        [sys.executable, "-B", "-m", "unittest", "discover", "-s", "tests/agentic", "-v"],
+                        cwd=self.root,
+                        capture_output=True,
+                        timeout=10,
+                    )
+                    self.assertEqual(reference.returncode, expected_exit)
+                    expected_trace = trace.read_bytes()
+                    for jobs in (1, 2):
+                        trace.unlink()
+                        result = self.command(jobs)
+                        self.assertEqual(result.returncode, expected_exit, result.stdout.decode())
+                        self.assertEqual(trace.read_bytes(), expected_trace)
+                        request, path, records, summary = self.records(result)
+                        self.assertIsNone(summary["error"])
+                        rows = [r for w in summary["workers"] for r in w["occurrences"]]
+                        self.assertEqual(
+                            [r["state"] for r in rows],
+                            ["completed"] * 3 if teardown else ["incomplete", "completed", "completed"],
+                        )
+                        fixtures = [r for r in records if r["event"] == "fixture"]
+                        self.assertEqual([r["sequence"] for r in fixtures], list(range(len(fixtures))))
+                        if cleanup:
+                            self.assertEqual([r["interval"] for r in fixtures], [[0, 1], [0, 1]])
+                        if teardown:
+                            self.assertEqual([r["interval"] for r in fixtures], [[0, 1], [2, 3]])
+                            changed = [r for r in records if r.get("position") != rows[2]["position"]]
+                            changed[-1] = {**changed[-1], "tests_run": 2}
+                            self.refused_records(request, path, changed)

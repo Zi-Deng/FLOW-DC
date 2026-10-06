@@ -17,7 +17,7 @@ from pathlib import Path
 SECONDS = 840
 TEXT_BYTES = 32 * 1024 * 1024
 EVIDENCE_BYTES = 16 * 1024 * 1024
-VERSION = 1
+VERSION = 2
 
 
 class RunnerError(Exception):
@@ -159,6 +159,91 @@ class Journal:
         self.size += len(raw)
 
 
+class FixtureCursor:
+    """Correlate callbacks with contiguous runs in this worker's occurrence order."""
+
+    def __init__(self, rows):
+        self.rows = rows
+        self.cursor = 0
+        self.active = None
+        self.sequence = 0
+        self.last_fixture = None
+        self.blocked = {}
+        self.failed_setups = set()
+        self.runs = {}
+        for field, suffix in (("module", "Module"), ("class", "Class")):
+            start = 0
+            while start < len(rows):
+                end = start + 1
+                while end < len(rows) and rows[end][field] == rows[start][field]:
+                    end += 1
+                for prefix in ("setUp", "tearDown"):
+                    name = f"{prefix}{suffix} ({rows[start][field]})"
+                    self.runs.setdefault(name, []).append((start, end))
+                start = end
+
+    def start(self, position):
+        if (
+            self.active is not None
+            or self.cursor >= len(self.rows)
+            or position != self.rows[self.cursor]["position"]
+        ):
+            raise RunnerError("Occurrence skips an unaccounted lifecycle")
+        self.active = position
+        self.last_fixture = None
+
+    def stop(self, position):
+        if position != self.active:
+            raise RunnerError("Occurrence stop differs")
+        self.active = None
+        self.cursor += 1
+        self.last_fixture = None
+
+    def fixture(self, name, kind, interval=None, sequence=None):
+        if (
+            self.active is not None
+            or type(kind) is not str
+            or kind not in {"skip", "error"}
+            or name not in self.runs
+        ):
+            raise RunnerError("Invalid fixture boundary")
+        setup = name.startswith("setUp")
+        # Multiple cleanup exceptions belong to the same actual fixture attempt.
+        if self.last_fixture and self.last_fixture[0] == name:
+            span = self.last_fixture[1]
+        else:
+            matches = [p for p in self.runs[name] if p[0 if setup else 1] == self.cursor]
+            if len(matches) != 1:
+                raise RunnerError("Fixture is outside its occurrence interval")
+            span = matches[0]
+        start, end = span
+        if interval is not None and (
+            type(interval) is not list
+            or len(interval) != 2
+            or any(type(i) is not int for i in interval)
+            or tuple(interval) != span
+        ):
+            raise RunnerError("Fixture interval differs")
+        if sequence is not None and (type(sequence) is not int or sequence != self.sequence):
+            raise RunnerError("Fixture callback sequence differs")
+        if setup:
+            for i in range(start, end):
+                prior = self.blocked.get(i)
+                self.blocked[i] = "error" if kind == "error" or prior == "error" else "skip"
+            self.failed_setups.add((name, span))
+            self.cursor = end
+        else:
+            setup_name = name.replace("tearDown", "setUp", 1)
+            if (setup_name, span) in self.failed_setups or any(
+                n.startswith("setUpModule") and a <= start and end <= b for n, (a, b) in self.failed_setups
+            ):
+                raise RunnerError("Teardown follows failed setup")
+        value = {"interval": [start, end], "sequence": self.sequence}
+        self.sequence += 1
+        self.last_fixture = (name, span)
+        return value
+
+
 class Result(unittest.TextTestResult):
     def __init__(self, *args, journal, rows, objects, **kwargs):
         super().__init__(*args, **kwargs)
@@ -167,14 +252,18 @@ class Result(unittest.TextTestResult):
         for row, obj in zip(rows, objects, strict=True):
             self.pending[id(obj)].append(row["position"])
         self.active = {}
+        self.objects = objects
+        self.fixtures = FixtureCursor(rows)
 
     def startTest(self, test):
         position = self.pending[id(test)].popleft()
+        self.fixtures.start(position)
         self.active[id(test)] = position
         self.journal.emit({"event": "start", "position": position, "monotonic_ns": time.monotonic_ns()})
         super().startTest(test)
 
     def stopTest(self, test):
+        self.fixtures.stop(self.active[id(test)])
         self.journal.emit(
             {"event": "stop", "position": self.active.pop(id(test)), "monotonic_ns": time.monotonic_ns()}
         )
@@ -183,7 +272,15 @@ class Result(unittest.TextTestResult):
     def outcome(self, test, kind, detail=""):
         position = self.active.get(id(getattr(test, "test_case", test)))
         if position is None:
-            self.journal.emit({"event": "fixture", "id": test.id(), "kind": kind, "detail": detail})
+            before = self.fixtures.cursor
+            correlation = self.fixtures.fixture(test.id(), kind)
+            for i in range(before, self.fixtures.cursor):
+                position = self.pending[id(self.objects[i])].popleft()
+                if position != self.fixtures.rows[i]["position"]:
+                    raise RunnerError("Blocked occurrence identity differs")
+            self.journal.emit(
+                {"event": "fixture", "id": test.id(), "kind": kind, "detail": detail, **correlation}
+            )
         else:
             self.journal.emit({"event": "outcome", "position": position, "kind": kind, "detail": detail})
 
@@ -263,6 +360,8 @@ def worker(root, request_path, index, evidence):
 
 
 def reconcile(request, index, path, exit_status):
+    if type(request.get("version")) is not int or request["version"] != VERSION:
+        raise RunnerError("Unsupported result protocol version")
     if path.stat().st_size > request["evidence_limit"]:
         raise RunnerError("Structured evidence overflow")
     records = [strict(line) for line in path.read_bytes().splitlines()]
@@ -285,16 +384,7 @@ def reconcile(request, index, path, exit_status):
     order = []
     timings = {}
     last_time = 0
-    fixture_runs = collections.Counter()
-    fixture_skips = collections.Counter()
-    previous_module, previous_class = None, None
-    for row in expected.values():
-        if row["module"] != previous_module:
-            fixture_runs[f"setUpModule ({row['module']})"] += 1
-            previous_module, previous_class = row["module"], None
-        if row["class"] != previous_class:
-            fixture_runs[f"setUpClass ({row['class']})"] += 1
-            previous_class = row["class"]
+    lifecycle = FixtureCursor(list(expected.values()))
     allowed = {
         "success",
         "failure",
@@ -308,26 +398,14 @@ def reconcile(request, index, path, exit_status):
     for record in records[1:-1]:
         event = record.get("event")
         if event == "fixture":
-            if set(record) != {"event", "id", "kind", "detail"} or record["kind"] not in {"error", "skip"}:
+            if set(record) != {"event", "id", "kind", "detail", "interval", "sequence"}:
                 raise RunnerError("Invalid fixture result")
-            if type(record["id"]) is not str or type(record["detail"]) is not str or active is not None:
+            if type(record["id"]) is not str or type(record["detail"]) is not str:
                 raise RunnerError("Invalid fixture identity")
-            names = {
-                f"{phase} ({r[field]})"
-                for r in expected.values()
-                for phase, field in (
-                    ("setUpModule", "module"),
-                    ("tearDownModule", "module"),
-                    ("setUpClass", "class"),
-                    ("tearDownClass", "class"),
-                )
-            }
-            if record["id"] not in names:
-                raise RunnerError("Foreign fixture result")
-            if record["kind"] == "skip":
-                fixture_skips[record["id"]] += 1
-                if fixture_skips[record["id"]] > fixture_runs[record["id"]]:
-                    raise RunnerError("Extra fixture skip")
+            # Null must not select the capture-only omitted-argument path.
+            if record["interval"] is None or record["sequence"] is None:
+                raise RunnerError("Missing fixture correlation")
+            lifecycle.fixture(record["id"], record["kind"], record["interval"], record["sequence"])
             fixtures.append(record)
             continue
         required = {"event", "position"} | ({"kind", "detail"} if event == "outcome" else {"monotonic_ns"})
@@ -346,6 +424,7 @@ def reconcile(request, index, path, exit_status):
             last_time = stamp
             timings.setdefault(key, {})[event] = stamp
         if event == "start":
+            lifecycle.start(position)
             if key in started or active is not None:
                 raise RunnerError("Duplicate or overlapping start")
             started.add(key)
@@ -354,6 +433,7 @@ def reconcile(request, index, path, exit_status):
         elif event == "stop":
             if key != active or key in stopped or not outcomes[key]:
                 raise RunnerError("Incomplete or duplicate stop")
+            lifecycle.stop(position)
             stopped.add(key)
             active = None
         else:
@@ -374,15 +454,9 @@ def reconcile(request, index, path, exit_status):
         if not any(o["kind"] != "subtest_success" for o in values):
             raise RunnerError("Missing terminal outcome")
     missing = set(expected) - stopped
-    skipped = set()
-    for key in missing:
-        row = expected[key]
-        if any(
-            f["kind"] == "skip"
-            and f["id"] in (f"setUpModule ({row['module']})", f"setUpClass ({row['class']})")
-            for f in fixtures
-        ):
-            skipped.add(key)
+    skipped = {
+        tuple(lifecycle.rows[i]["position"]) for i, kind in lifecycle.blocked.items() if kind == "skip"
+    }
     bad = any(
         o["kind"] in {"failure", "error", "unexpected_success", "subtest_failure"}
         for values in outcomes.values()
