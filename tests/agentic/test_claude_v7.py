@@ -18,6 +18,12 @@ from test_claude_reporting import AUXILIARY, LIMITS
 class ClaudeV7Tests(GitFixture):
     def setUp(self):
         super().setUp()
+        # Explicit historical preparation for the frozen v7 acceptance suite.
+        import claude_reporting_policy
+
+        frozen_build = patch("claude_reporting_versions.build", claude_reporting_policy.build)
+        frozen_build.start()
+        self.addCleanup(frozen_build.stop)
         binding = patch.object(claude_native_auth, "current_binding", return_value=AUTHENTICATION)
         binding.start()
         self.addCleanup(binding.stop)

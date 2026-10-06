@@ -397,8 +397,8 @@ def review_task(
             from claude_native_auth import bind
 
             selection["policy"] = bind(selection["policy"])
-            from claude_reporting_policy import build
-            from claude_reporting_policy import selection as reporting_selection
+            from claude_reporting_versions import build
+            from claude_reporting_versions import selection as reporting_selection
 
             reporting = reporting_selection(selection["policy"], configuration(repo.root), reporting)
             if reporting is not None:
@@ -621,7 +621,7 @@ def dispatch(repo, args):
     if args.command == "respond":
         return respond(repo, args.issue, args.key, args.body_file, args.retry_confirmed_absent)
     if args.command == "task-review":
-        from claude_reporting_policy import read_selection
+        from claude_reporting_versions import read_selection
 
         return review_task(
             repo,

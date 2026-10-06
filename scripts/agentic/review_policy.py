@@ -216,7 +216,7 @@ def validate_policy(value):
     if not isinstance(value, dict):
         raise WorkflowError("Missing immutable review policy")
     if type(value.get("schema_version")) is int and value["schema_version"] == 2:
-        from claude_reporting_policy import validate
+        from claude_reporting_versions import validate
 
         return validate(value)
     if type(value.get("schema_version")) is not int or value["schema_version"] != 1:
@@ -361,7 +361,7 @@ def status(repo, cfg, **overrides):
         result["native_authentication"] = native
         blockers.extend(native["blockers"])
         if cfg.get("review_reporting") is not None and "authentication" in native:
-            from claude_reporting_policy import build, selection
+            from claude_reporting_versions import build, selection
 
             result["policy"] = build(
                 {**result["policy"], "authentication": native["authentication"]},

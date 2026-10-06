@@ -605,6 +605,7 @@ def validate_diagnostics(diagnostics, packet, policy=None):
                 "claude-stream-json-2.1.282-v5": 7,
                 "claude-stream-json-2.1.282-v6": 8,
                 "claude-stream-json-2.1.282-v7": 9,
+                "claude-stream-json-2.1.282-v8": 10,
             }.get(policy.get("adapter"), SCHEMA)
             if policy
             else SCHEMA
@@ -644,6 +645,8 @@ def validate_diagnostics(diagnostics, packet, policy=None):
             from claude_telemetry_v4 import validate_summary
         elif policy["adapter"] == "claude-stream-json-2.1.282-v5":
             from claude_telemetry_v5 import validate_summary
+        elif policy["adapter"] == "claude-stream-json-2.1.282-v8":
+            from claude_telemetry_v8 import validate_summary
         elif policy["adapter"] == "claude-stream-json-2.1.282-v7":
             from claude_telemetry_v7_observed import validate_summary
         else:
@@ -651,7 +654,7 @@ def validate_diagnostics(diagnostics, packet, policy=None):
     else:
         from review_telemetry import validate_summary
     validate_summary(diagnostics["telemetry"])
-    if policy and policy["adapter"] == "claude-stream-json-2.1.282-v7":
+    if policy and policy["adapter"] in {"claude-stream-json-2.1.282-v7", "claude-stream-json-2.1.282-v8"}:
         from claude_partial_observation import validate_reasons
 
         validate_reasons(diagnostics["telemetry"], diagnostics["reasons"])

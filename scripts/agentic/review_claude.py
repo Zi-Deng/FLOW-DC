@@ -154,7 +154,7 @@ def check_controls(binary, settings, policy=None):
         raise WorkflowError("Builtin plugin controls require exact false values")
     data = Path(binary).read_bytes()
     if policy is not None and policy.get("schema_version") == 2:
-        from claude_reporting_policy import validate_controls
+        from claude_reporting_versions import validate_controls
 
         validate_controls(data, policy)
     # The signed binary binds this pinned supported-schema subset. The native
@@ -237,7 +237,7 @@ def environment(home, *, config=None, policy=None):
         "CLAUDE_CONFIG_DIR": str(config or home / "claude"),
     }
     if policy is not None and policy.get("schema_version") == 2:
-        from claude_reporting_policy import validate
+        from claude_reporting_versions import validate
 
         validate(policy)
         env["MAX_STRUCTURED_OUTPUT_RETRIES"] = str(policy["reporting"]["retry_limit"])
@@ -252,7 +252,7 @@ def command(binary, policy, session_id, settings_path, mcp_path, prompt):
     tools = "Read,Grep,Glob"
     reporting_flags = []
     if policy.get("schema_version") == 2:
-        from claude_reporting_policy import validate
+        from claude_reporting_versions import validate
 
         validate(policy)
         tools = ",".join(policy["reporting"]["tools"])
@@ -354,7 +354,7 @@ def execute(repo, directory, meta, *, diagnostic=False, dispatch_context=None):
     policy = meta["review_policy"]
     structured = policy.get("schema_version") == 2
     if structured:
-        from claude_reporting_policy import validate
+        from claude_reporting_versions import validate
         from tasks import plain_path
 
         validate(policy)

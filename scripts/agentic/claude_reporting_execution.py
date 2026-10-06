@@ -22,7 +22,7 @@ def require_activation(repo, meta):
 
 
 def binding(directory, meta, session_id, prompt, *, diagnostic=None):
-    from claude_reporting_policy import validate
+    from claude_reporting_versions import validate
     from review import RESULT_FIELDS
     from review_prompt import native
 

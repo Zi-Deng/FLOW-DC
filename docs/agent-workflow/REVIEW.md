@@ -383,8 +383,9 @@ reads and successful probes did not overcome the failed Read. A fresh changed-he
 preview, current CI and separately bounded coordinator authorization remain necessary.
 
 
-Current reporting qualification follows [finite recovery v3](PROVIDERS.md#finite-reporting-recovery-v3):
-only actual independently replayed purposes 14 and 15 admit ordinary v7 review.
+Current reporting qualification follows [finite recovery v4](PROVIDERS.md#finite-reporting-recovery-v4):
+only actual independently replayed purposes 16 and 17 admit ordinary v8 review.
+Stopped v3 actual 14 qualified and 15 did not; neither transfers changed-source credit.
 Preserve stopped v2 12/13 and the stopped 10 reservation/execution with unknown usage, unavailable 11,
 all nine original diagnostics and historical approval/report bytes. No skill action
 implicitly applies the new grant or invokes either purpose. Recovery stays offline;

@@ -176,8 +176,8 @@ def prepare(
     from claude_native_auth import bind
 
     selection["policy"] = bind(selection["policy"])
-    from claude_reporting_policy import build
-    from claude_reporting_policy import selection as reporting_selection
+    from claude_reporting_versions import build
+    from claude_reporting_versions import selection as reporting_selection
 
     reporting = reporting_selection(selection["policy"], cfg, reporting)
     if reporting is not None:
@@ -1074,7 +1074,7 @@ def main():
         repo = Repo()
         repo.assert_main()
         if args.command == "prepare":
-            from claude_reporting_policy import read_selection
+            from claude_reporting_versions import read_selection
 
             result = prepare(
                 repo,

@@ -327,19 +327,20 @@ prior consumption, identical reviewed identity/inventory/assignments/harness and
 separately named finite authorization. Integration requires every exact component
 report. The initial successor format does not chain a further successor. Validate
 reviewed model-input capacity and current credential lifetime before execution.
-Historical v6/c303 evidence acquires no changed-head credit. Both actual purposes 14/15
+Historical v6/c303 evidence acquires no changed-head credit. Both actual purposes 16/17
 records, final tested implementation/harness and current hosted gates are separate
 prerequisites; no skill invocation implicitly applies or spends either allowance.
 
-For v7 admission and continuation, the linked coverage procedure also requires a
+For v8 admission and continuation, the linked coverage procedure also requires a
 full remaining credential/receipt window distinct from the integer per-process
 reader/lineage timeout. Integration previews separate mandatory exact input from
 available archive storage and bind optional source/navigation/protocol allowances
 plus a separately reviewed token estimate. A byte envelope is not a token guarantee.
 
 
-Current reporting qualification follows [finite recovery v3](PROVIDERS.md#finite-reporting-recovery-v3):
-only actual independently replayed purposes 14 and 15 admit ordinary v7 review.
+Current reporting qualification follows [finite recovery v4](PROVIDERS.md#finite-reporting-recovery-v4):
+only actual independently replayed purposes 16 and 17 admit ordinary v8 review.
+Stopped v3 actual 14 qualified and 15 did not; neither transfers changed-source credit.
 Preserve stopped v2 12/13 and the stopped 10 reservation/execution with unknown usage, unavailable 11,
 all nine original diagnostics and historical approval/report bytes. No skill action
 implicitly applies the new grant or invokes either purpose. Recovery stays offline;

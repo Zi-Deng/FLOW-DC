@@ -266,12 +266,12 @@ valid saved journal without another paid call. Never relabel legacy records as c
 The operator can rewrite private records; this is accounting, not owner-proof attestation.
 
 
-Current native reporting admission uses [finite recovery v3](PROVIDERS.md#finite-reporting-recovery-v3):
-explicit isolation-first 14, then tools/source 15 only after independently replayed
-actual 14 qualifies. Preview, application and each call are separate coordinator
+Current native reporting admission uses [finite recovery v4](PROVIDERS.md#finite-reporting-recovery-v4):
+explicit isolation-first 16, then tools/source 17 only after independently replayed
+actual 16 qualifies. Preview, application and each call are separate coordinator
 steps after final-source local/installed/hosted and fresh native prerequisites.
-The two 300-second/$2 reference allocations stop on failure, with no 16 or full-review
-funding. Old 9/v1/v2/c303 captures remain historical and recover offline. Structural
+The two 300-second/$2 reference allocations stop on failure, with no 18 or full-review
+funding. Old 9/v1/v2/v3/c303 captures remain historical and recover offline. Structural
 schema 2 observations earn no inspection credit and preserve unknown-stream refusal.
 CI PR-head association and actual tested checkout must both be retained. Full exact
 component/integration review, publications, finding dispositions and human merge

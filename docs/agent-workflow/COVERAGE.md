@@ -1,7 +1,7 @@
 # Coverage evidence and operator migration
 
 Schema7 ordinary reviews can use explicitly configured structured reporting after
-both actual purposes 14/15 records independently qualify. Shared current readiness
+both actual purposes 16/17 records independently qualify under the v8 adapter. Shared current readiness
 requires the immutable dispatch admission/execution binding and matching current
 harness/policy; synthetic storage success alone remains incomplete. Exact model
 argument fragments and separate auxiliary text retain their existing representation.
@@ -36,7 +36,7 @@ failed reports and grant bytes. Unknown execution is not reattemptable. The mani
 explicitly names each known incomplete reattempt and every never-started obligation.
 
 Only an identical repository/issue/designated plan/contract/head/base/merge-base,
-full inventory/assignments and tested harness can continue. V6/v7 imports cannot mix.
+full inventory/assignments and tested harness can continue. V6/v7 imports cannot mix. V7/v8 adapter policies cannot mix as continuation credit.
 An optional `--authentication-binding FILE` contains only the sanitized binding from
 separately verified same-account renewal. That exception requires retained lineage;
 it never alters old authentication records or permits a source/policy change.
@@ -101,11 +101,11 @@ The coordinator must establish actual model, usage and credential-window feasibi
 before applying any full-review authorization. No truncation, lowered report limits,
 summary substitution or extra integration invocation follows failure.
 
-These paths have synthetic execution tests. They do not establish actual purposes 14/15
+These paths have synthetic execution tests. They do not establish actual purposes 16/17
 activation or a complete review. The stopped c303 aggregate remains 60/776 incomplete;
 its nineteen successes are historical after changed head/contract. Final source/local
 and hosted gates, inspected harness and fresh authentication/billing facts precede
-coordinator-owned purpose 14 then 15. The two-process allowance is never consumed at an
+coordinator-owned purpose 16 then conditional 17. The two-process allowance is never consumed at an
 intermediate implementation head. Full review remains separately authorized.
 
 ## Provider-aware bounded batches (current)
@@ -806,8 +806,9 @@ continuation remains unfinished; synthetic runner tests establish neither live
 activation nor review readiness.
 
 
-Current reporting qualification follows [finite recovery v3](PROVIDERS.md#finite-reporting-recovery-v3):
-only actual independently replayed purposes 14 and 15 admit ordinary v7 review.
+Current reporting qualification follows [finite recovery v4](PROVIDERS.md#finite-reporting-recovery-v4):
+only actual independently replayed purposes 16 and 17 admit ordinary v8 review.
+Stopped v3 actual 14 qualified and 15 did not; neither transfers changed-source credit.
 Preserve stopped v2 12/13 and the stopped 10 reservation/execution with unknown usage, unavailable 11,
 all nine original diagnostics and historical approval/report bytes. No skill action
 implicitly applies the new grant or invokes either purpose. Recovery stays offline;
@@ -861,3 +862,27 @@ frozen parser remains authoritative: `estimated_tokens` still yields
 as the cause of historical purpose 13. V3 diagnostic captures require the schema-2
 record even at zero rejections; this protocol requirement earns no inspection
 credit. Capture, result and completion hashes bind the entire record on recovery.
+
+
+### V8 partial-stream compatibility and observations
+
+The [v4 operating contract](PROVIDERS.md#finite-reporting-recovery-v4) uses an explicit
+v8 state/capture boundary. It accepts only the exact additional thinking delta layout
+specified there; no raw-stream normalization or v7 reason subtraction occurs. Actual
+payload type, model, session, parent, index, ordering and all other guards still apply.
+Old actual14true/15false retain v7 interpretation, exact reports/proofs and recovery.
+
+Every v8 capture includes unchanged nested observation schema2, including zero total.
+Accepted estimates add no rejection sample, source span or usage counter. Invalid
+layouts remain `delta_fields`, bad payloads `delta_text`, with unchanged
+`unsupported_partial_stream`. Adapter-specific validation rejects a purported rejected
+estimate-only thinking shape in classes null/integer_safe; v7 still accepts that row
+as historical rejection evidence. Missing, stripped, inconsistent or wrong-version
+observations refuse v8 recovery. Diagnostics/capture/result/completion hashes bind
+all observations without changing exact report fragments or auxiliary terminal bytes.
+
+The unchanged privacy bounds are23 fixed predicates,20,000 rejections,32 samples,
+8 capped other fields and32,768 canonical bytes, with explicit overflow/saturation.
+No raw values, numbers, thinking, signatures, arbitrary names/hashes or sessions enter
+the record. Overflow/unavailable evidence stays incomplete. Observations never earn
+inspection/admission credit; observed reads and green tests do not prove understanding.

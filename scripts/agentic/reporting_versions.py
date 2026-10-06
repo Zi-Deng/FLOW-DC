@@ -7,8 +7,9 @@ def diagnostic(meta):
     import reporting_diagnostic as v1
     import reporting_diagnostic_v2 as v2
     import reporting_diagnostic_v3 as v3
+    import reporting_diagnostic_v4 as v4
 
-    for module in (v1, v2, v3):
+    for module in (v1, v2, v3, v4):
         if meta.get("purpose") == module.PURPOSE:
             return module
     raise WorkflowError("Unsupported reporting diagnostic version")

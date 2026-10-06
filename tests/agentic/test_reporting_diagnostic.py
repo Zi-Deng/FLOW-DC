@@ -43,6 +43,9 @@ class ReportingDiagnosticFixture(GitFixture):
         self.repo._info["nameWithOwner"] = "Zi-Deng/FLOW-DC"
         self.commit_task()
         self.addCleanup(patch.stopall)
+        # Explicit historical v7 preparation for these retained v1/v2 fixtures.
+        # Current v4 fixtures install their own v8 builder after creating history.
+        patch("claude_reporting_versions.build", claude_reporting_policy.build).start()
         if self.legacy_admission:
             # These retained 10/11 fixtures test the original admission contract.
             # Production admission now requires 12/13; v2 tests do not patch it.

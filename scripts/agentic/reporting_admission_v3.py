@@ -11,9 +11,9 @@ import copy
 from pathlib import Path
 
 import claude_native_auth
-import claude_reporting_policy_v8 as claude_reporting_policy
-import reporting_activation_v4 as activation
-import reporting_diagnostic_v4 as diagnostic
+import claude_reporting_policy
+import reporting_activation_v3 as activation
+import reporting_diagnostic_v3 as diagnostic
 from tasks import digest
 from workflow import WorkflowError, run
 
@@ -49,9 +49,9 @@ def check(repo, policy, *, owned_auth=None):
     """Re-evaluate both purposes and all immutable bindings without dispatch."""
     import review
 
+    claude_reporting_policy.validate(policy)
     if not activation.root(repo).exists():
         raise WorkflowError("Missing separate reporting activation; both actual purposes are required")
-    claude_reporting_policy.validate(policy)
     claude_native_auth.validate_binding(policy["authentication"])
     grant, _ = activation.load(repo)
     bound = grant["binding"]
@@ -77,7 +77,7 @@ def check(repo, policy, *, owned_auth=None):
     ):
         raise WorkflowError("Reporting policy or verified same-account capability lineage differs")
     outcomes = {}
-    for number in (16, 17):
+    for number in (14, 15):
         directory = activation.root(repo) / f"evidence-{number}"
         meta = review.verify_packet(directory)
         diagnostic.identity(repo, directory, meta)
@@ -89,7 +89,7 @@ def check(repo, policy, *, owned_auth=None):
             raise WorkflowError("Both actual reporting purposes must qualify independently")
         outcomes[str(number)] = digest(result)
     return {
-        "schema_version": 4,
+        "schema_version": 3,
         "grant_digest": digest(grant),
         "policy_digest": digest(policy),
         "harness": copy.deepcopy(bound["harness"]),
