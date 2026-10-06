@@ -64,6 +64,33 @@ Configuration validation checks every required model, rubric, check-name and pos
 
 `make check` runs both suites, scoped lint/format checks and skills/configuration/schema/workflow/link validation. It does not run a dataset campaign or HPC job. Individual targets are `test-flowdc`, `test-agentic`, `check-agentic`, `lint` and `check-clean`. Override `PYTHON` and `RUFF` explicitly when using a prepared environment outside the worktree; never install editable project code into a shared environment.
 
+Workflow tests run in two fresh Python processes by default. The explicit reference
+command is `python3 -B scripts/agentic/check.py --jobs 1`; `--jobs 2` runs the full
+parallel gate. Other counts and filters are rejected. Both modes discover every
+test, including duplicate IDs and import failures. Whole discovery groups sharing
+a defining test module stay together, preserving their module/class fixtures and
+occurrence order. Workers have separate temporary directories and process-local
+mocks; the product suite remains separate.
+
+The runner prints a private temporary evidence directory with source/checkout
+hashes, ordered occurrences, assignments, per-worker JSON records, exact logs and
+an aggregate summary. Retain it with command/exit receipts when diagnosing a gate;
+it contains test diagnostics, not a provider review. Logs print in worker order
+after execution. Every assigned occurrence must reconcile with standard unittest
+outcomes and both workers must finish successfully. Crashes, incomplete records,
+source drift, protocol mismatch or overflow fail the gate without retries or a
+serial fallback. Ordinary test failures let the remaining tests finish. Existing
+skip and expected-failure semantics remain visible; no tests are newly skipped.
+
+The controller bounds discovery, execution and reconciliation to 840 seconds,
+with at most 32 MiB of text and 16 MiB of structured evidence per worker. Overflow
+retains an explicitly incomplete prefix. Process-group supervision requires the
+supported POSIX environment and reaps runner-owned workers on interruption or
+timeout. CI keeps its existing single workflow job and 15-minute cap; parallel
+local success cannot substitute for a completed current-head hosted job. Installed
+validation must resolve the runner and its tests from the disposable installed
+tree and verify payload hashes. Native review budgets and admission are unchanged.
+
 Generic workflow tests create a fixed synthetic project policy in real temporary Git
 repositories. They use the current configuration, report schema and provider profile,
 but do not copy FLOW-DC's growing documentation into every synthetic review contract.
