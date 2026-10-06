@@ -327,7 +327,7 @@ prior consumption, identical reviewed identity/inventory/assignments/harness and
 separately named finite authorization. Integration requires every exact component
 report. The initial successor format does not chain a further successor. Validate
 reviewed model-input capacity and current credential lifetime before execution.
-Historical v6/c303 evidence acquires no changed-head credit. Both actual purposes 16/17
+Historical v6/c303 evidence acquires no changed-head credit. Both actual purposes 18/19
 records, final tested implementation/harness and current hosted gates are separate
 prerequisites; no skill invocation implicitly applies or spends either allowance.
 
@@ -338,8 +338,10 @@ available archive storage and bind optional source/navigation/protocol allowance
 plus a separately reviewed token estimate. A byte envelope is not a token guarantee.
 
 
-Current reporting qualification follows [finite recovery v4](PROVIDERS.md#finite-reporting-recovery-v4):
-only actual independently replayed purposes 16 and 17 admit ordinary v8 review.
+Current reporting qualification follows [finite recovery v5](PROVIDERS.md#finite-reporting-recovery-v5):
+only actual independently replayed purposes 18 and 19 admit ordinary v8 review.
+Stopped v4 purpose16 remains consumed-uncertain, usage unknown and17 unavailable;
+its preflight repair does not restore its grant or infer a missing outcome.
 Stopped v3 actual 14 qualified and 15 did not; neither transfers changed-source credit.
 Preserve stopped v2 12/13 and the stopped 10 reservation/execution with unknown usage, unavailable 11,
 all nine original diagnostics and historical approval/report bytes. No skill action

@@ -1,7 +1,7 @@
 # Coverage evidence and operator migration
 
 Schema7 ordinary reviews can use explicitly configured structured reporting after
-both actual purposes 16/17 records independently qualify under the v8 adapter. Shared current readiness
+both actual purposes 18/19 records independently qualify under the v8 adapter. Shared current readiness
 requires the immutable dispatch admission/execution binding and matching current
 harness/policy; synthetic storage success alone remains incomplete. Exact model
 argument fragments and separate auxiliary text retain their existing representation.
@@ -101,7 +101,7 @@ The coordinator must establish actual model, usage and credential-window feasibi
 before applying any full-review authorization. No truncation, lowered report limits,
 summary substitution or extra integration invocation follows failure.
 
-These paths have synthetic execution tests. They do not establish actual purposes 16/17
+These paths have synthetic execution tests. They do not establish actual purposes 18/19
 activation or a complete review. The stopped c303 aggregate remains 60/776 incomplete;
 its nineteen successes are historical after changed head/contract. Final source/local
 and hosted gates, inspected harness and fresh authentication/billing facts precede
@@ -806,8 +806,10 @@ continuation remains unfinished; synthetic runner tests establish neither live
 activation nor review readiness.
 
 
-Current reporting qualification follows [finite recovery v4](PROVIDERS.md#finite-reporting-recovery-v4):
-only actual independently replayed purposes 16 and 17 admit ordinary v8 review.
+Current reporting qualification follows [finite recovery v5](PROVIDERS.md#finite-reporting-recovery-v5):
+only actual independently replayed purposes 18 and 19 admit ordinary v8 review.
+Stopped v4 purpose16 remains consumed-uncertain, usage unknown and17 unavailable;
+its preflight repair does not restore its grant or infer a missing outcome.
 Stopped v3 actual 14 qualified and 15 did not; neither transfers changed-source credit.
 Preserve stopped v2 12/13 and the stopped 10 reservation/execution with unknown usage, unavailable 11,
 all nine original diagnostics and historical approval/report bytes. No skill action

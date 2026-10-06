@@ -1,4 +1,4 @@
-"""Independent v4 negative boundaries after actual synthetic positive baselines."""
+"""Independent v5 negative boundaries after actual synthetic positive baselines."""
 
 import copy
 import json
@@ -6,18 +6,18 @@ from unittest.mock import patch
 
 import claude_native_auth as auth
 import claude_reporting_execution as execution
-import reporting_activation_v4 as activation
-import reporting_admission_v4 as admission
-import reporting_diagnostic_v4 as diagnostic
-import reporting_recovery_history_v4 as history
+import reporting_activation_v5 as activation
+import reporting_admission as admission
+import reporting_diagnostic_v5 as diagnostic
+import reporting_recovery_history_v5 as history
 from tasks import atomic_json, digest
-from test_reporting_recovery_v4 import RecoveryFixture
+from test_reporting_recovery_v5 import RecoveryFixture
 from test_workflow import workflow
 
 
 class BoundaryTests(RecoveryFixture):
     def test_application_torn_claim_and_changed_bindings_refuse(self):
-        fresh = self.parent / "fresh-v4-application"
+        fresh = self.parent / "fresh-v5-application"
         with patch.object(activation, "root", return_value=fresh):
             for key in (
                 "authorization",
@@ -89,7 +89,7 @@ class BoundaryTests(RecoveryFixture):
             grant["binding"]["observation"]["schema_version"] = value
             with self.assertRaises(workflow.WorkflowError):
                 activation.validate_grant(grant)
-        with patch.object(history, "V3_GRANT", "f" * 64), self.assertRaises(workflow.WorkflowError):
+        with patch.object(history, "V4_GRANT", "f" * 64), self.assertRaises(workflow.WorkflowError):
             activation.context(self.repo, self.policy)
         self.assertEqual(self.calls, 0)
 
@@ -101,7 +101,7 @@ class BoundaryTests(RecoveryFixture):
             self.now = 2100
             return result
 
-        fresh = self.parent / "expired-v4-application"
+        fresh = self.parent / "expired-v5-application"
         with (
             patch.object(activation, "root", return_value=fresh),
             patch.object(activation, "context", side_effect=delayed),
@@ -114,11 +114,11 @@ class BoundaryTests(RecoveryFixture):
             patch.object(activation, "context", side_effect=delayed),
             self.assertRaisesRegex(workflow.WorkflowError, "window expired"),
         ):
-            activation.reserve(self.repo, number=16, input_digest="a" * 64)
+            activation.reserve(self.repo, number=18, input_digest="a" * 64)
         for instant in (1, 2500, float("nan"), float("inf"), True):
             with self.assertRaises(workflow.WorkflowError):
-                activation.reserve(self.repo, number=16, input_digest="a" * 64, now=instant)
-        self.assertFalse((activation.root(self.repo) / "attempt-16.json").exists())
+                activation.reserve(self.repo, number=18, input_digest="a" * 64, now=instant)
+        self.assertFalse((activation.root(self.repo) / "attempt-18.json").exists())
         self.assertEqual(self.calls, 0)
 
     def test_unknown_usage_and_missing_refusal_fail_without_releasing_slots(self):
@@ -131,11 +131,11 @@ class BoundaryTests(RecoveryFixture):
             return result
 
         with self.isolated(process=process):
-            self.assertFalse(diagnostic.run(self.repo, number=16)["qualified"])
+            self.assertFalse(diagnostic.run(self.repo, number=18)["qualified"])
             with self.assertRaisesRegex(workflow.WorkflowError, "stopped"):
-                diagnostic.run(self.repo, number=17)
+                diagnostic.run(self.repo, number=19)
         with self.assertRaises(workflow.WorkflowError):
-            activation.reserve(self.repo, number=16, input_digest="b" * 64)
+            activation.reserve(self.repo, number=18, input_digest="b" * 64)
         self.assertEqual(self.calls, 1)
 
     def test_unknown_capture_never_replays_or_fabricates_completion(self):
@@ -146,18 +146,18 @@ class BoundaryTests(RecoveryFixture):
             self.isolated(process=interrupted),
             self.assertRaisesRegex(workflow.WorkflowError, "Dedicated native Max registration"),
         ):
-            diagnostic.run(self.repo, number=16)
-        for number in (16, 17):
+            diagnostic.run(self.repo, number=18)
+        for number in (18, 19):
             with self.assertRaises((workflow.WorkflowError, OSError)):
                 diagnostic.run(self.repo, number=number)
         self.assertEqual(self.calls, 0)
-        self.assertTrue((activation.root(self.repo) / "attempt-16.json").is_file())
-        self.assertFalse((activation.root(self.repo) / "evidence-16" / diagnostic.FINISHED).exists())
+        self.assertTrue((activation.root(self.repo) / "attempt-18.json").is_file())
+        self.assertFalse((activation.root(self.repo) / "evidence-18" / diagnostic.FINISHED).exists())
 
     def test_completed_pair_each_artifact_tamper_refuses_offline_and_current_admission(self):
         self.qualify()
-        self.assertEqual(admission.check(self.repo, self.policy)["schema_version"], 4)
-        for number in (16, 17):
+        self.assertEqual(admission.check(self.repo, self.policy)["schema_version"], 5)
+        for number in (18, 19):
             directory = activation.root(self.repo) / f"evidence-{number}"
             for name in (
                 "review.md",
@@ -179,12 +179,12 @@ class BoundaryTests(RecoveryFixture):
                         admission.check(self.repo, self.policy)
                 finally:
                     path.write_bytes(raw)
-        self.assertEqual(admission.check(self.repo, self.policy)["schema_version"], 4)
+        self.assertEqual(admission.check(self.repo, self.policy)["schema_version"], 5)
         self.assertEqual(self.calls, 2)
 
     def test_schema2_observation_is_required_and_tamper_bound_to_completion(self):
         self.qualify()
-        directory = activation.root(self.repo) / "evidence-16"
+        directory = activation.root(self.repo) / "evidence-18"
         path = directory / "review-capture.json"
         original = path.read_bytes()
         capture = json.loads(original)
@@ -200,10 +200,10 @@ class BoundaryTests(RecoveryFixture):
                     patch.object(auth, "store", side_effect=AssertionError("offline")),
                     self.assertRaises(workflow.WorkflowError),
                 ):
-                    diagnostic.recover(self.repo, number=16)
+                    diagnostic.recover(self.repo, number=18)
             finally:
                 path.write_bytes(original)
-        self.assertTrue(diagnostic.recover(self.repo, number=16)["qualified"])
+        self.assertTrue(diagnostic.recover(self.repo, number=18)["qualified"])
 
     def test_last_moment_receipt_expiry_never_dispatch(self):
         reserve = execution.reserve
@@ -221,10 +221,10 @@ class BoundaryTests(RecoveryFixture):
             patch.object(execution, "reserve", side_effect=mutate),
             self.assertRaises(workflow.WorkflowError),
         ):
-            diagnostic.run(self.repo, number=16)
+            diagnostic.run(self.repo, number=18)
         self.assertEqual(self.calls, 0)
         with self.assertRaisesRegex(workflow.WorkflowError, "uncertain"):
-            diagnostic.recover(self.repo, number=16)
+            diagnostic.recover(self.repo, number=18)
 
     def test_closed_history_tree_and_approval_refuse_extra_symlink_missing_or_rebound(self):
         directory = self.parent / "history-shape"
@@ -268,9 +268,9 @@ class BoundaryTests(RecoveryFixture):
             patch.object(execution, "reserve", side_effect=mutate),
             self.assertRaises(workflow.WorkflowError),
         ):
-            diagnostic.run(self.repo, number=16)
+            diagnostic.run(self.repo, number=18)
         self.assertEqual(self.calls, 0)
-        self.assertTrue((activation.root(self.repo) / "attempt-16.json").is_file())
+        self.assertTrue((activation.root(self.repo) / "attempt-18.json").is_file())
 
     def test_missing_actual_refusal_alone_cannot_qualify_isolation_first(self):
         def process(*args, **kwargs):
@@ -281,13 +281,13 @@ class BoundaryTests(RecoveryFixture):
             return result
 
         with self.isolated(process=process):
-            self.assertFalse(diagnostic.run(self.repo, number=16)["qualified"])
+            self.assertFalse(diagnostic.run(self.repo, number=18)["qualified"])
             with self.assertRaisesRegex(workflow.WorkflowError, "stopped"):
-                diagnostic.run(self.repo, number=17)
+                diagnostic.run(self.repo, number=19)
         self.assertEqual(self.calls, 1)
 
-    def test_original_v3_closure_and_whole_public_body_pin_before_preview(self):
-        import reporting_activation_v3 as previous
+    def test_original_v4_closure_and_whole_public_body_pin_before_preview(self):
+        import reporting_activation_v4 as previous
 
         directory = previous.root(self.repo)
         path = directory / "grant.json"

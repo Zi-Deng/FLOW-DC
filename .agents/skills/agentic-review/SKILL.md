@@ -6,9 +6,9 @@ description: "Run and publish an independent static review of a GitHub pull requ
 # Review Pull Request
 
 Explicit v8 preparation accepts `--reporting-policy FILE` with finite turn and
-retention limits. Ordinary admission requires both actual purposes 16/17 execution
+retention limits. Ordinary admission requires both actual purposes 18/19 execution
 and completion records under matching qualified bindings; storage-only success
-does not activate it. Follow the [finite recovery v4 procedure](../../../docs/agent-workflow/PROVIDERS.md#finite-reporting-recovery-v4); preserve stopped v1 unknown usage, v2 and v3 outcomes. Purpose 16 is isolation-first; 17 follows only qualified actual 16, with no 18 or automatic chain. V8 narrowly accepts a thinking delta estimate of null or a finite nonnegative safe integer; historical v7 refusal and exact evidence remain unchanged. The pure StructuredOutput tool earns no inspection credit.
+does not activate it. Follow the [finite recovery v5 procedure](../../../docs/agent-workflow/PROVIDERS.md#finite-reporting-recovery-v5); preserve stopped v1 unknown usage, v2/v3 outcomes and v4 consumed-uncertain 16 (unknown usage, no capture/outcome, 17 unavailable). Purpose 18 is isolation-first; 19 follows only qualified actual 18, with no 20 or automatic chain. V8 narrowly accepts a thinking delta estimate of null or a finite nonnegative safe integer; historical v7 refusal and exact evidence remain unchanged. The pure StructuredOutput tool earns no inspection credit.
 Preserve exact argument fragments and separate auxiliary terminal text. The
 coordinator must finish all implementation and final source/local/hosted gates
 before applying or invoking the separate two-purpose allowance. No automatic

@@ -1,6 +1,6 @@
 # Reviewer providers and activation
 
-The explicit v8 path now requires both purposes 16/17 native execution and completion
+The explicit v8 path now requires both purposes 18/19 native execution and completion
 records, independently re-evaluated on admission. Offline captures remain recoverable
 but cannot activate ordinary review. Use `review.py prepare --reporting-policy FILE`
 or managed `task-review --reporting-policy FILE`; the bounded JSON contains exactly
@@ -721,7 +721,7 @@ reconciliation remain unchanged.
 
 **Historical v1 only:** the following describes the unchanged 10/11 allowance.
 Purpose 10 is consumed/uncertain after the guarded-lock failure; 11 is unavailable.
-Current admission uses [recovery v4](#finite-reporting-recovery-v4).
+Current admission uses [recovery v5](#finite-reporting-recovery-v5).
 
 `reporting_activation.py` provides a separate, versioned local journal for the
 approved purpose 10/11 allowance. It does not extend or rewrite the old nine-attempt
@@ -878,7 +878,7 @@ remain separate obligations.
 
 This grant is stopped: actual 14 qualified, actual 15 remained incomplete with
 `unsupported_partial_stream`. Its immutable 52-file closure and original outcomes
-remain historical; no 16 exists under this grant. See current v4 below.
+remain historical; no 16 exists under this grant. See historical v4 and current v5 below.
 
 The [exact approved amendment](https://github.com/Zi-Deng/FLOW-DC/issues/31#issuecomment-6009076812)
 uses separate `reporting_activation_v3.py`, `reporting_diagnostic_v3.py` and
@@ -929,6 +929,11 @@ CLI/400 turns/report 10k/tools/schema/retry/isolation controls stay unchanged.
 
 ## Finite reporting recovery v4
 
+Historical, stopped: purpose16 was reserved and failed before CLI discovery at196c300.
+No native attempt/execution/capture/completion/outcome exists; usage remains unknown
+and17 unavailable. The preflight repair at421250c cannot reactivate this grant.
+The following records the original version4 contract; current admission uses v5 below.
+
 The [approved compatibility amendment](https://github.com/Zi-Deng/FLOW-DC/issues/31#issuecomment-6009865197)
 selects `claude-stream-json-2.1.282-v8` and diagnostic schema10. Policy2,
 metadata/capture/result7, report2, proof2 and execution2 retain their layouts.
@@ -965,7 +970,7 @@ public stopped response, then replays14true/15false through v3. It also preserve
 v2 12true/13false, v1 unknown10/unavailable11, original nine and c303's pinned original
 closure. Known usage and unknown consumption remain separate. `recover-v3`,
 `recover-v2`, `recover-v1` are storage-only; no auth/inference/current approval is
-needed to interpret old captures. `recover` routes only v4. Local hashes are
+needed to interpret old captures. Historical v4 `recover` routed only v4; current `recover-v4` is storage-only. Local hashes are
 owner-writable integrity bookkeeping, not provider attestations.
 
 The owned native snapshot keeps its exclusive real store lock through final source,
@@ -982,3 +987,57 @@ every original component plus integration, current unit/input/report/storage cou
 measured prerequisite overhead and complete credential/receipt window feasibility.
 No old181 count, catalog context declaration or byte arithmetic proves live token fit.
 No full batch, campaign, scientific claim or human merge is funded by this allowance.
+
+
+## Finite reporting recovery v5
+
+The [reconciled approved plan6012492318](https://github.com/Zi-Deng/FLOW-DC/issues/31#issuecomment-6012492318)
+uses separate `reporting_activation_v5.py`, `reporting_diagnostic_v5.py`,
+`reporting_recovery_history_v5.py` and `.agentic-local/claude-reporting-activation-v5`.
+Grant/reservation/completion/outcome and current admission are version5. The v8
+policy/parser/preflight, metadata/capture/result7, diagnostic10, report/proof/execution2,
+observation2 and every acceptance/privacy/tool control above remain unchanged.
+
+**18 isolation-refusal first; 19 native-tools-and-source only after independently
+replayed actual18 qualifies.** Each proves native Read/Grep/Glob, both required source
+ranges and exact StructuredOutput;18 additionally requires exactly one controlled
+outside-workspace refusal. Ordinary current admission requires BOTH actual18AND19
+under exact current source/policy and verified same-account lineage. Diagnostic
+reports, structural observations, synthetic fixtures and old successes never substitute.
+
+The separate allowance is two single-use wrappers,300 seconds/$2 reference each,
+600 seconds/$4 total, included Max only, paid-extra/API0, failure-stop and **no20**.
+No18 is authorized under stopped v4. No wrapper retry, autochain, refund, regrant,
+provider/model/auth switch or deadline extension follows from failure. Reference
+limits are monitored ceilings, not vendor billing guarantees. Ordinary900s/$10 stays.
+
+Before first preview, the new reader compares stopped v4's original16-file/67578-byte
+closed map, grant/application, exact historical approval and whole public failure6010351406.
+It validates reservation16 and complete fixed packet and requires absence of native
+attempt/execution/capture/completion/outcome and all17 material.16 stays consumed-uncertain,
+usage unknown,17 unavailable. Original nine, unknown10/unavailable11,12true13false,
+14true15false and c303's incomplete closure are re-evaluated by unchanged historical
+readers. Their bytes and approvals remain intact; no synthetic zero/outcome is produced.
+
+Current CLI `preview`, `apply`, `prepare`, `run`, `status`, `recover` select only v5;
+`prepare/run/recover --number` accept18/19 only. `recover-v4 --number16|17` and previous
+version recovery commands are storage-only and cannot execute or restore old slots.
+Frozen v4 admission/CLI preserve historical interpretation and test assertions.
+
+Preview, application and each invocation are separate coordinator actions after final
+committed local/installed/hosted gates. The owned real guarded store/flock remains held
+through final source/approval/history/policy/grant/CLI/model/account/generation/receipt
+and time checks and capture. Generation changes stop diagnostics. Only existing
+verified same-account renewal is permitted for ordinary admission/continuation.
+Measure all repeated offline checks/replay/preparation overhead; full600seconds plus
+unchanged margins must fit fresh actual credential/receipt windows before application.
+The first reservation starts the unchanged600-second aggregate clock; checks consume
+elapsed time. An infeasible window stops before application, without caches or waivers.
+
+Protocol2 workflow runner and all prior770 occurrences remain fixed: two processes,
+840seconds,32MiB text/16MiB evidence per worker and unchanged15-minute CI job. New
+software tests establish no live qualification. After actual18/19, full original PR
+component plus integration inspection/publication still needs a distinct populated
+finite grant, recomputed actual unit/context/report/storage count and complete-window
+feasibility. Old181 counts or catalog1M context are not token-fit proof. No human merge,
+scientific efficacy, manuscript or coauthor completion follows from software success.
