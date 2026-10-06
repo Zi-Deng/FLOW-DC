@@ -14,6 +14,12 @@ def current_binding(unit_seconds, window_seconds, *, root=None, clock=time.time)
     time remaining is rounded up, never down. No token or account data escapes
     this check, and neither a receipt nor a credential is renewed here.
     """
+    _window(unit_seconds, window_seconds)
+    with auth.store(root) as storage:
+        return _binding(storage, unit_seconds, window_seconds, clock=clock)
+
+
+def _window(unit_seconds, window_seconds):
     if (
         type(unit_seconds) is not int
         or not 1 <= unit_seconds <= 900
@@ -21,22 +27,26 @@ def current_binding(unit_seconds, window_seconds, *, root=None, clock=time.time)
         or not 0 < window_seconds <= auth.RECEIPT_SECONDS
     ):
         raise WorkflowError("Invalid batch lifetime window or per-process timeout")
-    window = max(unit_seconds, math.ceil(window_seconds))
+    return max(unit_seconds, math.ceil(window_seconds))
+
+
+def _binding(storage, unit_seconds, window_seconds, *, clock):
+    """Same full-window checks for a caller that already exclusively owns storage."""
+    window = _window(unit_seconds, window_seconds)
     start = clock()
     if not auth.finite(start) or start <= 0:
         raise WorkflowError("Invalid batch lifetime clock")
-    with auth.store(root) as storage:
-        receipt = storage.read("receipt.json")
-        registration, snapshot, _ = auth._load(storage, unit_seconds, now=start)
-        if receipt != storage.read("receipt.json"):
-            raise WorkflowError("Paid-usage receipt changed during batch lifetime check")
-        ready = clock()
-        if not auth.finite(ready) or ready < start:
-            raise WorkflowError("Batch lifetime clock rollback")
-        required_until = ready + window + auth.REFRESH_MARGIN + auth.CLOCK_ALLOWANCE
-        if (
-            snapshot["claudeAiOauth"]["expiresAt"] / 1000 <= required_until
-            or receipt["expires_at"] <= required_until
-        ):
-            raise WorkflowError("Native credentials or paid-usage receipt cannot cover full batch window")
-        return dict(registration["authentication"])
+    receipt = storage.read("receipt.json")
+    registration, snapshot, _ = auth._load(storage, unit_seconds, now=start)
+    if receipt != storage.read("receipt.json"):
+        raise WorkflowError("Paid-usage receipt changed during batch lifetime check")
+    ready = clock()
+    if not auth.finite(ready) or ready < start:
+        raise WorkflowError("Batch lifetime clock rollback")
+    required_until = ready + window + auth.REFRESH_MARGIN + auth.CLOCK_ALLOWANCE
+    if (
+        snapshot["claudeAiOauth"]["expiresAt"] / 1000 <= required_until
+        or receipt["expires_at"] <= required_until
+    ):
+        raise WorkflowError("Native credentials or paid-usage receipt cannot cover full batch window")
+    return dict(registration["authentication"])

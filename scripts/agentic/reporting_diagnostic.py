@@ -186,10 +186,16 @@ class Dispatch:
             raise WorkflowError("Reporting diagnostic reservation or current context changed")
         self.claimed = True
 
-    def recheck(self, meta):
+    def recheck(self, meta, *, owned_auth=None):
         grant, number = identity(self.repo, self.directory, review.verify_packet(self.directory))
         predecessor(self.repo, number)
-        if digest(activation.context(self.repo, meta["review_policy"])) != digest(grant["binding"]):
+        if digest(
+            activation.context(
+                self.repo,
+                meta["review_policy"],
+                **({"owned_auth": owned_auth} if owned_auth is not None else {}),
+            )
+        ) != digest(grant["binding"]):
             raise WorkflowError("Reporting context changed immediately before dispatch")
 
     def timeout(self):

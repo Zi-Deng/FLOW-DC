@@ -605,7 +605,7 @@ def qualification(directory, *, require=False):
     return assessment
 
 
-def coverage_ready(directory):
+def coverage_ready(directory, *, owned_auth=None):
     """Current-policy readiness, distinct from an immutable historical assessment."""
     assessment = qualification(directory)
     meta = verify_packet(directory)
@@ -615,7 +615,7 @@ def coverage_ready(directory):
         from reporting_admission import require_packet
 
         try:
-            require_packet(directory, meta)
+            require_packet(directory, meta, **({"owned_auth": owned_auth} if owned_auth is not None else {}))
         except (WorkflowError, OSError, ValueError, KeyError):
             return False
     if meta.get("review_policy", {}).get("provider") == "claude-code":
@@ -959,7 +959,7 @@ def verified_published(repo, directory, number, head, base):
     return matching[0]
 
 
-def verify_publication(repo, directory):
+def verify_publication(repo, directory, *, owned_auth=None):
     """Read-only byte comparison, including historical reports; never inference."""
     meta = verify_packet(directory)
     if meta["schema_version"] == 4:
@@ -994,7 +994,9 @@ def verify_publication(repo, directory):
         "head_sha": meta["head_sha"],
         "body_sha256": coverage.checksum(expected),
         "body_bytes": len(expected.encode("utf-8")),
-        "coverage_qualified": False if meta.get("schema_version") == 1 else coverage_ready(directory),
+        "coverage_qualified": False
+        if meta.get("schema_version") == 1
+        else coverage_ready(directory, **({"owned_auth": owned_auth} if owned_auth is not None else {})),
     }
 
 

@@ -156,11 +156,17 @@ def validate_policy(policy):
         raise WorkflowError("Reporting diagnostics require exactly 300 seconds and 2 reference USD")
 
 
-def context(repo, policy):
+def context(repo, policy, *, owned_auth=None):
     validate_policy(policy)
     # No historical approval or auth lineage substitution for this new grant.
     observed = {"authorization": authorization(repo), "history": historical(repo), "harness": harness()}
-    if claude_native_auth.current_binding(600) != policy["authentication"]:
+    if owned_auth is None:
+        binding = claude_native_auth.current_binding(600)
+    else:
+        from claude_owned_auth import require
+
+        binding = require(owned_auth).current_binding(600)
+    if binding != policy["authentication"]:
         raise WorkflowError("Reporting activation authentication generation changed")
     return {**observed, "policy": copy.deepcopy(policy), "tool_contract": diagnostic_tool_contract.contract()}
 

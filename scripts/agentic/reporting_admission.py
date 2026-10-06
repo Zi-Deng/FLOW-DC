@@ -45,7 +45,7 @@ def source_continuity(repo, original, current):
         raise WorkflowError("Reporting harness commit lacks verified merged-source continuity")
 
 
-def check(repo, policy):
+def check(repo, policy, *, owned_auth=None):
     """Re-evaluate both purposes and all immutable bindings without dispatch."""
     import review
 
@@ -67,7 +67,12 @@ def check(repo, policy):
     # model, effort, tool surface and every other policy field must match.
     observed.pop("budget")
     requested.pop("budget")
-    if digest(observed) != digest(requested) or not claude_native_auth.capability_lineage(
+    lineage = claude_native_auth.capability_lineage
+    if owned_auth is not None:
+        from claude_owned_auth import require
+
+        lineage = require(owned_auth).capability_lineage
+    if digest(observed) != digest(requested) or not lineage(
         old_auth, new_auth, policy["budget"]["timeout_seconds"]
     ):
         raise WorkflowError("Reporting policy or verified same-account capability lineage differs")
@@ -103,7 +108,7 @@ def retain(repo, directory, meta):
     return record
 
 
-def require_packet(directory, meta, *, repo=None):
+def require_packet(directory, meta, *, repo=None, owned_auth=None):
     """Current readiness needs dispatch admission, not just storage qualification."""
     from claude_reporting_execution import retained
     from workflow import Repo
@@ -114,7 +119,9 @@ def require_packet(directory, meta, *, repo=None):
         raise WorkflowError("Missing reporting dispatch admission; storage-only evidence is not ready")
     record = activation.read(Path(directory) / FILENAME)
     repo = repo or Repo(directory)
-    if repo.name != meta["repository"] or digest(record) != digest(check(repo, meta["review_policy"])):
+    if repo.name != meta["repository"] or digest(record) != digest(
+        check(repo, meta["review_policy"], **({"owned_auth": owned_auth} if owned_auth is not None else {}))
+    ):
         raise WorkflowError("Reporting admission or current evidence changed")
     execution = retained(directory, meta)
     if execution is None or execution.get("admission_digest") != digest(record):

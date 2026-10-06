@@ -775,3 +775,24 @@ seconds. Batch totals and fractional remaining deadlines never enter that interf
 renewal lineage also uses the per-process bound. See [integration capacity and batch
 lifetime](COVERAGE.md) for separately bound source/navigation allowances and byte/token
 uncertainty. These local checks do not establish actual purpose10/11 activation.
+
+### V7 owned authentication verification
+
+The v7 adapter holds the exclusive native registration lock from access-only
+snapshot creation through provider capture. Its explicit owned-snapshot handle
+re-reads the guarded registration, generation, Max account, disabled-paid-usage
+receipt and expiry immediately before launch. Diagnostic grant/source checks,
+ordinary admission and renewed continuation lineage use this same owned store;
+they never reacquire its non-reentrant lock. Imported exact publications retain
+their original generation and require verified same-account retention. Batch
+prelaunch checks also require the full remaining credential/receipt window,
+separate from the integer per-process timeout. The handle expires with its
+context, and the temporary snapshot contains no refresh token or copyback path.
+The frozen v6 native reader and historical interpretation remain unchanged.
+
+A prelaunch failure still consumes its durable reservation. The stopped purpose
+10 at head `6090992` has no capture/completion/outcome; absence of capture is not
+usage attestation. Software repair does not reset that grant or authorize a new
+slot. Any prospective recovery allowance needs a public amendment with explicit
+standing-authorization provenance, preserved stopped evidence, finite new bounds
+and fresh source/local/hosted gates before application or dispatch.

@@ -723,12 +723,19 @@ def captured(directory, meta):
         atomic_json(parent / "batch-state.json", state)
 
 
-def dispatch_timeout(repo, directory, meta, context, *, clock=time.time):
+def dispatch_timeout(repo, directory, meta, context, *, clock=time.time, owned_auth=None):
     """Called again inside the adapter, after preflight and immediately before spawn."""
     if _reporting(directory):
         import review_batch_v7
 
-        return review_batch_v7.dispatch_timeout(repo, directory, meta, context, clock=clock)
+        return review_batch_v7.dispatch_timeout(
+            repo,
+            directory,
+            meta,
+            context,
+            clock=clock,
+            **({"owned_auth": owned_auth} if owned_auth is not None else {}),
+        )
     if meta.get("kind") != "batch-unit":
         if context is not None:
             raise WorkflowError("Single review received batch dispatch context")

@@ -9,12 +9,13 @@ from pathlib import Path
 from unittest.mock import patch
 
 import test_claude_reporting as reporting_fixtures
-from claude_fixtures import AUTHENTICATION, native_events
+from claude_fixtures import AUTHENTICATION, native_events, simulated_owned_snapshot
 from test_claude_reporting import AUXILIARY, LIMITS
 from test_workflow import GitFixture, review, workflow
 
 # isort: split
 import claude_native_auth
+import claude_owned_auth
 import review_claude
 import review_prompt
 
@@ -56,7 +57,7 @@ class ClaudeExecutionV7Tests(GitFixture):
         def snapshot(policy):
             self.assertEqual(policy, self.policy)
             with tempfile.TemporaryDirectory() as temporary:
-                yield review_claude.environment(Path(temporary)), lambda: None
+                yield simulated_owned_snapshot(review_claude.environment(Path(temporary)), lambda: None)
 
         def process(args, **kw):
             self.process_calls += 1
@@ -85,7 +86,7 @@ class ClaudeExecutionV7Tests(GitFixture):
             ),
             patch("claude_reporting_execution.require_activation"),
             patch("reporting_admission.check", return_value={"synthetic_execution_boundary": True}),
-            patch.object(claude_native_auth, "snapshot", side_effect=snapshot),
+            patch.object(claude_owned_auth, "snapshot", side_effect=snapshot),
             patch.object(review_claude.review_cli, "executable", return_value="/verified/claude"),
             patch.object(review_claude.review_process, "capture", side_effect=process),
         ):
@@ -116,7 +117,7 @@ class ClaudeExecutionV7Tests(GitFixture):
         with self.isolated():
             review_claude.execute(self.repo, self.directory, self.meta)
         before = (self.directory / "attempt.json").read_bytes()
-        with patch.object(claude_native_auth, "snapshot", side_effect=AssertionError("no auth")):
+        with patch.object(claude_owned_auth, "snapshot", side_effect=AssertionError("no auth")):
             with self.assertRaisesRegex(workflow.WorkflowError, "attempt"):
                 review_claude.execute(self.repo, self.directory, self.meta)
         self.assertEqual((self.directory / "attempt.json").read_bytes(), before)
@@ -181,7 +182,7 @@ class ClaudeExecutionV7Tests(GitFixture):
         execution.exclusive(self.directory / execution.FILENAME, record)
         with (
             patch.object(review_claude, "preflight", side_effect=AssertionError("no preflight")),
-            patch.object(claude_native_auth, "snapshot", side_effect=AssertionError("no auth")),
+            patch.object(claude_owned_auth, "snapshot", side_effect=AssertionError("no auth")),
         ):
             with self.assertRaisesRegex(workflow.WorkflowError, "attempt"):
                 review_claude.execute(self.repo, self.directory, self.meta)
@@ -191,7 +192,7 @@ class ClaudeExecutionV7Tests(GitFixture):
 
     def test_no_activation_blocks_before_snapshot_or_provider(self):
         with (
-            patch.object(claude_native_auth, "snapshot", side_effect=AssertionError("no auth")),
+            patch.object(claude_owned_auth, "snapshot", side_effect=AssertionError("no auth")),
             patch.object(review_claude, "preflight", side_effect=AssertionError("no provider")),
         ):
             with self.assertRaisesRegex(workflow.WorkflowError, "separate reporting activation"):

@@ -139,7 +139,7 @@ def validate(directory, planned=None):
     return value
 
 
-def verify_live(repo, directory, batch):
+def verify_live(repo, directory, batch, *, owned_auth=None):
     value = validate(directory)
     if value is None:
         return
@@ -150,13 +150,21 @@ def verify_live(repo, directory, batch):
             raise WorkflowError("Continuation harness changed")
     from claude_native_auth import capability_lineage
 
+    if owned_auth is not None:
+        from claude_owned_auth import require
+
+        capability_lineage = require(owned_auth).capability_lineage
     if not capability_lineage(
         old["policy"]["authentication"], batch["policy"]["authentication"], batch["budget"]["unit_seconds"]
     ):
         raise WorkflowError("Continuation lacks verified same-account generation lineage")
     for unit in old["units"]:
         if unit["id"] in value["snapshot"]["imports"]:
-            receipt = b.api().verify_publication(repo, b.unit_path(value["snapshot"]["ancestor"], unit))
+            receipt = b.api().verify_publication(
+                repo,
+                b.unit_path(value["snapshot"]["ancestor"], unit),
+                **({"owned_auth": owned_auth} if owned_auth is not None else {}),
+            )
             if receipt != value["publications"][unit["id"]]:
                 raise WorkflowError("Imported publication changed or is ambiguous")
 

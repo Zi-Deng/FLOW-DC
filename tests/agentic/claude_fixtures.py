@@ -107,3 +107,27 @@ AUTHENTICATION = {
     "registration_id": "11111111-1111-4111-8111-111111111111",
     "generation_id": "22222222-2222-4222-8222-222222222222",
 }
+
+
+def simulated_owned_snapshot(env, recheck):
+    """Auth double for stream tests; real flock coverage lives in owned-auth tests."""
+    import time
+    from types import SimpleNamespace
+
+    import claude_native_auth as auth
+    import claude_owned_auth as owned
+
+    result = owned.OwnedSnapshot(
+        owned._KEY,
+        SimpleNamespace(read=lambda name: None),
+        None,
+        None,
+        None,
+        env,
+        300,
+        (time.time(), time.monotonic()),
+    )
+    result.recheck = recheck
+    result.current_binding = lambda timeout, window=None: auth.current_binding(timeout)
+    result.capability_lineage = auth.capability_lineage
+    return result

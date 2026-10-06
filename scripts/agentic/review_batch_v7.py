@@ -790,11 +790,15 @@ def captured(directory, meta):
         atomic_json(parent / "batch-state.json", state)
 
 
-def dispatch_timeout(repo, directory, meta, context, *, clock=time.time):
+def dispatch_timeout(repo, directory, meta, context, *, clock=time.time, owned_auth=None):
     """Called again inside the adapter, after preflight and immediately before spawn."""
     if meta.get("kind") != "batch-unit":
         if context is not None:
             raise WorkflowError("Single review received batch dispatch context")
+        if owned_auth is not None:
+            from claude_owned_auth import require
+
+            require(owned_auth).recheck()
         return meta["review_policy"]["budget"]["timeout_seconds"]
     if not isinstance(context, dict) or set(context) != {"parent", "dispatch_id"}:
         raise WorkflowError("Batch child requires a validated reservation context")
@@ -820,7 +824,9 @@ def dispatch_timeout(repo, directory, meta, context, *, clock=time.time):
     review_claims.verify(repo, batch, unit, row)
     import review_continuation
 
-    review_continuation.verify_live(repo, parent, batch)
+    review_continuation.verify_live(
+        repo, parent, batch, **({"owned_auth": owned_auth} if owned_auth is not None else {})
+    )
     review_continuation.owner(repo, parent, batch)
     api().verify_packet(directory)
     validate_navigation(directory, batch, unit, meta["batch_unit"])
@@ -843,6 +849,18 @@ def dispatch_timeout(repo, directory, meta, context, *, clock=time.time):
     ready = clock()
     if ready < now or ready >= state["deadline"]:
         raise WorkflowError("Batch clock rollback or deadline expiry")
+    if owned_auth is not None:
+        from claude_owned_auth import require
+
+        if (
+            require(owned_auth).current_binding(batch["budget"]["unit_seconds"], state["deadline"] - ready)
+            != batch["policy"]["authentication"]
+        ):
+            raise WorkflowError("Batch authentication changed before launch")
+        checked = clock()
+        if checked < ready or checked >= state["deadline"]:
+            raise WorkflowError("Batch clock rollback or deadline expiry")
+        ready = checked
     now = ready
     effective = min(row["binding"]["allocation"]["seconds"], state["deadline"] - now)
     state["last_clock"] = now

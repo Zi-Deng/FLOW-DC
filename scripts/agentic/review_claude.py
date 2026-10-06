@@ -394,10 +394,19 @@ def execute(repo, directory, meta, *, diagnostic=False, dispatch_context=None):
     if not diagnostic and not structured:
         require_activation(repo, policy)
     session_id = str(uuid.uuid4())
+    import claude_owned_auth
+
+    snapshot = claude_owned_auth.snapshot if structured else claude_native_auth.snapshot
     with (
-        claude_native_auth.snapshot(policy) as (env, recheck_auth),
+        snapshot(policy) as authentication,
         tempfile.TemporaryDirectory(prefix="agentic-claude-") as temporary,
     ):
+        if structured:
+            owned_auth = claude_owned_auth.require(authentication)
+            env, recheck_auth = owned_auth.env, owned_auth.recheck
+        else:
+            owned_auth = None
+            env, recheck_auth = authentication
         root = Path(temporary)
         home = Path(env["HOME"])
         if structured:
@@ -483,16 +492,19 @@ def execute(repo, directory, meta, *, diagnostic=False, dispatch_context=None):
         if structured and not diagnostic:
             from reporting_admission import require_packet
 
-            require_packet(directory, meta, repo=repo)
+            require_packet(directory, meta, repo=repo, owned_auth=owned_auth)
         from review_batch import dispatch_timeout
 
         timeout = (
             policy["budget"]["timeout_seconds"]
             if diagnostic
-            else dispatch_timeout(repo, directory, meta, dispatch_context)
+            else dispatch_timeout(
+                repo, directory, meta, dispatch_context, **({"owned_auth": owned_auth} if structured else {})
+            )
         )
         if structured and diagnostic:
-            dispatch_context.recheck(meta)
+            dispatch_context.recheck(meta, owned_auth=owned_auth)
+            recheck_auth()
             timeout = dispatch_context.timeout()
         response = review_process.capture(
             args,

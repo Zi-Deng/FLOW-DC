@@ -14,6 +14,7 @@ from test_workflow import GitFixture, review, workflow
 
 # isort: split
 import claude_native_auth
+import claude_owned_auth
 import claude_reporting_execution as execution
 import claude_reporting_policy
 import reporting_activation as activation
@@ -21,7 +22,7 @@ import reporting_diagnostic as diagnostic
 import review_claude
 import review_policy
 import test_claude_reporting as reporting_fixtures
-from claude_fixtures import AUTHENTICATION, native_events
+from claude_fixtures import AUTHENTICATION, native_events, simulated_owned_snapshot
 from tasks import atomic_json
 from test_claude_reporting import AUXILIARY, LIMITS
 from test_claude_v6 import FIXTURE
@@ -130,12 +131,14 @@ class ReportingDiagnosticFixture(GitFixture):
         def snapshot(policy):
             self.assertEqual(policy, self.policy)
             with tempfile.TemporaryDirectory() as temporary:
-                yield review_claude.environment(Path(temporary)), recheck or (lambda: None)
+                yield simulated_owned_snapshot(
+                    review_claude.environment(Path(temporary)), recheck or (lambda: None)
+                )
 
         with (
             patch.object(review_claude, "execute", side_effect=EXECUTE),
             patch.object(review_claude, "preflight", return_value="/verified/claude") as preflight,
-            patch.object(claude_native_auth, "snapshot", side_effect=snapshot),
+            patch.object(claude_owned_auth, "snapshot", side_effect=snapshot),
             patch.object(review_claude.review_cli, "executable", return_value="/verified/claude"),
             patch.object(review_claude.review_process, "capture", side_effect=process or self.response),
             patch.object(diagnostic.time, "time", side_effect=lambda: self.now),
