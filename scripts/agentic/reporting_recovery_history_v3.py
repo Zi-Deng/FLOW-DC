@@ -14,6 +14,13 @@ from workflow import WorkflowError
 C303_DIRECTORY = "reviews/pr-32-c303c46a8675-05c013fb"
 C303_HEAD = "c303c46a8675442a3d7270c00c40ad849d51bb5c"
 C303_CONTRACT = "e715ef7690c2b69830491740c2081bbeca88f0e2dd9b5cbc03a873ca4de7fc43"
+# Exact original relative-path/SHA manifest, independently retained before v3.
+# This is owner-writable provenance bookkeeping, not a provider attestation.
+C303_TREE = {
+    "files_digest": "ccac5d9eb9f5b7de2842745fea57e35c3cb44389d993ab08ef4f2fa0e918a598",
+    "file_count": 40568,
+    "byte_count": 338949235,
+}
 PUBLIC_SNAPSHOT = "issue31-provider-reconciliation/oct05-report-audit-current-public-feedback.json"
 V2_GRANT = "980e8aa6a6fd56ccbec5876d83b31f965b4cf177e78a8d31c08d7af49e662e34"
 
@@ -55,6 +62,9 @@ def approval(repo, contract, comment, expected=None):
 
 def c303(repo):
     directory = repo.main / ".agentic-local" / C303_DIRECTORY
+    closure = tree(directory)
+    if digest(closure) != digest(C303_TREE):
+        raise WorkflowError("Stopped c303 original history closure changed")
     meta = review.verify_packet(directory)
     batch = review_batch.load(directory)
     state = review_batch.state_for(directory, batch)
@@ -103,7 +113,7 @@ def c303(repo):
             raise WorkflowError("Stopped c303 exact publication is missing or ambiguous")
         publications[unit] = {"id": hits[0]["id"], "body_sha256": hashlib.sha256(body.encode()).hexdigest()}
     return {
-        **tree(directory),
+        **closure,
         "approval_digest": historical_approval,
         "head": C303_HEAD,
         "batch_digest": digest(batch),

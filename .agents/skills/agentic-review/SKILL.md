@@ -6,9 +6,9 @@ description: "Run and publish an independent static review of a GitHub pull requ
 # Review Pull Request
 
 Explicit v7 preparation accepts `--reporting-policy FILE` with finite turn and
-retention limits. Ordinary admission requires both actual purpose12/13 execution
+retention limits. Ordinary admission requires both actual purposes 14/15 execution
 and completion records under matching qualified bindings; storage-only success
-does not activate it. Follow the [finite recovery v2 procedure](../../../docs/agent-workflow/PROVIDERS.md#finite-reporting-recovery-v2); preserve stopped v1 records with unknown usage. The pure StructuredOutput tool earns no inspection credit.
+does not activate it. Follow the [finite recovery v3 procedure](../../../docs/agent-workflow/PROVIDERS.md#finite-reporting-recovery-v3); preserve stopped v1 records with unknown usage and stopped v2 outcomes. Purpose 14 is isolation-first; 15 follows only qualified actual 14, with no 16 or automatic chain. The pure StructuredOutput tool earns no inspection credit.
 Preserve exact argument fragments and separate auxiliary terminal text. The
 coordinator must finish all implementation and final source/local/hosted gates
 before applying or invoking the separate two-purpose allowance. No automatic
