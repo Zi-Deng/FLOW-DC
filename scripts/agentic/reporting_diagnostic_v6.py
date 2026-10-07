@@ -41,13 +41,16 @@ DESCRIPTOR = {
 
 
 def catalog(repo):
-    """Future adapter must recompute complete final source/catalog/check provenance.
+    """Recompute the designated final catalog and all current check provenance."""
+    import review_batch_windows_v1
 
-    No argument, environment variable, receipt flag or saved success opens this
-    boundary. Its result must include all current head/base/merge-base/contract,
-    source/test/finding/dependency ranges and both final check provenance maps.
-    """
-    raise WorkflowError("V6 fixture/profile and owned-window integration is not implemented: final catalog")
+    task = plain_path(repo.main / ".agentic-local/tasks/issue-31.json")
+    if not task.exists() or not activation.read(task).get("v6_catalog"):
+        # Preserve the historical unconfigured dependency diagnostic.
+        raise WorkflowError(
+            "V6 fixture/profile and owned-window integration is not implemented: final catalog designation missing"
+        )
+    return review_batch_windows_v1.catalog(repo)
 
 
 def policies(base, number):
