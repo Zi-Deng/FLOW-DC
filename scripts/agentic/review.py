@@ -651,6 +651,16 @@ def recover_review(repo, directory):
     """Finalize a durably saved exact result without another model request."""
     directory = plain_path(directory)
     meta = verify_packet(directory)
+    if "batch_version" in meta:
+        from review_batch_windows_v1 import recover_child
+
+        if (
+            type(meta["batch_version"]) is not int
+            or meta["batch_version"] != 9
+            or meta.get("kind") != "batch-unit"
+        ):
+            raise WorkflowError("Batch9 aggregate recovery remains closed")
+        return recover_child(repo, directory)
     if meta["schema_version"] == 4:
         return issue31_history.recover_review(repo, directory)
     if meta.get("kind") == "batch-parent":

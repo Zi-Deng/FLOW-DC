@@ -1605,6 +1605,17 @@ def prepare_child(repo, directory, unit_id, *, owned_auth):
     )
     if not started <= time.time() <= started + 840 or not 0 <= time.monotonic() - monotonic <= 840:
         refuse("final owned preparation checks exhausted local allocation")
+    exclusive(
+        target / "batch-preparation-clock.json",
+        {
+            "schema_version": 1,
+            "preparation_sha256": digest(read(target / "batch-preparation.json")),
+            "wall_started": started,
+            "monotonic_started": monotonic,
+            "wall_finished": time.time(),
+            "monotonic_finished": time.monotonic(),
+        },
+    )
     return target
 
 
@@ -1677,3 +1688,653 @@ def verify_child(repo, directory):
     ):
         refuse("preparation clock, allocation or timing changed")
     return meta
+
+
+RUNTIME = "batch-runtime-reservation.json"
+OUTPUT = "batch-owned-output.json"
+OBSERVATION = "batch-context-observation.json"
+COMPLETION = "batch-runtime-completion.json"
+
+
+def runtime_identity(repo, directory):
+    """Offline exact component, material claim and executable reservation binding."""
+    import review
+    import review_capacity_native_v1 as capacity
+
+    directory = plain_path(Path(directory))
+    meta = verify_child(repo, directory)
+    capacity.profile(meta["review_policy"])
+    batch = load_preparation(directory.parent.parent)
+    preparation = read(directory / "batch-preparation.json")
+    origin = read(directory / "batch-preparation-clock.json")
+    if (
+        type(origin) is not dict
+        or set(origin)
+        != {
+            "schema_version",
+            "preparation_sha256",
+            "wall_started",
+            "monotonic_started",
+            "wall_finished",
+            "monotonic_finished",
+        }
+        or type(origin["schema_version"]) is not int
+        or origin["schema_version"] != 1
+    ):
+        refuse("missing exact preparation clock origin")
+    if (
+        origin["preparation_sha256"] != digest(preparation)
+        or origin["wall_started"] != preparation["started"]
+        or not origin["wall_started"] <= clock(origin["wall_finished"]) <= preparation["local_deadline"]
+        or not 0 <= clock(origin["monotonic_finished"]) - clock(origin["monotonic_started"]) <= 840
+        or abs(
+            (origin["wall_finished"] - origin["wall_started"])
+            - (origin["monotonic_finished"] - origin["monotonic_started"])
+        )
+        > 1
+    ):
+        refuse("preparation wall/monotonic origin differs")
+    return (
+        meta,
+        batch,
+        {
+            "schema_version": 1,
+            "directory": str(directory.resolve()),
+            "batch_sha256": digest(batch),
+            "input_digest": digest({k: v for k, v in meta.items() if k not in review.RESULT_FIELDS}),
+            "assignment_sha256": digest(meta["batch_unit"]),
+            "preparation_sha256": digest(preparation),
+            "preparation_clock_sha256": digest(origin),
+            "material_claim": meta["batch_unit"]["material_claim"],
+            "policy_digest": digest(meta["review_policy"]),
+            "admission_digest": digest(batch["admission"]),
+            "started": preparation["started"],
+            "local_deadline": preparation["local_deadline"],
+            "action_deadline": preparation["action_deadline"],
+            "native_seconds": 900,
+            "local_seconds": 840,
+            "reference_usd": 10,
+            "wrapper_invocations": 1,
+        },
+    )
+
+
+def runtime_reservation(repo, directory):
+    meta, batch, expected = runtime_identity(repo, directory)
+    if digest(read(Path(directory) / RUNTIME)) != digest(expected):
+        refuse("executable reservation differs from original preparation and global claim")
+    if digest(read(Path(directory) / "reporting-admission.json")) != digest(batch["admission"]):
+        refuse("executable admission differs")
+    import review_claims
+
+    global_path = review_claims.root(repo) / "batch9-executions" / (expected["material_claim"] + ".json")
+    if digest(read(global_path)) != digest(expected):
+        refuse("global executable claim missing, copied or changed")
+    return meta, batch, expected
+
+
+class ChildDispatch:
+    """One owned component invocation; original preparation deadlines never move.
+
+    The in-memory object is only a routing guard. Every launch rederives packet,
+    catalog, admission and durable global/executable claims independently.
+    """
+
+    def __init__(self, repo, directory):
+        import time
+
+        self.repo, self.directory = repo, plain_path(Path(directory))
+        self.wall, self.monotonic = time.time(), time.monotonic()
+        self.meta, self.batch, self.reservation = runtime_identity(repo, self.directory)
+        self.origin = read(self.directory / "batch-preparation-clock.json")
+        self.last, self.last_mono = self.wall, self.monotonic
+        self.clocks = []
+        self.native = 0.0
+        self.native_start = None
+        self.claimed = False
+        self.check_clock()
+
+    def check_clock(self):
+        import time
+
+        now, mono = time.time(), time.monotonic()
+        elapsed = now - self.reservation["started"]
+        if (
+            now < self.last
+            or mono < self.last_mono
+            or now < self.origin["wall_finished"]
+            or mono < self.origin["monotonic_finished"]
+            or abs((now - self.origin["wall_started"]) - (mono - self.origin["monotonic_started"])) > 1
+            or abs((now - self.wall) - (mono - self.monotonic)) > 1
+            or elapsed < 0
+            or elapsed - self.native > 840
+            or elapsed > 1740
+            or now > self.reservation["action_deadline"]
+            or not 0 <= self.native <= 900
+        ):
+            refuse("component clock rollback or native/local/action allocation exhausted")
+        self.last, self.last_mono = now, mono
+        self.clocks.append({"wall": now, "monotonic": mono, "native_seconds": self.native})
+        if len(self.clocks) > 400:
+            refuse("component operation clock record exceeds bound")
+        return now
+
+    def recheck(self, meta, *, owned_auth):
+        import claude_owned_auth
+        import reporting_admission_v6 as admission
+
+        self.check_clock()
+        owned = claude_owned_auth.require(owned_auth)
+        import review
+
+        actual, batch, reservation = runtime_identity(self.repo, self.directory)
+        if digest({k: v for k, v in meta.items() if k not in review.RESULT_FIELDS}) != digest(
+            {k: v for k, v in actual.items() if k not in review.RESULT_FIELDS}
+        ) or digest(reservation) != digest(self.reservation):
+            refuse("dispatch packet, assignment, source or preparation changed")
+        self.check_clock()
+        current_plan(self.repo, batch["plan"])
+        self.check_clock()
+        if digest(admission.check(self.repo, owned_auth=owned, capacity_required=True)) != digest(
+            batch["admission"]
+        ):
+            refuse("actual V6 admission changed; successor lineage awaits published prefix")
+        self.check_clock()
+        parent = self.directory.parent.parent
+        rows = journal(parent, batch["plan"], batch["application"])
+        if rows:
+            refuse("stopped-window runtime awaits independent published prefix replay")
+        unit = meta["batch_unit"]["unit"]
+        components = batch["plan"]["catalog"]["components"]
+        if unit != components[0]:
+            refuse("later component runtime awaits independent published prefix replay")
+        window_clock(batch["plan"], batch["application"], rows, 0, self.check_clock())
+        if (
+            owned.current_binding(900, batch["plan"]["schedule"]["window_seconds"][0] - 360)
+            != meta["review_policy"]["authentication"]
+        ):
+            refuse("initial whole-window authentication changed")
+        self.check_clock()
+        if self.claimed:
+            runtime_reservation(self.repo, self.directory)
+            self.check_clock()
+
+    def claim(self, repo, directory, meta, *, owned_auth):
+        if self.claimed or repo is not self.repo or Path(directory) != self.directory:
+            refuse("copied, competing or repeated executable dispatch")
+        self.recheck(meta, owned_auth=owned_auth)
+        # A torn pair stays consumed. No replacement, refund or retry path exists.
+        import review_claims
+
+        with review_claims.locked(repo):
+            namespace = plain_path(review_claims.root(repo) / "batch9-executions")
+            namespace.mkdir(mode=0o700, exist_ok=True)
+            exclusive(namespace / (self.reservation["material_claim"] + ".json"), self.reservation)
+            exclusive(self.directory / RUNTIME, self.reservation)
+        exclusive(self.directory / "reporting-admission.json", self.batch["admission"], limit=2000000)
+        self.claimed = True
+        self.check_clock()
+
+    def begin_native(self, meta, *, owned_auth):
+        if not self.claimed or self.native_start is not None:
+            refuse("missing or repeated executable claim")
+        self.recheck(meta, owned_auth=owned_auth)
+        # The full native allocation must still fit; local time cannot borrow it.
+        if self.check_clock() + 900 > self.reservation["action_deadline"]:
+            refuse("complete native allocation no longer fits")
+        return 900
+
+    def start_native(self, owned_auth):
+        import time
+
+        import claude_owned_auth
+
+        owned = claude_owned_auth.require(owned_auth)
+        if not self.claimed or self.native_start is not None:
+            refuse("native process is unclaimed or already started")
+        if (
+            owned.current_binding(900, self.batch["plan"]["schedule"]["window_seconds"][0] - 360)
+            != self.meta["review_policy"]["authentication"]
+        ):
+            refuse("final owned whole-window identity differs")
+        if self.check_clock() + 900 > self.reservation["action_deadline"]:
+            refuse("final complete native allocation does not fit")
+        self.native_start = (time.time(), time.monotonic())
+
+    def native_returned(self):
+        import time
+
+        self.native_end = (time.time(), time.monotonic())
+
+    def end_native(self):
+        if self.native_start is None:
+            refuse("native completion without start")
+        wall, mono = self.native_end
+        self.native = wall - self.native_start[0]
+        if abs(self.native - (mono - self.native_start[1])) > 1:
+            refuse("native wall/monotonic clock differs")
+        self.check_clock()
+
+
+def require_dispatch(repo, directory, meta, dispatch, owned_auth):
+    if (
+        type(dispatch) is not ChildDispatch
+        or dispatch.repo is not repo
+        or dispatch.directory != Path(directory)
+    ):
+        refuse("batch9 requires its actual owned executable dispatch")
+    dispatch.recheck(meta, owned_auth=owned_auth)
+    return dispatch
+
+
+def observation_binding(meta, batch, capture):
+    import claude_context_observation_v1 as observer
+    import review_capacity_native_v1 as capacity
+
+    values = {
+        "input": capture["input_digest"],
+        "policy": capacity.sha(capacity.encoded(meta["review_policy"])),
+        "execution": capacity.sha(capacity.encoded(capture["execution"])),
+        "fixture": capacity.sha(capacity.encoded(meta["batch_unit"])),
+        "source": capacity.sha(capacity.encoded(batch["plan"]["catalog"])),
+        "descriptor": capacity.sha(observer._bytes(observer.DESCRIPTOR)),
+        "report": capacity.sha(capture["body"].encode("utf-8")),
+        "proof": capacity.sha(capacity.encoded(capture["reporting"])),
+        "diagnostic": capacity.sha(capacity.encoded(capture["diagnostics"])),
+    }
+    return {key + "_sha256": value for key, value in values.items()}
+
+
+def persist_child_capture(dispatch, meta, owned_auth, raw, workspace, session, body, diagnostics, proof):
+    import os
+    import time
+
+    import claude_context_observation_v1 as observer
+    import claude_owned_auth
+    import review
+    import review_capacity_native_v1 as capacity
+
+    owned = claude_owned_auth.require(owned_auth)
+    directory = dispatch.directory
+    # Save sanitized partial output even when proof, clocks or observer refuse.
+    exclusive(
+        directory / OUTPUT, {"body": body, "diagnostics": diagnostics, "reporting": proof}, limit=8000000
+    )
+    review.save_result(
+        directory, meta, body, diagnostics, meta["review_policy"]["cli"]["version"], reporting=proof
+    )
+    dispatch.end_native()
+    dispatch.recheck(meta, owned_auth=owned)
+    capture = review.read_result_artifact(directory, "review-capture.json", meta)
+    bindings = observation_binding(meta, dispatch.batch, capture)
+    input_bytes = input_accounting(raw, directory, meta, diagnostics)
+    dispatch.check_clock()
+    sidecar, correlation = capacity.batch_bridge(
+        raw,
+        directory / "packet",
+        workspace,
+        meta["review_policy"],
+        session,
+        bindings,
+        meta["batch_unit"]["required_ids"],
+    )
+    dispatch.check_clock()
+    fd = os.open(plain_path(directory / OBSERVATION), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "wb") as stream:
+        stream.write(sidecar)
+        stream.flush()
+        os.fsync(stream.fileno())
+    owned.recheck()
+    dispatch.check_clock()
+    capture_hash = review.digest(directory / "review-capture.json")
+    exclusive(
+        directory / COMPLETION,
+        {
+            "schema_version": 1,
+            "reservation_sha256": digest(dispatch.reservation),
+            "capture_sha256": capture_hash,
+            "output_sha256": review.digest(directory / OUTPUT),
+            "bindings": bindings,
+            "input_accounting": input_bytes,
+            "observation": observer.completion(sidecar, capture_hash),
+            "correlation": correlation,
+            "finished": dispatch.check_clock(),
+            "native_seconds": dispatch.native,
+            "runtime_started": dispatch.wall,
+            "runtime_monotonic_seconds": time.monotonic() - dispatch.monotonic,
+        },
+        limit=100000,
+    )
+    dispatch.check_clock()
+
+
+def run_child(repo, directory):
+    """Initial component only. No batch-wide CLI or publication/readiness credit."""
+    import claude_owned_auth
+    import review_claude
+
+    dispatch = ChildDispatch(repo, directory)
+    current_plan(repo, dispatch.batch["plan"])
+    dispatch.check_clock()
+    if any(
+        plain_path(Path(directory) / name).exists()
+        for name in (
+            RUNTIME,
+            "attempt.json",
+            "reporting-execution.json",
+            OUTPUT,
+            COMPLETION,
+        )
+    ):
+        refuse("prior or torn child execution cannot be repeated; offline recovery only")
+    try:
+        with claude_owned_auth.snapshot(dispatch.meta["review_policy"]) as owned:
+            dispatch.check_clock()
+            review_claude.execute(repo, directory, dispatch.meta, dispatch_context=dispatch, owned_auth=owned)
+            dispatch.check_clock()
+            result = _replay_child(repo, directory)
+            dispatch.check_clock()
+            _materialize_child(repo, directory)
+            dispatch.check_clock()
+            dispatch.recheck(dispatch.meta, owned_auth=owned)
+            dispatch.check_clock()
+            exclusive(
+                Path(directory) / "batch-runtime-acknowledged.json",
+                {
+                    "schema_version": 1,
+                    "reservation_sha256": digest(dispatch.reservation),
+                    "completion_sha256": result["completion_sha256"],
+                    "clocks": dispatch.clocks,
+                },
+                limit=100000,
+            )
+            dispatch.check_clock()
+            return result
+    except BaseException:
+        if plain_path(Path(directory) / RUNTIME).exists():
+            # Stop marker says only that the operation did not acknowledge success.
+            # It does not fabricate provider failure, zero use or a successor slot.
+            marker = Path(directory) / "batch-runtime-interrupted.json"
+            if not plain_path(marker).exists():
+                exclusive(
+                    marker,
+                    {
+                        "schema_version": 1,
+                        "reservation_sha256": digest(dispatch.reservation),
+                        "status": "incomplete-no-repeat",
+                    },
+                )
+        raise
+
+
+def _replay_child(repo, directory):
+    """Independent offline child replay; never parent or current admission readiness."""
+    import claude_context_observation_v1 as observer
+    import review
+    import review_capacity_native_v1 as capacity
+    from reporting_recovery_history_v6 import known_usage
+
+    directory = plain_path(Path(directory))
+    meta, batch, reservation = runtime_reservation(repo, directory)
+    if plain_path(directory / "batch-runtime-interrupted.json").exists():
+        refuse("interrupted child stays incomplete; no reconstructed success")
+    result, assessment = review.stored_result(directory, meta)
+    for key in review.RESULT_FIELDS:
+        if key in meta and meta[key] != result.get(key):
+            refuse("completed child metadata differs from exact capture")
+    for name, key, exact in (
+        ("review.md", "review_sha256", True),
+        ("terminal.txt", "terminal_sha256", True),
+        ("diagnostics.json", "diagnostics_sha256", False),
+        ("coverage.json", "coverage_sha256", False),
+        ("reporting-proof.json", "reporting_sha256", False),
+    ):
+        path = plain_path(directory / name)
+        if path.exists() or key in meta:
+            observed = (
+                review.digest(path) if exact else digest(review.read_result_artifact(directory, name, meta))
+            )
+            if observed != result[key]:
+                refuse("materialized child report or evidence changed")
+    completion = read(directory / COMPLETION)
+    expected_keys = {
+        "schema_version",
+        "reservation_sha256",
+        "capture_sha256",
+        "output_sha256",
+        "bindings",
+        "observation",
+        "correlation",
+        "finished",
+        "native_seconds",
+        "runtime_started",
+        "runtime_monotonic_seconds",
+        "input_accounting",
+    }
+    if (
+        type(completion) is not dict
+        or set(completion) != expected_keys
+        or type(completion["schema_version"]) is not int
+        or completion["schema_version"] != 1
+    ):
+        refuse("missing exact child completion")
+    totals = completion["input_accounting"]
+    if (
+        type(totals) is not dict
+        or set(totals) != {"input_bytes", "optional_bytes", "navigation_bytes", "protocol_bytes"}
+        or any(type(v) is not int or not 0 <= v <= capacity.DESCRIPTOR[k] for k, v in totals.items())
+    ):
+        refuse("missing or over-budget retained input accounting")
+    bindings = observation_binding(meta, batch, result)
+    if (
+        completion["reservation_sha256"] != digest(reservation)
+        or completion["capture_sha256"] != review.digest(directory / "review-capture.json")
+        or completion["output_sha256"] != review.digest(directory / OUTPUT)
+        or completion["bindings"] != bindings
+        or digest(read(directory / OUTPUT))
+        != digest(
+            {"body": result["body"], "diagnostics": result["diagnostics"], "reporting": result["reporting"]}
+        )
+    ):
+        refuse("child capture, output, claim or observation identity changed")
+    finished = clock(completion["finished"])
+    native = clock(completion["native_seconds"])
+    runtime_start = clock(completion["runtime_started"])
+    mono = clock(completion["runtime_monotonic_seconds"])
+    if (
+        not reservation["started"] <= runtime_start <= finished <= reservation["action_deadline"]
+        or not 0 <= native <= 900
+        or not 0 <= finished - reservation["started"] - native <= 840
+        or abs(finished - runtime_start - mono) > 1
+    ):
+        refuse("child immutable timing or allocations differ")
+    if not known_usage(result["diagnostics"].get("usage"), 900, 10):
+        refuse("unknown or over-budget child usage")
+    required = set(meta["batch_unit"]["required_ids"])
+    if (
+        result["diagnostics"]["reasons"]
+        or assessment["reasons"]
+        or not result["reporting"]["accepted"]
+        or required - {row["id"] for row in assessment["material"] if row["state"] == "reviewed"}
+    ):
+        refuse("assigned component evidence is incomplete")
+    summary = observer.replay_completed(
+        review.exact_reporting_bytes(directory / OBSERVATION, observer.MAX_BYTES),
+        completion["observation"],
+        completion["capture_sha256"],
+        bindings,
+        result["diagnostics"]["usage"]["counters"],
+        completion["correlation"],
+    )
+    if summary["max_observed_input"] > capacity.DESCRIPTOR["batch_observed_input"]:
+        refuse("component observed input exceeds fixed bound")
+    return {
+        "schema_version": 1,
+        "scope": "component-only",
+        "required_ids": sorted(required),
+        "qualified": True,
+        "usage": result["diagnostics"]["usage"],
+        "completion_sha256": digest(completion),
+    }
+
+
+def _materialize_child(repo, directory):
+    """Derive exact report artifacts from replayed capture without readiness credit."""
+    import review
+    from tasks import atomic_json
+
+    directory = plain_path(Path(directory))
+    meta, _, _ = runtime_reservation(repo, directory)
+    if not plain_path(directory / "review-result.json").exists():
+        capture = review.read_result_artifact(directory, "review-capture.json", meta)
+        inputs = {k: v for k, v in meta.items() if k not in review.RESULT_FIELDS}
+        if capture.get("input_digest") != digest(inputs):
+            refuse("offline capture belongs to another input")
+        review.save_result(
+            directory,
+            inputs,
+            capture["body"],
+            capture["diagnostics"],
+            capture["provider_version"],
+            reporting=capture["reporting"],
+        )
+    _replay_child(repo, directory)
+    result, assessment = review.stored_result(directory, meta)
+    from claude_reporting import _json_bytes
+
+    artifacts = {
+        "review.md": result["body"].encode("utf-8"),
+        "terminal.txt": result["reporting"]["terminal_text"].encode("utf-8"),
+        "diagnostics.json": _json_bytes(result["diagnostics"], 2000000),
+        "coverage.json": _json_bytes(assessment, 8000000),
+        "reporting-proof.json": _json_bytes(result["reporting"], 2000000),
+    }
+    import os
+
+    for name, raw in artifacts.items():
+        path = plain_path(directory / name)
+        if path.exists():
+            if review.exact_reporting_bytes(path, len(raw)) != raw:
+                refuse("offline recovery would replace existing evidence")
+            continue
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(raw)
+            stream.flush()
+            os.fsync(stream.fileno())
+    fields = {key: result[key] for key in review.RESULT_FIELDS if key in result}
+    if any(key in meta and meta[key] != value for key, value in fields.items()):
+        refuse("offline completed metadata differs")
+    atomic_json(directory / "metadata.json", {**meta, **fields})
+    return directory / "review.md"
+
+
+def input_accounting(raw, directory, meta, diagnostics):
+    """Conservative transient byte accounting, not tokenizer/context proof.
+
+    Mixed or repeated source responses charge their whole returned content to
+    optional source. All other responses charge navigation. JSON framing, model
+    output and escaping stay in protocol overhead rather than disappearing.
+    Only bounded numeric totals survive; exact diagnostic hashes bind the reads.
+    """
+    import review_capacity_native_v1 as capacity
+    import review_coverage as coverage
+
+    inventory = read(Path(directory) / "packet/required-material.json")["required"]
+    required_ids = set(meta["batch_unit"]["required_ids"])
+    required = {
+        (i["artifact"], n)
+        for i in inventory
+        if i["id"] in required_ids
+        for n in range(i["start_line"], i["end_line"] + 1)
+    }
+    source = {(i["artifact"], n) for i in inventory for n in range(i["start_line"], i["end_line"] + 1)}
+    seen, index, content_bytes, optional, navigation = set(), 0, 0, 0, 0
+    for line in raw.decode("utf-8").splitlines():
+        event = coverage.strict_json(line)
+        if event.get("type") != "user":
+            continue
+        for block in event["message"]["content"]:
+            # StructuredOutput acknowledgment is protocol, not source evidence.
+            if index >= len(diagnostics["events"]):
+                continue
+            record = diagnostics["events"][index]
+            if coverage.checksum(block["content"]) != record["result_sha256"]:
+                refuse("byte accounting does not match exact tool evidence")
+            index += 1
+            amount = len(block["content"].encode("utf-8"))
+            content_bytes += amount
+            spans = {
+                (s["artifact"], n) for s in record["spans"] for n in range(s["start_line"], s["end_line"] + 1)
+            }
+            if spans & source:
+                if record["tool"] != "view" or spans - required or spans & seen:
+                    optional += amount
+                seen.update(spans)
+            else:
+                navigation += amount
+    from review_prompt import native
+
+    fixed_protocol = len(native(directory, meta).encode("utf-8")) + len(
+        (Path(directory) / "packet/report-schema.json").read_bytes()
+    )
+    totals = {
+        "input_bytes": len(raw) + fixed_protocol,
+        "optional_bytes": optional,
+        "navigation_bytes": navigation,
+        "protocol_bytes": len(raw) - content_bytes + fixed_protocol,
+    }
+    if index != len(diagnostics["events"]) or any(
+        type(v) is not int or not 0 <= v <= capacity.DESCRIPTOR[k] for k, v in totals.items()
+    ):
+        refuse("native input, optional, navigation or protocol byte allocation exceeded")
+    return totals
+
+
+def qualify_child(repo, directory):
+    """Require complete owned-operation acknowledgment as well as exact output replay."""
+    result = _replay_child(repo, directory)
+    directory = Path(directory)
+    record = read(directory / "batch-runtime-acknowledged.json")
+    reservation = read(directory / RUNTIME)
+    origin = read(directory / "batch-preparation-clock.json")
+    if (
+        type(record) is not dict
+        or set(record) != {"schema_version", "reservation_sha256", "completion_sha256", "clocks"}
+        or type(record["schema_version"]) is not int
+        or record["schema_version"] != 1
+        or record["reservation_sha256"] != digest(reservation)
+        or record["completion_sha256"] != result["completion_sha256"]
+    ):
+        refuse("missing or changed final owned-operation acknowledgment")
+    clocks = record["clocks"]
+    if type(clocks) is not list or not 1 <= len(clocks) <= 400:
+        refuse("missing bounded operation clocks")
+    completion = read(directory / COMPLETION)
+    previous_wall, previous_mono = origin["wall_finished"], origin["monotonic_finished"]
+    previous_native = 0
+    for row in clocks:
+        if type(row) is not dict or set(row) != {"wall", "monotonic", "native_seconds"}:
+            refuse("invalid operation clock record")
+        wall, mono, native = (clock(row[key]) for key in ("wall", "monotonic", "native_seconds"))
+        if (
+            not previous_wall <= wall <= reservation["action_deadline"]
+            or mono < previous_mono
+            or native not in (0, completion["native_seconds"])
+            or native < previous_native
+            or not 0 <= native <= 900
+            or not 0 <= wall - reservation["started"] - native <= 840
+            or abs((wall - origin["wall_started"]) - (mono - origin["monotonic_started"])) > 1
+        ):
+            refuse("operation clock rollback, drift or allocation overrun")
+        previous_wall, previous_mono, previous_native = wall, mono, native
+    if previous_wall < completion["finished"] or previous_native != completion["native_seconds"]:
+        refuse("operation acknowledgment predates capture completion")
+    return result
+
+
+def recover_child(repo, directory):
+    """Pure offline storage recovery; never launch, authorize or extend deadlines."""
+    report = _materialize_child(repo, directory)
+    qualify_child(repo, directory)
+    return report

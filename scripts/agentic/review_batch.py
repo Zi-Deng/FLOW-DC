@@ -748,6 +748,13 @@ def observed_usage(target, policy):
 
 def captured(directory, meta):
     """Record durable capture before assessment; recovery never reclaims its slot."""
+    if "batch_version" in meta:
+        from claude_reporting_execution import validate_capture
+
+        if type(meta["batch_version"]) is not int or meta["batch_version"] != 9:
+            raise WorkflowError("Unsupported batch capture")
+        validate_capture(directory, meta, api().read_result_artifact(directory, "review-capture.json", meta))
+        return
     if _reporting(directory):
         import review_batch_v7
 
@@ -774,6 +781,12 @@ def captured(directory, meta):
 
 def dispatch_timeout(repo, directory, meta, context, *, clock=time.time, owned_auth=None):
     """Called again inside the adapter, after preflight and immediately before spawn."""
+    if "batch_version" in meta:
+        from review_batch_windows_v1 import require_dispatch
+
+        return require_dispatch(repo, directory, meta, context, owned_auth).begin_native(
+            meta, owned_auth=owned_auth
+        )
     if _reporting(directory):
         import review_batch_v7
 

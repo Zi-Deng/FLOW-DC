@@ -116,6 +116,14 @@ def native(directory, meta):
         "For blank-ended ranges extend through a following nonblank line where available. At EOF read the "
         "nonblank prefix and obtain actual numbered Grep matches for the blank tail. Suggestions grant no credit. "
         "Never strip, reconstruct or infer missing/masked content. Keep unread material incomplete. "
+        + (
+            "After the last assigned Read has completed, issue a final Glob for capability/*.txt before "
+            "StructuredOutput so the complete native response counters include the final mandatory input. "
+            "All assigned ranges remain mandatory; this navigation step grants no inspection credit. "
+            "Optional or repeated source and navigation each have a 100000-byte allocation; stop incomplete on exhaustion. "
+            if meta.get("batch_version") == 9
+            else ""
+        )
         + reporting
         + "Place scope/capability notes in limitations. Copy required IDs exactly. No commands, delegation, editing "
         "or network tools. Claim no approval or test execution. CI head association and actual checkout differ. "

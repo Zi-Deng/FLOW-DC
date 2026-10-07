@@ -59,7 +59,21 @@ def binding(directory, meta, session_id, prompt, *, diagnostic=None):
         path = plain_path(Path(directory) / ADMISSION)
         if path.exists():
             admission["admission_digest"] = digest(read(path))
+    batch = {}
+    if "batch_version" in meta:
+        from reporting_activation_v2 import read
+        from review_batch_windows_v1 import RUNTIME
+
+        if type(meta["batch_version"]) is not int or meta["batch_version"] != 9 or diagnostic is not None:
+            raise WorkflowError("Invalid batch9 executable binding")
+        reservation = read(plain_path(Path(directory) / RUNTIME))
+        if reservation.get("input_digest") != digest(
+            {k: v for k, v in meta.items() if k not in RESULT_FIELDS}
+        ):
+            raise WorkflowError("Batch9 executable input differs")
+        batch = {"batch_reservation_digest": digest(reservation)}
     return {
+        **batch,
         **admission,
         **(
             {
@@ -69,7 +83,7 @@ def binding(directory, meta, session_id, prompt, *, diagnostic=None):
             if diagnostic is not None
             else {}
         ),
-        "schema_version": 2 if diagnostic is not None else 1,
+        "schema_version": 2 if batch or diagnostic is not None else 1,
         "input_digest": digest({k: v for k, v in meta.items() if k not in RESULT_FIELDS}),
         "policy_digest": digest(meta["review_policy"]),
         "reporting_digest": digest(meta["review_policy"]["reporting"]),
@@ -119,6 +133,15 @@ def retained(directory, meta):
         plain_path(Path(directory) / name).exists() for name in (OWNED, SIDECAR)
     ):
         raise WorkflowError("Legacy execution cannot contain V6 sidecars")
+    if "batch_version" not in meta and any(
+        plain_path(Path(directory) / name).exists()
+        for name in (
+            "batch-runtime-reservation.json",
+            "batch-context-observation.json",
+            "batch-runtime-completion.json",
+        )
+    ):
+        raise WorkflowError("Legacy execution cannot contain batch9 runtime records")
     path = plain_path(Path(directory) / FILENAME)
     if not path.exists():
         return None
@@ -126,7 +149,7 @@ def retained(directory, meta):
         record = strict_json(exact_reporting_bytes(path, 10000).decode("utf-8"))
         diagnostic = None
         prompt = native(directory, meta)
-        if record.get("schema_version") == 2:
+        if record.get("schema_version") == 2 and "batch_version" not in meta:
             from reporting_versions import diagnostic as version
 
             diagnostic_prompt = version(meta).prompt

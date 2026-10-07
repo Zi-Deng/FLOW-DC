@@ -193,10 +193,24 @@ def check_controls(binary, settings, policy=None):
         raise WorkflowError("Pinned builtin plugin registrar differs from the audited controls") from None
 
 
-def preflight(repo, policy, *, reporting_diagnostic=False, v6_context=None):
+def preflight(repo, policy, *, reporting_diagnostic=False, v6_context=None, batch_context=None):
     from review_policy import require_current_adapter
 
-    if v6_context is not None:
+    if batch_context is not None:
+        from review_batch_windows_v1 import require_dispatch
+
+        if (
+            reporting_diagnostic
+            or v6_context is not None
+            or type(batch_context) is not tuple
+            or len(batch_context) != 4
+        ):
+            raise WorkflowError("Invalid batch9 owned preflight context")
+        directory, meta, dispatch, owned_auth = batch_context
+        if digest(policy) != digest(meta.get("review_policy")):
+            raise WorkflowError("Batch9 preflight policy differs")
+        require_dispatch(repo, directory, meta, dispatch, owned_auth)
+    elif v6_context is not None:
         from claude_reporting_versions import validate_v6_diagnostic
 
         if not reporting_diagnostic or type(v6_context) is not tuple or len(v6_context) != 4:
@@ -362,12 +376,21 @@ def execute(repo, directory, meta, *, diagnostic=False, dispatch_context=None, o
     from review import digest as file_digest
     from review_diagnostics import require_activation
 
-    if "batch_version" in meta:
-        raise WorkflowError("Batch9 preparation cannot dispatch; owned runtime is unavailable")
+    batch9 = "batch_version" in meta
+    if batch9:
+        from review_batch_windows_v1 import ChildDispatch
+
+        if (
+            type(meta["batch_version"]) is not int
+            or meta["batch_version"] != 9
+            or diagnostic
+            or type(dispatch_context) is not ChildDispatch
+        ):
+            raise WorkflowError("Batch9 requires actual owned component dispatch")
     v6 = meta.get("purpose") == V6_PURPOSE
     if v6 and not diagnostic:
         raise WorkflowError("V6 has no standalone ordinary execution route")
-    if owned_auth is not None and not v6:
+    if owned_auth is not None and not (v6 or batch9):
         raise WorkflowError("Legacy execution cannot accept an external owned snapshot")
     policy = meta["review_policy"]
     structured = policy.get("schema_version") == 2
@@ -395,7 +418,7 @@ def execute(repo, directory, meta, *, diagnostic=False, dispatch_context=None, o
                 raise WorkflowError("Reporting diagnostic requires a fresh journal dispatch")
             if not v6:
                 dispatch_context.claim(repo, directory, meta)
-        else:
+        elif not batch9:
             require_reporting_activation(repo, meta)
             from reporting_admission import retain
 
@@ -409,7 +432,7 @@ def execute(repo, directory, meta, *, diagnostic=False, dispatch_context=None, o
             diagnostic_tool_contract.validate_meta(meta)
     binary = (
         None
-        if v6
+        if v6 or batch9
         else (
             preflight(repo, policy, reporting_diagnostic=True)
             if structured and diagnostic
@@ -423,7 +446,9 @@ def execute(repo, directory, meta, *, diagnostic=False, dispatch_context=None, o
 
     snapshot = claude_owned_auth.snapshot if structured else claude_native_auth.snapshot
     with (
-        nullcontext(claude_owned_auth.require(owned_auth)) if v6 else snapshot(policy) as authentication,
+        nullcontext(claude_owned_auth.require(owned_auth))
+        if v6 or batch9
+        else snapshot(policy) as authentication,
         tempfile.TemporaryDirectory(prefix="agentic-claude-") as temporary,
     ):
         if structured:
@@ -432,6 +457,9 @@ def execute(repo, directory, meta, *, diagnostic=False, dispatch_context=None, o
         else:
             owned_auth = None
             env, recheck_auth = authentication
+        if batch9:
+            dispatch_context.claim(repo, directory, meta, owned_auth=owned_auth)
+            binary = preflight(repo, policy, batch_context=(directory, meta, dispatch_context, owned_auth))
         if v6:
             dispatch_context.claim(repo, directory, meta, owned_auth=owned_auth)
             binary = preflight(
@@ -528,7 +556,7 @@ def execute(repo, directory, meta, *, diagnostic=False, dispatch_context=None, o
         recheck_auth()
         if refusal_path is not None:
             validate_canary(refusal_path, workspace, root, env)
-        if structured and not diagnostic:
+        if structured and not diagnostic and not batch9:
             from reporting_admission import require_packet
 
             require_packet(directory, meta, repo=repo, owned_auth=owned_auth)
@@ -544,6 +572,12 @@ def execute(repo, directory, meta, *, diagnostic=False, dispatch_context=None, o
         if structured and diagnostic:
             dispatch_context.recheck(meta, owned_auth=owned_auth)
             timeout = dispatch_context.timeout()
+        if batch9:
+            managed_controls()
+            recheck_auth()
+            if review_cli.executable(repo, "claude-code") != binary:
+                raise WorkflowError("Batch9 reviewer executable changed at final dispatch")
+            dispatch_context.start_native(owned_auth)
         response = review_process.capture(
             args,
             cwd=workspace,
@@ -551,6 +585,8 @@ def execute(repo, directory, meta, *, diagnostic=False, dispatch_context=None, o
             timeout=timeout,
             **({"limit": policy["reporting"]["stream_bytes"]} if structured else {}),
         )
+        if batch9:
+            dispatch_context.native_returned()
         captured = claude_telemetry.capture(
             response.stdout,
             Path(directory) / "packet",
@@ -577,7 +613,21 @@ def execute(repo, directory, meta, *, diagnostic=False, dispatch_context=None, o
                 diagnostics["reasons"].append("unverified_managed_controls")
         except OSError:
             diagnostics["reasons"].append("reviewer_workspace_unreadable")
-        if v6:
+        if batch9:
+            from review_batch_windows_v1 import persist_child_capture
+
+            persist_child_capture(
+                dispatch_context,
+                meta,
+                owned_auth,
+                response.stdout,
+                workspace,
+                session_id,
+                body,
+                diagnostics,
+                captured[2],
+            )
+        elif v6:
             from reporting_diagnostic_v6 import persist_owned_capture
 
             persist_owned_capture(

@@ -1112,3 +1112,496 @@ class PreparationRouteTests(unittest.TestCase):
                     review_batch.plan(main / "undeclared", version=9, repo=repo)
                 with self.assertRaises(WorkflowError):
                     review_batch.plan(designated, version=9)
+
+
+class OwnedComponentTests(unittest.TestCase):
+    """Real Git/packet/claims/flock/preflight; external qualification/native doubles."""
+
+    def setUp(self):
+        self.setup_fixture(actual_admission=False)
+
+    def setup_fixture(self, *, actual_admission):
+        import time
+        from types import SimpleNamespace
+        from unittest.mock import patch
+
+        import claude_native_auth as auth
+        import claude_owned_auth
+        import reporting_activation_v6 as activation
+        import reporting_admission_v6 as admission
+        import reporting_diagnostic_v2
+        import review_claude
+
+        # Reuse data construction, not inherited tests or its owned-auth double.
+        self.fixture = PreparationTests()
+        self.fixture.setUp()
+        self.addCleanup(self.fixture.doCleanups)
+        f = self.fixture
+        f.stack.close()
+        self.repo, self.policy = f.repo, f.policy
+        native_temp = tempfile.TemporaryDirectory()
+        self.addCleanup(native_temp.cleanup)
+        self.native = Path(native_temp.name) / "native"
+        self.calls = 0
+        self.mutation = None
+        now = time.time()
+        f.last["finished"] = now - 100
+        f.evidence["outcomes"]["23"] = digest(f.last)
+        f.auth["expires_at"] = now + 129500
+        for name, raw in reporting_diagnostic_v2.packet_contents().items():
+            if name in ("required-material.json", "inventory-sha256.txt", "report-schema.json"):
+                continue
+            path = f.packet / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(raw.replace(b"CLAUDE_NATIVE_CANARY", b"REVIEW_CANARY_" + b"a" * 24))
+        inventory = json.loads((f.packet / "required-material.json").read_bytes())
+        for item in inventory["required"]:
+            item["revision"] = f.meta["head_sha"]
+        (f.packet / "required-material.json").write_text(json.dumps(inventory))
+        (f.packet / "inventory-sha256.txt").write_text(
+            self.fixture.review.digest(f.packet / "required-material.json") + "\n"
+        )
+        f.plan = windows.plan_catalog(
+            windows.partition(f.packet, inventory["required"], f.plan["catalog"]["binding"])
+        )
+        f.auth.update(plan_digest=digest(f.plan), funding=copy.deepcopy(f.plan["schedule"]))
+        f.meta["files"] = windows.packet_hashes(f.packet)
+
+        def export(repo, *, packet_target=None, plan_only=False):
+            import shutil
+
+            if packet_target is not None:
+                shutil.copytree(f.packet, packet_target)
+                return {"plan": copy.deepcopy(f.plan), "metadata": copy.deepcopy(f.meta)}
+            return f.plan if plan_only else {"dependencies": {"assignments": f.plan["catalog_digest"]}}
+
+        self.enterContext(patch.object(windows, "catalog", side_effect=export))
+        if not actual_admission:
+            self.enterContext(
+                patch.object(admission, "check", side_effect=lambda *a, **k: copy.deepcopy(f.evidence))
+            )
+            self.enterContext(
+                patch.object(activation, "load", return_value=(f.grant, {"applied_at": now - 1000}))
+            )
+            self.enterContext(patch.object(activation, "outcome", return_value=f.last))
+        self.enterContext(patch.object(auth, "default_root", return_value=self.native))
+        credentials = {
+            "claudeAiOauth": {
+                "accessToken": "synthetic-never-real",
+                "refreshToken": "synthetic-never-real",
+                "expiresAt": (now + 20000) * 1000,
+                "scopes": ["user:profile", "user:inference"],
+                "subscriptionType": "max",
+            }
+        }
+        config = {
+            "oauthAccount": {
+                "accountUuid": "11111111-1111-4111-8111-111111111111",
+                "organizationUuid": "22222222-2222-4222-8222-222222222222",
+                "hasExtraUsageEnabled": False,
+            },
+            "hasCompletedOnboarding": True,
+        }
+        prefix = "generations/" + self.policy["authentication"]["generation_id"] + "/config/"
+        with auth.store(self.native, create=True) as storage:
+            (self.native / prefix).mkdir(mode=0o700, parents=True)
+            (self.native / "generations").chmod(0o700)
+            (self.native / "generations" / self.policy["authentication"]["generation_id"]).chmod(0o700)
+            storage.write(prefix + ".credentials.json", credentials)
+            storage.write(prefix + ".claude.json", config)
+            _, account = auth.native_records(credentials, config, 900)
+            storage.write(
+                "registration.json",
+                {
+                    "authentication": self.policy["authentication"],
+                    "cli": self.policy["cli"],
+                    "native_exit": 0,
+                    "interactive": True,
+                    "account": account,
+                    "lineage": [],
+                    "retained_capability_generations": [],
+                    "files": {
+                        prefix + name: auth._digest(storage.raw(prefix + name))
+                        for name in (".credentials.json", ".claude.json")
+                    },
+                },
+            )
+            storage.write(
+                "setup-attempt.json",
+                {"schema_version": 2, "authentication": self.policy["authentication"], "status": "completed"},
+            )
+            storage.write(
+                "receipt.json",
+                {
+                    "schema_version": 1,
+                    "authentication": self.policy["authentication"],
+                    "account": account,
+                    "paid_usage_disabled": True,
+                    "recorded_at": now,
+                    "expires_at": now + auth.RECEIPT_SECONDS,
+                },
+            )
+        if actual_admission:
+            import reporting_activation_v2
+            import reporting_diagnostic_v6 as diagnostic
+            from reporting_recovery_history import semantics
+            from test_capacity_native_v1 import additional, catalog
+            from test_reporting_qualification_v6 import OwnedCaptureTests
+            from test_reporting_qualification_v6 import policy as diagnostic_policy
+
+            probe_policy = diagnostic_policy()
+            items, files = additional()
+            self.enterContext(
+                patch.object(
+                    diagnostic,
+                    "catalog",
+                    return_value={
+                        "components": catalog(),
+                        "items": items,
+                        "files": files,
+                        "dependencies": {"source": "c" * 64},
+                    },
+                )
+            )
+            self.enterContext(
+                patch.object(
+                    activation,
+                    "authorization",
+                    return_value={
+                        "contract_digest": activation.CONTRACT_DIGEST,
+                        "approval_digest": "ae8e4b2ff106d44908e471d1f36be74b5d9f632f1d0b92b32e5261193a245cd8",
+                    },
+                )
+            )
+            self.enterContext(
+                patch.object(
+                    activation,
+                    "historical",
+                    return_value={
+                        "stopped_v4": {"policy_semantics": semantics(probe_policy)},
+                        "synthetic": "external historical/source/authority fixtures, not live evidence",
+                    },
+                )
+            )
+            self.enterContext(
+                patch.object(
+                    reporting_activation_v2,
+                    "harness",
+                    return_value={
+                        "head": f.meta["head_sha"],
+                        "files": {"synthetic.py": "b" * 64},
+                    },
+                )
+            )
+            self.mutate = None
+            with claude_owned_auth.snapshot(probe_policy) as owned:
+                preview = activation.preview(
+                    self.repo,
+                    probe_policy,
+                    name="synthetic-runtime-pair",
+                    tested_head=f.meta["head_sha"],
+                    owned_auth=owned,
+                )
+                activation.apply(
+                    self.repo, preview, preview_digest=preview["preview_digest"], owned_auth=owned
+                )
+            with (
+                patch.object(review_claude.review_cli, "executable", return_value="/synthetic/claude"),
+                patch.object(review_claude, "check_controls"),
+                patch.object(
+                    review_claude.review_process,
+                    "capture",
+                    side_effect=lambda *a, **k: OwnedCaptureTests.response(self, *a, **k),
+                ),
+            ):
+                for number in (20, 21, 22, 23):
+                    self.assertTrue(diagnostic.run(self.repo, number=number)["qualified"])
+            with claude_owned_auth.snapshot(self.policy) as owned:
+                self.actual_admission = admission.check(self.repo, owned_auth=owned, capacity_required=True)
+        with claude_owned_auth.snapshot(self.policy) as owned:
+            windows.select_preparation(self.repo, f.target, f.auth, owned_auth=owned)
+            self.child = windows.prepare_child(
+                self.repo, f.target, f.plan["catalog"]["components"][0]["id"], owned_auth=owned
+            )
+        self.enterContext(
+            patch.object(review_claude.review_cli, "executable", return_value="/synthetic/claude")
+        )
+        self.enterContext(patch.object(review_claude, "check_controls"))
+        self.enterContext(patch.object(review_claude.review_process, "capture", side_effect=self.response))
+        self.enterContext(
+            patch.object(subprocess, "Popen", side_effect=AssertionError("No external process"))
+        )
+        self.response_type = SimpleNamespace
+
+    def response(self, args, **kwargs):
+        import claude_native_auth as auth
+        from test_capacity_native_v1 import raw, stream
+        from test_reporting_preflight import controls
+
+        with self.assertRaisesRegex(WorkflowError, "registration is busy"):
+            with auth.store(self.native):
+                self.fail("Owned registration must remain held")
+        if args[-1] in ("--version", "--help"):
+            return controls(args, **kwargs)
+        self.calls += 1
+        workspace = Path(kwargs["cwd"])
+        rows = stream(workspace)
+        session = args[args.index("--session-id") + 1]
+        for row in rows:
+            row["session_id"] = session
+            if row["type"] == "assistant":
+                for block in row["message"]["content"]:
+                    if block.get("name") == "Grep":
+                        block["input"]["pattern"] = "REVIEW_CANARY_" + "a" * 24
+        if self.mutation:
+            self.mutation(rows)
+        return self.response_type(stdout=raw(rows), returncode=0, failure_reason=None)
+
+    def test_actual_owned_component_capture_independent_replay_and_no_repeat(self):
+        result = windows.run_child(self.repo, self.child)
+        self.assertTrue(result["qualified"])
+        self.assertEqual(result["scope"], "component-only")
+        self.assertEqual(self.calls, 1)
+        self.assertEqual(windows.qualify_child(self.repo, self.child), result)
+        with self.assertRaises(WorkflowError):
+            windows.run_child(self.repo, self.child)
+        self.assertEqual(self.calls, 1)
+
+    def test_offline_recovery_exact_bytes_without_auth_or_remote(self):
+        from unittest.mock import patch
+
+        import claude_owned_auth
+        import reporting_admission_v6
+        import review
+
+        windows.run_child(self.repo, self.child)
+        capture = json.loads((self.child / "review-capture.json").read_bytes())
+        with (
+            patch.object(claude_owned_auth, "snapshot", side_effect=AssertionError("No auth")),
+            patch.object(reporting_admission_v6, "check", side_effect=AssertionError("No admission")),
+            patch.object(windows, "catalog", side_effect=AssertionError("No remote")),
+        ):
+            report = review.recover_review(self.repo, self.child)
+            self.assertEqual(report.read_bytes(), capture["body"].encode())
+            self.assertEqual(review.recover_review(self.repo, self.child), report)
+            self.assertTrue(windows.qualify_child(self.repo, self.child)["qualified"])
+        with self.assertRaisesRegex(WorkflowError, "not qualified review or aggregate"):
+            review.qualification(self.child, require=True)
+        self.assertEqual(self.calls, 1)
+        original = report.read_bytes()
+        report.write_bytes(original + b"changed")
+        with self.assertRaises(WorkflowError):
+            windows.qualify_child(self.repo, self.child)
+        report.write_bytes(original)
+
+    def test_independent_artifact_binding_mutations_and_lost_outputs(self):
+        windows.run_child(self.repo, self.child)
+        names = [
+            windows.RUNTIME,
+            windows.OUTPUT,
+            windows.COMPLETION,
+            windows.OBSERVATION,
+            "reporting-execution.json",
+            "reporting-admission.json",
+            "review-capture.json",
+            "review-result.json",
+            "attempt.json",
+            "batch-preparation.json",
+            "packet/assignment.json",
+            "batch-preparation-clock.json",
+            "batch-runtime-acknowledged.json",
+        ]
+        for name in names:
+            path = self.child / name
+            original = path.read_bytes()
+            value = json.loads(original)
+            value["unexpected"] = "independent mutation"
+            path.write_text(json.dumps(value))
+            with self.subTest(name=name), self.assertRaises(WorkflowError):
+                windows.qualify_child(self.repo, self.child)
+            path.write_bytes(original)
+        path = self.child / windows.OBSERVATION
+        original = path.read_bytes()
+        path.unlink()
+        with self.assertRaises(WorkflowError):
+            windows.recover_child(self.repo, self.child)
+        path.write_bytes(original)
+        self.assertEqual(self.calls, 1)
+
+    def test_unknown_native_usage_retains_partial_capture_and_consumed_claim(self):
+        def unknown(rows):
+            rows[-1].pop("total_cost_usd", None)
+
+        self.mutation = unknown
+        with self.assertRaises(WorkflowError):
+            windows.run_child(self.repo, self.child)
+        self.assertTrue((self.child / windows.OUTPUT).is_file())
+        self.assertTrue((self.child / "review-capture.json").is_file())
+        with self.assertRaises(WorkflowError):
+            windows.recover_child(self.repo, self.child)
+        with self.assertRaises(WorkflowError):
+            windows.run_child(self.repo, self.child)
+        self.assertEqual(self.calls, 1)
+
+    def test_copied_parent_cannot_reclaim_executable_material(self):
+        import shutil
+
+        windows.run_child(self.repo, self.child)
+        copied = self.fixture.root / "copied-parent"
+        shutil.copytree(self.fixture.target, copied)
+        child = copied / "units" / self.child.name
+        with self.assertRaises(WorkflowError):
+            windows.qualify_child(self.repo, child)
+        with self.assertRaises(WorkflowError):
+            windows.run_child(self.repo, child)
+        self.assertEqual(self.calls, 1)
+
+    def test_source_refusal_precedes_auth_and_clock_never_resets_preparation(self):
+        from unittest.mock import patch
+
+        import claude_owned_auth
+
+        before = (self.child / "batch-preparation.json").read_bytes()
+        with (
+            patch.object(windows, "catalog", side_effect=WorkflowError("stale current source")),
+            patch.object(
+                claude_owned_auth, "snapshot", side_effect=AssertionError("No auth on stale source")
+            ),
+        ):
+            with self.assertRaisesRegex(WorkflowError, "stale current source"):
+                windows.run_child(self.repo, self.child)
+        dispatch = windows.ChildDispatch(self.repo, self.child)
+        for delta in (-10, 841, 1741):
+            with (
+                patch("time.time", return_value=dispatch.wall + delta),
+                patch("time.monotonic", return_value=dispatch.monotonic + delta),
+                self.subTest(delta=delta),
+                self.assertRaises(WorkflowError),
+            ):
+                dispatch.check_clock()
+        self.assertEqual((self.child / "batch-preparation.json").read_bytes(), before)
+        self.assertEqual(self.calls, 0)
+
+    def test_unassigned_parent_range_never_becomes_component_or_parent_credit(self):
+        def omit(rows):
+            omitted = {
+                block["id"]
+                for row in rows
+                if row["type"] == "assistant"
+                for block in row["message"]["content"]
+                if block.get("name") == "Read" and block["input"]["file_path"] == "cross.txt"
+            }
+            rows[:] = [
+                row
+                for row in rows
+                if not (
+                    row["type"] in ("assistant", "user")
+                    and any(
+                        block.get("id", block.get("tool_use_id")) in omitted
+                        for block in row["message"]["content"]
+                    )
+                )
+            ]
+            report = rows[-1]["structured_output"]
+            report["reviewed"].remove("2" * 24)
+            for row in rows:
+                if row["type"] == "stream_event" and row["event"]["type"] == "content_block_delta":
+                    row["event"]["delta"]["partial_json"] = json.dumps(report)
+
+        self.mutation = omit
+        result = windows.run_child(self.repo, self.child)
+        self.assertEqual(result["required_ids"], ["1" * 24])
+        meta = self.fixture.review.verify_packet(self.child)
+        _, assessment = self.fixture.review.stored_result(self.child, meta)
+        self.assertFalse(assessment["qualified"])
+        self.assertEqual(next(r for r in assessment["material"] if r["id"] == "2" * 24)["state"], "unread")
+
+    def test_missing_global_claim_and_torn_runtime_refuse_before_inference(self):
+        import review_claims
+
+        batch = windows.load_preparation(self.fixture.target)
+        unit = batch["plan"]["catalog"]["components"][0]
+        claims = json.loads((self.fixture.target / "batch-claims.json").read_bytes())
+        key = claims[unit["id"]]["claim"]["keys"][0]
+        path = review_claims.root(self.repo) / key / "0001.json"
+        original = path.read_bytes()
+        path.unlink()
+        with self.assertRaises(WorkflowError):
+            windows.run_child(self.repo, self.child)
+        path.write_bytes(original)
+        (self.child / windows.RUNTIME).write_text("{}")
+        with self.assertRaises(WorkflowError):
+            windows.run_child(self.repo, self.child)
+        self.assertEqual(self.calls, 0)
+
+    def test_interrupted_native_process_never_relaunches_or_fabricates_capture(self):
+        from unittest.mock import patch
+
+        import review_claude
+
+        response = self.response
+
+        def interrupted(args, **kwargs):
+            if args[-1] in ("--version", "--help"):
+                return response(args, **kwargs)
+            self.calls += 1
+            raise RuntimeError("synthetic lost native process acknowledgment")
+
+        with patch.object(review_claude.review_process, "capture", side_effect=interrupted):
+            with self.assertRaisesRegex(RuntimeError, "lost native process"):
+                windows.run_child(self.repo, self.child)
+        self.assertFalse((self.child / "review-capture.json").exists())
+        self.assertTrue((self.child / "reporting-execution.json").is_file())
+        with self.assertRaises(WorkflowError):
+            windows.recover_child(self.repo, self.child)
+        with self.assertRaises(WorkflowError):
+            windows.run_child(self.repo, self.child)
+        self.assertEqual(self.calls, 1)
+
+    def test_final_preflight_source_mutation_stops_before_native_launch(self):
+        from unittest.mock import patch
+
+        import review_claude
+
+        response = self.response
+
+        def changed(args, **kwargs):
+            result = response(args, **kwargs)
+            if args[-1] == "--help":
+                (self.child / "packet/source.txt").write_text("changed after preflight\n")
+            return result
+
+        with patch.object(review_claude.review_process, "capture", side_effect=changed):
+            with self.assertRaises(WorkflowError):
+                windows.run_child(self.repo, self.child)
+        self.assertEqual(self.calls, 0)
+        self.assertTrue((self.child / windows.RUNTIME).exists())
+
+    def test_changed_original_qualification_or_generation_is_not_renewal(self):
+        for field in ("grant_digest", "outcomes", "authentication"):
+            original = copy.deepcopy(self.fixture.evidence)
+            self.fixture.evidence[field] = {"changed": True} if field != "grant_digest" else "f" * 64
+            with self.subTest(field=field), self.assertRaises(WorkflowError):
+                windows.run_child(self.repo, self.child)
+            self.fixture.evidence.clear()
+            self.fixture.evidence.update(original)
+        self.assertEqual(self.calls, 0)
+        self.assertFalse((self.child / windows.RUNTIME).exists())
+
+
+class QualifiedOwnedComponentTests(unittest.TestCase):
+    """No admission/outcome/owned-lock/preflight/claim/qualification stubs."""
+
+    response = OwnedComponentTests.response
+
+    def setUp(self):
+        OwnedComponentTests.setup_fixture(self, actual_admission=True)
+
+    def test_actual_four_slot_replay_admits_exact_owned_component(self):
+        self.assertEqual(self.calls, 4)
+        batch = windows.load_preparation(self.fixture.target)
+        self.assertEqual(batch["admission"], self.actual_admission)
+        self.assertEqual(set(batch["admission"]["outcomes"]), {"20", "21", "22", "23"})
+        self.assertTrue(windows.run_child(self.repo, self.child)["qualified"])
+        self.assertTrue(windows.qualify_child(self.repo, self.child)["qualified"])
+        self.assertEqual(self.calls, 5)
