@@ -734,3 +734,381 @@ class WindowTests(unittest.TestCase):
         self.assertGreater(len(json.dumps(expanded, separators=(",", ":")).encode()), 2000000)
         with self.assertRaisesRegex(ValueError, "text_limit_or_type"):
             _json_bytes(expanded, 2000000)
+
+
+class PreparationTests(unittest.TestCase):
+    """Real packets/global claims with explicit external gate and owned-auth doubles."""
+
+    def setUp(self):
+        from contextlib import ExitStack
+        from types import SimpleNamespace
+        from unittest.mock import patch
+
+        import claude_owned_auth
+        import reporting_activation_v6 as activation
+        import reporting_admission_v6 as admission
+        import review
+        from test_capacity_native_v1 import policy
+
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.repo = SimpleNamespace(root=self.root, main=self.root, name="example/test")
+        subprocess.run(["git", "init", "-q", str(self.root)], check=True)
+        (self.root / "source.py").write_text("value = 1\n")
+        subprocess.run(["git", "-C", str(self.root), "add", "."], check=True)
+        subprocess.run(
+            [
+                "git",
+                "-C",
+                str(self.root),
+                "-c",
+                "user.name=Fixture",
+                "-c",
+                "user.email=fixture@example.invalid",
+                "commit",
+                "-qm",
+                "fixture",
+            ],
+            check=True,
+        )
+        head = subprocess.check_output(["git", "-C", str(self.root), "rev-parse", "HEAD"], text=True).strip()
+        self.packet = self.root / "export-source"
+        self.packet.mkdir()
+        schema = Path(".agentic/schemas/review-report.json").read_bytes()
+        (self.packet / "report-schema.json").write_bytes(schema)
+        (self.packet / "source.txt").write_bytes((self.root / "source.py").read_bytes())
+        (self.packet / "cross.txt").write_bytes(b"Inspect interface\n")
+        inventory = [
+            {
+                "id": "1" * 24,
+                "path": "scripts/agentic/review.py",
+                "kind": "source",
+                "artifact": "source.txt",
+                "start_line": 1,
+                "end_line": 1,
+                "bytes": 10,
+            },
+            {
+                "id": "2" * 24,
+                "path": "cross",
+                "kind": "cross-boundary",
+                "artifact": "cross.txt",
+                "start_line": 1,
+                "end_line": 1,
+                "bytes": 18,
+            },
+        ]
+        (self.packet / "required-material.json").write_text(
+            json.dumps({"schema_version": 2, "required": inventory})
+        )
+        self.policy = policy()
+        identity = {
+            "repository": self.repo.name,
+            "pr": 32,
+            "issue": 31,
+            "plan_comment": 6035844223,
+            "head_sha": head,
+            "base_sha": head,
+            "merge_base_sha": head,
+        }
+        binding = {
+            **{
+                key: "b" * 64
+                for key in ("local", "hosted", "source", "authorization", "context", "inventory")
+            },
+            "identity": digest(identity),
+            "contract": "a" * 64,
+            "policy": digest(self.policy),
+        }
+        self.plan = windows.plan_catalog(windows.partition(self.packet, inventory, binding))
+        self.meta = {
+            **identity,
+            "schema_version": 7,
+            "kind": "single",
+            "requested_model": self.policy["model"],
+            "review_policy": self.policy,
+            "config": {},
+            "files": windows.packet_hashes(self.packet),
+        }
+        self.grant = {"binding": {"harness": {"head": head}}}
+        self.last = {"finished": 9500}
+        self.evidence = {
+            "schema_version": 6,
+            "grant_digest": digest(self.grant),
+            "binding_digest": "b" * 64,
+            "outcomes": {str(n): digest(self.last) if n == 23 else "c" * 64 for n in range(20, 24)},
+            "empirical_receipt": {"synthetic": "external qualification double; no actual readiness"},
+            "authentication": self.policy["authentication"],
+        }
+        self.calls = []
+        self.owned = SimpleNamespace(
+            current_binding=lambda *args: self.calls.append(args) or self.policy["authentication"],
+            recheck=lambda: None,
+        )
+        self.stack = ExitStack()
+        self.addCleanup(self.stack.close)
+        self.stack.enter_context(patch("time.time", return_value=10000))
+        self.stack.enter_context(patch("time.monotonic", return_value=500))
+        self.stack.enter_context(patch.object(claude_owned_auth, "require", return_value=self.owned))
+        self.admission = self.stack.enter_context(
+            patch.object(admission, "check", side_effect=lambda *a, **k: copy.deepcopy(self.evidence))
+        )
+        self.stack.enter_context(
+            patch.object(activation, "load", return_value=(self.grant, {"applied_at": 8000}))
+        )
+        self.stack.enter_context(patch.object(activation, "outcome", return_value=self.last))
+
+        def export(repo, *, packet_target=None, plan_only=False):
+            import shutil
+
+            if packet_target is not None:
+                shutil.copytree(self.packet, packet_target)
+                return {"plan": copy.deepcopy(self.plan), "metadata": copy.deepcopy(self.meta)}
+            return self.plan if plan_only else {"dependencies": {"assignments": self.plan["catalog_digest"]}}
+
+        self.catalog = self.stack.enter_context(patch.object(windows, "catalog", side_effect=export))
+        self.auth = {
+            "name": "synthetic-full-review",
+            "plan_digest": digest(self.plan),
+            "policy_digest": digest(self.policy),
+            "funding": copy.deepcopy(self.plan["schedule"]),
+            "expires_at": 10000 + 129600,
+        }
+        self.target = self.root / "prepared"
+        self.review = review
+
+    def select(self, target=None):
+        import review_batch
+
+        return review_batch.select(
+            target or self.target, None, self.auth, version=9, repo=self.repo, owned_auth=self.owned
+        )
+
+    def test_real_preparation_claims_load_and_assigned_surrounding_access(self):
+        import review_batch
+        import review_claims
+
+        batch = self.select()
+        self.assertEqual(review_batch.load(self.target), batch)
+        self.assertIn((900, self.plan["schedule"]["window_seconds"][0] - 360), self.calls)
+        unit = self.plan["catalog"]["components"][0]
+        child = review_batch.prepare_unit(
+            self.target, batch, unit, None, repo=self.repo, owned_auth=self.owned
+        )
+        meta = windows.verify_child(self.repo, child)
+        self.assertEqual(meta["schema_version"], 7)
+        self.assertEqual(meta["batch_unit"]["required_ids"], unit["required_ids"])
+        self.assertEqual(meta["batch_unit"]["context_ids"], ["2" * 24])
+        self.assertEqual((child / "packet/cross.txt").read_bytes(), b"Inspect interface\n")
+        claims = windows.read(self.target / "batch-claims.json")
+        for candidate in self.plan["catalog"]["components"] + [self.plan["catalog"]["integration"]]:
+            review_claims.verify(self.repo, batch, candidate, claims[candidate["id"]])
+        with self.assertRaisesRegex(WorkflowError, "owned runtime"):
+            self.review.run_review(self.repo, child)
+        with self.assertRaises(WorkflowError):
+            windows.prepare_child(self.repo, self.target, unit["id"], owned_auth=self.owned)
+
+    def test_scope_and_whole_funding_fail_before_admission(self):
+        self.auth["funding"]["processes"] = 1
+        with self.assertRaises(WorkflowError):
+            self.select()
+        self.admission.assert_not_called()
+        self.assertFalse(self.target.exists())
+        self.auth["funding"] = copy.deepcopy(self.plan["schedule"])
+        self.catalog.side_effect = WorkflowError("actual source/gates/context changed")
+        with self.assertRaisesRegex(WorkflowError, "source/gates/context"):
+            self.select()
+        self.admission.assert_not_called()
+
+    def test_unqualified_receipt_and_full_window_failure_leave_no_claim(self):
+        self.evidence["empirical_receipt"] = None
+        with self.assertRaises(WorkflowError):
+            self.select()
+        self.assertFalse(self.target.exists())
+        self.evidence["empirical_receipt"] = {"synthetic": True}
+
+        def expired(*args):
+            raise WorkflowError("full credential/paid receipt window unavailable")
+
+        self.owned.current_binding = expired
+        with self.assertRaisesRegex(WorkflowError, "receipt window"):
+            self.select()
+        self.assertFalse(self.target.exists())
+
+    def test_competing_and_torn_claims_are_consumed_without_replacement(self):
+        self.select()
+        with self.assertRaises(WorkflowError):
+            self.select()
+        second = self.root / "renamed"
+        with self.assertRaisesRegex(WorkflowError, "already claimed"):
+            self.select(second)
+        self.assertTrue((second / "windows-application.json").exists())
+        with self.assertRaises(WorkflowError):
+            self.select(second)
+        (self.target / "batch-claims.json").write_text("{")
+        with self.assertRaises((WorkflowError, ValueError)):
+            windows.load_preparation(self.target)
+
+    def test_child_tamper_and_missing_global_claim_are_not_storage_success(self):
+        import review_claims
+
+        self.select()
+        unit = self.plan["catalog"]["components"][0]
+        child = windows.prepare_child(self.repo, self.target, unit["id"], owned_auth=self.owned)
+        path = child / "packet/cross.txt"
+        original = path.read_bytes()
+        path.write_bytes(b"omitted context\n")
+        with self.assertRaises(WorkflowError):
+            windows.verify_child(self.repo, child)
+        path.write_bytes(original)
+        claims = windows.read(self.target / "batch-claims.json")
+        key = claims[unit["id"]]["claim"]["keys"][0]
+        (review_claims.root(self.repo) / key / "0001.json").write_text("{}")
+        with self.assertRaises(WorkflowError):
+            windows.verify_child(self.repo, child)
+
+    def test_integration_and_changed_public_context_remain_closed(self):
+        self.select()
+        with self.assertRaisesRegex(WorkflowError, "current complete window"):
+            windows.prepare_child(self.repo, self.target, "integration", owned_auth=self.owned)
+        self.catalog.side_effect = WorkflowError("public findings/dispositions/context changed")
+        with self.assertRaisesRegex(WorkflowError, "public findings"):
+            windows.prepare_child(
+                self.repo, self.target, self.plan["catalog"]["components"][0]["id"], owned_auth=self.owned
+            )
+
+    def test_independent_head_base_contract_owner_and_clock_mutations(self):
+        self.select()
+        path = self.target / "batch.json"
+        metadata = self.target / "metadata.json"
+        original, meta_original = path.read_bytes(), metadata.read_bytes()
+        for key in ("head_sha", "base_sha", "merge_base_sha", "repository", "plan_comment"):
+            changed = json.loads(original)
+            meta = json.loads(meta_original)
+            changed["binding"][key] = "f" * 40 if key.endswith("sha") else "wrong"
+            meta[key] = changed["binding"][key]
+            meta["batch_sha256"] = digest(changed)
+            path.write_text(json.dumps(changed))
+            metadata.write_text(json.dumps(meta))
+            with self.subTest(key=key), self.assertRaises(WorkflowError):
+                windows.load_preparation(self.target)
+        path.write_bytes(original)
+        metadata.write_bytes(meta_original)
+        unit = self.plan["catalog"]["components"][0]
+        child = windows.prepare_child(self.repo, self.target, unit["id"], owned_auth=self.owned)
+        timing = child / "batch-preparation.json"
+        saved = timing.read_bytes()
+        for key, value in (
+            ("started", 11000),
+            ("finished", 12000),
+            ("local_deadline", 12000),
+            ("action_deadline", 999999),
+            ("monotonic_seconds", -1),
+            ("schema_version", True),
+        ):
+            record = json.loads(saved)
+            record[key] = value
+            timing.write_text(json.dumps(record))
+            with self.subTest(key=key), self.assertRaises(WorkflowError):
+                windows.verify_child(self.repo, child)
+        timing.write_bytes(saved)
+        assignment = child / "packet/assignment.json"
+        changed = json.loads(assignment.read_bytes())
+        changed["required_ids"] = ["2" * 24]
+        assignment.write_text(json.dumps(changed))
+        meta = json.loads((child / "metadata.json").read_bytes())
+        meta["batch_unit"] = changed
+        meta["files"]["assignment.json"] = self.review.digest(assignment)
+        (child / "metadata.json").write_text(json.dumps(meta))
+        with self.assertRaises(WorkflowError):
+            windows.verify_child(self.repo, child)
+
+
+class CatalogExportTests(unittest.TestCase):
+    def test_actual_git_catalog_exports_every_bound_artifact_and_added_range(self):
+        from unittest.mock import patch
+
+        actual_catalog = windows.catalog
+        exports = []
+        # Reuse the cheap real-Git adapter scenario, including its source/context
+        # mutations. Only authority/final external receipts are fixture doubles.
+        with tempfile.TemporaryDirectory() as temp:
+
+            def export_and_compare(repo, **kwargs):
+                result = actual_catalog(repo, **kwargs)
+                target = Path(temp) / str(len(exports))
+                exported = actual_catalog(repo, packet_target=target)
+                self.assertEqual(windows.packet_hashes(target), exported["plan"]["catalog"]["files"])
+                inventory = json.loads((target / "required-material.json").read_bytes())["required"]
+                self.assertEqual(
+                    {row["id"] for row in inventory},
+                    {row["id"] for row in exported["plan"]["catalog"]["items"]},
+                )
+                self.assertTrue(any(row["artifact"].startswith("whole-responses/") for row in inventory))
+                self.assertEqual(sum(row["artifact"].startswith("final-guidance/") for row in inventory), 4)
+                for row in inventory:
+                    self.assertTrue((target / row["artifact"]).is_file())
+                exports.append(target)
+                return result
+
+            with patch.object(windows, "catalog", side_effect=export_and_compare):
+                WindowTests(
+                    "test_catalog_rebuilds_real_git_and_refuses_saved_context_or_source"
+                ).test_catalog_rebuilds_real_git_and_refuses_saved_context_or_source()
+            self.assertGreaterEqual(len(exports), 2)
+
+
+class PreparationRouteTests(unittest.TestCase):
+    def test_legacy_defaults_and_exact_batch9_routes_do_not_alias(self):
+        from unittest.mock import patch
+
+        import review_batch
+        import review_batch_v7
+
+        with tempfile.TemporaryDirectory() as temp:
+            directory = Path(temp)
+            (directory / "metadata.json").write_text(json.dumps({"schema_version": 7}))
+            with patch.object(review_batch_v7, "plan", return_value="legacy") as old:
+                self.assertEqual(review_batch.plan(directory), "legacy")
+                old.assert_called_once_with(directory, version=7)
+            with patch.object(review_batch_v7, "select", return_value="legacy") as old:
+                self.assertEqual(review_batch.select(directory, {"old": True}), "legacy")
+                old.assert_called_once_with(directory, {"old": True}, None)
+            with patch.object(review_batch_v7, "load", return_value="legacy") as old:
+                self.assertEqual(review_batch.load(directory), "legacy")
+                old.assert_called_once_with(directory)
+            with patch.object(review_batch_v7, "prepare_unit", return_value="legacy") as old:
+                self.assertEqual(
+                    review_batch.prepare_unit(directory, {"schema_version": 7}, {}, {}), "legacy"
+                )
+                old.assert_called_once_with(directory, {"schema_version": 7}, {}, {})
+            for version in (True, 8, "9"):
+                with self.subTest(version=version), self.assertRaises(WorkflowError):
+                    review_batch.select(directory, None, {}, version=version, repo=object())
+            (directory / "metadata.json").write_text(json.dumps({"schema_version": 7, "batch_version": 9}))
+            with self.assertRaisesRegex(WorkflowError, "owned execution/recovery"):
+                review_batch.execute(None, directory)
+
+    def test_plan9_requires_actual_designation_and_repo_adapter(self):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+
+        import review_batch
+
+        with tempfile.TemporaryDirectory() as temp:
+            main = Path(temp)
+            designated = main / "catalog"
+            (main / ".agentic-local/tasks").mkdir(parents=True)
+            (main / ".agentic-local/tasks/issue-31.json").write_text(
+                json.dumps({"v6_catalog": str(designated)})
+            )
+            repo = SimpleNamespace(main=main)
+            actual = windows.plan_catalog(catalog())
+            with patch.object(windows, "catalog", return_value=actual) as adapter:
+                self.assertEqual(review_batch.plan(designated, version=9, repo=repo), actual)
+                adapter.assert_called_once_with(repo, plan_only=True)
+                with self.assertRaises(WorkflowError):
+                    review_batch.plan(main / "undeclared", version=9, repo=repo)
+                with self.assertRaises(WorkflowError):
+                    review_batch.plan(designated, version=9)

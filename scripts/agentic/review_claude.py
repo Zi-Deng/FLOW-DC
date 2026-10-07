@@ -362,6 +362,8 @@ def execute(repo, directory, meta, *, diagnostic=False, dispatch_context=None, o
     from review import digest as file_digest
     from review_diagnostics import require_activation
 
+    if "batch_version" in meta:
+        raise WorkflowError("Batch9 preparation cannot dispatch; owned runtime is unavailable")
     v6 = meta.get("purpose") == V6_PURPOSE
     if v6 and not diagnostic:
         raise WorkflowError("V6 has no standalone ordinary execution route")

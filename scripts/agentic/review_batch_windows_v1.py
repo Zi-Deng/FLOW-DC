@@ -841,7 +841,7 @@ def full_checks(repo, directory, meta):
     return {"local": digest(evidence), "hosted": digest(receipts), "source": digest(current)}
 
 
-def catalog(repo, *, plan_only=False):
+def catalog(repo, *, plan_only=False, packet_target=None):
     """Actual source/check adapter; no readiness flag or provisional catalog input.
 
     The coordinator supplies a prepared full packet plus retained check artifacts
@@ -1036,8 +1036,20 @@ def catalog(repo, *, plan_only=False):
             "policy": digest(meta["review_policy"]),
             "inventory": digest(inventory),
         }
+        # Export the complete regenerated inventory, including whole responses and
+        # additional cross-boundary guidance. The same bytes bind every consumer.
+        write_json(packet / "required-material.json", {"schema_version": 3, "required": inventory})
+        (packet / "inventory-sha256.txt").write_text(review.digest(packet / "required-material.json") + "\n")
         planned = partition(packet, inventory, binding)
         planned_record = plan_catalog(planned)
+        if packet_target is not None:
+            import shutil
+
+            target = plain_path(Path(packet_target))
+            if target.exists():
+                refuse("catalog export must be exclusive")
+            shutil.copytree(packet, target)
+            return {"plan": planned_record, "metadata": copy.deepcopy(meta)}
         if plan_only:
             return planned_record
         components = []
@@ -1203,3 +1215,465 @@ def resume_window(repo, directory, *, owned, now):
     private_directory(plain_path(directory / "window-transitions"))
     exclusive(plain_path(directory / "window-transitions" / f"{len(rows):02d}.json"), record, limit=2000000)
     return record
+
+
+IDENTITY = ("repository", "pr", "issue", "plan_comment", "head_sha", "base_sha", "merge_base_sha")
+
+
+def packet_hashes(packet):
+    import packet_tree
+    import review
+
+    return {name: review.digest(path) for name, path in packet_tree.files(packet)}
+
+
+def finite_authorization(value, plan, policy, now):
+    """Named whole funding, with no caller-selected slots or lowered allocation."""
+    if (
+        type(value) is not dict
+        or set(value) != {"name", "plan_digest", "policy_digest", "funding", "expires_at"}
+        or type(value["name"]) is not str
+        or re.fullmatch("[a-z0-9][a-z0-9-]{0,79}", value["name"]) is None
+        or value["plan_digest"] != digest(validate_plan(plan))
+        or value["policy_digest"] != digest(policy)
+        or digest(value["funding"]) != digest(plan["schedule"])
+        or not clock(now) + plan["schedule"]["wall_seconds"] <= clock(value["expires_at"])
+    ):
+        refuse("named complete finite funding differs or is insufficient")
+
+
+def select_preparation(repo, directory, authorization, *, owned_auth):
+    """Apply a complete batch9 preparation; this does not authorize dispatch.
+
+    Source/catalog/full gates precede owned admission. Every original primary
+    obligation receives its existing global material claim before child creation.
+    A torn directory or any partial claim remains consumed, never overwritten.
+    """
+    import shutil
+    import tempfile
+    import time
+
+    import claude_owned_auth
+    import reporting_activation_v6 as activation
+    import reporting_admission_v6 as admission
+    import review_capacity_native_v1 as capacity
+    import review_claims
+
+    started, monotonic = time.time(), time.monotonic()
+    target = plain_path(Path(directory))
+    if target.exists():
+        refuse("preparation already exists or is torn; no replacement")
+    with tempfile.TemporaryDirectory(prefix="batch9-preparation-") as temporary:
+        exported = Path(temporary) / "packet"
+        actual = catalog(repo, packet_target=exported)
+        plan, meta = actual["plan"], actual["metadata"]
+        validate_plan(plan)
+        if set(plan["catalog"]["binding"]) != {
+            "local",
+            "hosted",
+            "source",
+            "authorization",
+            "context",
+            "contract",
+            "identity",
+            "policy",
+            "inventory",
+        }:
+            refuse("incomplete actual source/check/catalog provenance")
+        policy = meta["review_policy"]
+        capacity.profile(policy)
+        finite_authorization(authorization, plan, policy, started)
+        if packet_hashes(exported) != plan["catalog"]["files"]:
+            refuse("catalog export changed before admission")
+        identity = {key: meta[key] for key in IDENTITY}
+        if plan["catalog"]["binding"]["identity"] != digest(identity):
+            refuse("catalog identity differs from parent")
+        owned = claude_owned_auth.require(owned_auth)
+        evidence = admission.check(repo, owned_auth=owned, capacity_required=True)
+        grant, qualification = activation.load(repo)
+        last = activation.outcome(repo, 23)
+        if (
+            evidence.get("schema_version") != 6
+            or evidence.get("grant_digest") != digest(grant)
+            or set(evidence.get("outcomes", {})) != {"20", "21", "22", "23"}
+            or evidence["outcomes"]["23"] != digest(last)
+            or not evidence.get("empirical_receipt")
+            or grant["binding"]["harness"]["head"] != identity["head_sha"]
+        ):
+            refuse("actual V6 capability and empirical evidence incomplete")
+        applied = application(
+            plan, qualification["applied_at"], started, qualification_finished=last["finished"]
+        )
+        if authorization["expires_at"] > applied["deadline"]:
+            refuse("named expiry exceeds fixed application/outer expiry")
+        # The owned verifier adds the unchanged 300+60 margins to both lifetimes.
+        authentication = owned.current_binding(900, plan["schedule"]["window_seconds"][0] - 360)
+        if authentication != policy["authentication"] or authentication != evidence["authentication"]:
+            refuse("preparation authentication generation changed")
+        current_plan(repo, plan)
+        if not started <= time.time() <= started + 900 or not 0 <= time.monotonic() - monotonic <= 900:
+            refuse("setup clock rollback or allocation exhausted")
+        owned.recheck()
+        record = {
+            "schema_version": 9,
+            "binding": identity,
+            "contract_digest": plan["catalog"]["binding"]["contract"],
+            "plan": plan,
+            "authorization": copy.deepcopy(authorization),
+            "unit_policy": copy.deepcopy(policy),
+            "admission": evidence,
+            "application": applied,
+        }
+        # Prove complete storage fits before any application or material claim.
+        from claude_reporting import _json_bytes
+
+        planned_claims = {
+            unit["id"]: {
+                "binding": material_binding(record, unit),
+                "claim": review_claims.record(record, unit, material_binding(record, unit)),
+            }
+            for unit in plan["catalog"]["components"] + [plan["catalog"]["integration"]]
+        }
+        try:
+            _json_bytes(record, 2000000)
+            _json_bytes(planned_claims, 2000000)
+        except ValueError:
+            refuse("whole preparation records exceed fixed storage before claim")
+        # Exclusive directory is the first durable local application boundary.
+        target.mkdir(mode=0o700)
+        claim(target, plan, applied)
+        exclusive(target / "batch.json", record, limit=2000000)
+        shutil.copytree(exported, target / "packet")
+        claims = {}
+        for unit in plan["catalog"]["components"] + [plan["catalog"]["integration"]]:
+            if not started <= time.time() <= started + 900 or not 0 <= time.monotonic() - monotonic <= 900:
+                refuse("setup exhausted during global claims; partial claims remain consumed")
+            binding = material_binding(record, unit)
+            claims[unit["id"]] = {
+                "binding": binding,
+                "claim": review_claims.reserve(repo, record, unit, binding),
+            }
+        if digest(claims) != digest(planned_claims):
+            refuse("actual global claims differ from complete prepared bindings")
+        exclusive(target / "batch-claims.json", claims, limit=2000000)
+        parent = {key: value for key, value in meta.items() if key not in _result_fields()}
+        parent.update(
+            schema_version=7,
+            kind="batch-parent",
+            batch_version=9,
+            batch_sha256=digest(record),
+            files=packet_hashes(target / "packet"),
+        )
+        exclusive(target / "metadata.json", parent, limit=2000000)
+        if not started <= time.time() <= started + 900 or not 0 <= time.monotonic() - monotonic <= 900:
+            refuse("setup exhausted after application; claims remain consumed")
+        owned.recheck()
+        current_plan(repo, plan)
+        if not started <= time.time() <= started + 900 or not 0 <= time.monotonic() - monotonic <= 900:
+            refuse("final source checks exhausted setup; claims remain consumed")
+        result = load_preparation(target)
+        if not started <= time.time() <= started + 900 or not 0 <= time.monotonic() - monotonic <= 900:
+            refuse("final preparation verification exhausted setup")
+        return result
+
+
+def _result_fields():
+    import review
+
+    return review.RESULT_FIELDS | {"batch_sha256", "batch_unit", "reservation_digest", "claim_digest"}
+
+
+def material_binding(batch, unit):
+    return {
+        "schema_version": 1,
+        "purpose": "batch9-preparation-only",
+        "plan_digest": digest(batch["plan"]),
+        "application_digest": digest(batch["application"]),
+        "unit": unit["id"],
+        "required_ids": unit["required_ids"],
+        "native_seconds": 900,
+        "local_seconds": 840,
+        "reference_usd": 10,
+    }
+
+
+def load_preparation(directory):
+    """Verify immutable storage. Current source/admission must be rechecked separately."""
+    import review
+    import review_capacity_native_v1 as capacity
+    import review_claims
+
+    directory = plain_path(Path(directory))
+    meta = review.verify_packet(directory)
+    batch = read(directory / "batch.json")
+    if type(batch) is not dict or set(batch) != {
+        "schema_version",
+        "binding",
+        "contract_digest",
+        "plan",
+        "authorization",
+        "unit_policy",
+        "admission",
+        "application",
+    }:
+        refuse("unknown preparation fields")
+    plan, applied = load(directory)
+    if (
+        type(batch["schema_version"]) is not int
+        or batch["schema_version"] != 9
+        or meta.get("schema_version") != 7
+        or meta.get("kind") != "batch-parent"
+        or type(meta.get("batch_version")) is not int
+        or meta["batch_version"] != 9
+        or meta.get("batch_sha256") != digest(batch)
+        or digest(plan) != digest(batch["plan"])
+        or digest(applied) != digest(batch["application"])
+        or batch["binding"] != {key: meta[key] for key in IDENTITY}
+        or digest(batch["binding"]) != plan["catalog"]["binding"].get("identity")
+        or batch["contract_digest"] != plan["catalog"]["binding"].get("contract")
+        or batch["unit_policy"] != meta["review_policy"]
+        or digest(batch["unit_policy"]) != plan["catalog"]["binding"].get("policy")
+        or meta["files"] != plan["catalog"]["files"]
+    ):
+        refuse("preparation identity/source/packet changed")
+    capacity.profile(batch["unit_policy"])
+    finite_authorization(batch["authorization"], plan, batch["unit_policy"], applied["applied_at"])
+    if batch["authorization"]["expires_at"] > applied["deadline"]:
+        refuse("preparation expiry exceeds fixed ceiling")
+    evidence = batch["admission"]
+    if (
+        type(evidence) is not dict
+        or type(evidence.get("schema_version")) is not int
+        or evidence["schema_version"] != 6
+        or not evidence.get("empirical_receipt")
+        or set(evidence.get("outcomes", {})) != {"20", "21", "22", "23"}
+        or evidence.get("authentication") != batch["unit_policy"]["authentication"]
+    ):
+        refuse("missing complete retained V6 admission; storage is not readiness")
+    claims = read(directory / "batch-claims.json")
+    units = plan["catalog"]["components"] + [plan["catalog"]["integration"]]
+    if type(claims) is not dict or set(claims) != {u["id"] for u in units}:
+        refuse("missing whole material claims")
+    for unit in units:
+        row = claims[unit["id"]]
+        expected = material_binding(batch, unit)
+        if (
+            type(row) is not dict
+            or set(row) != {"binding", "claim"}
+            or digest(row["binding"]) != digest(expected)
+        ):
+            refuse("changed preparation material binding")
+        if digest(row["claim"]) != digest(review_claims.record(batch, unit, expected)):
+            refuse("changed material claim identity")
+    return batch
+
+
+def prepare_child(repo, directory, unit_id, *, owned_auth):
+    """Prepare exact assigned material; no executable reservation is created."""
+    import shutil
+    import time
+
+    import claude_owned_auth
+    import reporting_admission_v6 as admission
+    import review
+    import review_claims
+    from tasks import atomic_json, atomic_text
+
+    started, monotonic = time.time(), time.monotonic()
+    directory = plain_path(Path(directory))
+    batch = load_preparation(directory)
+    plan = batch["plan"]
+    # Until prefix replay is implemented, any changed public context (including
+    # newly published children) remains closed. No arbitrary exclusion is applied.
+    current_plan(repo, plan)
+    units = plan["catalog"]["components"] + [plan["catalog"]["integration"]]
+    matches = [unit for unit in units if unit["id"] == unit_id]
+    if len(matches) != 1:
+        refuse("unknown child or renamed assignment")
+    unit = matches[0]
+    target = plain_path(directory / "units" / unit_id)
+    if target.exists():
+        refuse("child exists or is torn; no repeat preparation")
+    rows = journal(directory, plan, batch["application"])
+    if len(rows) % 2:
+        refuse("cannot prepare inside a paused window")
+    window = len(rows) // 2
+    if unit_id not in plan["schedule"]["windows"][window]:
+        refuse("child is outside the current complete window")
+    window_clock(plan, batch["application"], rows, window, started)
+    window_start = rows[-1]["value"]["resumed_at"] if rows else batch["application"]["applied_at"]
+    if started + 1740 > window_start + plan["schedule"]["window_seconds"][window] - 360:
+        refuse("complete child allocation does not fit the current window")
+    if started + 1740 > min(batch["application"]["wall_deadline"], batch["authorization"]["expires_at"]):
+        refuse("complete child allocation does not fit")
+    claims = read(directory / "batch-claims.json")
+    for candidate in units:
+        review_claims.verify(repo, batch, candidate, claims[candidate["id"]])
+    extra = {"items": [], "files": {}, "dependencies": {}}
+    if unit_id == "integration":
+        # This production gate is deliberately still closed, not a receipt flag.
+        replay_prefix(repo, directory, plan, len(plan["schedule"]["windows"]) - 3)
+        reports, dependencies = {}, {}
+        for component in plan["catalog"]["components"]:
+            child = directory / "units" / component["id"]
+            child_meta = review.verify_packet(child)
+            publication = review.verify_publication(repo, child)
+            dependencies[component["id"]] = {
+                **{
+                    key: child_meta[key]
+                    for key in (
+                        "review_sha256",
+                        "diagnostics_sha256",
+                        "coverage_sha256",
+                        "reporting_sha256",
+                        "terminal_sha256",
+                    )
+                },
+                "execution_sha256": review.digest(child / "reporting-execution.json"),
+                "publication_sha256": publication["body_sha256"],
+            }
+            reports[component["id"]] = (child / "review.md").read_bytes()
+        existing = sum(
+            (directory / "packet" / name).stat().st_size
+            for name in plan["catalog"]["files"]
+            if name.startswith("projections/")
+        )
+        extra = integration_reports(plan, reports, dependencies, existing_projection_bytes=existing)
+    owned = claude_owned_auth.require(owned_auth)
+    actual_admission = admission.check(repo, owned_auth=owned, capacity_required=True)
+    if digest(actual_admission) != digest(batch["admission"]):
+        refuse("current V6 admission differs; renewal runtime is not available")
+    if (
+        owned.current_binding(900, plan["schedule"]["window_seconds"][window] - 360)
+        != batch["unit_policy"]["authentication"]
+    ):
+        refuse("current whole-window authentication changed")
+    current_plan(repo, plan)
+    checked = time.time()
+    window_clock(plan, batch["application"], rows, window, checked)
+    if not started <= checked <= started + 840 or not 0 <= time.monotonic() - monotonic <= 840:
+        refuse("preparation local allocation exhausted or clock rolled back")
+    owned.recheck()
+    target.parent.mkdir(mode=0o700, exist_ok=True)
+    target.mkdir(mode=0o700)
+    shutil.copytree(directory / "packet", target / "packet")
+    packet = target / "packet"
+    for name, raw in extra["files"].items():
+        path = plain_path(packet / name)
+        if path.exists():
+            refuse("integration would replace existing source")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(raw)
+    if extra["items"]:
+        inventory = read(packet / "required-material.json")
+        inventory["required"].extend(extra["items"])
+        atomic_json(packet / "required-material.json", inventory)
+        atomic_text(packet / "inventory-sha256.txt", review.digest(packet / "required-material.json") + "\n")
+    assignment = {
+        "schema_version": 9,
+        "batch_sha256": digest(batch),
+        "unit": unit,
+        "required_ids": unit["required_ids"] + [item["id"] for item in extra["items"]],
+        "context_ids": surrounding_ids(plan["catalog"], unit),
+        "dependencies": extra["dependencies"],
+        "material_claim": digest(claims[unit_id]),
+        "policy_digest": digest(batch["unit_policy"]),
+        "authorization_digest": digest(batch["authorization"]),
+    }
+    atomic_json(packet / "assignment.json", assignment)
+    meta = review.verify_packet(directory)
+    meta = {key: value for key, value in meta.items() if key not in _result_fields()}
+    meta.update(kind="batch-unit", batch_version=9, batch_unit=assignment, files=packet_hashes(packet))
+    exclusive(target / "metadata.json", meta, limit=2000000)
+    if not started <= time.time() <= started + 840 or not 0 <= time.monotonic() - monotonic <= 840:
+        refuse("preparation overrun after storage; material remains consumed")
+    owned.recheck()
+    exclusive(
+        target / "batch-preparation.json",
+        {
+            "schema_version": 1,
+            "batch_sha256": digest(batch),
+            "assignment_sha256": digest(assignment),
+            "started": started,
+            "finished": time.time(),
+            "local_deadline": started + 840,
+            "action_deadline": min(
+                started + 1740, batch["application"]["wall_deadline"], batch["authorization"]["expires_at"]
+            ),
+            "monotonic_seconds": time.monotonic() - monotonic,
+        },
+    )
+    if not started <= time.time() <= started + 840 or not 0 <= time.monotonic() - monotonic <= 840:
+        refuse("final owned preparation checks exhausted local allocation")
+    return target
+
+
+def verify_child(repo, directory):
+    """Recompute prepared component identity and actual global claims, not readiness."""
+    import review
+    import review_claims
+
+    directory = plain_path(Path(directory))
+    parent = directory.parent.parent
+    batch = load_preparation(parent)
+    meta = review.verify_packet(directory)
+    assignment = read(directory / "packet/assignment.json")
+    if (
+        meta.get("batch_version") != 9
+        or meta.get("kind") != "batch-unit"
+        or meta.get("batch_unit") != assignment
+    ):
+        refuse("child metadata/assignment changed")
+    unit = assignment.get("unit")
+    units = batch["plan"]["catalog"]["components"]
+    if not any(digest(unit) == digest(candidate) for candidate in units):
+        refuse("integration child verification awaits qualified prefix replay")
+    if directory != parent / "units" / unit["id"]:
+        refuse("copied or renamed child")
+    claims = read(parent / "batch-claims.json")
+    review_claims.verify(repo, batch, unit, claims[unit["id"]])
+    expected = {
+        "schema_version": 9,
+        "batch_sha256": digest(batch),
+        "unit": unit,
+        "required_ids": unit["required_ids"],
+        "context_ids": surrounding_ids(batch["plan"]["catalog"], unit),
+        "dependencies": {},
+        "material_claim": digest(claims[unit["id"]]),
+        "policy_digest": digest(batch["unit_policy"]),
+        "authorization_digest": digest(batch["authorization"]),
+    }
+    if digest(assignment) != digest(expected) or any(meta[k] != batch["binding"][k] for k in IDENTITY):
+        refuse("child source/contract/owner/assignment changed")
+    expected_files = {
+        **batch["plan"]["catalog"]["files"],
+        "assignment.json": review.digest(directory / "packet/assignment.json"),
+    }
+    if meta["files"] != expected_files or meta["review_policy"] != batch["unit_policy"]:
+        refuse("child omits or changes surrounding material or policy")
+    timing = read(directory / "batch-preparation.json")
+    if type(timing) is not dict or set(timing) != {
+        "schema_version",
+        "batch_sha256",
+        "assignment_sha256",
+        "started",
+        "finished",
+        "local_deadline",
+        "action_deadline",
+        "monotonic_seconds",
+    }:
+        refuse("missing exact preparation timing")
+    start, finish = clock(timing["started"]), clock(timing["finished"])
+    if (
+        type(timing["schema_version"]) is not int
+        or timing["schema_version"] != 1
+        or timing["batch_sha256"] != digest(batch)
+        or timing["assignment_sha256"] != digest(assignment)
+        or not batch["application"]["applied_at"] <= start <= finish <= start + 840
+        or not 0 <= clock(timing["monotonic_seconds"]) <= 840
+        or timing["local_deadline"] != start + 840
+        or timing["action_deadline"]
+        != min(start + 1740, batch["application"]["wall_deadline"], batch["authorization"]["expires_at"])
+    ):
+        refuse("preparation clock, allocation or timing changed")
+    return meta

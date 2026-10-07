@@ -553,6 +553,8 @@ def qualification(directory, *, require=False):
     """Shared gate used by recovery, publication, managed designation and preflight."""
     directory = plain_path(directory)
     meta = verify_packet(directory)
+    if "batch_version" in meta:
+        raise WorkflowError("Batch9 preparation is not qualified review or aggregate evidence")
     if require and (
         "reporting_activation" in meta or meta.get("purpose") == "issue-31-reporting-recovery-v6"
     ):
@@ -804,6 +806,8 @@ def review(repo, directory, *, dispatch_context=None):
 def run_review(repo, directory, *, dispatch_context=None):
     directory = plain_path(directory)
     meta = verify_packet(directory)
+    if "batch_version" in meta:
+        raise WorkflowError("Batch9 preparation cannot dispatch; owned runtime is unavailable")
     if meta.get("kind") == "batch-parent":
         raise WorkflowError("Batch execution requires explicit batch-run or batch-resume")
     if meta.get("batch_unit") and dispatch_context is None:

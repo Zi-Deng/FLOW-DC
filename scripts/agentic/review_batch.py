@@ -34,8 +34,21 @@ def api():
     return review
 
 
-def plan(directory, *, version=None):
+def plan(directory, *, version=None, repo=None):
     """Deterministic scope partition with explicit linked navigation context."""
+    if type(version) is int and version == 9:
+        import review_batch_windows_v1 as windows
+
+        if repo is None:
+            raise WorkflowError("Batch9 planning requires the current repository/catalog adapter")
+        state = windows.read(repo.main / ".agentic-local/tasks/issue-31.json")
+        if type(state.get("v6_catalog")) is not str or plain_path(Path(state["v6_catalog"])) != plain_path(
+            Path(directory)
+        ):
+            raise WorkflowError("Batch9 plan requires the actual designated full catalog")
+        return windows.catalog(repo, plan_only=True)
+    if repo is not None:
+        raise WorkflowError("Legacy planning cannot accept batch9 context")
     if _reporting(directory):
         import review_batch_v7
 
@@ -262,7 +275,26 @@ def inspection_suggestions(packet, items, *, version=3):
     return result
 
 
-def prepare_unit(directory, batch, unit, reservation):
+def prepare_unit(directory, batch, unit, reservation, *, repo=None, owned_auth=None):
+    if type(batch.get("schema_version")) is int and batch["schema_version"] == 9:
+        import review_batch_windows_v1 as windows
+
+        if (
+            repo is None
+            or reservation is not None
+            or digest(windows.load_preparation(directory)) != digest(batch)
+        ):
+            raise WorkflowError(
+                "Batch9 preparation requires actual parent and owned context, not a reservation"
+            )
+        if not any(
+            digest(unit) == digest(u)
+            for u in batch["plan"]["catalog"]["components"] + [batch["plan"]["catalog"]["integration"]]
+        ):
+            raise WorkflowError("Unknown batch9 preparation assignment")
+        return windows.prepare_child(repo, directory, unit["id"], owned_auth=owned_auth)
+    if repo is not None or owned_auth is not None:
+        raise WorkflowError("Legacy preparation cannot accept batch9 context")
     if _reporting(directory):
         import review_batch_v7
 
@@ -517,7 +549,17 @@ def verify_unit_publications(repo, directory, complete_only=True):
             api().verify_publication(repo, unit_path(directory, unit))
 
 
-def select(directory, limits, authorization=None):
+def select(directory, limits, authorization=None, *, version=None, repo=None, owned_auth=None):
+    if version is not None:
+        if type(version) is not int or version != 9 or repo is None or limits is not None:
+            raise WorkflowError("Batch9 preparation requires exact version, repository and fixed funding")
+        import review_batch_windows_v1
+
+        return review_batch_windows_v1.select_preparation(
+            repo, directory, authorization, owned_auth=owned_auth
+        )
+    if repo is not None or owned_auth is not None:
+        raise WorkflowError("Legacy selection cannot accept batch9 context")
     if _reporting(directory):
         import review_batch_v7
 
@@ -573,6 +615,13 @@ def validate_authorization(auth, executable):
 
 
 def load(directory):
+    meta = coverage.read_json(Path(directory) / "metadata.json")
+    if "batch_version" in meta:
+        if type(meta["batch_version"]) is not int or meta["batch_version"] != 9:
+            raise WorkflowError("Unknown explicit batch version")
+        import review_batch_windows_v1
+
+        return review_batch_windows_v1.load_preparation(directory)
     if _reporting(directory):
         import review_batch_v7
 
@@ -785,6 +834,8 @@ def dispatch_timeout(repo, directory, meta, context, *, clock=time.time, owned_a
 
 
 def execute(repo, directory, *, resume=False, recover_only=False, clock=time.time):
+    if "batch_version" in coverage.read_json(Path(directory) / "metadata.json"):
+        raise WorkflowError("Batch9 owned execution/recovery is not implemented")
     if _reporting(directory):
         import review_batch_v7
 
