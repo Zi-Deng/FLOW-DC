@@ -1155,3 +1155,459 @@ class OwnedCaptureTests(unittest.TestCase):
             self.diagnostic.run(self.repo, number=20)
         self.assertEqual(self.calls, 0)
         self.assertFalse((activation.root(self.repo) / "attempt-20.json").exists())
+
+
+class StrictMillisecondTests(unittest.TestCase):
+    def test_fixed_machine_thresholds(self):
+        import math
+
+        now = 1791396000.000005
+        config = {
+            "oauthAccount": {
+                "accountUuid": "11111111-1111-4111-8111-111111111111",
+                "organizationUuid": "22222222-2222-4222-8222-222222222222",
+                "hasExtraUsageEnabled": False,
+            },
+            "hasCompletedOnboarding": True,
+        }
+        for timeout in (300, 900):
+            threshold = (now + timeout + 360) * 1000
+            for expiry, accepted in (
+                (math.nextafter(threshold, -math.inf), False),
+                (threshold, False),
+                (math.nextafter(threshold, math.inf), True),
+                (threshold + 1000, True),
+                (True, False),
+                (float("nan"), False),
+                ((now + 367 * 86400) * 1000, False),
+            ):
+                credentials = {
+                    "claudeAiOauth": {
+                        "accessToken": "fixture-access-never-real",
+                        "refreshToken": "fixture-refresh-never-real",
+                        "expiresAt": expiry,
+                        "scopes": ["user:profile", "user:inference"],
+                        "subscriptionType": "max",
+                    }
+                }
+                with self.subTest(timeout=timeout, expiry=expiry, accepted=accepted):
+                    if accepted:
+                        claude_native_auth.native_records(credentials, config, timeout, now=now)
+                    else:
+                        with self.assertRaises(WorkflowError):
+                            claude_native_auth.native_records(credentials, config, timeout, now=now)
+
+
+# Exact noncredential governance records, replayed only in disposable fixtures.
+G13_STATE = {
+    "contract_generation": 13,
+    "approval": {
+        "issue": 31,
+        "plan_comment": 6045434332,
+        "contract": {
+            "issue": 31,
+            "plan_comment": 6045434332,
+            "issue_digest": "1875464d1340e35cd90fae86ad70e87be1b13108587ef138ce8130cc9263c03f",
+            "plan_digest": "05e7a6d54163067d7b0a02f1e3d61e995482e617233b0d973a41940add09d85f",
+        },
+        "source": "Direct coordinating conversation: maintainer explicitly approved all "
+        "things/decisions/plans/actions necessary through a finished private "
+        "coauthor-review manuscript and directed this override to persist in "
+        "repository memory (2026-10-03). This concrete append-only S amendment "
+        "repairs a deterministically reproduced strict-expiry bug and reconciles "
+        "only exact prospective authority/history; inherited tests, limits and "
+        "zero reviewer paid-extra/API usage remain. Standing receipt "
+        "memory/FLOW-DC-standing-authorization.md; exact full verified "
+        "plan6045434332. Operator assertion of existing authorization, not new "
+        "advisor/coauthor approval or GitHub human review.",
+        "recorded_at": "2026-10-07T19:42:04.886852+00:00",
+        "note": "Operator assertion of prior human authorization; not public approval proof.",
+    },
+    "approval_history": [
+        {
+            "issue": 31,
+            "plan_comment": 5900844013,
+            "contract": {
+                "issue": 31,
+                "plan_comment": 5900844013,
+                "issue_digest": "1875464d1340e35cd90fae86ad70e87be1b13108587ef138ce8130cc9263c03f",
+                "plan_digest": "85a4947faefeb29410ed250b29fbf82c3e5dd1c95d2106dbaa928e0c9bc883d7",
+            },
+            "source": "Maintainer explicitly requested implementation of the supplied "
+            "twelve-step roadmap on September 29, 2026 and repeated that "
+            "request after pausing; this comment maps its step 2 to "
+            "existing source and tests without expanding scope. Paid live "
+            "batch remains separately unapproved.",
+            "recorded_at": "2026-09-29T23:12:35.136186+00:00",
+            "note": "Operator assertion of prior human authorization; not public approval proof.",
+        },
+        {
+            "issue": 31,
+            "plan_comment": 5966428269,
+            "contract": {
+                "issue": 31,
+                "plan_comment": 5966428269,
+                "issue_digest": "1875464d1340e35cd90fae86ad70e87be1b13108587ef138ce8130cc9263c03f",
+                "plan_digest": "b170fe0c80b101de1568b96b5b07ac6f4418778ca585b53b5f6c755105511b7a",
+            },
+            "source": "User explicitly authorized all necessary "
+            "decisions/plans/actions to complete the coauthor-review "
+            "manuscript, requested this override be retained in repository "
+            "memory, and confirmed PR34 merged; applied to the concrete "
+            "issue31 provider-aware amendment under "
+            "memory/FLOW-DC-standing-authorization.md. This is an operator "
+            "receipt of standing authorization, not an advisor/coauthor "
+            "decision or GitHub approval.",
+            "recorded_at": "2026-10-03T06:38:52.487404+00:00",
+            "note": "Operator assertion of prior human authorization; not public approval proof.",
+        },
+        {
+            "issue": 31,
+            "plan_comment": 6001819615,
+            "contract": {
+                "issue": 31,
+                "plan_comment": 6001819615,
+                "issue_digest": "1875464d1340e35cd90fae86ad70e87be1b13108587ef138ce8130cc9263c03f",
+                "plan_digest": "2163be1844b7ef658d23276ce425ea8797ffa90bf776c6318109423288865e57",
+            },
+            "source": "Direct maintainer standing override authorizes all necessary "
+            "decisions/plans/actions through private coauthor review, "
+            "retained in FLOW-DC memory. Coordinator bound prospective "
+            "reporting/test/continuation amendment6001819615 and two new "
+            "separately capped activation purposes10/11; old grants, calls, "
+            "reports and human merge duties preserved. No approval inferred "
+            "from public issue text.",
+            "recorded_at": "2026-10-05T19:49:38.315425+00:00",
+            "note": "Operator assertion of prior human authorization; not public approval proof.",
+        },
+        {
+            "issue": 31,
+            "plan_comment": 6008093895,
+            "contract": {
+                "issue": 31,
+                "plan_comment": 6008093895,
+                "issue_digest": "1875464d1340e35cd90fae86ad70e87be1b13108587ef138ce8130cc9263c03f",
+                "plan_digest": "e793c7623749aba94ae69fd623d7b406b4ec40227a3f71f271487a5019724734",
+            },
+            "source": "Maintainer explicitly authorized all necessary "
+            "decisions/plans/actions and paid processes through the "
+            "finished private coauthor-review manuscript, requested the "
+            "override retained in repository memory, and now requested "
+            "continuation after upgrading usage. Applied prospectively to "
+            "the concrete finite recovery amendment6008093895: only new "
+            "purposes12then13,300s/$2referenceeach600/$4total,Maxincludedonly/extraAPI0,no14,alloldreservations/stops/historypreserved. "
+            "This supersedes task-level approval prompts; it does not "
+            "attest diagnostics, provider usage, advisor/coauthor approval, "
+            "merge or scientific readiness. Source: "
+            "memory/FLOW-DC-standing-authorization.md and direct "
+            "coordinating conversation.",
+            "recorded_at": "2026-10-06T02:28:48.397470+00:00",
+            "note": "Operator assertion of prior human authorization; not public approval proof.",
+        },
+        {
+            "issue": 31,
+            "plan_comment": 6009076812,
+            "contract": {
+                "issue": 31,
+                "plan_comment": 6009076812,
+                "issue_digest": "1875464d1340e35cd90fae86ad70e87be1b13108587ef138ce8130cc9263c03f",
+                "plan_digest": "88af4787bfab768b81ff05ea7b09ab20bdefbb6e87572666b38c8b890ce1d2d0",
+            },
+            "source": "Direct maintainer standing override "
+            "recorded2026-10-03T01:36:38.550153UTC: all necessary "
+            "decisions/plans/actions and paid processes through private "
+            "coauthor review. Applied prospectively to this exact "
+            "original-Astra-authored v3 plan, published6009076812: "
+            "observations only;14isolation-first "
+            "then15tools/source;2wrappers,300s/$2reference "
+            "each,600s/$4total,Maxincluded/extraAPI0,failure-stop/no16. "
+            "Preserve all historical records, existing evidence/review "
+            "gates and human login/merge/submission. This is an operator "
+            "provenance receipt, not a fabricated human GitHub approval.",
+            "recorded_at": "2026-10-06T04:03:24.534151+00:00",
+            "note": "Operator assertion of prior human authorization; not public approval proof.",
+        },
+        {
+            "issue": 31,
+            "plan_comment": 6009865197,
+            "contract": {
+                "issue": 31,
+                "plan_comment": 6009865197,
+                "issue_digest": "1875464d1340e35cd90fae86ad70e87be1b13108587ef138ce8130cc9263c03f",
+                "plan_digest": "6493f379fdb2ed9ea1580a38d2fcdc1d618608f42b30613b145faea69323f484",
+            },
+            "source": 'Direct user standing override recorded 2026-10-03: "I approve '
+            "of all things/decisions/plans/actions needed for us to get the "
+            "finished manuscript that is ready for co-author review ... "
+            'this is an explicit overrite"; reinforced by subsequent '
+            "requests to continue and authorize necessary paid processes. "
+            "Applied prospectively to the complete source-verified "
+            "v8/recovery-v4 amendment6009865197 after actual15 identified "
+            "estimated_tokens shapes. Concrete finite limits and all "
+            "evidence/human boundaries retained. Local operator receipt, "
+            "not inferred GitHub approval or new credential/billing "
+            "authority.",
+            "recorded_at": "2026-10-06T05:19:19.280275+00:00",
+            "note": "Operator assertion of prior human authorization; not public approval proof.",
+        },
+        {
+            "issue": 31,
+            "plan_comment": 6010775261,
+            "contract": {
+                "issue": 31,
+                "plan_comment": 6010775261,
+                "issue_digest": "1875464d1340e35cd90fae86ad70e87be1b13108587ef138ce8130cc9263c03f",
+                "plan_digest": "e87de935601b8bbb50f7fa4188ddeb2bac4e1782479aeed00e2185f9dfc1cf05",
+            },
+            "source": "Direct coordinating user explicit standing override: approve "
+            "all necessary things/decisions/plans/actions and paid "
+            "continuations through private coauthor review, recorded "
+            "memory/FLOW-DC-standing-authorization.md (2026-10-03). Applies "
+            "prospectively to this exact published finite recovery-v5 "
+            "contract only, preserving extra/API0, all evidence gates and "
+            "human login/merge/submission boundaries. Local operator "
+            "receipt, not fabricated human GitHub approval. Current hosted "
+            "workflow must pass before source mutation or paid trial.",
+            "recorded_at": "2026-10-06T06:33:27.488866+00:00",
+            "note": "Operator assertion of prior human authorization; not public approval proof.",
+        },
+        {
+            "issue": 31,
+            "plan_comment": 6011162252,
+            "contract": {
+                "issue": 31,
+                "plan_comment": 6011162252,
+                "issue_digest": "1875464d1340e35cd90fae86ad70e87be1b13108587ef138ce8130cc9263c03f",
+                "plan_digest": "f3d7d5d6656a3397d4c11a759ef543fcbb94c8fa49e83795117f8e922799cde4",
+            },
+            "source": "Direct coordinating user standing explicit override recorded "
+            "memory/FLOW-DC-standing-authorization.md: approves necessary "
+            "actions and finite paid continuations through private coauthor "
+            "review. Applied prospectively to this exact narrow CI-runtime "
+            "amendment only: permits runner repair before hosted success to "
+            "resolve two cancellations, preserving all tests, CI15min, "
+            "historical evidence and human boundaries. Native-v5 "
+            "implementation/diagnostics remain gated on successful "
+            "repaired-head software receipts and separate prospective "
+            "contract reconciliation. Local operator receipt, not human "
+            "GitHub approval.",
+            "recorded_at": "2026-10-06T07:02:43.864501+00:00",
+            "note": "Operator assertion of prior human authorization; not public approval proof.",
+        },
+        {
+            "issue": 31,
+            "plan_comment": 6012492318,
+            "contract": {
+                "issue": 31,
+                "plan_comment": 6012492318,
+                "issue_digest": "1875464d1340e35cd90fae86ad70e87be1b13108587ef138ce8130cc9263c03f",
+                "plan_digest": "c0dbb09a3b7a03176988263aee50059c905af6750ef42de8042ff386e65b8461",
+            },
+            "source": "Direct coordinating user standing explicit override in "
+            "memory/FLOW-DC-standing-authorization.md approves necessary "
+            "concrete actions and finite paid continuations through private "
+            "coauthor review. Applied prospectively to this exact "
+            "original-Astra-authored recovery-v5 reconciliation at4fbe2af "
+            "after verified full local/installed/hosted gates: two separate "
+            "single-use diagnostics18isolation-first and "
+            "conditional19tools/source,300seconds/$2reference "
+            "each,600seconds/$4total,Maxincluded/extraAPI0,failure-stop/no20. "
+            "No repeated task approval is pending; exact final-head "
+            "software gates and fresh actual prerequisites still precede "
+            "separate preview/application/invokes. Full "
+            "component+integration review requires a distinct populated "
+            "finite grant. Historical approvals/evidence and human "
+            "login/merge/submission boundaries remain. Local operator "
+            "receipt, not human GitHub approval.",
+            "recorded_at": "2026-10-06T08:33:16.223093+00:00",
+            "note": "Operator assertion of prior human authorization; not public approval proof.",
+        },
+        {
+            "issue": 31,
+            "plan_comment": 6013795098,
+            "contract": {
+                "issue": 31,
+                "plan_comment": 6013795098,
+                "issue_digest": "1875464d1340e35cd90fae86ad70e87be1b13108587ef138ce8130cc9263c03f",
+                "plan_digest": "8351ce7ce762488c0f2447332487565c1c216e1f24ac440b237dc4d275277130",
+            },
+            "source": "Direct coordinating user standing explicit override in "
+            "memory/FLOW-DC-standing-authorization.md authorizes necessary "
+            "concrete actions through private coauthor review. Applied "
+            "prospectively to this exact original-Astra-authored 58960-byte "
+            "fixture-group scheduling plan at44eeac9. Only check_runner.py, "
+            "additive test_check_runner.py and SETUP.md change; preserve803 "
+            "occurrences and old methods, protocol2, two workers,840second "
+            "phase,900second CI and all historical findings/evidence. "
+            "Require exact final serial/parallel, installed affected "
+            "suites, coordinator full local and both first-attempt hosted "
+            "gates. No native grant/trial funded or authority constant "
+            "change; separate prospective native binding reconciliation "
+            "remains required. Retain generation9 and prior approvals once "
+            "and original executor UUID. Human login, merge and submission "
+            "boundaries remain. Local operator receipt, not human GitHub "
+            "approval.",
+            "recorded_at": "2026-10-06T09:55:50.305381+00:00",
+            "note": "Operator assertion of prior human authorization; not public approval proof.",
+        },
+        {
+            "issue": 31,
+            "plan_comment": 6014789492,
+            "contract": {
+                "issue": 31,
+                "plan_comment": 6014789492,
+                "issue_digest": "1875464d1340e35cd90fae86ad70e87be1b13108587ef138ce8130cc9263c03f",
+                "plan_digest": "e2fe530795df6701f43de54bb869032cd5375e92c9ecf543fa4e5a7d7830fb84",
+            },
+            "source": "Direct coordinating user standing explicit override in "
+            "memory/FLOW-DC-standing-authorization.md authorizes necessary "
+            "concrete actions through private coauthor review. Applied "
+            "prospectively to this exact original-Astra-authored whole "
+            "native-v5 authority reconciliation at8bb1abb. Only "
+            "reporting_activation_v5.py exact next contract literals and "
+            "duplicated plan check, new standalone "
+            "test_reporting_authority_v5.py, and PROVIDERS "
+            "current-authority guidance change. Preserve all810 occurrences "
+            "and existing methods,56frozen paths,83009history, fixed runner "
+            "seed/two workers/840second phase/900second CI and every "
+            "historical finding/obligation. Require behavioral base "
+            "regression, full affected/serial/parallel/disposable "
+            "installed, coordinator full local and both first-attempt "
+            "final-head hosted gates. Separately prepare/review/apply the "
+            "existing finite18/conditional19 pair only after final "
+            "gates/fresh prerequisites:two300second/$2reference "
+            "wrappers,600seconds/$4total,Maxincluded,paid-extra/API0,failure-stop/no20. "
+            "This receipt itself applies no grant and funds no full "
+            "component/integration review. Retain generations6-10 exactly "
+            "once, same executor UUID. Human login, merge and submission "
+            "boundaries remain. Local operator receipt, not human GitHub "
+            "approval.",
+            "recorded_at": "2026-10-06T10:58:57.843959+00:00",
+            "note": "Operator assertion of prior human authorization; not public approval proof.",
+        },
+        {
+            "issue": 31,
+            "plan_comment": 6035844223,
+            "contract": {
+                "issue": 31,
+                "plan_comment": 6035844223,
+                "issue_digest": "1875464d1340e35cd90fae86ad70e87be1b13108587ef138ce8130cc9263c03f",
+                "plan_digest": "494abcda1fa95d346ae5f8a84b638202701e4756c3ceb24fc4b4f0a9f9d114e5",
+            },
+            "source": "Maintainer explicit standing override recorded October3 in "
+            "memory/FLOW-DC-standing-authorization.md authorizes all "
+            "necessary decisions/actions through the private "
+            "coauthor-review manuscript. Applying it to this exact "
+            "reconciled Q1-Q7 no-Console engineering and finite "
+            "qualification contract, verified whole-body "
+            "publication6035844223 and proposal "
+            "SHAe9dcbd25045504eb0f9bddcec2614e93507bc4b53c4c74ffe73b292d301986f3. "
+            "Included Max only, extra/API0; human login/merge/submission "
+            "boundaries preserved. No live grant or "
+            "scientific/advisor/coauthor approval is implied.",
+            "recorded_at": "2026-10-07T10:19:09.955094+00:00",
+            "note": "Operator assertion of prior human authorization; not public approval proof.",
+        },
+    ],
+    "key": "issue-31",
+    "repository": "Zi-Deng/FLOW-DC",
+}
+
+
+class NextAuthorityTests(unittest.TestCase):
+    write_state = QualificationTests.write_state
+
+    def setUp(self):
+        QualificationTests.setUp(self)
+        self.state = copy.deepcopy(G13_STATE)
+        self.write_state(self.state)
+
+    def test_literal_current_and_historical_storage(self):
+        current = activation.authorization(self.repo)
+        self.assertEqual(
+            current["contract_digest"], "02e78ae136d06616db297cf656a3e17f6d6ee466a29970d7f6869adfe928d691"
+        )
+        self.assertEqual(
+            current["approval_digest"], "0cf9de4afdbd048248941023eaf66b4d4f7be70108d11026c69b30a085bd7605"
+        )
+        self.assertEqual(activation.selected_contract(self.repo), self.state["approval"]["contract"])
+        activation._binding(self.binding)  # Legacy storage still interpretable.
+        self.assertNotEqual(self.binding["authorization"], current)
+        self.binding["authorization"] = current
+        activation._binding(self.binding)
+        self.binding["authorization"]["approval_digest"] = "a" * 64
+        with self.assertRaises(WorkflowError):
+            activation._binding(self.binding)
+
+    def test_exact_history_and_authority_mutations(self):
+        changes = [
+            lambda s: s.update(contract_generation=True),
+            lambda s: s.update(contract_generation=14),
+            lambda s: s.update(repository="other/repo"),
+            lambda s: s.update(key="issue-32"),
+            lambda s: s.update(approval=copy.deepcopy(s["approval_history"][-1])),
+            lambda s: s["approval"].update(plan_comment=True),
+            lambda s: s["approval"].update(source="copied"),
+            lambda s: s["approval"]["contract"].update(plan_digest="a" * 64),
+            lambda s: s["approval"].update(extra="torn"),
+            lambda s: s.pop("approval"),
+            lambda s: s["approval_history"].pop(),
+            lambda s: s["approval_history"].append(copy.deepcopy(s["approval_history"][-1])),
+            lambda s: s["approval_history"].reverse(),
+            lambda s: s["approval_history"].__setitem__(10, copy.deepcopy(s["approval_history"][11])),
+            lambda s: s["approval_history"][0].update(source="changed"),
+        ]
+        for index, change in enumerate(changes):
+            with self.subTest(index=index):
+                state = copy.deepcopy(self.state)
+                change(state)
+                self.write_state(state)
+                with self.assertRaises(WorkflowError):
+                    activation.authorization(self.repo)
+
+
+class NextOwnedAuthorityTests(unittest.TestCase):
+    response = OwnedCaptureTests.response
+
+    def setUp(self):
+        self.actual_authorization = activation.authorization
+        OwnedCaptureTests.setUp(self)
+        self.enterContext(patch.object(activation, "authorization", self.actual_authorization))
+        self.task = self.repo.main / ".agentic-local/tasks/issue-31.json"
+        self.task.parent.mkdir(parents=True, exist_ok=True)
+        self.task.write_text(json.dumps(G13_STATE))
+
+    def test_old_grant_refused_then_new_owned_dispatch_and_admission(self):
+        import claude_owned_auth
+        import reporting_admission_v6 as admission
+
+        legacy, _ = activation.load(self.repo)
+        self.assertEqual(legacy["binding"]["authorization"]["contract_digest"], CONTRACT_DIGEST)
+        with claude_owned_auth.snapshot(self.policy) as owned:
+            current = activation.context(self.repo, self.policy, owned_auth=owned)
+            self.assertNotEqual(current, legacy["binding"])
+            with self.assertRaisesRegex(WorkflowError, "current source, authority"):
+                admission.check(self.repo, owned_auth=owned)
+        with self.assertRaises(WorkflowError):
+            self.diagnostic.run(self.repo, number=20)
+        self.assertEqual(self.calls, 0)
+        # Separate disposable repository; preserve the old grant rather than reset it.
+        self.repo = SimpleNamespace(main=self.repo.main.parent / "next-repo", name=self.repo.name)
+        self.task = self.repo.main / ".agentic-local/tasks/issue-31.json"
+        self.task.parent.mkdir(parents=True)
+        self.task.write_text(json.dumps(G13_STATE))
+        with claude_owned_auth.snapshot(self.policy) as owned:
+            proposal = activation.preview(
+                self.repo, self.policy, name="next-synthetic", tested_head="a" * 40, owned_auth=owned
+            )
+            activation.apply(self.repo, proposal, preview_digest=proposal["preview_digest"], owned_auth=owned)
+        for number in (20, 21):
+            self.assertTrue(self.diagnostic.run(self.repo, number=number)["qualified"])
+        with claude_owned_auth.snapshot(self.policy) as owned:
+            self.assertEqual(admission.check(self.repo, owned_auth=owned)["schema_version"], 6)
+            state = copy.deepcopy(G13_STATE)
+            state["approval_history"].reverse()
+            self.task.write_text(json.dumps(state))
+            with self.assertRaises(WorkflowError):
+                admission.check(self.repo, owned_auth=owned)
+        self.assertEqual(self.calls, 2)

@@ -25,6 +25,30 @@ CONTRACT = {
     "plan_digest": "494abcda1fa95d346ae5f8a84b638202701e4756c3ceb24fc4b4f0a9f9d114e5",
 }
 CONTRACT_DIGEST = "d124f792051c909f1cf77c8717393888141ff64c2c7cf5a38411f48cce7c5467"
+# Exact prospective S binding; the exported g12 constants remain historical APIs.
+NEXT_CONTRACT = {
+    "issue": 31,
+    "plan_comment": 6045434332,
+    "issue_digest": "1875464d1340e35cd90fae86ad70e87be1b13108587ef138ce8130cc9263c03f",
+    "plan_digest": "05e7a6d54163067d7b0a02f1e3d61e995482e617233b0d973a41940add09d85f",
+}
+NEXT_CONTRACT_DIGEST = "02e78ae136d06616db297cf656a3e17f6d6ee466a29970d7f6869adfe928d691"
+NEXT_APPROVAL_DIGEST = "0cf9de4afdbd048248941023eaf66b4d4f7be70108d11026c69b30a085bd7605"
+NEXT_HISTORY_DIGEST = "1e687cfea245e9926302b77b51733c4abf1d36c4e968c9a98b5bcc930bdb44b2"
+NEXT_HISTORY_ROWS = (
+    (5900844013, "5eba73542750e24757e47f0cd7bd6143ca0f430c0439a8b0c9becb6b50ba7f98"),
+    (5966428269, "c1006c694d96ef8487ee6742d54e427d8394ae10365b8a52275e6b0acc66ac35"),
+    (6001819615, "6c9709afe5e931fd88340bc30b75558a1c51cc1467831691bdb82e4169b7f67e"),
+    (6008093895, "8cb40e9af7f48c2f9522c4e146c7efd4e6dad24d2d71bcac667def8a8764f566"),
+    (6009076812, "3143727dc6cf38b8f54cb4c3f017fbde7557006a9a0ac569d61f531149f872d7"),
+    (6009865197, "65ea7d798151f777a1e6682d7cda05f14b6722bd0c36f455febaabe8d7f2023d"),
+    (6010775261, "004ea3142aed88ca9fa955d5ef808ce1285486dff8f73de5c84e48d9ed25c1e6"),
+    (6011162252, "177ba4f77027e22b0f2510fd918ad66ebf1c6fdf2fb5e0abaf67a81e9fb1aabc"),
+    (6012492318, "061e2149206692cdff0e8c013872a30c3dd205c678c8bbb6db81b7d05b795970"),
+    (6013795098, "a3d1f17e7f3b3884d40859b9622a1bd172e0d05978e5515552171ed7be214e97"),
+    (6014789492, "111069f7b7474052c5055b2b9f69cf73b2df8b5aba2f5c719550fb20bad37a71"),
+    (6035844223, "ae8e4b2ff106d44908e471d1f36be74b5d9f632f1d0b92b32e5261193a245cd8"),
+)
 PURPOSE = "issue-31-reporting-recovery-v6"
 SEQUENCE = {
     20: "isolation-refusal",
@@ -72,9 +96,50 @@ def remaining(number):
     return sum(slot(n)["native_seconds"] + 840 + 180 for n in SEQUENCE if n >= number)
 
 
+def _next_history(state):
+    rows = state.get("approval_history")
+    if (
+        type(rows) is not list
+        or len(rows) != 12
+        or digest(rows) != NEXT_HISTORY_DIGEST
+        or any(
+            type(row) is not dict
+            or type(row.get("plan_comment")) is not int
+            or row["plan_comment"] != comment
+            or digest(row) != expected
+            for row, (comment, expected) in zip(rows, NEXT_HISTORY_ROWS, strict=True)
+        )
+    ):
+        raise WorkflowError("V6 next ordered approval history differs")
+
+
+def selected_contract(repo):
+    """Select only an internally verified, literal current contract."""
+    authority = authorization(repo)
+    contract = NEXT_CONTRACT if authority["contract_digest"] == NEXT_CONTRACT_DIGEST else CONTRACT
+    return copy.deepcopy(contract)
+
+
 def authorization(repo):
     state = read(repo.main / ".agentic-local/tasks/issue-31.json")
     approval = state.get("approval")
+    if type(state.get("contract_generation")) is int and state["contract_generation"] == 13:
+        if (
+            repo.name != "Zi-Deng/FLOW-DC"
+            or state.get("repository") != repo.name
+            or state.get("key") != "issue-31"
+            or digest(NEXT_CONTRACT) != NEXT_CONTRACT_DIGEST
+            or type(approval) is not dict
+            or type(approval.get("issue")) is not int
+            or approval["issue"] != 31
+            or type(approval.get("plan_comment")) is not int
+            or approval["plan_comment"] != 6045434332
+            or digest(approval.get("contract")) != NEXT_CONTRACT_DIGEST
+            or digest(approval) != NEXT_APPROVAL_DIGEST
+        ):
+            raise WorkflowError("V6 requires the exact generation13 approval")
+        _next_history(state)
+        return {"contract_digest": NEXT_CONTRACT_DIGEST, "approval_digest": NEXT_APPROVAL_DIGEST}
     if (
         repo.name != "Zi-Deng/FLOW-DC"
         or state.get("repository") != repo.name
@@ -124,7 +189,12 @@ def context(repo, policy, *, remaining_seconds=7380, owned_auth=None):
         raise WorkflowError("Invalid V6 full remaining window")
     # The actual final catalog/check adapter is deliberately not implemented yet.
     source = catalog(repo)
-    if current["approval_digest"] != "ae8e4b2ff106d44908e471d1f36be74b5d9f632f1d0b92b32e5261193a245cd8":
+    expected_approval = (
+        NEXT_APPROVAL_DIGEST
+        if current["contract_digest"] == NEXT_CONTRACT_DIGEST
+        else "ae8e4b2ff106d44908e471d1f36be74b5d9f632f1d0b92b32e5261193a245cd8"
+    )
+    if current["approval_digest"] != expected_approval:
         raise WorkflowError("V6 exact standing approval differs")
     actual_harness = harness()
     fixtures = {n: fixture_binding(files) for n, files in packets(source).items()}
@@ -154,7 +224,11 @@ def _binding(value):
     if (
         type(auth) is not dict
         or set(auth) != {"contract_digest", "approval_digest"}
-        or auth["contract_digest"] != CONTRACT_DIGEST
+        or auth["contract_digest"] not in (CONTRACT_DIGEST, NEXT_CONTRACT_DIGEST)
+        or (
+            auth["contract_digest"] == NEXT_CONTRACT_DIGEST
+            and auth["approval_digest"] != NEXT_APPROVAL_DIGEST
+        )
         or not _hex(auth["approval_digest"])
     ):
         raise WorkflowError("Invalid V6 authority binding")

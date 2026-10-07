@@ -101,7 +101,7 @@ def native_records(credentials, config, timeout, *, now=None):
         if any(c.isspace() or ord(c) < 33 for c in access):
             raise ValueError
         expiry = record.get("expiresAt")
-        if not finite(expiry) or expiry / 1000 - now <= timeout + REFRESH_MARGIN + CLOCK_ALLOWANCE:
+        if not finite(expiry) or expiry <= (now + timeout + REFRESH_MARGIN + CLOCK_ALLOWANCE) * 1000:
             raise ValueError
         # Implausible units/far-future values must not authorize a call.
         if expiry / 1000 - now > 366 * 86400:

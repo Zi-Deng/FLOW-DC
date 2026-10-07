@@ -860,6 +860,9 @@ def catalog(repo, *, plan_only=False, packet_target=None, batch_directory=None):
 
     state = read(repo.main / ".agentic-local/tasks/issue-31.json")
     authority = activation.authorization(repo)
+    current_contract = activation.selected_contract(repo)
+    if digest(current_contract) != authority["contract_digest"]:
+        refuse("catalog authority changed during selection")
     pointer = state.get("v6_catalog")
     if type(pointer) is not str or not pointer:
         refuse("actual final catalog/full-check designation is absent")
@@ -871,7 +874,7 @@ def catalog(repo, *, plan_only=False, packet_target=None, batch_directory=None):
         meta.get("schema_version") != 7
         or meta.get("kind") not in {"single", "batch-parent"}
         or meta.get("issue") != 31
-        or meta.get("plan_comment") != activation.CONTRACT["plan_comment"]
+        or meta.get("plan_comment") != current_contract["plan_comment"]
         or meta.get("repository") != repo.name
         or meta.get("pr") != 32
         or meta.get("batch_unit")
@@ -884,7 +887,7 @@ def catalog(repo, *, plan_only=False, packet_target=None, batch_directory=None):
     ancestor = repo.git("merge-base", meta["base_sha"], meta["head_sha"])
     if ancestor != meta["merge_base_sha"]:
         refuse("catalog merge base differs")
-    if digest(issue_contract(repo, 31, activation.CONTRACT["plan_comment"])) != activation.CONTRACT_DIGEST:
+    if digest(issue_contract(repo, 31, current_contract["plan_comment"])) != authority["contract_digest"]:
         refuse("current issue/plan changed")
     review.current_pr(repo, 32, meta["head_sha"], meta["base_sha"])
     gates = full_checks(repo, directory, meta)
@@ -892,7 +895,7 @@ def catalog(repo, *, plan_only=False, packet_target=None, batch_directory=None):
     context = read(original / "context.json")
     saved_contract = {
         "issue": 31,
-        "plan_comment": activation.CONTRACT["plan_comment"],
+        "plan_comment": current_contract["plan_comment"],
         "issue_digest": digest(
             {"title": context["issue"]["title"], "body": context["issue"].get("body") or ""}
         ),
@@ -903,7 +906,7 @@ def catalog(repo, *, plan_only=False, packet_target=None, batch_directory=None):
             }
         ),
     }
-    if digest(saved_contract) != activation.CONTRACT_DIGEST:
+    if digest(saved_contract) != authority["contract_digest"]:
         refuse("saved issue/plan contract differs")
     if (
         context["pull_request"]["head"]["sha"] != meta["head_sha"]
@@ -1024,7 +1027,7 @@ def catalog(repo, *, plan_only=False, packet_target=None, batch_directory=None):
             **gates,
             "authorization": digest(authority),
             "context": digest(context),
-            "contract": activation.CONTRACT_DIGEST,
+            "contract": authority["contract_digest"],
             "identity": digest(
                 {
                     k: meta[k]
