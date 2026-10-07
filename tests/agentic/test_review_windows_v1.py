@@ -1605,3 +1605,363 @@ class QualifiedOwnedComponentTests(unittest.TestCase):
         self.assertTrue(windows.run_child(self.repo, self.child)["qualified"])
         self.assertTrue(windows.qualify_child(self.repo, self.child)["qualified"])
         self.assertEqual(self.calls, 5)
+
+
+class ComponentPublicationTests(unittest.TestCase):
+    """Real qualified capture/claims; explicit external catalog/native/GitHub doubles."""
+
+    response = OwnedComponentTests.response
+
+    def setUp(self):
+        from unittest.mock import patch
+
+        import review
+
+        original_popen = subprocess.Popen
+        OwnedComponentTests.setup_fixture(self, actual_admission=False)
+        self.enterContext(patch.object(subprocess, "Popen", original_popen))
+        windows.run_child(self.repo, self.child)
+        self.remote = []
+        self.posts = 0
+        self.actor = {"id": 123, "login": "synthetic-reviewer"}
+        self.lose_response = False
+        self.enterContext(patch.object(review, "current_pr", return_value={}))
+        self.repo.api = self.api
+
+    def api(self, suffix, *, data=None, **kwargs):
+        if data is not None:
+            self.assertEqual(suffix, "pulls/32/reviews")
+            self.assertEqual(data["event"], "COMMENT")
+            self.posts += 1
+            value = {
+                "id": 100 + self.posts,
+                "body": data["body"],
+                "commit_id": data["commit_id"],
+                "state": "COMMENTED",
+                "user": self.actor.copy(),
+            }
+            self.remote.append(value)
+            if self.lose_response:
+                raise WorkflowError("synthetic lost response")
+            return copy.deepcopy(value)
+        if suffix == "pulls/32/reviews":
+            return copy.deepcopy(self.remote)
+        if suffix.startswith("pulls/32/reviews/"):
+            return copy.deepcopy(next(r for r in self.remote if str(r["id"]) == suffix.rsplit("/", 1)[1]))
+        if suffix in ("pulls/32/comments", "issues/32/comments", "issues/31/comments"):
+            return []
+        raise AssertionError(suffix)
+
+    def test_scoped_comment_and_independent_verification(self):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+
+        import review
+        import workflow
+
+        with patch.object(
+            workflow, "run", return_value=SimpleNamespace(returncode=0, stdout=json.dumps(self.actor))
+        ) as actor:
+            result = review.publish(self.repo, self.child)
+        actor.assert_called_once()
+        self.assertEqual(self.posts, 1)
+        self.assertEqual(self.calls, 1)
+        self.assertFalse(result["coverage_qualified"])
+        self.assertTrue(result["component_qualified"])
+        self.assertEqual(review.verify_publication(self.repo, self.child), result)
+        self.assertIn((self.child / "review.md").read_text(), self.remote[0]["body"])
+        with self.assertRaises(WorkflowError):
+            review.qualification(self.child)
+        with self.assertRaises(WorkflowError):
+            review.publish(self.repo, self.child)
+        self.assertEqual(self.posts, 1)
+
+    def publish(self):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+
+        import review
+        import workflow
+
+        with patch.object(
+            workflow, "run", return_value=SimpleNamespace(returncode=0, stdout=json.dumps(self.actor))
+        ):
+            return review.publish(self.repo, self.child)
+
+    def test_lost_write_response_recovers_without_auth_write_or_inference(self):
+        from unittest.mock import patch
+
+        import claude_owned_auth
+        import review
+        import workflow
+
+        self.lose_response = True
+        with self.assertRaisesRegex(WorkflowError, "lost response"):
+            self.publish()
+        self.assertTrue((self.child / windows.PUBLICATION_INTENT).exists())
+        self.assertTrue((self.child / windows.PUBLICATION_FAILURE).exists())
+        self.assertFalse((self.child / windows.PUBLICATION_ACK).exists())
+        with self.assertRaises(WorkflowError):
+            self.publish()
+        with (
+            patch.object(claude_owned_auth, "snapshot", side_effect=AssertionError("No auth")),
+            patch.object(workflow, "run", side_effect=AssertionError("No actor/CLI")),
+        ):
+            result = windows.recover_component_publication(self.repo, self.child)
+            self.assertEqual(review.verify_publication(self.repo, self.child), result)
+            self.assertEqual(windows.recover_component_publication(self.repo, self.child), result)
+        self.assertEqual(self.posts, 1)
+        self.assertEqual(self.calls, 1)
+
+    def test_remote_mutations_and_duplicate_match_refuse(self):
+        import review
+
+        self.publish()
+        original = copy.deepcopy(self.remote[0])
+        for field, value in (
+            ("body", "changed"),
+            ("commit_id", "0" * 40),
+            ("state", "APPROVED"),
+            ("user", {"id": 124, "login": "synthetic-reviewer"}),
+            ("user", {"id": 123, "login": "different"}),
+            ("id", True),
+        ):
+            with self.subTest(field=field, value=value):
+                self.remote[0] = {**original, field: value}
+                with self.assertRaises(WorkflowError):
+                    review.verify_publication(self.repo, self.child)
+        self.remote[0] = original
+        self.remote.append({**original, "id": 500})
+        with self.assertRaisesRegex(WorkflowError, "ambiguous"):
+            windows.recover_component_publication(self.repo, self.child)
+        self.assertEqual(self.posts, 1)
+
+    def test_independent_get_disagreement_and_wrong_returned_id_stop(self):
+        original_api = self.repo.api
+
+        def wrong(suffix, **kwargs):
+            result = original_api(suffix, **kwargs)
+            if kwargs.get("data") is not None:
+                result["id"] += 1
+            return result
+
+        self.repo.api = wrong
+        with self.assertRaisesRegex(WorkflowError, "ID differs"):
+            self.publish()
+        self.assertFalse((self.child / windows.PUBLICATION_ACK).exists())
+        self.assertEqual(self.posts, 1)
+        self.repo.api = original_api
+        # Uncertain response is reconciled only against the actual unique artifact.
+        windows.recover_component_publication(self.repo, self.child)
+
+        def changed_get(suffix, **kwargs):
+            result = original_api(suffix, **kwargs)
+            if suffix.startswith("pulls/32/reviews/"):
+                result["body"] += "changed"
+            return result
+
+        self.repo.api = changed_get
+        with self.assertRaisesRegex(WorkflowError, "independently fetched"):
+            windows.verify_component_publication(self.repo, self.child)
+
+    def test_local_artifact_loss_and_mutation_refuse(self):
+        import review
+
+        self.publish()
+        for name in (
+            "review.md",
+            windows.OBSERVATION,
+            "reporting-proof.json",
+            "reporting-execution.json",
+            "batch-runtime-acknowledged.json",
+            windows.PUBLICATION_ACK,
+            windows.PUBLICATION_INTENT,
+        ):
+            path = self.child / name
+            original = path.read_bytes()
+            with self.subTest(name=name):
+                path.write_bytes(b"{}")
+                with self.assertRaises((WorkflowError, KeyError)):
+                    review.verify_publication(self.repo, self.child)
+                path.unlink()
+                with self.assertRaises((WorkflowError, FileNotFoundError)):
+                    review.verify_publication(self.repo, self.child)
+                path.write_bytes(original)
+        self.assertEqual(self.posts, 1)
+
+    def test_torn_intent_and_copied_operation_cannot_post(self):
+        import shutil
+
+        import review
+
+        (self.child / windows.PUBLICATION_INTENT).write_text("{")
+        with self.assertRaises(WorkflowError):
+            self.publish()
+        self.assertEqual(self.posts, 0)
+        with self.assertRaises(WorkflowError):
+            windows.recover_component_publication(self.repo, self.child)
+        (self.child / windows.PUBLICATION_INTENT).unlink()  # Disposable torn fixture only.
+        self.publish()
+        copied = self.child.parent / "copied-child"
+        shutil.copytree(self.child, copied)
+        with self.assertRaises(WorkflowError):
+            review.verify_publication(self.repo, copied)
+        self.assertEqual(self.posts, 1)
+
+    def test_unrelated_context_change_is_not_excluded(self):
+        self.publish()
+        self.remote.append({"id": 900, "body": "unrelated new finding"})
+        with self.assertRaisesRegex(WorkflowError, "unrelated public context"):
+            windows.verify_component_publication(self.repo, self.child)
+
+    def test_source_or_unknown_usage_refuses_before_post(self):
+        from unittest.mock import patch
+
+        with patch.object(windows, "current_plan", side_effect=WorkflowError("stale source")):
+            with self.assertRaisesRegex(WorkflowError, "stale source"):
+                self.publish()
+        path = self.child / "review-capture.json"
+        capture = json.loads(path.read_bytes())
+        capture["diagnostics"]["usage"] = {}
+        path.write_text(json.dumps(capture))
+        with self.assertRaises(WorkflowError):
+            self.publish()
+        self.assertEqual(self.posts, 0)
+
+    def test_remote_overhead_exhausts_original_clock_and_cannot_recover(self):
+        import time
+        from unittest.mock import patch
+
+        wall, mono = time.time(), time.monotonic()
+        original_api = self.repo.api
+        shifted = [False]
+
+        def slow(suffix, **kwargs):
+            result = original_api(suffix, **kwargs)
+            if kwargs.get("data") is not None:
+                shifted[0] = True
+            return result
+
+        self.repo.api = slow
+        with (
+            patch.object(time, "time", side_effect=lambda: wall + (1741 if shifted[0] else 0)),
+            patch.object(time, "monotonic", side_effect=lambda: mono + (1741 if shifted[0] else 0)),
+        ):
+            with self.assertRaisesRegex(WorkflowError, "allocation exhausted"):
+                self.publish()
+        self.assertEqual(self.posts, 1)
+        failure = json.loads((self.child / windows.PUBLICATION_FAILURE).read_bytes())
+        self.assertTrue(failure["clock_exhausted"])
+        with self.assertRaises(WorkflowError):
+            windows.recover_component_publication(self.repo, self.child)
+        self.assertFalse((self.child / windows.PUBLICATION_ACK).exists())
+
+    def test_preexisting_component_cannot_masquerade_as_new_operation(self):
+        import uuid
+
+        identity, raw, meta, _ = windows._publication_identity(self.repo, self.child)
+        body, _ = windows._publication_body(identity, raw, str(uuid.uuid4()))
+        self.remote.append(
+            {
+                "id": 999,
+                "body": body,
+                "commit_id": meta["head_sha"],
+                "state": "COMMENTED",
+                "user": self.actor.copy(),
+            }
+        )
+        with self.assertRaisesRegex(WorkflowError, "preexisting component"):
+            self.publish()
+        self.assertEqual(self.posts, 0)
+
+    def test_competing_exclusive_intent_stops_before_post(self):
+        from unittest.mock import patch
+
+        exclusive = windows.exclusive
+
+        def competing(path, value, **kwargs):
+            if path.name == windows.PUBLICATION_INTENT:
+                exclusive(path, value, **kwargs)
+            return exclusive(path, value, **kwargs)
+
+        with patch.object(windows, "exclusive", side_effect=competing):
+            with self.assertRaises(WorkflowError):
+                self.publish()
+        self.assertEqual(self.posts, 0)
+        self.assertTrue((self.child / windows.PUBLICATION_INTENT).exists())
+        with self.assertRaisesRegex(WorkflowError, "absent"):
+            windows.recover_component_publication(self.repo, self.child)
+
+    def test_intent_binding_actor_and_clock_mutations_refuse(self):
+        self.publish()
+        path = self.child / windows.PUBLICATION_INTENT
+        original = path.read_bytes()
+        mutations = (
+            lambda v: v["identity"].update(claim="f" * 64),
+            lambda v: v["identity"].update(sequence=1),
+            lambda v: v["actor"].update(id=999),
+            lambda v: v.update(body=v["body"] + "changed"),
+            lambda v: v["clocks"][-1].update(wall=v["clocks"][-1]["wall"] + 2000),
+        )
+        for mutate in mutations:
+            value = json.loads(original)
+            mutate(value)
+            path.write_text(json.dumps(value))
+            with self.assertRaises(WorkflowError):
+                windows.verify_component_publication(self.repo, self.child)
+        path.write_bytes(original)
+        self.assertEqual(self.posts, 1)
+
+    def test_final_global_claim_loss_after_intent_prevents_post(self):
+        from unittest.mock import patch
+
+        import review_claims
+
+        exclusive = windows.exclusive
+
+        def lose_claim(path, value, **kwargs):
+            result = exclusive(path, value, **kwargs)
+            if path.name == windows.PUBLICATION_INTENT:
+                claim = value["identity"]["claim"]
+                (review_claims.root(self.repo) / "batch9-executions" / (claim + ".json")).unlink()
+            return result
+
+        with patch.object(windows, "exclusive", side_effect=lose_claim):
+            with self.assertRaises(WorkflowError):
+                self.publish()
+        self.assertEqual(self.posts, 0)
+        self.assertTrue((self.child / windows.PUBLICATION_FAILURE).exists())
+
+    def test_current_admission_and_incomplete_runtime_refuse_before_post(self):
+        from unittest.mock import patch
+
+        import reporting_admission_v6 as admission
+
+        with patch.object(admission, "check", return_value={"schema_version": 6}):
+            with self.assertRaisesRegex(WorkflowError, "admission changed"):
+                self.publish()
+        (self.child / "batch-runtime-interrupted.json").write_text("{}")
+        with self.assertRaisesRegex(WorkflowError, "interrupted"):
+            self.publish()
+        self.assertEqual(self.posts, 0)
+
+    def test_monotonic_rollback_and_missing_intent_refuse(self):
+        import time
+        from unittest.mock import patch
+
+        self.publish()
+        origin = json.loads((self.child / "batch-preparation-clock.json").read_bytes())
+        with patch.object(time, "monotonic", return_value=origin["monotonic_started"] - 1):
+            with self.assertRaisesRegex(WorkflowError, "clock rollback"):
+                windows.verify_component_publication(self.repo, self.child)
+        (self.child / windows.PUBLICATION_INTENT).unlink()
+        with self.assertRaises(WorkflowError):
+            windows.recover_component_publication(self.repo, self.child)
+        self.assertEqual(self.posts, 1)
+
+    def test_actual_tracked_source_change_after_publication_refuses(self):
+        self.publish()
+        (self.repo.root / "source.py").write_text("value = 2\n")
+        with self.assertRaisesRegex(WorkflowError, "current source differs"):
+            windows.verify_component_publication(self.repo, self.child)
+        self.assertEqual(self.posts, 1)

@@ -987,6 +987,10 @@ def verified_published(repo, directory, number, head, base):
 def verify_publication(repo, directory, *, owned_auth=None):
     """Read-only byte comparison, including historical reports; never inference."""
     meta = verify_packet(directory)
+    if meta.get("batch_version") == 9:
+        from review_batch_windows_v1 import verify_component_publication
+
+        return verify_component_publication(repo, directory)
     if meta["schema_version"] == 4:
         return issue31_history.verify_publication(repo, directory)
     if meta.get("kind") == "batch-parent":
@@ -1028,6 +1032,10 @@ def verify_publication(repo, directory, *, owned_auth=None):
 def publish(repo, directory):
     directory = plain_path(directory)
     meta = verify_packet(directory)
+    if meta.get("batch_version") == 9:
+        from review_batch_windows_v1 import publish_component
+
+        return publish_component(repo, directory)
     if meta["schema_version"] == 4:
         return issue31_history.publish(repo, directory)
     body = publication_body(directory)

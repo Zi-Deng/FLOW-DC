@@ -2338,3 +2338,486 @@ def recover_child(repo, directory):
     report = _materialize_child(repo, directory)
     qualify_child(repo, directory)
     return report
+
+
+PUBLICATION_INTENT = "batch-publication-intent.json"
+PUBLICATION_ACK = "batch-publication-acknowledged.json"
+PUBLICATION_FAILURE = "batch-publication-uncertain.json"
+PUBLIC_CONTEXT = ("pulls/32/reviews", "pulls/32/comments", "issues/32/comments", "issues/31/comments")
+
+
+def publication_actor(repo):
+    """Resolve the actual GitHub credential's actor; never accept a caller assertion."""
+    import review_coverage
+    import workflow
+
+    result = workflow.run(["gh", "api", "--hostname", "github.com", "user"], cwd=repo.root, check=False)
+    if result.returncode or len(result.stdout.encode("utf-8")) > 65536:
+        refuse("authenticated GitHub actor unavailable")
+    value = review_coverage.strict_json(result.stdout)
+    return _publication_actor(value)
+
+
+def _publication_actor(value):
+    if (
+        type(value) is not dict
+        or type(value.get("id")) is not int
+        or value["id"] <= 0
+        or type(value.get("login")) is not str
+        or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]{0,38}(?:\[bot\])?", value["login"]) is None
+    ):
+        refuse("invalid authenticated publication actor")
+    return {"id": value["id"], "login": value["login"]}
+
+
+class PublicationClock:
+    """Publication shares the original child clock; recovery grants no new time."""
+
+    def __init__(self, directory):
+        self.exhausted = False
+        self.directory = Path(directory)
+        self.origin = read(self.directory / "batch-preparation-clock.json")
+        self.reservation = read(self.directory / RUNTIME)
+        self.native = clock(read(self.directory / COMPLETION)["native_seconds"])
+        self.rows = copy.deepcopy(read(self.directory / "batch-runtime-acknowledged.json")["clocks"][-1:])
+        self.check()
+
+    def check(self):
+        import time
+
+        now, mono = time.time(), time.monotonic()
+        last = self.rows[-1]
+        if (
+            clock(now) < last["wall"]
+            or clock(mono) < last["monotonic"]
+            or abs(now - self.origin["wall_started"] - (mono - self.origin["monotonic_started"])) > 1
+            or not 0 <= now - self.reservation["started"] - self.native <= 840
+            or now - self.reservation["started"] > 1740
+            or now > self.reservation["action_deadline"]
+            or len(self.rows) >= 400
+        ):
+            self.exhausted = True
+            refuse("publication clock rollback or original child allocation exhausted")
+        self.rows.append({"wall": now, "monotonic": mono, "native_seconds": self.native})
+        return now
+
+
+def _publication_identity(repo, directory):
+    """Requalify all owned artifacts and global claims, without another invocation."""
+    import review
+
+    directory = plain_path(Path(directory))
+    qualified = qualify_child(repo, directory)
+    meta, batch, reservation = runtime_reservation(repo, directory)
+    if meta["repository"] != repo.name:
+        refuse("publication repository differs")
+    unit = meta["batch_unit"]["unit"]
+    components = batch["plan"]["catalog"]["components"]
+    sequence = next(i for i, item in enumerate(components) if item == unit)
+    # Later components cannot execute yet. Publication must not open that route.
+    if sequence != 0:
+        refuse("later component publication awaits exact prefix replay")
+    report = review.exact_reporting_bytes(directory / "review.md", 10000)
+    if review.coverage.checksum(report.decode("utf-8")) != meta["review_sha256"]:
+        refuse("publication report differs")
+    artifacts = (
+        RUNTIME,
+        OUTPUT,
+        OBSERVATION,
+        COMPLETION,
+        "batch-runtime-acknowledged.json",
+        "reporting-execution.json",
+        "review-capture.json",
+        "reporting-proof.json",
+        "diagnostics.json",
+        "coverage.json",
+        "terminal.txt",
+        "review.md",
+        "metadata.json",
+    )
+    identity = {
+        "directory": str(directory),
+        "parent": str(directory.parent.parent),
+        "batch_sha256": digest(batch),
+        "catalog_sha256": batch["plan"]["catalog_digest"],
+        "unit": unit["id"],
+        "sequence": sequence,
+        "claim": reservation["material_claim"],
+        "binding": copy.deepcopy(batch["binding"]),
+        "qualification": digest(qualified),
+        "artifacts": {name: review.digest(directory / name) for name in artifacts},
+    }
+    return identity, report, meta, batch
+
+
+def _publication_body(identity, report, operation):
+    import uuid
+
+    if type(operation) is not str or str(uuid.UUID(operation)) != operation:
+        refuse("invalid publication operation identity")
+    marker = f"<!-- agentic-batch9-component:{operation}:{digest(identity)} -->"
+    body = (
+        "Scoped model review — component only; the full PR review remains incomplete.\n"
+        f"Unit: {identity['unit']}; sequence: {identity['sequence']}; "
+        f"head: {identity['binding']['head_sha']}.\n"
+        "Observed reads do not prove understanding. This COMMENT is not human approval.\n\n"
+        + report.decode("utf-8")
+        + "\n\n"
+        + marker
+    )
+    if len(body.encode("utf-8")) > 60000:
+        refuse("scoped publication exceeds exact body limit")
+    return body, marker
+
+
+def _publication_context(repo, timer):
+    value = {}
+    for endpoint in PUBLIC_CONTEXT:
+        timer.check()
+        rows = repo.api(endpoint, paginate=True)
+        timer.check()
+        if type(rows) is not list or any(type(r) is not dict or type(r.get("id")) is not int for r in rows):
+            refuse("unsupported remote context shape")
+        if len({r["id"] for r in rows}) != len(rows):
+            refuse("ambiguous remote context IDs")
+        value[endpoint] = rows
+    return value
+
+
+def _publication_source(repo, meta, timer):
+    import check_runner
+    import review
+
+    timer.check()
+    review.current_pr(repo, meta["pr"], meta["head_sha"], meta["base_sha"])
+    timer.check()
+    source = check_runner.source(repo.root)
+    timer.check()
+    if source["checkout"] != meta["head_sha"]:
+        refuse("publication source checkout changed")
+    return digest(source)
+
+
+def _publication_intent(repo, directory, timer):
+    import hashlib
+
+    intent = read(Path(directory) / PUBLICATION_INTENT)
+    keys = {
+        "schema_version",
+        "identity",
+        "operation",
+        "body",
+        "body_sha256",
+        "marker",
+        "actor",
+        "source",
+        "context",
+        "clocks",
+    }
+    if (
+        type(intent) is not dict
+        or set(intent) != keys
+        or type(intent["schema_version"]) is not int
+        or intent["schema_version"] != 1
+    ):
+        refuse("torn or unsupported publication intent")
+    identity, report, meta, _ = _publication_identity(repo, directory)
+    timer.check()
+    body, marker = _publication_body(identity, report, intent["operation"])
+    if (
+        intent["identity"] != identity
+        or intent["body"] != body
+        or intent["marker"] != marker
+        or intent["body_sha256"] != hashlib.sha256(body.encode("utf-8")).hexdigest()
+    ):
+        refuse("publication intent source, claim or exact body changed")
+    if _publication_actor(intent["actor"]) != intent["actor"]:
+        refuse("publication actor record changed")
+    if intent["source"] != _publication_source(repo, meta, timer):
+        refuse("publication current source differs from prewrite checks")
+    _publication_clocks(directory, intent["clocks"])
+    if (
+        intent["clocks"][-1]["wall"] > timer.rows[-1]["wall"]
+        or intent["clocks"][-1]["monotonic"] > timer.rows[-1]["monotonic"]
+    ):
+        refuse("publication intent is from a later clock")
+    if type(intent["context"]) is not dict or set(intent["context"]) != set(PUBLIC_CONTEXT):
+        refuse("publication initial context missing")
+    for binding in intent["context"].values():
+        if (
+            type(binding) is not dict
+            or set(binding) != {"sha256", "ids"}
+            or type(binding["ids"]) is not list
+            or any(type(i) is not int or i <= 0 for i in binding["ids"])
+            or len(set(binding["ids"])) != len(binding["ids"])
+        ):
+            refuse("invalid initial public context binding")
+        checksum(binding["sha256"])
+    failure_path = Path(directory) / PUBLICATION_FAILURE
+    if failure_path.exists():
+        failure = read(failure_path)
+        if (
+            type(failure) is not dict
+            or set(failure) != {"schema_version", "intent_sha256", "status", "clocks", "clock_exhausted"}
+            or type(failure["schema_version"]) is not int
+            or failure["schema_version"] != 1
+            or failure["intent_sha256"] != digest(intent)
+            or failure["status"] != "uncertain-no-repeat"
+            or type(failure["clock_exhausted"]) is not bool
+            or failure["clock_exhausted"]
+        ):
+            refuse("publication failure is torn or its clock allocation is exhausted")
+        _publication_clocks(directory, failure["clocks"])
+    if any(intent["clocks"][-1][key] > timer.rows[1][key] for key in ("wall", "monotonic")):
+        refuse("publication intent clock rollback")
+    timer.rows = copy.deepcopy(intent["clocks"]) + timer.rows[1:]
+    timer.check()
+    return intent, meta
+
+
+def _publication_clocks(directory, rows):
+    origin = read(Path(directory) / "batch-preparation-clock.json")
+    reservation = read(Path(directory) / RUNTIME)
+    native = read(Path(directory) / COMPLETION)["native_seconds"]
+    prior = read(Path(directory) / "batch-runtime-acknowledged.json")["clocks"][-1]
+    if type(rows) is not list or not 2 <= len(rows) <= 400 or rows[0] != prior:
+        refuse("missing original publication clock origin")
+    for row in rows:
+        if type(row) is not dict or set(row) != {"wall", "monotonic", "native_seconds"}:
+            refuse("invalid publication clock row")
+        wall, mono = clock(row["wall"]), clock(row["monotonic"])
+        if (
+            row["native_seconds"] != native
+            or wall < prior["wall"]
+            or mono < prior["monotonic"]
+            or abs(wall - origin["wall_started"] - (mono - origin["monotonic_started"])) > 1
+            or wall > reservation["action_deadline"]
+            or wall - reservation["started"] > 1740
+            or not 0 <= wall - reservation["started"] - native <= 840
+        ):
+            refuse("retained publication clocks exceed original allocation")
+        prior = row
+
+
+def _publication_remote(repo, intent, timer, *, returned_id=None):
+    """Only this operation's exact artifact may extend its prewrite context."""
+    context = _publication_context(repo, timer)
+    baseline = intent["context"]
+    reviews = context[PUBLIC_CONTEXT[0]]
+    matches = [r for r in reviews if intent["marker"] in (r.get("body") or "")]
+    if len(matches) != 1:
+        refuse("publication is absent or ambiguous; no repeat write")
+    remote = matches[0]
+    identifier = remote["id"]
+    if identifier <= 0 or (
+        returned_id is not None and (type(returned_id) is not int or identifier != returned_id)
+    ):
+        refuse("returned publication ID differs")
+    if identifier in baseline[PUBLIC_CONTEXT[0]]["ids"]:
+        refuse("preexisting publication cannot represent this operation")
+    timer.check()
+    fetched = repo.api(f"pulls/32/reviews/{identifier}")
+    timer.check()
+    if fetched != remote or type(fetched.get("id")) is not int:
+        refuse("independently fetched publication differs")
+    if (
+        remote.get("body") != intent["body"]
+        or remote.get("state") != "COMMENTED"
+        or remote.get("commit_id") != intent["identity"]["binding"]["head_sha"]
+        or _publication_actor(remote.get("user")) != intent["actor"]
+    ):
+        refuse("remote publication body, actor, head or COMMENT state differs")
+    context[PUBLIC_CONTEXT[0]] = [r for r in reviews if r["id"] != identifier]
+    if any(digest(rows) != baseline[endpoint]["sha256"] for endpoint, rows in context.items()):
+        refuse("unrelated public context changed during scoped publication")
+    return remote
+
+
+def _publication_result(intent, remote):
+    import hashlib
+
+    return {
+        "exact_match": True,
+        "review_id": remote["id"],
+        "head_sha": remote["commit_id"],
+        "body_sha256": hashlib.sha256(intent["body"].encode("utf-8")).hexdigest(),
+        "body_bytes": len(intent["body"].encode("utf-8")),
+        "coverage_qualified": False,
+        "component_qualified": True,
+        "scope": "component-only",
+    }
+
+
+def verify_component_publication(repo, directory):
+    timer = PublicationClock(directory)
+    intent, _ = _publication_intent(repo, directory, timer)
+    ack = read(Path(directory) / PUBLICATION_ACK)
+    if (
+        type(ack) is not dict
+        or set(ack) != {"schema_version", "intent_sha256", "remote", "clocks"}
+        or type(ack["schema_version"]) is not int
+        or ack["schema_version"] != 1
+        or ack["intent_sha256"] != digest(intent)
+    ):
+        refuse("missing or changed publication acknowledgment")
+    _publication_clocks(directory, ack["clocks"])
+    if ack["clocks"][: len(intent["clocks"])] != intent["clocks"] or any(
+        ack["clocks"][-1][key] > timer.rows[-1][key] for key in ("wall", "monotonic")
+    ):
+        refuse("publication acknowledgment clock origin or current time differs")
+    if (
+        ack["clocks"][-1]["wall"] < intent["clocks"][-1]["wall"]
+        or ack["clocks"][-1]["monotonic"] < intent["clocks"][-1]["monotonic"]
+    ):
+        refuse("publication acknowledgment precedes intent")
+    remote = _publication_remote(repo, intent, timer)
+    if remote != ack["remote"]:
+        refuse("acknowledged remote publication changed")
+    _, _, meta, _ = _publication_identity(repo, directory)
+    timer.check()
+    if _publication_source(repo, meta, timer) != intent["source"]:
+        refuse("source changed during publication verification")
+    timer.check()
+    return _publication_result(intent, remote)
+
+
+def recover_component_publication(repo, directory):
+    """Read-only remote reconciliation; never POST, launch or renew credentials."""
+    directory = plain_path(Path(directory))
+    if (directory / PUBLICATION_ACK).exists():
+        return verify_component_publication(repo, directory)
+    timer = PublicationClock(directory)
+    intent, meta = _publication_intent(repo, directory, timer)
+    remote = _publication_remote(repo, intent, timer)
+    _publication_identity(repo, directory)
+    timer.check()
+    if _publication_source(repo, meta, timer) != intent["source"]:
+        refuse("source changed during publication recovery")
+    exclusive(
+        directory / PUBLICATION_ACK,
+        {"schema_version": 1, "intent_sha256": digest(intent), "remote": remote, "clocks": timer.rows},
+        limit=2000000,
+    )
+    timer.check()
+    return _publication_result(intent, remote)
+
+
+def publish_component(repo, directory):
+    """One scoped COMMENT attempt, guarded by exclusive durable intent."""
+    import hashlib
+    import uuid
+
+    import claude_owned_auth
+    import reporting_admission_v6 as admission
+
+    directory = plain_path(Path(directory))
+    if any(
+        (directory / name).exists() for name in (PUBLICATION_INTENT, PUBLICATION_ACK, PUBLICATION_FAILURE)
+    ):
+        refuse("publication was attempted; use read-only recovery, never repeat POST")
+    timer = PublicationClock(directory)
+    identity, report, meta, batch = _publication_identity(repo, directory)
+    timer.check()
+    source = _publication_source(repo, meta, timer)
+    current_plan(repo, batch["plan"])
+    timer.check()
+    with claude_owned_auth.snapshot(meta["review_policy"]) as owned:
+        if digest(admission.check(repo, owned_auth=owned, capacity_required=True)) != digest(
+            batch["admission"]
+        ):
+            refuse("publication current V6 admission changed")
+        timer.check()
+        if (
+            owned.current_binding(900, batch["plan"]["schedule"]["window_seconds"][0] - 360)
+            != meta["review_policy"]["authentication"]
+        ):
+            refuse("publication whole-window authentication changed")
+        timer.check()
+        actor = publication_actor(repo)
+        timer.check()
+        context = _publication_context(repo, timer)
+        operation = str(uuid.uuid4())
+        body, marker = _publication_body(identity, report, operation)
+        if any(f":{digest(identity)} -->" in (row.get("body") or "") for row in context[PUBLIC_CONTEXT[0]]):
+            refuse("preexisting component publication requires its original intent; no new POST")
+        current_plan(repo, batch["plan"])
+        timer.check()
+        if (
+            source != _publication_source(repo, meta, timer)
+            or identity != _publication_identity(repo, directory)[0]
+        ):
+            refuse("publication source or child changed before intent")
+        if digest(admission.check(repo, owned_auth=owned, capacity_required=True)) != digest(
+            batch["admission"]
+        ):
+            refuse("publication final V6 admission changed")
+        timer.check()
+        owned.recheck()
+        timer.check()
+        intent = {
+            "schema_version": 1,
+            "identity": identity,
+            "operation": operation,
+            "body": body,
+            "body_sha256": hashlib.sha256(body.encode("utf-8")).hexdigest(),
+            "marker": marker,
+            "actor": actor,
+            "source": source,
+            "context": {
+                endpoint: {"sha256": digest(rows), "ids": [r["id"] for r in rows]}
+                for endpoint, rows in context.items()
+            },
+            "clocks": copy.deepcopy(timer.rows),
+        }
+        exclusive(directory / PUBLICATION_INTENT, intent, limit=2000000)
+        try:
+            timer.check()
+            owned.recheck()
+            timer.check()
+            if identity != _publication_identity(repo, directory)[0] or source != _publication_source(
+                repo, meta, timer
+            ):
+                refuse("publication final source or executable claim changed")
+            owned.recheck()
+            timer.check()
+            posted = repo.api(
+                "pulls/32/reviews", data={"commit_id": meta["head_sha"], "event": "COMMENT", "body": body}
+            )
+            timer.check()
+            if type(posted) is not dict or type(posted.get("id")) is not int:
+                refuse("unsupported publication write response")
+            remote = _publication_remote(repo, intent, timer, returned_id=posted["id"])
+            if posted != remote:
+                refuse("write response and independently fetched publication differ")
+            if identity != _publication_identity(repo, directory)[0] or source != _publication_source(
+                repo, meta, timer
+            ):
+                refuse("publication source or child changed after write")
+            owned.recheck()
+            timer.check()
+            exclusive(
+                directory / PUBLICATION_ACK,
+                {
+                    "schema_version": 1,
+                    "intent_sha256": digest(intent),
+                    "remote": remote,
+                    "clocks": copy.deepcopy(timer.rows),
+                },
+                limit=2000000,
+            )
+            timer.check()
+            return _publication_result(intent, remote)
+        except BaseException:
+            if not (directory / PUBLICATION_FAILURE).exists():
+                exclusive(
+                    directory / PUBLICATION_FAILURE,
+                    {
+                        "schema_version": 1,
+                        "intent_sha256": digest(intent),
+                        "status": "uncertain-no-repeat",
+                        "clocks": timer.rows,
+                        "clock_exhausted": timer.exhausted,
+                    },
+                    limit=2000000,
+                )
+            raise
