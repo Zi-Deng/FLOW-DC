@@ -1054,3 +1054,11 @@ component plus integration inspection/publication still needs a distinct populat
 finite grant, recomputed actual unit/context/report/storage count and complete-window
 feasibility. Old181 counts or catalog1M context are not token-fit proof. No human merge,
 scientific efficacy, manuscript or coauthor completion follows from software success.
+
+## Current issue31 empirical included-Max path
+
+The approved prospective V6/batch9 path uses the dedicated Claude Max registration without Console API access. Paid-extra and API allowances are zero; reference dollar caps are not bills. There is no automatic retry, model/provider fallback or permission expansion. Explicit Copilot remains supported by its existing route; batch9 does not silently change that policy. Free-counter work is an optional historical/preparation alternative, not executed qualification or a prerequisite for the selected No-Console path.
+
+Only after final-source local, installed and hosted gates, separately requested purposes20 (isolation), conditional21 (native tools/source), conditional22 (largest component capacity) and conditional23 (48-report integration capacity) may consume their single-use V6 allowance. Four wrappers maximum,2400 native seconds/$24 reference, zero paid-extra/API, no24/retry. Original diagnostic outcomes retain their original generation interpretation; a stopped batch consumer independently verifies later same-account lineage and fresh whole-window receipt under the owned lock. A synthetic fixture, legacy pair or storage record provides no actual capability credit.
+
+Capacity uses maximum observed input, never summed-message totals or an invisible peak claim. The planning estimate is ceil(1.5P)+200000 with128000 output/thinking reserve; P must be<=448000. The uplift is a disclosed planning allocation, not universal token-fit proof. Compaction, decreasing/unknown counters, incomplete observations, masking or overflow remain incomplete. Batch observations must remain<=872000. No actual native/provider/scientific execution is claimed by these implementation tests. See the current finite-window commands in OPERATING-GUIDE.md.

@@ -3103,3 +3103,302 @@ class IntegrationPartialReadTests(unittest.TestCase):
         with self.assertRaises(WorkflowError):
             windows.qualify_child(self.repo, self.child)
         self.assertEqual((self.calls, self.posts), (3, 2))
+
+
+class FinalWindowTests(unittest.TestCase):
+    response = OwnedComponentTests.response
+    api = ComponentPublicationTests.api
+    publish = ComponentPublicationTests.publish
+    pair = FirstWindowPrefixTests.pair
+    prepare_second = FirstWindowPrefixTests.prepare_second
+
+    def setUp(self):
+        from unittest.mock import patch
+
+        original = PreparationTests.setUp
+
+        def canonical(fixture):
+            original(fixture)
+            fixture.target = fixture.root / ".agentic-local/reviews/final-test"
+            fixture.target.parent.mkdir(parents=True, exist_ok=True)
+
+        with patch.object(PreparationTests, "setUp", canonical):
+            IntegrationWindowTests.setUp(self)
+
+    enter_integration = IntegrationWindowTests.enter_integration
+
+    def test_actual_final_window_transition(self):
+        import time
+
+        import claude_owned_auth
+
+        self.enter_integration()
+        windows.run_child(self.repo, self.child)
+        self.publish()
+        with claude_owned_auth.snapshot(self.policy) as owned:
+            windows.pause(self.repo, self.fixture.target, owned=owned, now=time.time(), final_validation=True)
+            windows.resume_window(
+                self.repo, self.fixture.target, owned=owned, now=time.time(), final_validation=True
+            )
+            value = windows.finalize(self.repo, self.fixture.target, owned_auth=owned)
+            self.assertEqual(len(value["members"]), 3)
+            self.assertTrue(
+                windows.aggregate_qualification(self.repo, self.fixture.target, owned_auth=owned)["qualified"]
+            )
+
+        from unittest.mock import patch
+
+        import review
+
+        with patch.object(windows, "task_repository", return_value=self.repo):
+            with self.assertRaises(WorkflowError):
+                review.qualification(self.fixture.target, require=True, repo=self.repo)
+            self.child = self.fixture.target
+            remote = self.publish()
+            self.assertEqual(remote["id"], self.remote[-1]["id"])
+            self.assertTrue(review.qualification(self.child, require=True, repo=self.repo)["qualified"])
+            self.assertEqual((self.calls, self.posts), (3, 4))
+
+            import argparse
+
+            import pipeline
+            import review_batch
+
+            parser = argparse.ArgumentParser()
+            windows.add_commands(parser.add_subparsers(dest="command", required=True))
+            args = parser.parse_args(["batch9-status", str(self.child)])
+            self.assertFalse(windows.command(self.repo, args)["qualified"])
+            self.assertTrue(review_batch.qualification(self.child, require=True)["qualified"])
+            meta = review.verify_packet(self.child)
+            batch = windows.load_preparation(self.child)
+            contract = {"external-test-authority": "unchanged"}
+            state = {"pr": 32, "approval": {"issue": 31, "plan_comment": 6035844223, "contract": contract}}
+            record = {
+                "directory": str(self.child),
+                "head_sha": meta["head_sha"],
+                "base_sha": meta["base_sha"],
+                "contract_digest": batch["contract_digest"],
+                "review_policy": meta["review_policy"],
+                "review_policy_digest": digest(meta["review_policy"]),
+                "batch_sha256": digest(batch),
+                "authorization_digest": digest(batch["authorization"]),
+                "run_attempted": True,
+                "status": "published",
+            }
+            state["review_rounds"] = [record]
+            state["designated_review"] = {
+                "directory": str(self.child),
+                "head_sha": meta["head_sha"],
+                "base_sha": meta["base_sha"],
+                "contract_digest": batch["contract_digest"],
+                "review_id": remote["id"],
+            }
+            pr = {"head": {"sha": meta["head_sha"]}, "base": {"sha": meta["base_sha"]}}
+            # Authority and current GitHub PR facts are external doubles. Actual
+            # report/aggregate/publication/designation consumers remain unpatched.
+            with (
+                patch.object(pipeline, "verify_contract", return_value=contract),
+                patch.object(pipeline, "current_task_pr", return_value=pr),
+                patch.object(
+                    pipeline,
+                    "digest",
+                    side_effect=lambda v: batch["contract_digest"] if v == contract else digest(v),
+                ),
+            ):
+                self.assertEqual(pipeline.validate_designated(self.repo, state)["review"], remote)
+                from contextlib import contextmanager
+
+                record["origin"] = "independently-replayed-batch9-windows"
+
+                class Registration:
+                    def __init__(self, repo):
+                        pass
+
+                    @contextmanager
+                    def locked(self, key):
+                        yield state
+
+                    def save(self, value):
+                        self.saved = copy.deepcopy(value)
+
+                with patch.object(pipeline, "TaskStore", Registration):
+                    designated = pipeline.designate_batch9(self.repo, 31, self.child)
+                    self.assertEqual(designated["review_id"], remote["id"])
+                state["designated_review"]["head_sha"] = "f" * 40
+                with self.assertRaises(WorkflowError):
+                    pipeline.validate_designated(self.repo, state)
+            for key, bad in (
+                ("body", "changed"),
+                ("commit_id", "f" * 40),
+                ("state", "APPROVED"),
+                ("user", {"id": 999, "login": "other", "type": "User"}),
+            ):
+                original = self.remote[-1][key]
+                self.remote[-1][key] = bad
+                with self.subTest(publication=key), self.assertRaises(WorkflowError):
+                    review.qualification(self.child, require=True, repo=self.repo)
+                self.remote[-1][key] = original
+            for filename in (windows.AGGREGATE, windows.FINAL_ACK, windows.AGGREGATE_ACK):
+                original = (self.child / filename).read_bytes()
+                (self.child / filename).write_text("{}")
+                with self.subTest(record=filename), self.assertRaises(WorkflowError):
+                    review.qualification(self.child, require=True, repo=self.repo)
+                (self.child / filename).write_bytes(original)
+            with self.assertRaises(WorkflowError):
+                self.publish()
+
+
+class FinalLineageTests(unittest.TestCase):
+    response = OwnedComponentTests.response
+    api = ComponentPublicationTests.api
+    publish = ComponentPublicationTests.publish
+    pair = FirstWindowPrefixTests.pair
+    prepare_second = FirstWindowPrefixTests.prepare_second
+    renew_fixture = StoppedComponentWindowTests.renew_fixture
+
+    def test_final_window_actual_admission_and_unknown_write_recovery(self):
+        import time
+        from unittest.mock import patch
+
+        import claude_owned_auth
+        import reporting_admission_v6 as admission
+        import reporting_diagnostic_v6 as diagnostic
+        import review
+
+        real_check, real_pause = admission.check_batch, admission.check_pause
+        IntegrationActualAdmissionTests.test_real_v6_lineage_consumer_into_owned_integration(self)
+        source = diagnostic.catalog(self.repo)
+
+        def consumer(checker, repo, directory, *, owned_auth):
+            def catalog(repo, *, batch_directory):
+                windows.reconcile_public_context(repo, batch_directory, self.initial)
+                return copy.deepcopy(source)
+
+            with patch.object(windows, "catalog", side_effect=catalog):
+                return checker(repo, directory, owned_auth=owned_auth)
+
+        with (
+            patch.object(admission, "check_pause", side_effect=lambda *a, **k: consumer(real_pause, *a, **k)),
+            patch.object(admission, "check_batch", side_effect=lambda *a, **k: consumer(real_check, *a, **k)),
+            patch.object(windows, "task_repository", return_value=self.repo),
+        ):
+            with claude_owned_auth.snapshot(self.policy) as owned:
+                windows.pause(
+                    self.repo, self.fixture.target, owned=owned, now=time.time(), final_validation=True
+                )
+                resumed = windows.resume_window(
+                    self.repo, self.fixture.target, owned=owned, now=time.time(), final_validation=True
+                )
+                self.assertEqual(resumed["value"]["required_seconds"], 3 * 180 + 360)
+                windows.finalize(self.repo, self.fixture.target, owned_auth=owned)
+            self.child = self.fixture.target
+            self.lose_response = True
+            with self.assertRaises(WorkflowError):
+                self.publish()
+            self.lose_response = False
+            recovered = windows.recover_aggregate_publication(self.repo, self.child)
+            self.assertEqual(recovered["id"], self.remote[-1]["id"])
+            self.assertTrue(review.qualification(self.child, require=True, repo=self.repo)["qualified"])
+            self.assertEqual((self.calls, self.posts), (7, 4))
+            with self.assertRaises(WorkflowError):
+                self.publish()
+            before = (self.child / windows.FINAL_ACK).read_bytes()
+            (self.child / windows.FINAL_ACK).write_text("{}")
+            with self.assertRaises(WorkflowError):
+                review.qualification(self.child, require=True, repo=self.repo)
+            (self.child / windows.FINAL_ACK).write_bytes(before)
+            wall, mono = time.time(), time.monotonic()
+            with (
+                patch.object(time, "time", return_value=wall + 901),
+                patch.object(time, "monotonic", return_value=mono + 901),
+            ):
+                with self.assertRaises(WorkflowError):
+                    review.qualification(self.child, require=True, repo=self.repo)
+            self.assertEqual((self.calls, self.posts), (7, 4))
+
+
+class FinalCommandTests(unittest.TestCase):
+    response = OwnedComponentTests.response
+    api = ComponentPublicationTests.api
+    publish = ComponentPublicationTests.publish
+    pair = FirstWindowPrefixTests.pair
+    prepare_second = FirstWindowPrefixTests.prepare_second
+    setUp = FinalWindowTests.setUp
+
+    def test_explicit_commands_one_integration_and_final_window(self):
+        import argparse
+        from unittest.mock import patch
+
+        import review
+
+        parser = argparse.ArgumentParser()
+        windows.add_commands(parser.add_subparsers(dest="command", required=True))
+
+        def command(name, *options):
+            args = parser.parse_args(["batch9-" + name, str(self.fixture.target), *options])
+            return windows.command(self.repo, args)
+
+        with patch.object(windows, "task_repository", return_value=self.repo):
+            with self.assertRaises(WorkflowError):
+                command("run", "--unit", "integration")
+            self.assertEqual(self.calls, 1)
+            self.pair()
+            command("pause")
+            command("resume")
+            result = command("run", "--unit", "integration")
+            self.assertTrue(result["qualified"])
+            self.child = self.fixture.target / "units/integration"
+            self.publish()
+            with self.assertRaises(WorkflowError):
+                review.verified_published(
+                    self.repo, self.child, 32, self.fixture.meta["head_sha"], self.fixture.meta["base_sha"]
+                )
+            with self.assertRaises(WorkflowError):
+                command("run", "--unit", "integration")
+            command("pause", "--final-validation")
+            command("resume", "--final-validation")
+            self.assertEqual(len(command("finalize")["members"]), 3)
+            with self.assertRaises(WorkflowError):
+                command("run", "--unit", "integration")
+            with self.assertRaises(WorkflowError):
+                command("finalize")
+            self.child = self.fixture.target
+            self.publish()
+            self.assertEqual(command("recover", "--publication")["id"], self.remote[-1]["id"])
+            with self.assertRaises(WorkflowError):
+                command("recover")
+            self.assertEqual((self.calls, self.posts), (3, 4))
+
+
+class FinalEntrypointTests(unittest.TestCase):
+    response = OwnedComponentTests.response
+    api = ComponentPublicationTests.api
+    setUp = ComponentPublicationTests.setUp
+
+    def test_generic_publish_resolves_registered_reviewed_checkout(self):
+        import io
+        from contextlib import redirect_stderr, redirect_stdout
+        from types import SimpleNamespace
+        from unittest.mock import patch
+
+        import review
+        import workflow
+
+        control = copy.copy(self.repo)
+        control.root = self.fixture.root / "control-checkout"
+        control.root.mkdir()
+        control.assert_main = lambda: None
+        with (
+            patch.object(review, "Repo", return_value=control),
+            patch.object(windows, "task_repository", return_value=self.repo) as resolve,
+            patch.object(
+                workflow, "run", return_value=SimpleNamespace(returncode=0, stdout=json.dumps(self.actor))
+            ),
+            patch("sys.argv", ["review.py", "publish", str(self.child)]),
+            redirect_stdout(io.StringIO()),
+            redirect_stderr(io.StringIO()) as errors,
+        ):
+            result = review.main()
+        self.assertEqual(result, 0, errors.getvalue())
+        resolve.assert_called_once_with(control, str(self.child))
+        self.assertEqual((self.calls, self.posts), (1, 1))

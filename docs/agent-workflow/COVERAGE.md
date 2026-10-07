@@ -888,3 +888,11 @@ The unchanged privacy bounds are23 fixed predicates,20,000 rejections,32 samples
 No raw values, numbers, thinking, signatures, arbitrary names/hashes or sessions enter
 the record. Overflow/unavailable evidence stays incomplete. Observations never earn
 inspection/admission credit; observed reads and green tests do not prove understanding.
+
+## Current batch9 complete aggregate
+
+A scoped component or integration report is independently useful but never parent readiness. Integration reads every row of the lossless whole-report projections for every actual component, plus all declared cross-boundary/source/test/guidance/findings obligations. Raw reports remain byte-exact; canonical128-character UTF8 projection rows preserve contiguous byte offsets and inverse reconstruction. Missing/partial/masked/unsupported material is not omitted or replaced by summaries. Existing storage, report, proof, event and capture bounds remain fixed.
+
+The explicit final window independently replays all components and integration, global material/execution claims, exact captures/reports/proofs/observers, known usage, ordered publications, immutable assignments and original public context. Only independently verified publications from this batch can reconcile new context objects; original objects and bodies remain obligations. A versioned aggregate binds those exact members and the final window, source and admission evidence. It invents no parent provider process/capture. Its COMMENT index links every full independently published report and binds its byte count/hash; it is not a replacement model report or findings summary. Exact report bytes and publication wrappers remain separate.
+
+Qualification with require=True, publication verification and pipeline designation/managed/finish consumers recheck current evidence and exact remote publication. Stored completion, copied success, old source, unknown usage or a child-only publication cannot waive these checks. Unknown POST outcomes recover by GET only from retained intent and complete evidence; torn finalization remains consumed/incomplete. Observed reads do not prove understanding, local integrity records are not independent attestations, and synthetic software tests do not qualify actual capability or scientific results.

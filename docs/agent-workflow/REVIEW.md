@@ -393,3 +393,11 @@ all nine original diagnostics and historical approval/report bytes. No skill act
 implicitly applies the new grant or invokes either purpose. Recovery stays offline;
 a changed head needs fresh qualification, full independent review and hosted receipts
 with PR head association distinguished from the actual tested checkout.
+
+## Current batch9 review and final gates
+
+The issue31 finite-window adapter explicitly separates components, independent complete-report integration and final aggregate validation. Use the current commands in OPERATING-GUIDE.md. Each native run is isolated and separately requested within the declared funded window; pause/resume requires complete independently qualified/published predecessors and verified same-account lineage. No full49-call loop crosses manual stopped boundaries.
+
+The final aggregate is an evidence index with exact member hashes and full report publication references, not a fabricated provider report. Independent current-source replay and remote COMMENT verification remain required at designation and finish. Every original finding, unread range, cross-boundary obligation and exact report remains in scope. Useful partial findings remain publishable as incomplete; no percentage, stored boolean or observed read establishes complete understanding.
+
+Before any actual V6 application, final committed source needs full local, installed and hosted gates with exact PR head versus checkout/run/attempt attribution. Actual20–23 capacity qualification and the subsequent complete funded review remain separate from synthetic implementation validation. Static reviewers do not execute the test suite; tests, domain validity and human merge approval are distinct. Do not label this software slice actual native qualification, PR review completion or scientific evidence.

@@ -496,6 +496,8 @@ def current_contract(repo, directory, meta):
 
 
 def publication_body(directory):
+    if coverage.read_json(Path(directory) / "metadata.json").get("batch_version") == 9:
+        return api().publication_body(directory)
     if _reporting(directory):
         import review_batch_v7
 
@@ -538,6 +540,18 @@ def publish_units(repo, directory):
 
 
 def verify_unit_publications(repo, directory, complete_only=True):
+    if coverage.read_json(Path(directory) / "metadata.json").get("batch_version") == 9:
+        import review_batch_windows_v1 as windows
+
+        current = windows.task_repository(repo, directory)
+        prefix = windows.component_prefix(current, Path(directory))
+        batch = windows.load_preparation(directory)
+        if complete_only and (
+            prefix["pending"] is not None
+            or len(prefix["rows"]) != len(batch["plan"]["catalog"]["components"]) + 1
+        ):
+            raise WorkflowError("Batch9 component and integration publications remain incomplete")
+        return prefix["rows"]
     if _reporting(directory):
         import review_batch_v7
 
@@ -848,7 +862,7 @@ def dispatch_timeout(repo, directory, meta, context, *, clock=time.time, owned_a
 
 def execute(repo, directory, *, resume=False, recover_only=False, clock=time.time):
     if "batch_version" in coverage.read_json(Path(directory) / "metadata.json"):
-        raise WorkflowError("Batch9 owned execution/recovery is not implemented")
+        raise WorkflowError("Batch9 owned execution/recovery requires explicit finite-window commands")
     if _reporting(directory):
         import review_batch_v7
 
@@ -967,6 +981,8 @@ def execute(repo, directory, *, resume=False, recover_only=False, clock=time.tim
 
 
 def assessment(directory):
+    if coverage.read_json(Path(directory) / "metadata.json").get("batch_version") == 9:
+        return api().qualification(directory)
     if _reporting(directory):
         import review_batch_v7
 
@@ -1060,6 +1076,8 @@ def assessment(directory):
 
 
 def finalize(directory):
+    if coverage.read_json(Path(directory) / "metadata.json").get("batch_version") == 9:
+        raise WorkflowError("Batch9 finalization requires its explicit final window and owned consumer")
     if _reporting(directory):
         import review_batch_v7
 
@@ -1074,6 +1092,8 @@ def finalize(directory):
 
 
 def qualification(directory, require=False):
+    if api().verify_packet(directory).get("batch_version") == 9:
+        return api().qualification(directory, require=require)
     if _reporting(directory):
         import review_batch_v7
 

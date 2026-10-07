@@ -275,6 +275,9 @@ def report_record(repo, state, round_record):
             "authorization_digest"
         ) != digest(planned["authorization"]):
             raise WorkflowError("Batch plan or authorization differs from the registered round")
+    if meta.get("batch_version") == 9:
+        independent.qualification(directory, require=True, repo=repo)
+        return meta, independent.publication_body(directory)
     report = plain_path(directory / "review.md")
     if (
         not report.is_file()
@@ -287,6 +290,8 @@ def report_record(repo, state, round_record):
 
 def published_report(repo, state, round_record):
     meta, expected_body = report_record(repo, state, round_record)
+    if meta.get("batch_version") == 9:
+        return independent.verify_publication(repo, round_record["directory"])
     records = repo.api(f"pulls/{state['pr']}/reviews", paginate=True)
     matching = [
         item
@@ -323,7 +328,10 @@ def validate_designated(repo, state):
     ]
     if len(matching) != 1:
         raise WorkflowError("Designated review has no unique completed pipeline round")
-    independent.qualification(designated["directory"], require=True)
+    if independent.verify_packet(designated["directory"]).get("batch_version") == 9:
+        independent.qualification(designated["directory"], require=True, repo=repo)
+    else:
+        independent.qualification(designated["directory"], require=True)
     published = published_report(repo, state, matching[0])
     if not published or positive(published["id"]) != designated["review_id"]:
         raise WorkflowError("Designated GitHub review is missing or changed")
@@ -461,6 +469,8 @@ def review_task(
             }
             rounds.append(record)
             store.save(state)
+        if independent.verify_packet(record["directory"]).get("batch_version") == 9:
+            raise WorkflowError("Batch9 requires explicit finite-window commands and manual stopped resume")
         is_batch = independent.verify_packet(record["directory"]).get("kind") == "batch-parent"
         if batch and record["run_attempted"] and not is_batch:
             raise WorkflowError("Cannot switch an attempted single review into batch mode")
@@ -648,3 +658,56 @@ def dispatch(repo, args):
             args.batch_successor,
         )
     raise WorkflowError("Unknown pipeline operation")
+
+
+def designate_batch9(repo, number, directory):
+    """Register already executed, fully replayed finite-window evidence, not a new run."""
+    import review_batch_windows_v1 as windows
+
+    number = positive(number)
+    if number != 31:
+        raise WorkflowError("Batch9 is restricted to its exact approved issue")
+    directory = plain_path(directory)
+    current = windows.task_repository(repo, directory)
+    published = windows.verify_aggregate_publication(current, directory)
+    batch = windows.load_preparation(directory)
+    meta = independent.verify_packet(directory)
+    with TaskStore(repo).locked(f"issue-{number}") as state:
+        contract = verify_contract(repo, state)
+        pr = current_task_pr(repo, state)
+        if (
+            meta["head_sha"] != pr["head"]["sha"]
+            or meta["base_sha"] != pr["base"]["sha"]
+            or batch["contract_digest"] != digest(contract)
+        ):
+            raise WorkflowError("Final batch differs from the current task contract or PR")
+        record = {
+            "directory": str(directory),
+            "head_sha": meta["head_sha"],
+            "base_sha": meta["base_sha"],
+            "contract_digest": digest(contract),
+            "review_policy": meta["review_policy"],
+            "review_policy_digest": digest(meta["review_policy"]),
+            "batch_sha256": digest(batch),
+            "authorization_digest": digest(batch["authorization"]),
+            "run_attempted": True,
+            "status": "published",
+            "origin": "independently-replayed-batch9-windows",
+        }
+        rounds = state.setdefault("review_rounds", [])
+        prior = [r for r in rounds if r["directory"] == str(directory)]
+        if prior and prior != [record]:
+            raise WorkflowError("Competing or altered managed batch round")
+        if not prior:
+            rounds.append(record)
+        state["designated_review"] = {
+            "directory": str(directory),
+            "head_sha": meta["head_sha"],
+            "base_sha": meta["base_sha"],
+            "contract_digest": digest(contract),
+            "review_id": published["id"],
+            "url": f"https://github.com/{repo.name}/pull/{state['pr']}#pullrequestreview-{published['id']}",
+        }
+        validate_designated(repo, state)
+        TaskStore(repo).save(state)
+        return state["designated_review"]

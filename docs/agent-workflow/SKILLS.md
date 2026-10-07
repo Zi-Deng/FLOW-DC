@@ -348,3 +348,9 @@ all nine original diagnostics and historical approval/report bytes. No skill act
 implicitly applies the new grant or invokes either purpose. Recovery stays offline;
 a changed head needs fresh qualification, full independent review and hosted receipts
 with PR head association distinguished from the actual tested checkout.
+
+## Current finite-window consumer routing
+
+Protected skills retain their human-merged PR34 bytes. For issue31 batch9, the current command and recovery reference is OPERATING-GUIDE.md. Executors implement and validate software; the coordinator alone publishes task/PR artifacts and dispatches separately authorized actual reviews. The recorded original executor UUID persists, with no recursive executor or automatic model switch.
+
+Batch9 designation routes through the existing pipeline after real final-window aggregate and exact COMMENT verification. Managed/finish consumers inherit those checks; finish.py does not gain a bypass. Scoped child publications, synthetic capacity, saved aggregate flags and incomplete/legacy records cannot establish readiness. Full final-source local/installed/hosted checks and actual conditional20–23 qualification are later separate gates. No-Console included Max keeps paid-extra/API zero and no fallback. Human stopped same-account renewal is external to these commands; a fresh whole-window receipt and actual verified lineage are mandatory before resume.

@@ -277,3 +277,23 @@ schema 2 observations earn no inspection credit and preserve unknown-stream refu
 CI PR-head association and actual tested checkout must both be retained. Full exact
 component/integration review, publications, finding dispositions and human merge
 remain separate obligations.
+
+## Current issue31 batch9 finite-window route
+
+Batch9 is an explicit issue31/PR32 route under the approved generation12 contract. Ordinary review and older batch7/8 commands retain their defaults; there is no standalone ordinary V6 route. These software interfaces do not establish actual provider qualification or PR readiness.
+
+Before application, complete the final committed source's local serial/parallel, installed-payload and hosted gates and preserve both PR-head association and actual tested checkout/run/attempt. Designate the complete source-bound packet and check receipts in the task's `v6_catalog`. Recompute the whole catalog, report projections, input/output and time feasibility; no old candidate catalog or funded prefix substitutes. Actual conditional V6 purposes20–23 and the empirical decision must then qualify on that source. Supply the complete finite named batch authorization before preparation.
+
+From the control checkout, use `python3 -B scripts/agentic/review.py` with these explicit subcommands (paths must be in the canonical `.agentic-local/reviews` storage):
+
+- `batch9-catalog`: recompute the complete catalog and fixed schedule, read-only.
+- `batch9-prepare DIRECTORY --authorization FILE`: exclusively prepare the whole authorized batch and original material claims. This consumes an application; it is not a preview.
+- `batch9-run DIRECTORY --unit UNIT`: prepare and run exactly one next declared component or `integration`, within its current window. It never runs all windows automatically.
+- `publish DIRECTORY/units/UNIT`: publish the exact scoped report once, with independently verified COMMENT/list/direct-GET acknowledgment.
+- `batch9-status DIRECTORY`: report local journal state only, explicitly without readiness credit.
+- `batch9-pause DIRECTORY` then, after any separate human same-account renewal, `batch9-resume DIRECTORY`: independently replay the completed window and enter the next declared window under the real owned lock and verified lineage. No automatic refresh/login occurs.
+- Add `--final-validation` to both pause and resume when entering the final window after all components and integration are qualified and published.
+- `batch9-finalize DIRECTORY`, then `publish DIRECTORY`, then `batch9-designate DIRECTORY`: independently complete, publish and designate the full aggregate. Each gate rechecks current evidence; a stored completion flag is insufficient.
+- `batch9-recover DIRECTORY/units/UNIT` recovers only retained capture material. Add `--publication` for GET-only scoped publication recovery, or use `batch9-recover DIRECTORY --publication` for the aggregate. Unknown writes never trigger another POST; missing capture/final acknowledgment is not reconstructed.
+
+All repeated source/history/admission/remote/replay work consumes the original allocation. Components and integration retain900 native+840 local seconds, action1740; final validation allows180 seconds per child plus360 margins (maximum9180). Pauses are at most1800 seconds; original36-hour and combined48-hour expiries and finite aggregate budgets still apply. Renew only while stopped, with the existing dedicated same account, verified lineage and a fresh disabled-paid receipt covering the whole next window plus300+60 margins. In-flight changes, torn records, unknown usage, changed source/context or exhausted clocks stop without refund/reset/extension. Preserve evidence and stop adoption on failure.

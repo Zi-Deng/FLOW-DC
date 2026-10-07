@@ -549,12 +549,24 @@ def stored_result(directory, meta):
     return result, assessment
 
 
-def qualification(directory, *, require=False):
+def qualification(directory, *, require=False, repo=None, owned_auth=None):
     """Shared gate used by recovery, publication, managed designation and preflight."""
     directory = plain_path(directory)
     meta = verify_packet(directory)
     if "batch_version" in meta:
-        raise WorkflowError("Batch9 preparation is not qualified review or aggregate evidence")
+        import review_batch_windows_v1 as windows
+
+        if (
+            meta.get("batch_version") != 9
+            or meta.get("kind") != "batch-parent"
+            or not (Path(directory) / windows.FINAL_ACK).exists()
+        ):
+            raise WorkflowError("Batch9 preparation is not qualified review or aggregate evidence")
+        current = windows.task_repository(repo or Repo(directory), directory)
+        result = windows.aggregate_qualification(current, directory, owned_auth=owned_auth)
+        if require:
+            windows.verify_aggregate_publication(current, directory, owned_auth=owned_auth)
+        return result
     if require and (
         "reporting_activation" in meta or meta.get("purpose") == "issue-31-reporting-recovery-v6"
     ):
@@ -620,8 +632,13 @@ def qualification(directory, *, require=False):
 
 def coverage_ready(directory, *, owned_auth=None):
     """Current-policy readiness, distinct from an immutable historical assessment."""
-    assessment = qualification(directory)
     meta = verify_packet(directory)
+    if meta.get("batch_version") == 9:
+        try:
+            return qualification(directory, require=True, owned_auth=owned_auth)["qualified"]
+        except (WorkflowError, OSError, ValueError, KeyError):
+            return False
+    assessment = qualification(directory)
     if "reporting_activation" in meta:
         return False
     if meta.get("schema_version") == 7 and meta.get("kind") != "batch-parent":
@@ -654,6 +671,10 @@ def recover_review(repo, directory):
     if "batch_version" in meta:
         from review_batch_windows_v1 import recover_child
 
+        if meta.get("batch_version") == 9 and meta.get("kind") == "batch-parent":
+            import review_batch_windows_v1 as windows
+
+            return windows.recover_aggregate_publication(windows.task_repository(repo, directory), directory)
         if (
             type(meta["batch_version"]) is not int
             or meta["batch_version"] != 9
@@ -889,6 +910,10 @@ def run_review(repo, directory, *, dispatch_context=None):
 
 def publication_body(directory):
     meta = verify_packet(directory)
+    if meta.get("batch_version") == 9 and meta.get("kind") == "batch-parent":
+        from review_batch_windows_v1 import aggregate_intent
+
+        return aggregate_intent(directory)["body"]
     if "reporting_activation" in meta:
         raise WorkflowError("Reporting diagnostic evidence cannot be published as a PR review")
     if meta["schema_version"] == 4 or (meta["schema_version"] == 3 and meta.get("batch_unit")):
@@ -969,6 +994,10 @@ def verified_published(repo, directory, number, head, base):
     ):
         raise WorkflowError("Review coverage record is stale or belongs to another PR")
     current_pr(repo, number, head, base)
+    if meta.get("batch_version") == 9:
+        if meta.get("kind") != "batch-parent":
+            raise WorkflowError("Scoped batch9 publication cannot establish parent readiness")
+        return verify_publication(repo, directory)
     review_batch.current_contract(repo, Path(directory), meta)
     qualification(directory, require=True)
     if meta.get("kind") == "batch-parent":
@@ -988,6 +1017,12 @@ def verify_publication(repo, directory, *, owned_auth=None):
     """Read-only byte comparison, including historical reports; never inference."""
     meta = verify_packet(directory)
     if meta.get("batch_version") == 9:
+        if meta.get("kind") == "batch-parent":
+            import review_batch_windows_v1 as windows
+
+            return windows.verify_aggregate_publication(
+                windows.task_repository(repo, directory), directory, owned_auth=owned_auth
+            )
         from review_batch_windows_v1 import verify_component_publication
 
         return verify_component_publication(repo, directory)
@@ -1033,6 +1068,10 @@ def publish(repo, directory):
     directory = plain_path(directory)
     meta = verify_packet(directory)
     if meta.get("batch_version") == 9:
+        if meta.get("kind") == "batch-parent":
+            import review_batch_windows_v1 as windows
+
+            return windows.publish_aggregate(windows.task_repository(repo, directory), directory)
         from review_batch_windows_v1 import publish_component
 
         return publish_component(repo, directory)
@@ -1102,11 +1141,19 @@ def main():
             review_batch.add_budget_arguments(
                 p, required=name == "batch-run", authorization=name == "batch-run"
             )
+    import review_batch_windows_v1 as windows
+
+    windows.add_commands(sub)
     args = parser.parse_args()
     try:
         repo = Repo()
         repo.assert_main()
-        if args.command == "prepare":
+        if args.command in {"run", "publish", "qualify", "verify-publication"}:
+            if verify_packet(args.directory).get("batch_version") == 9:
+                repo = windows.task_repository(repo, args.directory)
+        if args.command.startswith("batch9-"):
+            result = windows.command(repo, args)
+        elif args.command == "prepare":
             from claude_reporting_versions import read_selection
 
             result = prepare(

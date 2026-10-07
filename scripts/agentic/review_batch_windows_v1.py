@@ -7,6 +7,7 @@ replay children before any stopped boundary can be sealed or resumed.
 from __future__ import annotations
 
 import copy
+import hashlib
 import math
 import re
 from pathlib import Path
@@ -1209,7 +1210,7 @@ def current_plan(repo, plan, *, directory=None):
 
 
 def window_clock(plan, applied, rows, window, now):
-    integer(window, 0, len(plan["schedule"]["windows"]) - 2)
+    integer(window, 0, len(plan["schedule"]["windows"]) - 1)
     started = rows[-1]["value"]["resumed_at"] if rows else applied["applied_at"]
     allocation = plan["schedule"]["window_seconds"][window] - 360
     if not started <= clock(now) <= min(started + allocation, applied["wall_deadline"]):
@@ -1271,12 +1272,14 @@ def journal(directory, plan, applied):
     return rows
 
 
-def pause(repo, directory, *, owned, now):
+def pause(repo, directory, *, owned, now, final_validation=False):
     """Stop only after current source and independently published prefix replay."""
     import claude_owned_auth
 
     if (Path(directory) / "batch.json").exists():
-        return component_transition(repo, Path(directory), owned=owned, now=now, resuming=False)
+        return component_transition(
+            repo, Path(directory), owned=owned, now=now, resuming=False, final_validation=final_validation
+        )
     plan, applied = load(directory)
     current_plan(repo, plan)
     rows = journal(directory, plan, applied)
@@ -1300,12 +1303,14 @@ def pause(repo, directory, *, owned, now):
     return record
 
 
-def resume_window(repo, directory, *, owned, now):
+def resume_window(repo, directory, *, owned, now, final_validation=False):
     """Manual stopped renewal only; owned verifier covers the whole next window."""
     import claude_owned_auth
 
     if (Path(directory) / "batch.json").exists():
-        return component_transition(repo, Path(directory), owned=owned, now=now, resuming=True)
+        return component_transition(
+            repo, Path(directory), owned=owned, now=now, resuming=True, final_validation=final_validation
+        )
     plan, applied = load(directory)
     current_plan(repo, plan)
     rows = journal(directory, plan, applied)
@@ -3162,9 +3167,9 @@ def component_prefix(repo, directory, *, before=None, publication=None):
     names = [u["id"] for u in components] + ["integration"]
     transitions = journal(directory, plan, batch["application"])
     window = len(transitions) // 2
-    if window >= len(plan["schedule"]["windows"]) - 1:
-        refuse("final validation prefix remains closed")
-    first = [u for w in plan["schedule"]["windows"][: window + 1] for u in w]
+    if window >= len(plan["schedule"]["windows"]):
+        refuse("window outside the finite original plan")
+    first = [u for w in plan["schedule"]["windows"][: window + 1] for u in w if u != "final-validation"]
     units_root = plain_path(directory / "units")
     paths = sorted(units_root.iterdir()) if units_root.exists() else []
     if any(p.is_symlink() or not p.is_dir() or p.name not in first for p in paths):
@@ -3217,7 +3222,7 @@ def component_prefix(repo, directory, *, before=None, publication=None):
             refuse("required preceding component is missing, active or unpublished")
         if pending is not None and pending.name != before:
             refuse("competing active component")
-    context = _publication_context(repo, timer)
+    context = aggregate_context(repo, directory, _publication_context(repo, timer), timer)
     if publication is not None:
         own = plain_path(Path(publication))
         if pending != own or before != own.name:
@@ -3393,7 +3398,7 @@ def validate_transition(directory, row, prior):
             refuse("stopped-boundary clocks precede previous transition")
 
 
-def component_transition(repo, directory, *, owned, now, resuming):
+def component_transition(repo, directory, *, owned, now, resuming, final_validation=False):
     """Actual exclusive stopped boundary, with owned verification and no external mutation."""
     import time
 
@@ -3408,8 +3413,10 @@ def component_transition(repo, directory, *, owned, now, resuming):
         refuse("already paused or missing complete stopped boundary")
     window = len(rows) // 2
     next_window = window + 1
-    if next_window >= len(plan["schedule"]["windows"]) - 1:
-        refuse("production stopped-window transitions to final validation remain closed")
+    if next_window >= len(plan["schedule"]["windows"]) or (
+        next_window == len(plan["schedule"]["windows"]) - 1 and not final_validation
+    ):
+        refuse("production stopped-window transitions to final validation require explicit selection")
     if abs(clock(now) - start["wall"]) > 1:
         refuse("stopped-window transitions require the actual current clock")
     owned = claude_owned_auth.require(owned)
@@ -3546,3 +3553,563 @@ def transition_ack(directory, record, prior, plan, applied):
             refuse("resume acknowledgment exceeded original pause")
         window_clock(plan, applied, prior + [record], (len(prior) + 1) // 2, ack["wall"])
     return ack
+
+
+AGGREGATE = "batch-final-aggregate.json"
+FINAL_START = "batch-final-start.json"
+FINAL_ACK = "batch-final-acknowledged.json"
+FINAL_FAILURE = "batch-final-failure.json"
+AGGREGATE_INTENT = "batch-aggregate-publication-intent.json"
+AGGREGATE_ACK = "batch-aggregate-publication-acknowledged.json"
+AGGREGATE_FAILURE = "batch-aggregate-publication-uncertain.json"
+
+
+def final_window(directory):
+    directory = plain_path(Path(directory))
+    batch = load_preparation(directory)
+    rows = journal(Path(directory), batch["plan"], batch["application"])
+    if len(rows) != 2 * (len(batch["plan"]["schedule"]["windows"]) - 1):
+        refuse("final validation requires its exact complete stopped resume")
+    PrefixClock(directory).check()
+    return batch, rows
+
+
+def final_policy(directory):
+    batch, rows = final_window(directory)
+    policy = copy.deepcopy(batch["unit_policy"])
+    policy["authentication"] = copy.deepcopy(rows[-1]["authentication"])
+    return policy
+
+
+def aggregate_current(repo, directory, *, owned_auth):
+    """Actual complete evidence replay, never a saved qualification flag."""
+    import claude_owned_auth
+    import reporting_admission_v6 as admission
+
+    directory = plain_path(Path(directory))
+    batch, transitions = final_window(directory)
+    owned = claude_owned_auth.require(owned_auth)
+    timer = PrefixClock(directory)
+    if admission.check_batch(repo, directory, owned_auth=owned) != batch["admission"]:
+        refuse("final original admission changed")
+    timer.check()
+    source = catalog(repo, batch_directory=directory)
+    if source["dependencies"]["assignments"] != batch["plan"]["catalog_digest"]:
+        refuse("final current source assignments changed")
+    timer.check()
+    prefix = component_prefix(repo, directory)
+    names = [u["id"] for u in batch["plan"]["catalog"]["components"]] + ["integration"]
+    if prefix["pending"] is not None or [r["unit"] for r in prefix["rows"]] != names:
+        refuse("aggregate requires all actual component and integration publications")
+    if prefix["rows"] != transitions[-2]["value"]["children"]:
+        refuse("final stopped seal differs from complete current prefix")
+    members, covered = [], set()
+    for name, row, (_, ack) in zip(names, prefix["rows"], prefix["records"], strict=True):
+        import time
+
+        started, mono = time.time(), time.monotonic()
+        child = directory / "units" / name
+        identity, report, meta, _ = _publication_identity(repo, child)
+        qualified = qualify_child(repo, child)
+        covered.update(qualified["required_ids"])
+        members.append(
+            {
+                "unit": name,
+                "identity": identity,
+                "assignment": digest(meta["batch_unit"]),
+                "evidence": row,
+                "report_bytes": len(report),
+                "remote": ack["remote"],
+            }
+        )
+        if not 0 <= time.time() - started <= 180 or not 0 <= time.monotonic() - mono <= 180:
+            refuse("final child replay allocation exhausted")
+        timer.check()
+    required = {i["id"] for i in batch["plan"]["catalog"]["items"]}
+    if not required <= covered:
+        refuse("aggregate leaves original primary material unread")
+    # Rebuilding the integration input rechecks every raw report and projected row.
+    material = integration_material(repo, directory, batch)
+    timer.check()
+    owned.recheck()
+    if owned.current_binding(900) != transitions[-1]["authentication"]:
+        refuse("final generation changed in flight")
+    timer.check()
+    return {
+        "schema_version": 1,
+        "kind": "batch9-complete-aggregate",
+        "directory": str(directory),
+        "batch_sha256": digest(batch),
+        "binding": copy.deepcopy(batch["binding"]),
+        "transition": digest(transitions[-1]),
+        "source": digest(source["dependencies"]),
+        "admission": digest(batch["admission"]),
+        "members": members,
+        "required_ids": sorted(required),
+        "integration_material": digest(
+            {
+                "items": material["items"],
+                "dependencies": material["dependencies"],
+                "files": {name: hashlib.sha256(raw).hexdigest() for name, raw in material["files"].items()},
+            }
+        ),
+    }
+
+
+def final_clocks(directory, value):
+    batch, transitions = final_window(directory)
+    if type(value) is not dict or set(value) != {"wall", "monotonic"}:
+        refuse("invalid final completion clocks")
+    origin = transitions[-1]["batch_proof"]["clocks"][-1]
+    wall, mono = clock(value["wall"]), clock(value["monotonic"])
+    if (
+        wall < origin["wall"]
+        or mono < origin["monotonic"]
+        or abs(wall - origin["wall"] - (mono - origin["monotonic"])) > 1
+    ):
+        refuse("final completion clock rollback")
+    window_clock(batch["plan"], batch["application"], transitions, len(transitions) // 2, wall)
+
+
+def final_now(directory):
+    import time
+
+    value = {"wall": time.time(), "monotonic": time.monotonic()}
+    final_clocks(directory, value)
+    return value
+
+
+def finalize(repo, directory, *, owned_auth):
+    """One exclusive completion; no provider process or parent capture is invented."""
+    directory = plain_path(Path(directory))
+    batch, rows = final_window(directory)
+    start = {
+        "schema_version": 1,
+        "batch_sha256": digest(batch),
+        "transition": digest(rows[-1]),
+        "directory": str(directory),
+        "clocks": final_now(directory),
+    }
+    exclusive(directory / FINAL_START, start)
+    try:
+        value = aggregate_current(repo, directory, owned_auth=owned_auth)
+        exclusive(directory / AGGREGATE, value, limit=2000000)
+        ack = {
+            "schema_version": 1,
+            "start_sha256": digest(start),
+            "aggregate_sha256": digest(value),
+            "clocks": final_now(directory),
+        }
+        owned_auth.recheck()
+        exclusive(directory / FINAL_ACK, ack)
+        final_now(directory)
+        owned_auth.recheck()
+        return value
+    except BaseException:
+        exclusive(
+            directory / FINAL_FAILURE,
+            {"schema_version": 1, "start_sha256": digest(start), "status": "consumed-incomplete-no-repeat"},
+        )
+        raise
+
+
+def aggregate_qualification(repo, directory, *, owned_auth=None):
+    import claude_owned_auth
+
+    directory = plain_path(Path(directory))
+    if owned_auth is None:
+        with claude_owned_auth.snapshot(final_policy(directory)) as owned:
+            return aggregate_qualification(repo, directory, owned_auth=owned)
+    batch, transitions = final_window(directory)
+    if (directory / FINAL_FAILURE).exists():
+        refuse("failed final validation remains incomplete")
+    start, ack = read(directory / FINAL_START), read(directory / FINAL_ACK)
+    value = read(directory / AGGREGATE)
+    if (
+        type(start) is not dict
+        or set(start) != {"schema_version", "batch_sha256", "transition", "directory", "clocks"}
+        or type(ack) is not dict
+        or set(ack) != {"schema_version", "start_sha256", "aggregate_sha256", "clocks"}
+    ):
+        refuse("torn final validation")
+    if (
+        type(start["schema_version"]) is not int
+        or start["schema_version"] != 1
+        or type(ack["schema_version"]) is not int
+        or ack["schema_version"] != 1
+        or start["batch_sha256"] != digest(batch)
+        or start["transition"] != digest(transitions[-1])
+        or start["directory"] != str(directory)
+        or ack["start_sha256"] != digest(start)
+        or ack["aggregate_sha256"] != digest(value)
+    ):
+        refuse("final completion identity changed")
+    for row in (start["clocks"], ack["clocks"]):
+        final_clocks(directory, row)
+    now = final_now(directory)
+    if any(not start["clocks"][k] <= ack["clocks"][k] <= now[k] for k in now):
+        refuse("final completion clock order changed")
+    actual = aggregate_current(repo, directory, owned_auth=owned_auth)
+    if digest(actual) != digest(value):
+        refuse("aggregate source, members or qualification changed")
+    return {
+        "schema_version": 1,
+        "qualified": True,
+        "scope": "complete-batch9",
+        "aggregate_sha256": digest(actual),
+        "required_ids": actual["required_ids"],
+        "members": actual["members"],
+    }
+
+
+def aggregate_envelope(value, operation):
+    import hashlib
+    import uuid
+
+    if type(operation) is not str or str(uuid.UUID(operation)) != operation:
+        refuse("invalid aggregate publication operation")
+    marker = f"<!-- agentic-batch9-aggregate:{operation}:{digest(value)} -->"
+    body = "Complete batch9 static-review evidence index. This is a COMMENT, not human approval.\n"
+    body += "All exact model reports remain independently published and retained; this index is not a model report or a findings summary. Observed reads do not prove understanding. Tests and CI are separate evidence.\n"
+    body += f"Head: {value['binding']['head_sha']}; base: {value['binding']['base_sha']}; aggregate SHA256: {digest(value)}.\n\n"
+    for member in value["members"]:
+        body += (
+            f"{member['unit']}: https://github.com/{value['binding']['repository']}/pull/{value['binding']['pr']}#pullrequestreview-{member['remote']['id']} "
+            f"exact report SHA256 {member['evidence']['report']}, {member['report_bytes']} bytes; publication SHA256 {hashlib.sha256(member['remote']['body'].encode()).hexdigest()}.\n"
+        )
+    body += "\n" + marker
+    if len(body.encode("utf-8")) > 60000:
+        refuse("complete aggregate envelope exceeds publication bound")
+    return body, marker
+
+
+def aggregate_intent(directory):
+    """Closed transport binding only; callers must independently qualify the aggregate."""
+    import hashlib
+
+    directory = Path(directory)
+    value = read(directory / AGGREGATE)
+    intent = read(directory / AGGREGATE_INTENT)
+    keys = {
+        "schema_version",
+        "operation",
+        "identity",
+        "body",
+        "marker",
+        "body_sha256",
+        "actor",
+        "context",
+        "clocks",
+    }
+    if (
+        type(intent) is not dict
+        or set(intent) != keys
+        or type(intent["schema_version"]) is not int
+        or intent["schema_version"] != 1
+    ):
+        refuse("torn aggregate publication intent")
+    body, marker = aggregate_envelope(value, intent["operation"])
+    if (
+        intent["identity"]
+        != {
+            "directory": str(directory),
+            "aggregate_sha256": digest(value),
+            "binding": value["binding"],
+            "completion_sha256": digest(read(directory / FINAL_ACK)),
+        }
+        or intent["body"] != body
+        or intent["marker"] != marker
+        or intent["body_sha256"] != hashlib.sha256(body.encode()).hexdigest()
+        or _publication_actor(intent["actor"]) != intent["actor"]
+    ):
+        refuse("aggregate publication intent differs from exact completion")
+    final_clocks(directory, intent["clocks"])
+    if type(intent["context"]) is not dict or set(intent["context"]) != set(PUBLIC_CONTEXT):
+        refuse("missing aggregate initial context")
+    for binding in intent["context"].values():
+        if (
+            type(binding) is not dict
+            or set(binding) != {"sha256", "ids"}
+            or type(binding["ids"]) is not list
+            or any(type(i) is not int or i <= 0 for i in binding["ids"])
+            or len(set(binding["ids"])) != len(binding["ids"])
+        ):
+            refuse("invalid aggregate original context binding")
+        checksum(binding["sha256"])
+    if (directory / AGGREGATE_FAILURE).exists():
+        failure = read(directory / AGGREGATE_FAILURE)
+        if failure != {"schema_version": 1, "intent_sha256": digest(intent), "status": "uncertain-no-repeat"}:
+            refuse("changed aggregate uncertain-write record")
+    return intent
+
+
+def aggregate_context(repo, directory, context, timer):
+    """Remove only this exact declared aggregate artifact during source replay."""
+    directory = Path(directory)
+    if not (directory / AGGREGATE_INTENT).exists():
+        if (directory / AGGREGATE_ACK).exists() or (directory / AGGREGATE_FAILURE).exists():
+            refuse("orphan aggregate publication")
+        return context
+    intent = aggregate_intent(directory)
+    matches = [r for r in context[PUBLIC_CONTEXT[0]] if intent["marker"] in (r.get("body") or "")]
+    if not matches and not (directory / AGGREGATE_ACK).exists():
+        return context
+    remote = _publication_remote(repo, intent, timer)
+    if matches != [remote]:
+        refuse("aggregate context changed between reads")
+    if (directory / AGGREGATE_ACK).exists():
+        aggregate_ack(directory, intent, remote)
+    context[PUBLIC_CONTEXT[0]] = [r for r in context[PUBLIC_CONTEXT[0]] if r["id"] != remote["id"]]
+    return context
+
+
+def aggregate_ack(directory, intent, remote):
+    ack = read(Path(directory) / AGGREGATE_ACK)
+    if (
+        type(ack) is not dict
+        or set(ack) != {"schema_version", "intent_sha256", "remote", "clocks"}
+        or type(ack["schema_version"]) is not int
+        or ack["schema_version"] != 1
+        or ack["intent_sha256"] != digest(intent)
+        or ack["remote"] != remote
+    ):
+        refuse("aggregate publication acknowledgment changed")
+    final_clocks(directory, ack["clocks"])
+    now = final_now(directory)
+    if any(not intent["clocks"][k] <= ack["clocks"][k] <= now[k] for k in now):
+        refuse("aggregate publication clock order differs")
+    return ack
+
+
+def publish_aggregate(repo, directory):
+    import hashlib
+    import uuid
+
+    import claude_owned_auth
+
+    directory = plain_path(Path(directory))
+    if any((directory / name).exists() for name in (AGGREGATE_INTENT, AGGREGATE_ACK, AGGREGATE_FAILURE)):
+        refuse("aggregate publication already attempted; read-only recovery only")
+    with claude_owned_auth.snapshot(final_policy(directory)) as owned:
+        aggregate_qualification(repo, directory, owned_auth=owned)
+        timer = PrefixClock(directory)
+        value = read(directory / AGGREGATE)
+        operation = str(uuid.uuid4())
+        body, marker = aggregate_envelope(value, operation)
+        context = _publication_context(repo, timer)
+        actor = publication_actor(repo)
+        timer.check()
+        intent = {
+            "schema_version": 1,
+            "operation": operation,
+            "identity": {
+                "directory": str(directory),
+                "aggregate_sha256": digest(value),
+                "binding": value["binding"],
+                "completion_sha256": digest(read(directory / FINAL_ACK)),
+            },
+            "body": body,
+            "marker": marker,
+            "body_sha256": hashlib.sha256(body.encode()).hexdigest(),
+            "actor": actor,
+            "context": {k: {"sha256": digest(v), "ids": [r["id"] for r in v]} for k, v in context.items()},
+            "clocks": final_now(directory),
+        }
+        exclusive(directory / AGGREGATE_INTENT, intent, limit=2000000)
+        try:
+            aggregate_qualification(repo, directory, owned_auth=owned)
+            owned.recheck()
+            timer.check()
+            posted = repo.api(
+                "pulls/32/reviews",
+                data={"commit_id": value["binding"]["head_sha"], "event": "COMMENT", "body": body},
+            )
+            timer.check()
+            if type(posted) is not dict or type(posted.get("id")) is not int:
+                refuse("unsupported aggregate write response")
+            remote = _publication_remote(repo, intent, timer, returned_id=posted["id"])
+            if posted != remote:
+                refuse("aggregate returned artifact differs from independent GET")
+            aggregate_qualification(repo, directory, owned_auth=owned)
+            owned.recheck()
+            exclusive(
+                directory / AGGREGATE_ACK,
+                {
+                    "schema_version": 1,
+                    "intent_sha256": digest(intent),
+                    "remote": remote,
+                    "clocks": final_now(directory),
+                },
+                limit=2000000,
+            )
+            timer.check()
+            owned.recheck()
+            return remote
+        except BaseException:
+            exclusive(
+                directory / AGGREGATE_FAILURE,
+                {"schema_version": 1, "intent_sha256": digest(intent), "status": "uncertain-no-repeat"},
+            )
+            raise
+
+
+def verify_aggregate_publication(repo, directory, *, owned_auth=None):
+    import claude_owned_auth
+
+    directory = plain_path(Path(directory))
+
+    if owned_auth is None:
+        with claude_owned_auth.snapshot(final_policy(directory)) as owned:
+            return verify_aggregate_publication(repo, directory, owned_auth=owned)
+    owned = claude_owned_auth.require(owned_auth)
+    aggregate_qualification(repo, directory, owned_auth=owned)
+    intent = aggregate_intent(directory)
+    remote = _publication_remote(repo, intent, PrefixClock(directory))
+    aggregate_ack(directory, intent, remote)
+    owned.recheck()
+    if owned.current_binding(900) != final_policy(directory)["authentication"]:
+        refuse("aggregate verification generation changed")
+    return remote
+
+
+def recover_aggregate_publication(repo, directory):
+    """GET-only recovery from complete retained final and member evidence."""
+    import claude_owned_auth
+
+    directory = Path(directory)
+    with claude_owned_auth.snapshot(final_policy(directory)) as owned:
+        aggregate_qualification(repo, directory, owned_auth=owned)
+        intent = aggregate_intent(directory)
+        remote = _publication_remote(repo, intent, PrefixClock(directory))
+        owned.recheck()
+        if (directory / AGGREGATE_ACK).exists():
+            aggregate_ack(directory, intent, remote)
+        else:
+            exclusive(
+                directory / AGGREGATE_ACK,
+                {
+                    "schema_version": 1,
+                    "intent_sha256": digest(intent),
+                    "remote": remote,
+                    "clocks": final_now(directory),
+                },
+                limit=2000000,
+            )
+        return verify_aggregate_publication(repo, directory, owned_auth=owned)
+
+
+def task_repository(repo, directory=None):
+    """Resolve the registered reviewed worktree; never trust a caller's checkout."""
+    import review
+    from tasks import verify_contract, workspace
+    from workflow import Repo
+
+    state = read(repo.main / ".agentic-local/tasks/issue-31.json")
+    verify_contract(repo, state)
+    target = workspace(repo, state)
+    current = Repo(target)
+    if current.main != repo.main or current.name != repo.name:
+        refuse("registered batch repository differs")
+    if directory is not None:
+        directory = plain_path(Path(directory))
+        if not directory.is_relative_to(plain_path(repo.main / ".agentic-local/reviews")):
+            refuse("batch record outside canonical review storage")
+        meta = review.verify_packet(directory)
+        if (
+            meta.get("repository") != repo.name
+            or meta.get("issue") != 31
+            or meta.get("pr") != state.get("pr")
+        ):
+            refuse("registered batch identity differs")
+    return current
+
+
+def add_commands(subparsers):
+    """Explicit opt-in routes; legacy commands keep their original defaults."""
+    subparsers.add_parser("batch9-catalog")
+    for name in ("prepare", "run", "status", "pause", "resume", "recover", "finalize", "designate"):
+        parser = subparsers.add_parser("batch9-" + name)
+        parser.add_argument("directory")
+        if name == "prepare":
+            parser.add_argument("--authorization", required=True)
+        if name == "run":
+            parser.add_argument("--unit", required=True)
+        if name in {"pause", "resume"}:
+            parser.add_argument("--final-validation", action="store_true")
+        if name == "recover":
+            parser.add_argument("--publication", action="store_true")
+
+
+def command(repo, args):
+    """One requested operation only; manual stopped renewal is always external."""
+    import time
+
+    import claude_native_auth
+    import claude_owned_auth
+    import pipeline
+    import review
+
+    action = args.command.removeprefix("batch9-")
+    current = task_repository(repo)
+    if action == "catalog":
+        return catalog(current, plan_only=True)
+    directory = plain_path(Path(args.directory))
+    if not directory.is_relative_to(plain_path(repo.main / ".agentic-local/reviews")):
+        refuse("batch9 commands require canonical review storage")
+    if action == "prepare":
+        # This is the original source-bound policy, never an ordinary V6 selector.
+        import reporting_activation_v6 as activation
+
+        grant, _ = activation.load(current)
+        policy = grant["binding"]["policy"]
+        with claude_owned_auth.snapshot(policy) as owned:
+            return select_preparation(current, directory, read(Path(args.authorization)), owned_auth=owned)
+    task_repository(repo, directory)
+    if action == "recover":
+        meta = review.verify_packet(directory)
+        if meta.get("kind") == "batch-parent":
+            if not args.publication:
+                refuse("torn final completion cannot be reconstructed")
+            return recover_aggregate_publication(current, directory)
+        return (recover_component_publication if args.publication else recover_child)(current, directory)
+    batch = load_preparation(directory)
+    rows = journal(directory, batch["plan"], batch["application"])
+    if action == "status":
+        return {
+            "schema_version": 1,
+            "batch_sha256": digest(batch),
+            "window": len(rows) // 2,
+            "stopped": bool(len(rows) % 2),
+            "declared_windows": batch["plan"]["schedule"]["windows"],
+            "qualified": False,
+            "meaning": "local journal status only; no readiness credit",
+        }
+    if action == "designate":
+        return pipeline.designate_batch9(repo, 31, directory)
+    policy = copy.deepcopy(batch["unit_policy"])
+    policy["authentication"] = copy.deepcopy(rows[-1]["authentication"] if rows else policy["authentication"])
+    if action == "resume":
+        if not rows or len(rows) % 2 != 1:
+            refuse("manual resume requires a complete stopped boundary")
+        # Reads the existing dedicated registration. No refresh/login/account mutation.
+        # The owned consumer independently verifies all prior generations and lineage.
+        policy["authentication"] = claude_native_auth.current_binding(900)
+    with claude_owned_auth.snapshot(policy) as owned:
+        if action == "pause":
+            return pause(
+                current, directory, owned=owned, now=time.time(), final_validation=args.final_validation
+            )
+        if action == "resume":
+            return resume_window(
+                current, directory, owned=owned, now=time.time(), final_validation=args.final_validation
+            )
+        if action == "finalize":
+            return finalize(current, directory, owned_auth=owned)
+        if action == "run":
+            # Prepare exactly the requested next unit; existing attempts cannot be repeated.
+            child = prepare_child(current, directory, args.unit, owned_auth=owned)
+        else:
+            refuse("unsupported explicit batch9 operation")
+    # run_child obtains and verifies its own owned lock through capture, preserving
+    # the preparation origin and refusing any intervening generation/source change.
+    return run_child(current, child)

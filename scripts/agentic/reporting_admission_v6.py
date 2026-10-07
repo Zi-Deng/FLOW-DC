@@ -102,8 +102,8 @@ def _check_batch(repo, directory, *, owned_auth, complete_pause):
         raise WorkflowError("Batch9 original V6 source/fixtures/authority/history differs")
     rows = windows.journal(directory, batch["plan"], batch["application"])
     window = len(rows) // 2 + (len(rows) % 2)
-    if window >= len(batch["plan"]["schedule"]["windows"]) - 1:
-        raise WorkflowError("Batch9 final validation admission remains closed")
+    if window >= len(batch["plan"]["schedule"]["windows"]):
+        raise WorkflowError("Batch9 admission is outside the finite declared schedule")
     live = (
         owned.current_binding(900)
         if complete_pause
