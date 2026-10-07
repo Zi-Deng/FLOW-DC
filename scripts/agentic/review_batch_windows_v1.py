@@ -1112,14 +1112,20 @@ def integration_reports(plan, reports, dependencies, *, existing_projection_byte
 
 
 def replay_prefix(repo, directory, plan, window):
-    """Recompute the complete published first-window prefix, without repairs or imports."""
+    """Recompute the complete declared component prefix, without repairs or imports."""
     if not (Path(directory) / "batch.json").exists():
         refuse("prefix adapter requires actual complete batch9 preparation")
     batch = load_preparation(directory)
-    if type(window) is not int or window != 0 or digest(plan) != digest(batch["plan"]):
-        refuse("only the exact original first window can replay")
+    if (
+        type(window) is not int
+        or not 0 <= window < len(plan["schedule"]["windows"]) - 2
+        or digest(plan) != digest(batch["plan"])
+    ):
+        refuse("only the exact original component windows can replay")
     value = component_prefix(repo, directory)
-    if value["pending"] is not None or [r["unit"] for r in value["rows"]] != plan["schedule"]["windows"][0]:
+    if value["pending"] is not None or [r["unit"] for r in value["rows"]] != [
+        u for w in plan["schedule"]["windows"][: window + 1] for u in w
+    ]:
         refuse("incomplete published window or active/uncertain reservation")
     return value["rows"]
 
@@ -1145,15 +1151,28 @@ def window_clock(plan, applied, rows, window, now):
 def journal(directory, plan, applied):
     """Read an append-only stopped-boundary journal; a torn transition stops it."""
     root = plain_path(directory / "window-transitions")
+    if (Path(directory) / "window-transition-failures").exists():
+        refuse("stopped-boundary failure remains consumed; no repair or repeat")
     if not root.exists():
+        if (Path(directory) / "window-transition-acks").exists():
+            refuse("orphan stopped-boundary acknowledgments")
         return []
     paths = sorted(root.iterdir())
+    if (Path(directory) / "batch.json").exists():
+        acknowledgments = plain_path(Path(directory) / "window-transition-acks")
+        if not acknowledgments.exists() or sorted(p.name for p in acknowledgments.iterdir()) != [
+            p.name for p in paths
+        ]:
+            refuse("torn or hidden stopped-boundary acknowledgments")
     if len(paths) > 18 or [p.name for p in paths] != [f"{i:02d}.json" for i in range(len(paths))]:
         refuse("torn, renamed or excessive window transition journal")
     rows = []
     for i, path in enumerate(paths):
         row = read(plain_path(path))
-        if type(row) is not dict or set(row) != {"operation", "previous", "value", "authentication"}:
+        if type(row) is not dict or set(row) not in (
+            {"operation", "previous", "value", "authentication"},
+            {"operation", "previous", "value", "authentication", "batch_proof"},
+        ):
             refuse("incomplete window transition")
         if row["previous"] != (digest(rows[-1]) if rows else digest(applied)):
             refuse("window transition predecessor changed")
@@ -1175,6 +1194,11 @@ def journal(directory, plan, applied):
         import claude_native_auth
 
         claude_native_auth.validate_binding(row["authentication"])
+        if (Path(directory) / "batch.json").exists():
+            validate_transition(directory, row, rows)
+            transition_ack(directory, row, rows, plan, applied)
+        elif "batch_proof" in row:
+            refuse("production transition without batch")
         rows.append(row)
     return rows
 
@@ -1184,7 +1208,7 @@ def pause(repo, directory, *, owned, now):
     import claude_owned_auth
 
     if (Path(directory) / "batch.json").exists():
-        refuse("production stopped-window transitions await the lineage adapter")
+        return component_transition(repo, Path(directory), owned=owned, now=now, resuming=False)
     plan, applied = load(directory)
     current_plan(repo, plan)
     rows = journal(directory, plan, applied)
@@ -1213,7 +1237,7 @@ def resume_window(repo, directory, *, owned, now):
     import claude_owned_auth
 
     if (Path(directory) / "batch.json").exists():
-        refuse("production stopped-window transitions await the lineage adapter")
+        return component_transition(repo, Path(directory), owned=owned, now=now, resuming=True)
     plan, applied = load(directory)
     current_plan(repo, plan)
     rows = journal(directory, plan, applied)
@@ -1514,14 +1538,17 @@ def prepare_child(repo, directory, unit_id, *, owned_auth):
     if target.exists():
         refuse("child exists or is torn; no repeat preparation")
     rows = journal(directory, plan, batch["application"])
-    if rows:
+    if len(rows) % 2:
         refuse("cannot prepare inside a paused window")
     window = len(rows) // 2
     if unit_id not in plan["schedule"]["windows"][window]:
         refuse("child is outside the current complete window")
     window_clock(plan, batch["application"], rows, window, started)
     window_start = rows[-1]["value"]["resumed_at"] if rows else batch["application"]["applied_at"]
-    if started + 1740 > window_start + plan["schedule"]["window_seconds"][window] - 360:
+    if (
+        started + (1740 if window == 0 else 900)
+        > window_start + plan["schedule"]["window_seconds"][window] - 360
+    ):
         refuse("complete child allocation does not fit the current window")
     if started + 1740 > min(batch["application"]["wall_deadline"], batch["authorization"]["expires_at"]):
         refuse("complete child allocation does not fit")
@@ -1558,13 +1585,14 @@ def prepare_child(repo, directory, unit_id, *, owned_auth):
             if name.startswith("projections/")
         )
         extra = integration_reports(plan, reports, dependencies, existing_projection_bytes=existing)
+    policy, transition = child_window_policy(directory, batch, unit_id)
     owned = claude_owned_auth.require(owned_auth)
     actual_admission = _component_admission(repo, directory, owned_auth=owned)
     if digest(actual_admission) != digest(batch["admission"]):
         refuse("current V6 admission differs; renewal runtime is not available")
     if (
         owned.current_binding(900, plan["schedule"]["window_seconds"][window] - 360)
-        != batch["unit_policy"]["authentication"]
+        != policy["authentication"]
     ):
         refuse("current whole-window authentication changed")
     current_plan(repo, plan, directory=directory)
@@ -1596,13 +1624,21 @@ def prepare_child(repo, directory, unit_id, *, owned_auth):
         "context_ids": surrounding_ids(plan["catalog"], unit),
         "dependencies": extra["dependencies"],
         "material_claim": digest(claims[unit_id]),
-        "policy_digest": digest(batch["unit_policy"]),
+        "policy_digest": digest(policy),
         "authorization_digest": digest(batch["authorization"]),
     }
+    if transition is not None:
+        assignment["window_transition"] = transition
     atomic_json(packet / "assignment.json", assignment)
     meta = review.verify_packet(directory)
     meta = {key: value for key, value in meta.items() if key not in _result_fields()}
-    meta.update(kind="batch-unit", batch_version=9, batch_unit=assignment, files=packet_hashes(packet))
+    meta.update(
+        kind="batch-unit",
+        batch_version=9,
+        batch_unit=assignment,
+        files=packet_hashes(packet),
+        review_policy=policy,
+    )
     exclusive(target / "metadata.json", meta, limit=2000000)
     if not started <= time.time() <= started + 840 or not 0 <= time.monotonic() - monotonic <= 840:
         refuse("preparation overrun after storage; material remains consumed")
@@ -1617,7 +1653,10 @@ def prepare_child(repo, directory, unit_id, *, owned_auth):
             "finished": time.time(),
             "local_deadline": started + 840,
             "action_deadline": min(
-                started + 1740, batch["application"]["wall_deadline"], batch["authorization"]["expires_at"]
+                started + 1740,
+                batch["application"]["wall_deadline"],
+                batch["authorization"]["expires_at"],
+                child_window_deadline(directory, batch, unit_id),
             ),
             "monotonic_seconds": time.monotonic() - monotonic,
         },
@@ -1662,6 +1701,7 @@ def verify_child(repo, directory):
         refuse("copied or renamed child")
     claims = read(parent / "batch-claims.json")
     review_claims.verify(repo, batch, unit, claims[unit["id"]])
+    policy, transition = child_window_policy(parent, batch, unit["id"])
     expected = {
         "schema_version": 9,
         "batch_sha256": digest(batch),
@@ -1670,16 +1710,18 @@ def verify_child(repo, directory):
         "context_ids": surrounding_ids(batch["plan"]["catalog"], unit),
         "dependencies": {},
         "material_claim": digest(claims[unit["id"]]),
-        "policy_digest": digest(batch["unit_policy"]),
+        "policy_digest": digest(policy),
         "authorization_digest": digest(batch["authorization"]),
     }
+    if transition is not None:
+        expected["window_transition"] = transition
     if digest(assignment) != digest(expected) or any(meta[k] != batch["binding"][k] for k in IDENTITY):
         refuse("child source/contract/owner/assignment changed")
     expected_files = {
         **batch["plan"]["catalog"]["files"],
         "assignment.json": review.digest(directory / "packet/assignment.json"),
     }
-    if meta["files"] != expected_files or meta["review_policy"] != batch["unit_policy"]:
+    if meta["files"] != expected_files or meta["review_policy"] != policy:
         refuse("child omits or changes surrounding material or policy")
     timing = read(directory / "batch-preparation.json")
     if type(timing) is not dict or set(timing) != {
@@ -1703,7 +1745,12 @@ def verify_child(repo, directory):
         or not 0 <= clock(timing["monotonic_seconds"]) <= 840
         or timing["local_deadline"] != start + 840
         or timing["action_deadline"]
-        != min(start + 1740, batch["application"]["wall_deadline"], batch["authorization"]["expires_at"])
+        != min(
+            start + 1740,
+            batch["application"]["wall_deadline"],
+            batch["authorization"]["expires_at"],
+            child_window_deadline(parent, batch, unit["id"]),
+        )
     ):
         refuse("preparation clock, allocation or timing changed")
     return meta
@@ -1860,16 +1907,21 @@ class ChildDispatch:
         self.check_clock()
         parent = self.directory.parent.parent
         rows = journal(parent, batch["plan"], batch["application"])
-        if rows:
-            refuse("stopped-window runtime awaits independent published prefix replay")
+        if len(rows) % 2:
+            refuse("stopped-window runtime requires a complete resume")
+        window = len(rows) // 2
+        if meta["batch_unit"]["unit"]["id"] not in batch["plan"]["schedule"]["windows"][window]:
+            refuse("component is not in the current declared window")
         unit = meta["batch_unit"]["unit"]
         components = batch["plan"]["catalog"]["components"]
         if unit != components[0]:
             component_prefix(self.repo, parent, before=unit["id"])
             self.check_clock()
-        window_clock(batch["plan"], batch["application"], rows, 0, self.check_clock())
+        window_clock(batch["plan"], batch["application"], rows, window, self.check_clock())
         if (
-            owned.current_binding(900, batch["plan"]["schedule"]["window_seconds"][0] - 360)
+            owned.current_binding(
+                900, batch["plan"]["schedule"]["window_seconds"][active_component_window(parent, batch)] - 360
+            )
             != meta["review_policy"]["authentication"]
         ):
             refuse("initial whole-window authentication changed")
@@ -1912,7 +1964,13 @@ class ChildDispatch:
         if not self.claimed or self.native_start is not None:
             refuse("native process is unclaimed or already started")
         if (
-            owned.current_binding(900, self.batch["plan"]["schedule"]["window_seconds"][0] - 360)
+            owned.current_binding(
+                900,
+                self.batch["plan"]["schedule"]["window_seconds"][
+                    active_component_window(self.directory.parent.parent, self.batch)
+                ]
+                - 360,
+            )
             != self.meta["review_policy"]["authentication"]
         ):
             refuse("final owned whole-window identity differs")
@@ -2028,7 +2086,7 @@ def persist_child_capture(dispatch, meta, owned_auth, raw, workspace, session, b
 
 
 def run_child(repo, directory):
-    """First-window components only. No batch-wide CLI or aggregate readiness credit."""
+    """Declared component windows only. No batch-wide CLI or aggregate readiness credit."""
     import claude_owned_auth
     import review_claude
 
@@ -2439,11 +2497,8 @@ def _publication_identity(repo, directory):
     unit = meta["batch_unit"]["unit"]
     components = batch["plan"]["catalog"]["components"]
     sequence = next(i for i, item in enumerate(components) if item == unit)
-    # Only first-window components; stopped and integration routes remain closed.
-    if unit["id"] not in batch["plan"]["schedule"]["windows"][0] or journal(
-        directory.parent.parent, batch["plan"], batch["application"]
-    ):
-        refuse("only unpaused first-window component publication is available")
+    # Historical publications remain replayable across declared stopped boundaries.
+    child_window_policy(directory.parent.parent, batch, unit["id"])
     report = review.exact_reporting_bytes(directory / "review.md", 10000)
     if review.coverage.checksum(report.decode("utf-8")) != meta["review_sha256"]:
         refuse("publication report differs")
@@ -2768,6 +2823,9 @@ def publish_component(repo, directory):
     timer = PublicationClock(directory)
     identity, report, meta, batch = _publication_identity(repo, directory)
     timer.check()
+    window = active_component_window(directory.parent.parent, batch)
+    if identity["unit"] not in batch["plan"]["schedule"]["windows"][window]:
+        refuse("publication is not in the active declared component window")
     preceding = []
     if identity["sequence"]:
         preceding = component_prefix(repo, directory.parent.parent, before=identity["unit"])["rows"]
@@ -2782,7 +2840,13 @@ def publish_component(repo, directory):
             refuse("publication current V6 admission changed")
         timer.check()
         if (
-            owned.current_binding(900, batch["plan"]["schedule"]["window_seconds"][0] - 360)
+            owned.current_binding(
+                900,
+                batch["plan"]["schedule"]["window_seconds"][
+                    active_component_window(directory.parent.parent, batch)
+                ]
+                - 360,
+            )
             != meta["review_policy"]["authentication"]
         ):
             refuse("publication whole-window authentication changed")
@@ -2885,16 +2949,24 @@ def publish_component(repo, directory):
 
 
 class PrefixClock:
-    """Charge replay to the existing active first window, never an old child's new allowance."""
+    """Charge replay to the declared active/pause budget, never renew an old child allowance."""
 
     def __init__(self, directory):
         import time
 
         self.plan, self.applied = load(directory)
-        if journal(directory, self.plan, self.applied):
-            refuse("stopped-window prefix requires the separate lineage adapter")
+        self.directory = Path(directory)
+        self.rows = journal(directory, self.plan, self.applied)
         self.wall, self.mono = time.time(), time.monotonic()
         self.last, self.last_mono = self.wall, self.mono
+        if self.rows:
+            ack = read(Path(directory) / "window-transition-acks" / f"{len(self.rows) - 1:02d}.json")
+            if (
+                self.wall < ack["wall"]
+                or self.mono < ack["monotonic"]
+                or abs(self.wall - ack["wall"] - (self.mono - ack["monotonic"])) > 1
+            ):
+                refuse("window clock predates its immutable acknowledgment")
         self.check()
 
     def check(self):
@@ -2903,7 +2975,14 @@ class PrefixClock:
         now, mono = clock(time.time()), clock(time.monotonic())
         if now < self.last or mono < self.last_mono or abs(now - self.wall - (mono - self.mono)) > 1:
             refuse("prefix operation clock rollback")
-        window_clock(self.plan, self.applied, [], 0, now)
+        if journal(self.directory, self.plan, self.applied) != self.rows:
+            refuse("window journal changed during prefix operation")
+        if len(self.rows) % 2:
+            paused = self.rows[-1]["value"]
+            if not paused["sealed_at"] <= now <= paused["resume_before"]:
+                refuse("stopped prefix pause expired or clock rolled back")
+        else:
+            window_clock(self.plan, self.applied, self.rows, len(self.rows) // 2, now)
         self.last, self.last_mono = now, mono
         return now
 
@@ -3003,7 +3082,7 @@ def _stored_publication(repo, child, timer):
 
 
 def component_prefix(repo, directory, *, before=None, publication=None):
-    """Actual first-window publications only; no imported rows or readiness callbacks.
+    """Actual declared component publications only; no imported rows or readiness callbacks.
 
     A single prepared/active tail may exist for its current operation. It is never
     returned as qualified prefix. Explicit replay_prefix requires the whole window.
@@ -3016,7 +3095,11 @@ def component_prefix(repo, directory, *, before=None, publication=None):
     timer = PrefixClock(directory)
     components = plan["catalog"]["components"]
     names = [u["id"] for u in components]
-    first = plan["schedule"]["windows"][0]
+    transitions = journal(directory, plan, batch["application"])
+    window = len(transitions) // 2
+    if window >= len(plan["schedule"]["windows"]) - 2:
+        refuse("integration/final prefix remains closed")
+    first = [u for w in plan["schedule"]["windows"][: window + 1] for u in w]
     units_root = plain_path(directory / "units")
     paths = sorted(units_root.iterdir()) if units_root.exists() else []
     if any(p.is_symlink() or not p.is_dir() or p.name not in first for p in paths):
@@ -3055,7 +3138,15 @@ def component_prefix(repo, directory, *, before=None, publication=None):
             refuse("declared publication prefix changed or omitted")
         records.append((intent, ack))
         rows.append(row)
+    for transition in transitions[::2]:
+        sealed = transition["value"]["children"]
+        if rows[: len(sealed)] != sealed:
+            refuse("stopped prefix differs from immutable complete seal")
+    if len(transitions) % 2 and (pending is not None or rows != transitions[-1]["value"]["children"]):
+        refuse("active or hidden child at a stopped boundary")
     if before is not None:
+        if len(transitions) % 2 or before not in plan["schedule"]["windows"][window]:
+            refuse("child is outside current active window")
         if before not in first or len(rows) != names.index(before):
             refuse("required preceding component is missing, active or unpublished")
         if pending is not None and pending.name != before:
@@ -3156,3 +3247,236 @@ def _component_admission(repo, directory, *, owned_auth):
     if _has_publications(directory):
         return admission.check_batch(repo, directory, owned_auth=owned_auth)
     return admission.check(repo, owned_auth=owned_auth, capacity_required=True)
+
+
+def active_component_window(directory, batch):
+    rows = journal(Path(directory), batch["plan"], batch["application"])
+    window = len(rows) // 2
+    if len(rows) % 2 or window >= len(batch["plan"]["schedule"]["windows"]) - 2:
+        refuse("no active declared component window")
+    return window
+
+
+def child_window_policy(directory, batch, unit_id):
+    """Derive policy from the immutable declared resume, never rewrite ancestors."""
+    windows = batch["plan"]["schedule"]["windows"][:-2]
+    indices = [i for i, units in enumerate(windows) if unit_id in units]
+    if len(indices) != 1:
+        refuse("unknown component window")
+    index = indices[0]
+    rows = journal(Path(directory), batch["plan"], batch["application"])
+    policy = copy.deepcopy(batch["unit_policy"])
+    if index == 0:
+        return policy, None
+    if len(rows) < index * 2:
+        refuse("component window has no immutable verified resume")
+    record = rows[index * 2 - 1]
+    policy["authentication"] = copy.deepcopy(record["authentication"])
+    return policy, digest(record)
+
+
+def validate_transition(directory, row, prior):
+    """Closed production record and clock replay; owned lineage is rechecked live."""
+    batch = read(Path(directory) / "batch.json")
+    proof = row.get("batch_proof")
+    keys = {
+        "schema_version",
+        "directory",
+        "batch_sha256",
+        "admission_digest",
+        "observed",
+        "current",
+        "clocks",
+    }
+    if (
+        type(proof) is not dict
+        or set(proof) != keys
+        or type(proof["schema_version"]) is not int
+        or proof["schema_version"] != 1
+    ):
+        refuse("missing or torn production stopped-boundary proof")
+    observed = prior[-1]["authentication"] if prior else batch["unit_policy"]["authentication"]
+    if (
+        proof["directory"] != str(Path(directory).resolve())
+        or proof["batch_sha256"] != digest(batch)
+        or proof["admission_digest"] != digest(batch["admission"])
+        or proof["observed"] != observed
+        or proof["current"] != row["authentication"]
+        or (row["operation"] == "pause" and observed != row["authentication"])
+    ):
+        refuse("stopped-boundary source/admission/account binding changed")
+    clocks = proof["clocks"]
+    if type(clocks) is not list or len(clocks) != 2:
+        refuse("missing stopped-boundary operation clocks")
+    for item in clocks:
+        if type(item) is not dict or set(item) != {"wall", "monotonic"}:
+            refuse("invalid stopped-boundary clocks")
+        clock(item["wall"])
+        clock(item["monotonic"])
+    start, end = clocks
+    if (
+        end["wall"] < start["wall"]
+        or end["monotonic"] < start["monotonic"]
+        or abs(end["wall"] - start["wall"] - (end["monotonic"] - start["monotonic"])) > 1
+        or end["wall"] != row["value"]["sealed_at" if row["operation"] == "pause" else "resumed_at"]
+    ):
+        refuse("stopped-boundary clock rollback or changed acknowledgment")
+    if prior:
+        previous = prior[-1]["batch_proof"]["clocks"][-1]
+        if start["wall"] < previous["wall"] or start["monotonic"] < previous["monotonic"]:
+            refuse("stopped-boundary clocks precede previous transition")
+
+
+def component_transition(repo, directory, *, owned, now, resuming):
+    """Actual exclusive stopped boundary, with owned verification and no external mutation."""
+    import time
+
+    import claude_owned_auth
+    import reporting_admission_v6 as admission
+
+    start = {"wall": time.time(), "monotonic": time.monotonic()}
+    batch = load_preparation(directory)
+    plan, applied = batch["plan"], batch["application"]
+    rows = journal(directory, plan, applied)
+    if bool(len(rows) % 2) != resuming:
+        refuse("already paused or missing complete stopped boundary")
+    window = len(rows) // 2
+    next_window = window + 1
+    if next_window >= len(plan["schedule"]["windows"]) - 2:
+        refuse("production stopped-window transitions to integration remain closed")
+    if abs(clock(now) - start["wall"]) > 1:
+        refuse("transition requires the actual current clock")
+    owned = claude_owned_auth.require(owned)
+    timer = PrefixClock(directory)
+    current_plan(repo, plan, directory=directory)
+    timer.check()
+    children = replay_prefix(repo, directory, plan, window)
+    timer.check()
+    checker = admission.check_batch if resuming else admission.check_pause
+    if checker(repo, directory, owned_auth=owned) != batch["admission"]:
+        refuse("stopped-boundary original admission changed")
+    timer.check()
+    observed = rows[-1]["authentication"] if rows else batch["unit_policy"]["authentication"]
+    required_window = next_window if resuming else window
+    current = (
+        owned.current_binding(900, plan["schedule"]["window_seconds"][required_window] - 360)
+        if resuming
+        else owned.current_binding(900)
+    )
+    if (not resuming and current != observed) or not owned.capability_lineage(observed, current, 900):
+        refuse("renewal is not verified same-account stopped lineage")
+    timer.check()
+    # Re-fetch all remote publications and claims after admission/history work.
+    if replay_prefix(repo, directory, plan, window) != children:
+        refuse("stopped prefix changed during transition")
+    current_plan(repo, plan, directory=directory)
+    timer.check()
+    owned.recheck()
+    final_binding = (
+        owned.current_binding(900, plan["schedule"]["window_seconds"][required_window] - 360)
+        if resuming
+        else owned.current_binding(900)
+    )
+    if final_binding != current:
+        refuse("stopped-boundary current generation changed")
+    end = {"wall": time.time(), "monotonic": time.monotonic()}
+    timer.check()
+    value = (
+        resume(plan, applied, rows[-1]["value"], children, end["wall"])
+        if resuming
+        else seal(plan, applied, window, children, end["wall"])
+    )
+    record = {
+        "operation": "resume" if resuming else "pause",
+        "previous": digest(rows[-1]) if rows else digest(applied),
+        "value": value,
+        "authentication": current,
+        "batch_proof": {
+            "schema_version": 1,
+            "directory": str(directory.resolve()),
+            "batch_sha256": digest(batch),
+            "admission_digest": digest(batch["admission"]),
+            "observed": observed,
+            "current": current,
+            "clocks": [start, end],
+        },
+    }
+    validate_transition(directory, record, rows)
+    if journal(directory, plan, applied) != rows:
+        refuse("competing stopped-boundary transition")
+    target = plain_path(directory / "window-transitions")
+    private_directory(target)
+    exclusive(target / f"{len(rows):02d}.json", record, limit=2000000)
+    # A post-write failure leaves the transition consumed; no rewrite/refund.
+    try:
+        owned.recheck()
+        if abs((time.time() - start["wall"]) - (time.monotonic() - start["monotonic"])) > 1:
+            refuse("clock changed after stopped-boundary write")
+        if resuming:
+            window_clock(plan, applied, rows + [record], next_window, time.time())
+        else:
+            window_clock(plan, applied, rows, window, time.time())
+        acknowledgments = plain_path(directory / "window-transition-acks")
+        private_directory(acknowledgments)
+        ack = {"record_sha256": digest(record), "wall": time.time(), "monotonic": time.monotonic()}
+        exclusive(acknowledgments / f"{len(rows):02d}.json", ack)
+        transition_ack(directory, record, rows, plan, applied)
+        owned.recheck()
+        finished, monotonic = time.time(), time.monotonic()
+        if (
+            finished < ack["wall"]
+            or monotonic < ack["monotonic"]
+            or abs(finished - start["wall"] - (monotonic - start["monotonic"])) > 1
+        ):
+            refuse("clock changed after stopped-boundary acknowledgment")
+        if resuming:
+            if finished > rows[-1]["value"]["resume_before"]:
+                refuse("resume acknowledgment exceeded original pause")
+            window_clock(plan, applied, rows + [record], next_window, finished)
+        else:
+            window_clock(plan, applied, rows, window, finished)
+    except BaseException:
+        failures = plain_path(directory / "window-transition-failures")
+        private_directory(failures)
+        exclusive(
+            failures / f"{len(rows):02d}.json",
+            {"schema_version": 1, "record_sha256": digest(record), "status": "consumed-uncertain-no-repeat"},
+        )
+        raise
+    return record
+
+
+def child_window_deadline(directory, batch, unit_id):
+    _, transition = child_window_policy(directory, batch, unit_id)
+    if transition is None:
+        # Preserve exact first-window preparation semantics.
+        return batch["application"]["wall_deadline"]
+    rows = journal(Path(directory), batch["plan"], batch["application"])
+    index = next(i for i, w in enumerate(batch["plan"]["schedule"]["windows"]) if unit_id in w)
+    return (
+        rows[2 * index - 1]["value"]["resumed_at"] + batch["plan"]["schedule"]["window_seconds"][index] - 360
+    )
+
+
+def transition_ack(directory, record, prior, plan, applied):
+    ack = read(Path(directory) / "window-transition-acks" / f"{len(prior):02d}.json")
+    if (
+        type(ack) is not dict
+        or set(ack) != {"record_sha256", "wall", "monotonic"}
+        or ack["record_sha256"] != digest(record)
+    ):
+        refuse("missing or changed stopped-boundary acknowledgment")
+    end = record["batch_proof"]["clocks"][-1]
+    if (
+        clock(ack["wall"]) < end["wall"]
+        or clock(ack["monotonic"]) < end["monotonic"]
+        or abs(ack["wall"] - end["wall"] - (ack["monotonic"] - end["monotonic"])) > 1
+    ):
+        refuse("stopped-boundary acknowledgment clock changed")
+    if record["operation"] == "pause":
+        window_clock(plan, applied, prior, len(prior) // 2, ack["wall"])
+    else:
+        if ack["wall"] > prior[-1]["value"]["resume_before"]:
+            refuse("resume acknowledgment exceeded original pause")
+        window_clock(plan, applied, prior + [record], (len(prior) + 1) // 2, ack["wall"])
+    return ack

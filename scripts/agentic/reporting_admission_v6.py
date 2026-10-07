@@ -1,4 +1,4 @@
-"""V6 capability and empirical evidence; no ordinary or batch consumer yet."""
+"""V6 evidence and batch component admission; no standalone ordinary route."""
 
 import copy
 
@@ -56,7 +56,17 @@ def require_packet(directory, meta, *, repo=None, owned_auth=None):
 
 
 def check_batch(repo, directory, *, owned_auth):
-    """Same-generation first-window consumer; original diagnostic check is unchanged."""
+    """Admission to active work or the complete next stopped window."""
+    return _check_batch(repo, directory, owned_auth=owned_auth, complete_pause=False)
+
+
+def check_pause(repo, directory, *, owned_auth):
+    """Completed-prefix stop only; this record cannot admit a component launch."""
+    return _check_batch(repo, directory, owned_auth=owned_auth, complete_pause=True)
+
+
+def _check_batch(repo, directory, *, owned_auth, complete_pause):
+    """Original diagnostic evidence stays unchanged; owned consumers stay distinct."""
     import review_batch_windows_v1 as windows
     from reporting_activation_v2 import harness
     from reporting_recovery_history import semantics
@@ -64,6 +74,10 @@ def check_batch(repo, directory, *, owned_auth):
     owned = claude_owned_auth.require(owned_auth)
     batch = windows.load_preparation(directory)
     timer = windows.PrefixClock(directory)
+    if complete_pause:
+        active = windows.active_component_window(directory, batch)
+        windows.replay_prefix(repo, directory, batch["plan"], active)
+        timer.check()
     source = windows.catalog(repo, batch_directory=directory)
     timer.check()
     grant, _ = activation.load(repo)
@@ -86,11 +100,23 @@ def check_batch(repo, directory, *, owned_auth):
         or semantics(policy) != current["history"]["stopped_v4"]["policy_semantics"]
     ):
         raise WorkflowError("Batch9 original V6 source/fixtures/authority/history differs")
-    if (
-        owned.current_binding(900, batch["plan"]["schedule"]["window_seconds"][0] - 360)
-        != policy["authentication"]
-    ):
-        raise WorkflowError("Batch9 first window requires the original V6 generation")
+    rows = windows.journal(directory, batch["plan"], batch["application"])
+    window = len(rows) // 2 + (len(rows) % 2)
+    if window >= len(batch["plan"]["schedule"]["windows"]) - 2:
+        raise WorkflowError("Batch9 integration admission remains closed")
+    live = (
+        owned.current_binding(900)
+        if complete_pause
+        else owned.current_binding(900, batch["plan"]["schedule"]["window_seconds"][window] - 360)
+    )
+    expected = rows[-1]["authentication"] if rows else policy["authentication"]
+    if not len(rows) % 2 and live != expected:
+        raise WorkflowError("Batch9 active window requires its original V6 generation or declared resume")
+    # The frozen verifier checks both endpoints in the current dedicated account.
+    # Renewal is accepted only while stopped; an active window must match exactly.
+    for observed in [policy["authentication"]] + [r["authentication"] for r in rows]:
+        if not owned.capability_lineage(observed, live, 900):
+            raise WorkflowError("Batch9 unverified or cross-account stopped lineage")
     timer.check()
     outcomes, cases, bindings = {}, {}, {}
     for number in (20, 21, 22, 23):

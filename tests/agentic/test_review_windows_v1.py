@@ -2308,3 +2308,447 @@ class FirstWindowAdmissionTests(unittest.TestCase):
                     with self.assertRaisesRegex(WorkflowError, "original V6 generation"):
                         admission.check_batch(self.repo, self.fixture.target, owned_auth=owned)
         self.assertEqual(self.calls, 4)
+
+
+class StoppedComponentWindowTests(unittest.TestCase):
+    """Seven actual owned children, two declared windows, explicit external doubles."""
+
+    response = OwnedComponentTests.response
+    api = ComponentPublicationTests.api
+    publish = ComponentPublicationTests.publish
+
+    def setUp(self):
+        from unittest.mock import patch
+
+        import reporting_admission_v6 as admission
+
+        partition = windows.partition
+
+        def seven(packet, items, binding):
+            if not any(i["id"] == "3" * 24 for i in items):
+                for n in range(3, 9):
+                    name = f"component{n}.txt"
+                    (packet / name).write_bytes(b"Source line\n")
+                    items.append(
+                        {
+                            **items[0],
+                            "id": str(n) * 24,
+                            "path": f"scripts/agentic/component{n}.py",
+                            "artifact": name,
+                            "bytes": 12,
+                        }
+                    )
+                inventory = json.loads((packet / "required-material.json").read_bytes())
+                inventory["required"] = copy.deepcopy(items)
+                (packet / "required-material.json").write_text(json.dumps(inventory))
+                (packet / "inventory-sha256.txt").write_text(
+                    hashlib.sha256((packet / "required-material.json").read_bytes()).hexdigest() + "\n"
+                )
+            return partition(packet, items, binding)
+
+        with patch.object(windows, "partition", side_effect=seven):
+            ComponentPublicationTests.setUp(self)
+        self.assertEqual([len(w) for w in self.fixture.plan["schedule"]["windows"]], [6, 1, 1, 1])
+        self.initial = {
+            "reviews": [],
+            "inline_comments": [],
+            "pr_comments": [],
+            "issue_comments": [],
+            "issue": self.api("issues/31"),
+        }
+        export = windows.catalog.side_effect
+
+        def current_catalog(repo, *, batch_directory=None, **kwargs):
+            if batch_directory is not None:
+                windows.reconcile_public_context(repo, batch_directory, self.initial)
+            return export(repo, **kwargs)
+
+        self.enterContext(patch.object(windows, "catalog", side_effect=current_catalog))
+        # External diagnostic evidence double; separate tests exercise actual admission replay.
+        self.enterContext(
+            patch.object(
+                admission, "check_batch", side_effect=lambda *a, **k: copy.deepcopy(self.fixture.evidence)
+            )
+        )
+        self.enterContext(
+            patch.object(
+                admission, "check_pause", side_effect=lambda *a, **k: copy.deepcopy(self.fixture.evidence)
+            )
+        )
+
+    def complete_first(self):
+        import claude_owned_auth
+
+        self.publish()
+        for unit in self.fixture.plan["catalog"]["components"][1:6]:
+            with claude_owned_auth.snapshot(self.policy) as owned:
+                self.child = windows.prepare_child(
+                    self.repo, self.fixture.target, unit["id"], owned_auth=owned
+                )
+            windows.run_child(self.repo, self.child)
+            self.publish()
+
+    def test_actual_completed_window_seals(self):
+        import time
+
+        import claude_owned_auth
+
+        with claude_owned_auth.snapshot(self.policy) as owned:
+            with self.assertRaises(WorkflowError):
+                windows.pause(self.repo, self.fixture.target, owned=owned, now=time.time())
+        self.complete_first()
+        with claude_owned_auth.snapshot(self.policy) as owned:
+            result = windows.pause(self.repo, self.fixture.target, owned=owned, now=time.time())
+        self.assertEqual(result["operation"], "pause")
+        self.assertEqual(len(result["value"]["children"]), 6)
+        with claude_owned_auth.snapshot(self.policy) as owned:
+            with self.assertRaises(WorkflowError):
+                windows.prepare_child(
+                    self.repo,
+                    self.fixture.target,
+                    self.fixture.plan["catalog"]["components"][6]["id"],
+                    owned_auth=owned,
+                )
+            resumed = windows.resume_window(self.repo, self.fixture.target, owned=owned, now=time.time())
+            self.assertEqual(resumed["authentication"], self.policy["authentication"])
+            with self.assertRaises(WorkflowError):
+                windows.resume_window(self.repo, self.fixture.target, owned=owned, now=time.time())
+        self.assertEqual((self.calls, self.posts), (6, 6))
+
+    def renew_fixture(self, *, retain=True):
+        """Explicit synthetic account-service response; never touch the real store."""
+        import time
+
+        import claude_native_auth as auth
+
+        old = copy.deepcopy(self.policy["authentication"])
+        new = {**old, "generation_id": "33333333-3333-4333-8333-333333333333"}
+        with auth.store(self.native) as storage:
+            reg = storage.read("registration.json")
+            oldprefix = "generations/" + old["generation_id"] + "/config/"
+            prefix = "generations/" + new["generation_id"] + "/config/"
+            (self.native / prefix).mkdir(mode=0o700, parents=True)
+            (self.native / "generations" / new["generation_id"]).chmod(0o700)
+            for name in (".credentials.json", ".claude.json"):
+                storage.write(prefix + name, storage.read(oldprefix + name))
+            reg.update(
+                authentication=new,
+                lineage=[old],
+                retained_capability_generations=[old["generation_id"]] if retain else [],
+                files={
+                    prefix + name: auth._digest(storage.raw(prefix + name))
+                    for name in (".credentials.json", ".claude.json")
+                },
+            )
+            storage.write("registration.json", reg, replace=True)
+            storage.write(
+                "setup-attempt.json",
+                {"schema_version": 2, "authentication": new, "status": "completed"},
+                replace=True,
+            )
+            receipt = storage.read("receipt.json")
+            receipt_now = time.time()
+            receipt.update(
+                authentication=new, recorded_at=receipt_now, expires_at=receipt_now + auth.RECEIPT_SECONDS
+            )
+            storage.write("receipt.json", receipt, replace=True)
+        self.policy = {**self.policy, "authentication": new}
+
+    def test_two_actual_windows_with_verified_owned_renewal(self):
+        import time
+
+        import claude_owned_auth
+        import review
+
+        self.complete_first()
+        original = {p: p.read_bytes() for p in self.fixture.target.glob("units/*/metadata.json")}
+        with claude_owned_auth.snapshot(self.policy) as owned:
+            windows.pause(self.repo, self.fixture.target, owned=owned, now=time.time())
+        self.renew_fixture()
+        with claude_owned_auth.snapshot(self.policy) as owned:
+            record = windows.resume_window(self.repo, self.fixture.target, owned=owned, now=time.time())
+            self.assertEqual(record["authentication"], self.policy["authentication"])
+            unit = self.fixture.plan["catalog"]["components"][6]
+            self.child = windows.prepare_child(self.repo, self.fixture.target, unit["id"], owned_auth=owned)
+        windows.run_child(self.repo, self.child)
+        self.publish()
+        self.assertEqual(len(windows.replay_prefix(self.repo, self.fixture.target, self.fixture.plan, 1)), 7)
+        self.assertEqual((self.calls, self.posts), (7, 7))
+        self.assertEqual(
+            json.loads((self.child / "metadata.json").read_bytes())["review_policy"], self.policy
+        )
+        self.assertTrue(all(p.read_bytes() == data for p, data in original.items()))
+        with self.assertRaises(WorkflowError):
+            review.qualification(self.fixture.target)
+
+    def test_stopped_mutations_expiry_and_unverified_renewal_refuse(self):
+        import time
+        from unittest.mock import patch
+
+        import claude_owned_auth
+
+        self.complete_first()
+        with claude_owned_auth.snapshot(self.policy) as owned:
+            windows.pause(self.repo, self.fixture.target, owned=owned, now=time.time())
+            with self.assertRaises(WorkflowError):
+                windows.pause(self.repo, self.fixture.target, owned=owned, now=time.time())
+        target = self.fixture.target
+        for path in [
+            target / "window-transitions/00.json",
+            target / "window-transition-acks/00.json",
+            self.child / windows.OBSERVATION,
+            self.child / windows.PUBLICATION_ACK,
+            self.child / "batch-runtime-acknowledged.json",
+        ]:
+            raw = path.read_bytes()
+            path.write_text("{}")
+            with self.subTest(path=path.name), self.assertRaises((WorkflowError, KeyError, TypeError)):
+                windows.replay_prefix(self.repo, target, self.fixture.plan, 0)
+            path.write_bytes(raw)
+        transition = target / "window-transitions/00.json"
+        acknowledgment = target / "window-transition-acks/00.json"
+        raw, ack_raw = transition.read_bytes(), acknowledgment.read_bytes()
+        changes = [
+            lambda row: row.update(previous="0" * 64),
+            lambda row: row["value"]["children"].reverse(),
+            lambda row: row["value"]["children"][0].update(usage={"status": "unknown"}),
+            lambda row: row["batch_proof"].update(directory="/copied/batch"),
+            lambda row: row["batch_proof"]["observed"].update(generation_id="changed"),
+            lambda row: row["batch_proof"]["clocks"][-1].update(monotonic=0),
+        ]
+        for change in changes:
+            row, ack = json.loads(raw), json.loads(ack_raw)
+            change(row)
+            ack["record_sha256"] = digest(row)
+            transition.write_text(json.dumps(row))
+            acknowledgment.write_text(json.dumps(ack))
+            with self.assertRaises(WorkflowError):
+                windows.replay_prefix(self.repo, target, self.fixture.plan, 0)
+            transition.write_bytes(raw)
+            acknowledgment.write_bytes(ack_raw)
+        acknowledgment.unlink()
+        with self.assertRaisesRegex(WorkflowError, "torn or hidden"):
+            windows.replay_prefix(self.repo, target, self.fixture.plan, 0)
+        acknowledgment.write_bytes(ack_raw)
+        original = copy.deepcopy(self.remote)
+        self.remote[0]["body"] += "changed"
+        with self.assertRaises(WorkflowError):
+            windows.replay_prefix(self.repo, target, self.fixture.plan, 0)
+        self.remote = original
+        wall, mono = time.time(), time.monotonic()
+        with (
+            patch.object(time, "time", return_value=wall + 1801),
+            patch.object(time, "monotonic", return_value=mono + 1801),
+        ):
+            with self.assertRaisesRegex(WorkflowError, "pause expired"):
+                windows.replay_prefix(self.repo, target, self.fixture.plan, 0)
+        with patch.object(time, "time", return_value=wall - 100):
+            with self.assertRaises(WorkflowError):
+                windows.replay_prefix(self.repo, target, self.fixture.plan, 0)
+        self.renew_fixture(retain=False)
+        with claude_owned_auth.snapshot(self.policy) as owned:
+            with self.assertRaisesRegex(WorkflowError, "same-account stopped lineage"):
+                windows.resume_window(self.repo, target, owned=owned, now=time.time())
+        # A different synthetic native account/registration is also a valid
+        # current store, but cannot carry the old sealed generation.
+        import claude_native_auth as auth
+
+        with auth.store(self.native) as storage:
+            reg = storage.read("registration.json")
+            current = {
+                **self.policy["authentication"],
+                "registration_id": "44444444-4444-4444-8444-444444444444",
+            }
+            prefix = "generations/" + current["generation_id"] + "/config/"
+            config = storage.read(prefix + ".claude.json")
+            config["oauthAccount"]["accountUuid"] = "55555555-5555-4555-8555-555555555555"
+            storage.write(prefix + ".claude.json", config, replace=True)
+            _, account = auth.native_records(storage.read(prefix + ".credentials.json"), config, 900)
+            reg.update(
+                authentication=current,
+                lineage=[],
+                retained_capability_generations=[],
+                account=account,
+                files={
+                    prefix + name: auth._digest(storage.raw(prefix + name))
+                    for name in (".credentials.json", ".claude.json")
+                },
+            )
+            storage.write("registration.json", reg, replace=True)
+            storage.write(
+                "setup-attempt.json",
+                {"schema_version": 2, "authentication": current, "status": "completed"},
+                replace=True,
+            )
+            receipt = storage.read("receipt.json")
+            receipt.update(authentication=current, account=account)
+            storage.write("receipt.json", receipt, replace=True)
+        self.policy = {**self.policy, "authentication": current}
+        with claude_owned_auth.snapshot(self.policy) as owned:
+            with self.assertRaisesRegex(WorkflowError, "same-account stopped lineage"):
+                windows.resume_window(self.repo, target, owned=owned, now=time.time())
+        self.assertFalse((target / "window-transitions/01.json").exists())
+        self.assertEqual((self.calls, self.posts), (6, 6))
+
+    def test_generation_change_inside_window_and_short_receipt_refuse(self):
+        import time
+
+        import claude_native_auth as auth
+        import claude_owned_auth
+
+        self.complete_first()
+        self.renew_fixture()
+        with claude_owned_auth.snapshot(self.policy) as owned:
+            with self.assertRaisesRegex(WorkflowError, "same-account stopped lineage"):
+                windows.pause(self.repo, self.fixture.target, owned=owned, now=time.time())
+        # Restoring neither history nor allowance: this fixture has no transition.
+        with auth.store(self.native) as storage:
+            receipt = storage.read("receipt.json")
+            receipt["expires_at"] = time.time() + 1300
+            storage.write("receipt.json", receipt, replace=True)
+        with claude_owned_auth.snapshot(self.policy) as owned:
+            with self.assertRaises(WorkflowError):
+                windows.pause(self.repo, self.fixture.target, owned=owned, now=time.time())
+        self.assertFalse((self.fixture.target / "window-transitions").exists())
+        self.assertEqual((self.calls, self.posts), (6, 6))
+
+    def test_stopped_replay_and_resume_after_old_active_window_expired(self):
+        import time
+        from unittest.mock import patch
+
+        import claude_native_auth as auth
+        import claude_owned_auth
+
+        self.complete_first()
+        wall, mono = time.time(), time.monotonic()
+        batch = windows.load_preparation(self.fixture.target)
+        old_end = batch["application"]["applied_at"] + batch["plan"]["schedule"]["window_seconds"][0] - 360
+        shift = [old_end - wall - 30]
+        with (
+            patch.object(time, "time", side_effect=lambda: wall + shift[0]),
+            patch.object(time, "monotonic", side_effect=lambda: mono + shift[0]),
+        ):
+            with claude_owned_auth.snapshot(self.policy) as owned:
+                windows.pause(self.repo, self.fixture.target, owned=owned, now=time.time())
+            shift[0] += 100
+            self.assertGreater(
+                time.time(),
+                windows.load_preparation(self.fixture.target)["application"]["applied_at"] + 11340,
+            )
+            self.assertEqual(
+                len(windows.replay_prefix(self.repo, self.fixture.target, self.fixture.plan, 0)), 6
+            )
+            with auth.store(self.native) as storage:
+                receipt = storage.read("receipt.json")
+                shortened = {**receipt, "expires_at": time.time() + 1300}
+                storage.write("receipt.json", shortened, replace=True)
+            with claude_owned_auth.snapshot(self.policy) as owned:
+                with self.assertRaisesRegex(WorkflowError, "full batch window"):
+                    windows.resume_window(self.repo, self.fixture.target, owned=owned, now=time.time())
+            with auth.store(self.native) as storage:
+                storage.write("receipt.json", receipt, replace=True)
+            with claude_owned_auth.snapshot(self.policy) as owned:
+                resumed = windows.resume_window(self.repo, self.fixture.target, owned=owned, now=time.time())
+            self.assertEqual(resumed["value"]["window"], 1)
+        self.assertEqual((self.calls, self.posts), (6, 6))
+
+    def test_acknowledgment_storage_overhead_is_consumed_failure(self):
+        import time
+        from unittest.mock import patch
+
+        import claude_owned_auth
+
+        self.complete_first()
+        batch = windows.load_preparation(self.fixture.target)
+        wall, mono = time.time(), time.monotonic()
+        old_end = batch["application"]["applied_at"] + batch["plan"]["schedule"]["window_seconds"][0] - 360
+        shift = [old_end - wall - 10]
+        exclusive = windows.exclusive
+
+        def slow_ack(path, value, **kwargs):
+            result = exclusive(path, value, **kwargs)
+            if path.parent.name == "window-transition-acks":
+                shift[0] += 20
+            return result
+
+        with (
+            patch.object(time, "time", side_effect=lambda: wall + shift[0]),
+            patch.object(time, "monotonic", side_effect=lambda: mono + shift[0]),
+            patch.object(windows, "exclusive", side_effect=slow_ack),
+        ):
+            with claude_owned_auth.snapshot(self.policy) as owned:
+                with self.assertRaisesRegex(WorkflowError, "allocation overrun"):
+                    windows.pause(self.repo, self.fixture.target, owned=owned, now=time.time())
+            with self.assertRaisesRegex(WorkflowError, "failure remains consumed"):
+                windows.replay_prefix(self.repo, self.fixture.target, self.fixture.plan, 0)
+        self.assertTrue((self.fixture.target / "window-transitions/00.json").exists())
+        self.assertTrue((self.fixture.target / "window-transition-acks/00.json").exists())
+        self.assertTrue((self.fixture.target / "window-transition-failures/00.json").exists())
+        self.assertEqual((self.calls, self.posts), (6, 6))
+
+
+class StoppedActualAdmissionTests(unittest.TestCase):
+    response = OwnedComponentTests.response
+    api = ComponentPublicationTests.api
+    publish = ComponentPublicationTests.publish
+    complete_first = StoppedComponentWindowTests.complete_first
+    renew_fixture = StoppedComponentWindowTests.renew_fixture
+
+    def test_real_admission_replays_original_four_outcomes_under_owned_successor(self):
+        import time
+        from unittest.mock import patch
+
+        import claude_owned_auth
+        import reporting_activation_v6 as activation
+        import reporting_admission_v6 as admission
+        import reporting_diagnostic_v6 as diagnostic
+
+        setup = OwnedComponentTests.setup_fixture
+        real_check = admission.check_batch
+        real_pause = admission.check_pause
+        with patch.object(
+            OwnedComponentTests, "setup_fixture", lambda obj, **kw: setup(obj, actual_admission=True)
+        ):
+            StoppedComponentWindowTests.setUp(self)
+        self.fixture.evidence = copy.deepcopy(self.actual_admission)
+        self.complete_first()
+        source = diagnostic.catalog(self.repo)
+
+        def pause_admission(repo, directory, *, owned_auth):
+            def catalog(repo, *, batch_directory):
+                windows.reconcile_public_context(repo, batch_directory, self.initial)
+                return copy.deepcopy(source)
+
+            with patch.object(windows, "catalog", side_effect=catalog):
+                return real_pause(repo, directory, owned_auth=owned_auth)
+
+        with patch.object(admission, "check_pause", side_effect=pause_admission):
+            with claude_owned_auth.snapshot(self.policy) as owned:
+                windows.pause(self.repo, self.fixture.target, owned=owned, now=time.time())
+        self.renew_fixture()
+
+        def actual(repo, directory, *, owned_auth):
+            def catalog(repo, *, batch_directory):
+                windows.reconcile_public_context(repo, batch_directory, self.initial)
+                return copy.deepcopy(source)
+
+            with patch.object(windows, "catalog", side_effect=catalog):
+                return real_check(repo, directory, owned_auth=owned_auth)
+
+        with patch.object(admission, "check_batch", side_effect=actual):
+            with claude_owned_auth.snapshot(self.policy) as owned:
+                original = activation.outcome
+
+                def unknown(repo, number):
+                    value = original(repo, number)
+                    return {**value, "usage": {"status": "unknown"}} if number == 23 else value
+
+                with patch.object(activation, "outcome", side_effect=unknown):
+                    with self.assertRaisesRegex(WorkflowError, "predecessor qualification"):
+                        windows.resume_window(self.repo, self.fixture.target, owned=owned, now=time.time())
+                resumed = windows.resume_window(self.repo, self.fixture.target, owned=owned, now=time.time())
+                self.assertEqual(resumed["authentication"], self.policy["authentication"])
+                self.assertEqual(
+                    actual(self.repo, self.fixture.target, owned_auth=owned), self.actual_admission
+                )
+        self.assertEqual((self.calls, self.posts), (10, 6))
