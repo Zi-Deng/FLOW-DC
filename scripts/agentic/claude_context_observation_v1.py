@@ -105,7 +105,7 @@ def _correlation(value, rows):
         if not _integer(ordinal, MAX_EVENTS) or not previous < ordinal < output:
             _fail()
         previous = ordinal
-    if any(row["ordinal"] >= output or row["ordinal"] in reads for row in rows):
+    if any(row["ordinal"] >= count or row["ordinal"] == output or row["ordinal"] in reads for row in rows):
         _fail()
     if not any(reads[-1] < row["ordinal"] < output for row in rows):
         _fail()
@@ -127,6 +127,10 @@ class Observer:
 
     `assistant` carries a complete native message, including id and usage; its
     full canonical fingerprint is kept only in memory to reject conflicting IDs.
+    `native_assistant` is reserved for a frozen-qualified native bridge: usage
+    may include native auxiliary fields and the complete report message can arrive
+    after the output block starts. Full-message dedup still includes those fields;
+    replay still requires a distinct response after the last Read BEFORE output.
     `mandatory_read` means a successful exact mandatory span, established by the
     consumer, not a tool name or a model claim. Any feed rejection poisons this object.
     """
@@ -151,14 +155,18 @@ class Observer:
         if self._failed or self._terminal or type(event) is not dict:
             _fail()
         kind = event.get("kind")
-        keys = {"ordinal", "kind", "message"} if kind == "assistant" else {"ordinal", "kind"}
+        keys = (
+            {"ordinal", "kind", "message"}
+            if kind in {"assistant", "native_assistant"}
+            else {"ordinal", "kind"}
+        )
         if set(event) != keys or not _integer(event["ordinal"], MAX_EVENTS):
             _fail()
         if event["ordinal"] != self._ordinal + 1:
             _fail()
         self._ordinal = event["ordinal"]
-        if kind == "assistant":
-            if self._output is not None:
+        if kind in {"assistant", "native_assistant"}:
+            if kind == "assistant" and self._output is not None:
                 _fail()
             message = event["message"]
             if type(message) is not dict:
@@ -166,7 +174,7 @@ class Observer:
             identity, usage = message.get("id"), message.get("usage")
             if type(identity) is not str or not 0 < len(identity) <= 256:
                 _fail()
-            if type(usage) is not dict or set(usage) - {*COUNTERS, "output_tokens"}:
+            if type(usage) is not dict or (kind == "assistant" and set(usage) - {*COUNTERS, "output_tokens"}):
                 _fail()
             if not all(_integer(usage.get(k)) for k in COUNTERS):
                 _fail()
