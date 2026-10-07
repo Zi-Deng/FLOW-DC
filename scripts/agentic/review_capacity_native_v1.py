@@ -393,6 +393,59 @@ def bridge(raw, packet, workspace, policy, session_id, bindings):
         or not coverage.assess(packet, body, diagnostics, policy=policy)["qualified"]
     ):
         fail()
+    required = coverage.strict_json((Path(packet) / "required-material.json").read_text())["required"]
+    return _observe(raw, body, diagnostics, proof, policy, bindings, required)
+
+
+def batch_bridge(raw, packet, workspace, policy, session_id, bindings, required_ids):
+    """Derive ordinary child observations, never dispatch or readiness authority.
+
+    The runtime must independently derive required_ids from the immutable plan,
+    validate the child packet/claim and retain the result inside its owned capture.
+    This pure function cannot certify that association. Unassigned material stays
+    present and unread; it is never removed to manufacture global qualification.
+    """
+    profile(policy)
+    inventory = coverage.strict_json((Path(packet) / "required-material.json").read_text())
+    required = inventory["required"]
+    if (
+        type(required_ids) is not list
+        or not required_ids
+        or any(type(value) is not str for value in required_ids)
+        or len(required_ids) != len(set(required_ids))
+        or len(required_ids) > 128
+    ):
+        fail()
+    selected = set(required_ids)
+    if not selected <= {item["id"] for item in required}:
+        fail()
+    body, diagnostics, proof = telemetry.capture(raw, packet, workspace, policy, session_id)
+    assessment = coverage.assess(packet, body, diagnostics, policy=policy)
+    if (
+        not proof["accepted"]
+        or claude_reporting.replay(proof) != proof
+        or diagnostics["reasons"]
+        or assessment["reasons"]
+        or {row["id"] for row in assessment["material"] if row["state"] == "reviewed"} & selected != selected
+    ):
+        fail()
+    sidecar, correlation = _observe(
+        raw,
+        body,
+        diagnostics,
+        proof,
+        policy,
+        bindings,
+        [item for item in required if item["id"] in selected],
+    )
+    summary = observation.replay(sidecar, bindings, diagnostics["usage"]["counters"], correlation)
+    if summary["max_observed_input"] > DESCRIPTOR["batch_observed_input"]:
+        fail()
+    return sidecar, correlation
+
+
+def _observe(raw, body, diagnostics, proof, policy, bindings, required):
+    """Shared numeric correlation after the caller's distinct frozen qualification."""
     expected = dict(bindings)
     for key, value in {
         "policy": encoded(policy),
@@ -405,7 +458,6 @@ def bridge(raw, packet, workspace, policy, session_id, bindings):
             fail()
     observer = observation.Observer()
     pending, seen, reads, output, ordinal, record_index = {}, {}, [], None, 0, 0
-    required = coverage.strict_json((Path(packet) / "required-material.json").read_text())["required"]
     spans_needed = {(i["artifact"], n) for i in required for n in range(i["start_line"], i["end_line"] + 1)}
     spans_seen = set()
 

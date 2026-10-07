@@ -489,3 +489,140 @@ class CapacityNativeTests(unittest.TestCase):
             mutate(changed)
             with self.assertRaises(WorkflowError):
                 capacity.largest_fixture([changed], items, files, {"source": "c" * 64})
+
+
+class BatchObservationTests(unittest.TestCase):
+    """Ordinary frozen capture and numeric checks; no claim or admission authority."""
+
+    def packet_stream(self, packet):
+        for name, content in reporting_diagnostic_v2.packet_contents().items():
+            target = packet / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(content)
+        inventory_path = packet / "required-material.json"
+        inventory = json.loads(inventory_path.read_bytes())
+        selected = [item["id"] for item in inventory["required"]]
+        inventory["required"].append(
+            {
+                **inventory["required"][-1],
+                "id": "c" * 24,
+                "artifact": "surrounding.txt",
+                "path": "surrounding.txt",
+                "start_line": 1,
+                "end_line": 1,
+            }
+        )
+        (packet / "surrounding.txt").write_bytes(b"Unassigned surrounding source remains available.\n")
+        inventory_path.write_bytes(capacity.encoded(inventory))
+        (packet / "inventory-sha256.txt").write_text(capacity.sha(inventory_path.read_bytes()) + "\n")
+        rows = stream(packet)
+        omitted = {
+            block["id"]
+            for row in rows
+            if row["type"] == "assistant"
+            for block in row["message"]["content"]
+            if block.get("name") == "Read" and block["input"]["file_path"] == "surrounding.txt"
+        }
+        rows = [
+            row
+            for row in rows
+            if not (
+                row["type"] in {"assistant", "user"}
+                and any(
+                    block.get("id", block.get("tool_use_id")) in omitted
+                    for block in row["message"]["content"]
+                )
+            )
+        ]
+        report = rows[-1]["structured_output"]
+        report["reviewed"].remove("c" * 24)
+        for row in rows:
+            if row["type"] == "stream_event" and row["event"]["type"] == "content_block_delta":
+                row["event"]["delta"]["partial_json"] = json.dumps(report)
+        return rows, selected
+
+    def captured(self, packet, rows):
+        body, diagnostics, proof = claude_telemetry_v8.capture(
+            raw(rows), packet, packet, policy(), "synthetic-session"
+        )
+        bound = {key: capacity.sha(key.encode()) for key in observation.BINDINGS}
+        for key, value in {
+            "policy": capacity.encoded(policy()),
+            "report": body.encode(),
+            "proof": capacity.encoded(proof),
+            "diagnostic": capacity.encoded(diagnostics),
+            "descriptor": observation._bytes(observation.DESCRIPTOR),
+        }.items():
+            bound[key + "_sha256"] = capacity.sha(value)
+        return bound, diagnostics, proof
+
+    def test_child_observation_keeps_unassigned_parent_material_unread(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            packet = Path(tmp)
+            rows, selected = self.packet_stream(packet)
+            bound, diagnostics, proof = self.captured(packet, rows)
+            assessment = review_coverage.assess(packet, proof["report"], diagnostics, policy=policy())
+            self.assertFalse(assessment["qualified"])
+            self.assertEqual(assessment["material"][-1]["state"], "unread")
+            self.assertTrue(proof["accepted"])
+            # The historical diagnostic bridge still requires its entire inventory.
+            with self.assertRaises(WorkflowError):
+                capacity.bridge(raw(rows), packet, packet, policy(), "synthetic-session", bound)
+            sidecar, correlation = capacity.batch_bridge(
+                raw(rows), packet, packet, policy(), "synthetic-session", bound, selected
+            )
+            observation.replay(sidecar, bound, diagnostics["usage"]["counters"], correlation)
+            self.assertNotIn(b"synthetic-session", sidecar)
+            self.assertEqual(len(json.loads((packet / "required-material.json").read_bytes())["required"]), 3)
+
+    def test_unknown_duplicate_unread_assignment_and_binding_refuse(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            packet = Path(tmp)
+            rows, selected = self.packet_stream(packet)
+            bound, _, _ = self.captured(packet, rows)
+            for selection in ([], True, [True], selected + selected, ["f" * 24], selected + ["c" * 24]):
+                with self.subTest(selection=selection), self.assertRaises(WorkflowError):
+                    capacity.batch_bridge(
+                        raw(rows), packet, packet, policy(), "synthetic-session", bound, selection
+                    )
+            for key in ("policy", "report", "proof", "diagnostic", "descriptor"):
+                with self.subTest(key=key), self.assertRaises(WorkflowError):
+                    capacity.batch_bridge(
+                        raw(rows),
+                        packet,
+                        packet,
+                        policy(),
+                        "synthetic-session",
+                        {**bound, key + "_sha256": "f" * 64},
+                        selected,
+                    )
+
+    def test_observed_input_ceiling_and_missing_final_response(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            packet = Path(tmp)
+            rows, selected = self.packet_stream(packet)
+            for total in (872000, 872001):
+                changed = copy.deepcopy(rows)
+                for row in changed:
+                    if row["type"] == "assistant":
+                        row["message"]["usage"]["input_tokens"] = total - 50
+                bound, _, _ = self.captured(packet, changed)
+                if total == 872000:
+                    capacity.batch_bridge(
+                        raw(changed), packet, packet, policy(), "synthetic-session", bound, selected
+                    )
+                else:
+                    with self.assertRaises(WorkflowError):
+                        capacity.batch_bridge(
+                            raw(changed), packet, packet, policy(), "synthetic-session", bound, selected
+                        )
+            changed = [
+                row
+                for row in rows
+                if not (row["type"] == "assistant" and row["message"]["content"][0]["type"] == "text")
+            ]
+            bound, _, _ = self.captured(packet, changed)
+            with self.assertRaises(WorkflowError):
+                capacity.batch_bridge(
+                    raw(changed), packet, packet, policy(), "synthetic-session", bound, selected
+                )
