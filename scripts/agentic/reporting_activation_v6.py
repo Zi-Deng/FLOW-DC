@@ -110,11 +110,42 @@ def context(repo, policy, *, remaining_seconds=7380, owned_auth=None):
     The later implementation must recheck exact source/history/authority/policy,
     all four fixture descriptors and unchanged owned authentication generation;
     credential AND paid-receipt lifetime must exceed remaining_seconds + 360.
-    This seam intentionally does not read credentials or infer qualification.
+    The default catalog refusal precedes all credential/history access. Once that
+    adapter exists, only an already-owned snapshot may verify the full window;
+    there is no unowned fallback or caller-supplied qualification.
     """
-    authorization(repo)
-    validate_policy(policy)  # Fixed v8 base profile; no capacity budget exception here.
-    raise WorkflowError("V6 fixture/profile and owned-window integration is not implemented")
+    from claude_owned_auth import require
+    from reporting_activation_v2 import harness
+    from reporting_diagnostic_v6 import catalog, fixture_binding, packets
+    from reporting_recovery_history import semantics
+
+    current = authorization(repo)
+    validate_policy(policy)
+    if type(remaining_seconds) not in {int, float} or not 0 < remaining_seconds <= 7380:
+        raise WorkflowError("Invalid V6 full remaining window")
+    # The actual final catalog/check adapter is deliberately not implemented yet.
+    source = catalog(repo)
+    if current["approval_digest"] != "ae8e4b2ff106d44908e471d1f36be74b5d9f632f1d0b92b32e5261193a245cd8":
+        raise WorkflowError("V6 exact standing approval differs")
+    actual_harness = harness()
+    fixtures = {n: fixture_binding(files) for n, files in packets(source).items()}
+    history = historical(repo)
+    if semantics(policy) != history["stopped_v4"]["policy_semantics"]:
+        raise WorkflowError("V6 frozen policy semantics differ")
+    # This existing owned verifier checks BOTH lifetimes, adds300+60 margins,
+    # and holds the original lock. No unowned fallback or lineage renewal.
+    actual_auth = require(owned_auth).current_binding(900, remaining_seconds)
+    if actual_auth != policy["authentication"]:
+        raise WorkflowError("V6 authentication generation changed")
+    result = {
+        "authorization": current,
+        "history": history,
+        "harness": actual_harness,
+        "policy": copy.deepcopy(policy),
+        "fixtures": fixtures,
+    }
+    _binding(result)
+    return result
 
 
 def _binding(value):
@@ -354,7 +385,9 @@ def evaluate(repo, grant, reservation, finished):
         <= min(application["deadline"], reservation["replay_deadline"])
     ):
         raise WorkflowError("V6 reservation, completion window or grant changed")
-    raise WorkflowError("V6 diagnostic/capacity replay is not implemented; outcome remains incomplete")
+    from reporting_diagnostic_v6 import replay
+
+    return replay(repo, grant, reservation, finished)
 
 
 def outcome(repo, number):

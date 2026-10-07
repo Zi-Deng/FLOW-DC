@@ -394,3 +394,399 @@ class QualificationTests(unittest.TestCase):
             reserved = activation.reserve(self.repo, number=20, input_digest="c" * 64)
         self.assertEqual(reserved["started"], 1005)
         self.assertEqual(reserved["deadline"], 2145)
+
+
+class DiagnosticDependencyTests(unittest.TestCase):
+    """Standalone synthetic storage, not a successful dispatch or live allowance."""
+
+    def setUp(self):
+        import reporting_diagnostic_v6 as diagnostic
+        from test_capacity_native_v1 import additional, catalog
+
+        self.diagnostic = diagnostic
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.repo = SimpleNamespace(main=Path(temporary.name), name="Zi-Deng/FLOW-DC")
+        items, files = additional()
+        self.source = {
+            "components": catalog(),
+            "items": items,
+            "files": files,
+            "dependencies": {"source": "c" * 64},
+        }
+        self.packets = diagnostic.packets(self.source)
+        self.binding = {
+            "authorization": {"contract_digest": CONTRACT_DIGEST, "approval_digest": "d" * 64},
+            "history": {"synthetic": "no live qualification"},
+            "harness": {"head": "a" * 40, "files": {"synthetic.py": "b" * 64}},
+            "policy": policy(),
+            "fixtures": {n: diagnostic.fixture_binding(files) for n, files in self.packets.items()},
+        }
+        with patch.object(activation, "context", return_value=self.binding):
+            proposal = activation.preview(
+                self.repo, policy(), name="synthetic-storage", tested_head="a" * 40, now=1000
+            )
+            activation.apply(self.repo, proposal, preview_digest=proposal["preview_digest"], now=1001)
+        self.grant = proposal["grant"]
+        for owner, name in (
+            (claude_native_auth, "current_binding"),
+            (claude_native_auth, "store"),
+            (subprocess, "Popen"),
+            (socket.socket, "connect"),
+        ):
+            self.enterContext(
+                patch.object(owner, name, side_effect=AssertionError("Forbidden external operation"))
+            )
+
+    def prepared(self, number):
+        import review
+
+        with patch.object(self.diagnostic, "catalog", return_value=self.source):
+            directory = self.diagnostic.prepare(self.repo, number=number)
+        meta = review.verify_packet(directory)
+        return directory, meta
+
+    def stored(self, number=21):
+        import claude_reporting_execution as execution
+        import claude_telemetry_v8
+        import diagnostic_tool_contract
+        from test_capacity_native_v1 import raw, stream
+
+        directory, meta = self.prepared(number)
+        # A local schema fixture, deliberately NOT a successful predecessor chain.
+        reservation = activation._reservation(self.grant, number, digest(meta), 1002)
+        activation.exclusive(activation.root(self.repo) / f"attempt-{number}.json", reservation)
+        packet = directory / "packet"
+        rows = stream(packet)
+        session = "11111111-1111-4111-8111-111111111111"
+        for row in rows:
+            row["session_id"] = session
+        progress = next(
+            i
+            for i, row in enumerate(rows)
+            if row["type"] == "assistant" and row["message"]["content"][0]["type"] == "text"
+        )
+        # Actual permitted Glob response after all mandatory Reads, not an invented
+        # reordering or a model statement claiming that a Read happened.
+        rows[progress]["message"]["content"] = [
+            {
+                "type": "tool_use",
+                "id": "final-navigation",
+                "name": "Glob",
+                "input": {"pattern": "capability/fixture.txt"},
+            }
+        ]
+        rows.insert(
+            progress + 1,
+            {
+                "type": "user",
+                "uuid": "final-navigation-result",
+                "session_id": session,
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "final-navigation",
+                            "content": "capability/fixture.txt",
+                            "is_error": False,
+                        }
+                    ]
+                },
+            },
+        )
+        refusal = None
+        if number == 20:
+            refusal = str(directory / "outside-refusal-canary.txt")
+            fixture = json.loads(
+                (Path(__file__).parent / "fixtures/claude-refusal-2.1.282-v5.json").read_text()
+            )["positive"]
+            fixture["tool"]["message"]["content"][0]["input"]["file_path"] = refusal
+            fixture["denials"][0]["tool_input"]["file_path"] = refusal
+            message = f"{refusal} is outside {packet}; --restricted confines the file tools to the working directory."
+            fixture["advisory"]["message"] = message
+            fixture["result"]["message"]["content"][0]["content"] = message
+            for key in ("tool", "advisory", "result"):
+                fixture[key].update(session_id=session)
+                fixture[key].setdefault(
+                    "uuid",
+                    "11111111-1111-4111-8111-"
+                    + {"tool": "000000000021", "advisory": "000000000022", "result": "000000000023"}[key],
+                )
+            rows[progress:progress] = [fixture["tool"], fixture["advisory"], fixture["result"]]
+            rows[-1]["permission_denials"] = fixture["denials"]
+        body, diagnostics, proof = claude_telemetry_v8.capture(
+            raw(rows),
+            packet,
+            packet,
+            meta["review_policy"],
+            session,
+            diagnostic_purpose="isolation-refusal" if number == 20 else "native-tools-and-source",
+            diagnostic_tool_contract=diagnostic_tool_contract.contract(),
+            refusal_path=refusal,
+        )
+        prompt = self.diagnostic.prompt(directory, meta, refusal)
+        record = execution.binding(
+            directory,
+            meta,
+            session,
+            prompt,
+            diagnostic={"reservation_digest": digest(reservation), "refusal_path": refusal},
+        )
+        execution.exclusive(directory / execution.FILENAME, record)
+        dispatch = self.diagnostic.Dispatch(self.repo, directory, reservation)
+        # Exercise only timeout/finish storage here. Real claim/owned-lock launch
+        # positives are explicitly deferred to review_claude wiring.
+        dispatch.claimed = True
+        with (
+            patch.object(self.diagnostic.time, "time", return_value=1003),
+            patch.object(self.diagnostic.time, "monotonic", return_value=50),
+        ):
+            self.assertEqual(dispatch.timeout(), activation.slot(number)["native_seconds"])
+        with (
+            patch.object(self.diagnostic.time, "time", return_value=1004),
+            patch.object(self.diagnostic.time, "monotonic", return_value=51),
+        ):
+            dispatch.finish(meta, session, body, diagnostics, proof)
+        capture = {
+            "input_digest": digest(meta),
+            "provider_version": "2.1.282",
+            "body": body,
+            "diagnostics": diagnostics,
+            "reporting": proof,
+            "execution": record,
+        }
+        return directory, meta, reservation, capture, rows
+
+    def test_four_exact_metadata_profiles_and_prompt_routes(self):
+        import claude_reporting_versions
+        import reporting_versions
+
+        for number in (20, 21, 22, 23):
+            directory, meta = self.prepared(number)
+            self.assertIs(reporting_versions.diagnostic(meta), self.diagnostic)
+            self.assertEqual(self.diagnostic.identity(self.repo, directory, meta)[1], number)
+            self.assertEqual(meta["review_policy"]["budget"]["timeout_seconds"], 300 if number < 22 else 900)
+            canary = str(directory / "outside-refusal-canary.txt") if number == 20 else None
+            text = self.diagnostic.prompt(directory, meta, canary)
+            self.assertIn('Glob with exactly {"pattern":"capability/fixture.txt"}', text)
+            if number >= 22:
+                with self.assertRaisesRegex(WorkflowError, "300 seconds"):
+                    claude_reporting_versions.validate_diagnostic(meta["review_policy"])
+            else:
+                claude_reporting_versions.validate_diagnostic(meta["review_policy"])
+            with self.assertRaises(WorkflowError):
+                claude_reporting_versions.validate_v6_diagnostic(
+                    self.repo, directory, meta, object(), owned_auth=None
+                )
+            with self.assertRaises(WorkflowError):
+                self.diagnostic.prompt(
+                    directory, meta, None if number == 20 else "/tmp/outside-refusal-canary.txt"
+                )
+
+    def test_metadata_source_fixture_slot_and_packet_mutations(self):
+        import review
+
+        directory, meta = self.prepared(22)
+        for mutate in (
+            lambda m: m.update(schema_version=True),
+            lambda m: m.update(head_sha="f" * 40),
+            lambda m: m.update(purpose="issue-31-reporting-recovery-v5"),
+            lambda m: m["reporting_activation"].update(number=23),
+            lambda m: m["v6_fixture"].update(fixture_sha256="f" * 64),
+            lambda m: m["review_policy"]["budget"].update(estimated_usd=2),
+            lambda m: m.update(extra="unknown"),
+        ):
+            changed = copy.deepcopy(meta)
+            mutate(changed)
+            (directory / "metadata.json").write_text(json.dumps(changed))
+            with self.assertRaises(WorkflowError):
+                self.diagnostic.identity(self.repo, directory, changed)
+        (directory / "metadata.json").write_text(json.dumps(meta))
+        (directory / "packet/guidance.txt").write_text("changed")
+        with self.assertRaises(WorkflowError):
+            review.verify_packet(directory)
+
+    def test_claim_timeout_replay_and_window_refusals(self):
+        directory, meta = self.prepared(20)
+        with patch.object(activation, "context", return_value=self.binding):
+            reservation = activation.reserve(self.repo, number=20, input_digest=digest(meta), now=1002)
+        dispatch = self.diagnostic.Dispatch(self.repo, directory, reservation)
+        with self.assertRaises(WorkflowError):
+            dispatch.timeout()
+        with (
+            patch.object(activation, "context", return_value=self.binding),
+            patch.object(self.diagnostic.time, "time", return_value=1003),
+        ):
+            dispatch.claim(self.repo, directory, meta)
+            with self.assertRaises(WorkflowError):
+                dispatch.claim(self.repo, directory, meta)
+        with (
+            patch.object(activation, "context", return_value={}),
+            patch.object(self.diagnostic.time, "time", return_value=1003),
+            self.assertRaises(WorkflowError),
+        ):
+            dispatch.recheck(meta)
+        for now in (1001, 1900, float("nan")):
+            with (
+                patch.object(self.diagnostic.time, "time", return_value=now),
+                self.assertRaises(WorkflowError),
+            ):
+                dispatch.timeout()
+        with patch.object(self.diagnostic.time, "time", return_value=1003):
+            self.assertEqual(dispatch.timeout(), 300)
+            with self.assertRaises(WorkflowError):
+                dispatch.timeout()
+
+    def test_frozen_capture_completion_and_independent_mutations(self):
+        directory, meta, reservation, capture, _ = self.stored()
+        timing, assessment, qualified = self.diagnostic.assess_capture(directory, meta, capture, reservation)
+        self.assertTrue(qualified)
+        self.assertTrue(assessment["qualified"])
+        self.assertEqual(timing["finished"], 1004)
+        with self.assertRaisesRegex(WorkflowError, "owned capture persistence"):
+            self.diagnostic.owned_capture(directory, meta, capture)
+        for mutate in (
+            lambda c: c.update(body=c["body"] + " "),
+            lambda c: c.update(provider_version="wrong"),
+            lambda c: c["execution"].update(session_id="changed"),
+            lambda c: c["diagnostics"]["usage"].update(status="unknown"),
+            lambda c: c["reporting"].update(accepted=False),
+        ):
+            changed = copy.deepcopy(capture)
+            mutate(changed)
+            with self.assertRaises((WorkflowError, ValueError)):
+                self.diagnostic.assess_capture(directory, meta, changed, reservation)
+        record = json.loads((directory / self.diagnostic.FINISHED).read_text())
+        for key, value in (
+            ("schema_version", True),
+            ("elapsed_seconds", -1),
+            ("finished", 999),
+            ("fixture", {}),
+            ("extra", 1),
+        ):
+            (directory / self.diagnostic.FINISHED).write_text(json.dumps({**record, key: value}))
+            with self.assertRaises(WorkflowError):
+                self.diagnostic.completion(directory, capture, reservation)
+        (directory / self.diagnostic.FINISHED).write_text("{")
+        with self.assertRaises(WorkflowError):
+            self.diagnostic.completion(directory, capture, reservation)
+
+    def test_actual_synthetic_isolation_chain_is_independent(self):
+        directory, meta, reservation, capture, _ = self.stored(20)
+        _, _, qualified = self.diagnostic.assess_capture(directory, meta, capture, reservation)
+        self.assertTrue(qualified, capture["diagnostics"]["reasons"])
+        # Rebind a structurally valid storage completion to mutated telemetry: the
+        # diagnostic requirement itself must refuse, not just the earlier hash.
+        changed = copy.deepcopy(capture)
+        changed["diagnostics"]["telemetry"]["controlled_refusals"] = 0
+        path = directory / self.diagnostic.FINISHED
+        record = json.loads(path.read_text())
+        record["diagnostics_sha256"] = digest(changed["diagnostics"])
+        path.write_text(json.dumps(record))
+        with self.assertRaisesRegex(WorkflowError, "exactly one"):
+            self.diagnostic.assess_capture(directory, meta, changed, reservation)
+
+    def test_default_catalog_capture_and_dispatch_stay_closed(self):
+        with self.assertRaisesRegex(WorkflowError, "final catalog"):
+            self.diagnostic.catalog(self.repo)
+        for number in (20, 21, 22, 23):
+            with self.assertRaisesRegex(WorkflowError, "dispatch wiring"):
+                self.diagnostic.run(self.repo, number=number)
+        directory, meta, reservation, capture, _ = self.stored()
+        with self.assertRaises(WorkflowError):
+            self.diagnostic.predecessor(self.repo, 22)
+        with self.assertRaises((WorkflowError, OSError)):
+            self.diagnostic.recover(self.repo, number=21)
+        self.assertFalse((activation.root(self.repo) / "outcome-21.json").exists())
+
+    def test_full_capacity_packets_frozen_capture_and_observer(self):
+        import claude_context_observation_v1 as observer
+        import review_capacity_native_v1 as capacity
+        from test_capacity_native_v1 import bindings, raw
+
+        for number in (22, 23):
+            directory, meta, reservation, capture, rows = self.stored(number)
+            _, assessment, qualified = self.diagnostic.assess_capture(directory, meta, capture, reservation)
+            self.assertTrue(qualified, capture["diagnostics"]["reasons"])
+            self.assertEqual(assessment["required_count"], assessment["inspected_count"])
+            # Bridge helpers bind the actual synthetic session used by stored().
+            for row in rows:
+                row["session_id"] = "synthetic-session"
+            packet = directory / "packet"
+            bound, diagnostics, _ = bindings(packet, rows)
+            sidecar, correlation = capacity.bridge(
+                raw(rows), packet, packet, meta["review_policy"], "synthetic-session", bound
+            )
+            summary = observer.replay(sidecar, bound, diagnostics["usage"]["counters"], correlation)
+            self.assertLessEqual(summary["response_count"], 400)
+            self.assertLessEqual(len(sidecar), 65536)
+            with self.assertRaisesRegex(WorkflowError, "owned capture persistence"):
+                self.diagnostic.owned_capture(directory, meta, capture)
+
+    def test_legacy_routes_unknown_versions_and_current_profile_guard(self):
+        import claude_reporting_versions
+        import reporting_diagnostic
+        import reporting_diagnostic_v2
+        import reporting_diagnostic_v3
+        import reporting_diagnostic_v4
+        import reporting_diagnostic_v5
+        import reporting_versions
+
+        for module in (
+            reporting_diagnostic,
+            reporting_diagnostic_v2,
+            reporting_diagnostic_v3,
+            reporting_diagnostic_v4,
+            reporting_diagnostic_v5,
+        ):
+            self.assertIs(reporting_versions.diagnostic({"purpose": module.PURPOSE}), module)
+        for purpose in (None, True, "issue-31-reporting-recovery-v7", "issue-31-reporting-recovery-v6 "):
+            with self.assertRaises(WorkflowError):
+                reporting_versions.diagnostic({"purpose": purpose})
+        directory, meta = self.prepared(22)
+        dispatch = self.diagnostic.Dispatch(
+            self.repo, directory, activation._reservation(self.grant, 22, digest(meta), 1002)
+        )
+        dispatch.claimed = True
+        with self.assertRaises((WorkflowError, OSError)):
+            claude_reporting_versions.validate_v6_diagnostic(
+                self.repo, directory, meta, dispatch, owned_auth=None
+            )
+
+    def test_unknown_usage_and_overrun_remain_failed_after_rebinding(self):
+        directory, meta, reservation, capture, _ = self.stored()
+        path = directory / self.diagnostic.FINISHED
+        original = json.loads(path.read_text())
+        for usage in (
+            {"status": "unknown", "counters": {}},
+            {"status": "observed", "counters": {"duration_ms": 300001, "estimated_usd": 0.1}},
+            {"status": "observed", "counters": {"duration_ms": 10, "estimated_usd": 3}},
+        ):
+            changed = copy.deepcopy(capture)
+            changed["diagnostics"]["usage"] = {**usage, "models": {}}
+            path.write_text(json.dumps({**original, "diagnostics_sha256": digest(changed["diagnostics"])}))
+            self.assertFalse(self.diagnostic.assess_capture(directory, meta, changed, reservation)[2])
+        path.write_text(json.dumps({**original, "finished": 1305, "elapsed_seconds": 302}))
+        self.assertFalse(self.diagnostic.completion(directory, capture, reservation)[1])
+        with self.assertRaises(WorkflowError):
+            self.diagnostic.assess_capture(directory, meta, capture, {**reservation, "number": 22})
+
+    def test_final_recheck_elapsed_and_torn_dispatch_do_not_relaunch(self):
+        directory, meta = self.prepared(20)
+        with patch.object(activation, "context", return_value=self.binding):
+            reservation = activation.reserve(self.repo, number=20, input_digest=digest(meta), now=1002)
+        dispatch = self.diagnostic.Dispatch(self.repo, directory, reservation)
+        with (
+            patch.object(activation, "context", return_value=self.binding),
+            patch.object(self.diagnostic.time, "time", side_effect=[1003, 1903]),
+            self.assertRaisesRegex(WorkflowError, "exhausted"),
+        ):
+            dispatch.claim(self.repo, directory, meta)
+        self.assertFalse(dispatch.claimed)
+        self.assertTrue((activation.root(self.repo) / "attempt-20.json").exists())
+        saved = activation.root(self.repo) / "attempt-20.json"
+        saved.write_text("{")
+        with self.assertRaises((WorkflowError, OSError)):
+            dispatch.claim(self.repo, directory, meta)
+        with self.assertRaises(WorkflowError):
+            dispatch.timeout()

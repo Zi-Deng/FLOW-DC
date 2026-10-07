@@ -39,3 +39,13 @@ def validate_diagnostic(policy):
         from reporting_activation_v4 import validate_policy
 
     validate_policy(policy)
+
+
+def validate_v6_diagnostic(repo, directory, meta, dispatch, *, owned_auth):
+    """Separate exact claimed-V6 route; legacy diagnostic selection is unchanged."""
+    from reporting_diagnostic_v6 import PURPOSE, validate_profile
+
+    if type(meta) is not dict or meta.get("purpose") != PURPOSE:
+        raise WorkflowError("V6 profile requires exact diagnostic metadata")
+    version(meta.get("review_policy"))
+    return validate_profile(repo, directory, meta, dispatch, owned_auth=owned_auth)
