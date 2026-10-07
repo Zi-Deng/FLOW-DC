@@ -1611,3 +1611,92 @@ class NextOwnedAuthorityTests(unittest.TestCase):
             with self.assertRaises(WorkflowError):
                 admission.check(self.repo, owned_auth=owned)
         self.assertEqual(self.calls, 2)
+
+
+class CatalogAuthorityTests(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name)
+        self.repo = SimpleNamespace(main=root, root=root, name="Zi-Deng/FLOW-DC")
+        self.task = root / ".agentic-local/tasks/issue-31.json"
+        self.task.parent.mkdir(parents=True)
+        self.state = copy.deepcopy(G13_STATE)
+        self.state["v6_catalog"] = str(root)
+        self.task.write_text(json.dumps(self.state))
+
+    def test_current_literal_public_contract_and_old_grant_refusal(self):
+        import review
+        import review_batch_windows_v1 as windows
+        import tasks
+        import workflow
+
+        meta = {
+            "config": {},
+            "schema_version": 7,
+            "kind": "single",
+            "issue": 31,
+            "plan_comment": 6045434332,
+            "repository": self.repo.name,
+            "pr": 32,
+            "head_sha": "a" * 40,
+            "base_sha": "b" * 40,
+            "merge_base_sha": "c" * 40,
+        }
+        self.repo.git = lambda *args: {
+            "status": "",
+            "rev-parse": "a" * 40,
+            "merge-base": "c" * 40,
+        }[args[0]]
+        with (
+            patch.object(review, "verify_packet", return_value=meta),
+            patch.object(workflow, "configuration", return_value={}),
+            patch.object(tasks, "issue_contract", return_value=activation.NEXT_CONTRACT) as public,
+            patch.object(review, "current_pr", side_effect=WorkflowError("public transport boundary")),
+        ):
+            with self.assertRaisesRegex(WorkflowError, "public transport boundary"):
+                windows.catalog(self.repo)
+            public.assert_called_once_with(self.repo, 31, 6045434332)
+            public.return_value = activation.CONTRACT
+            with self.assertRaisesRegex(WorkflowError, "current issue/plan changed"):
+                windows.catalog(self.repo)
+            meta["reporting_activation"] = {"contract_digest": CONTRACT_DIGEST}
+            with self.assertRaisesRegex(WorkflowError, "full current metadata7 parent"):
+                windows.catalog(self.repo)
+
+    def test_real_authorization_rejects_unknown_missing_bool_and_copied_approval(self):
+        import review
+        import review_batch_windows_v1 as windows
+
+        changes = [
+            lambda s: s.update(contract_generation=14),
+            lambda s: s.pop("contract_generation"),
+            lambda s: s.update(contract_generation=True),
+            lambda s: s.update(approval=copy.deepcopy(s["approval_history"][-1])),
+        ]
+        with patch.object(review, "verify_packet", side_effect=AssertionError("unauthorized packet read")):
+            for change in changes:
+                state = copy.deepcopy(self.state)
+                change(state)
+                self.task.write_text(json.dumps(state))
+                with self.assertRaises(WorkflowError):
+                    windows.catalog(self.repo)
+
+    def test_fresh_state_change_after_real_authorization_refuses(self):
+        import review_batch_windows_v1 as windows
+
+        actual_read = windows.read
+        reads = 0
+
+        def changed_read(path):
+            nonlocal reads
+            value = actual_read(path)
+            reads += 1
+            if reads == 2:
+                value["v6_catalog"] += "-changed"
+            return value
+
+        with patch.object(windows, "read", side_effect=changed_read):
+            with self.assertRaisesRegex(WorkflowError, "authority changed during selection"):
+                windows.catalog(self.repo)
+        self.assertEqual(reads, 2)
