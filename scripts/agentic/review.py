@@ -332,6 +332,15 @@ def prepare(
 def verify_packet(directory):
     directory = plain_path(directory)
     metadata = coverage.read_json(plain_path(directory / "metadata.json"))
+    if metadata.get("purpose") != "issue-31-reporting-recovery-v6" and (
+        "v6_descriptor" in metadata
+        or "v6_fixture" in metadata
+        or any(
+            plain_path(directory / name).exists()
+            for name in ("v6-owned-capture.json", "v6-context-observation.json")
+        )
+    ):
+        raise WorkflowError("Legacy packet cannot contain V6 capture evidence")
     if type(metadata.get("schema_version")) is not int or metadata["schema_version"] not in {
         1,
         2,
@@ -544,7 +553,9 @@ def qualification(directory, *, require=False):
     """Shared gate used by recovery, publication, managed designation and preflight."""
     directory = plain_path(directory)
     meta = verify_packet(directory)
-    if require and "reporting_activation" in meta:
+    if require and (
+        "reporting_activation" in meta or meta.get("purpose") == "issue-31-reporting-recovery-v6"
+    ):
         raise WorkflowError("Reporting diagnostic evidence is not a PR review")
     if meta["schema_version"] == 4:
         if require:

@@ -790,3 +790,368 @@ class DiagnosticDependencyTests(unittest.TestCase):
             dispatch.claim(self.repo, directory, meta)
         with self.assertRaises(WorkflowError):
             dispatch.timeout()
+
+
+class OwnedCaptureTests(unittest.TestCase):
+    """Fresh finite stores, real flock/preflight, and synthetic inference only."""
+
+    def setUp(self):
+        import time
+
+        import reporting_activation_v2
+        import reporting_diagnostic_v6 as diagnostic
+        import review_claude
+        from reporting_recovery_history import semantics
+        from test_capacity_native_v1 import additional, catalog
+
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.repo = SimpleNamespace(main=Path(temporary.name) / "repo", name="Zi-Deng/FLOW-DC")
+        self.native = Path(temporary.name) / "native"
+        self.repo.main.mkdir()
+        self.policy = policy()
+        self.diagnostic = diagnostic
+        self.calls = 0
+        self.mutate = None
+        items, files = additional()
+        self.source = {
+            "components": catalog(),
+            "items": items,
+            "files": files,
+            "dependencies": {"source": "c" * 64},
+        }
+        self.enterContext(patch.object(diagnostic, "catalog", return_value=self.source))
+        self.enterContext(
+            patch.object(
+                activation,
+                "authorization",
+                return_value={
+                    "contract_digest": CONTRACT_DIGEST,
+                    "approval_digest": "ae8e4b2ff106d44908e471d1f36be74b5d9f632f1d0b92b32e5261193a245cd8",
+                },
+            )
+        )
+        self.enterContext(
+            patch.object(
+                activation,
+                "historical",
+                return_value={
+                    "stopped_v4": {"policy_semantics": semantics(self.policy)},
+                    "synthetic": "no native credit",
+                },
+            )
+        )
+        self.enterContext(
+            patch.object(
+                reporting_activation_v2,
+                "harness",
+                return_value={"head": "a" * 40, "files": {"synthetic.py": "b" * 64}},
+            )
+        )
+        self.enterContext(patch.object(claude_native_auth, "default_root", return_value=self.native))
+        credentials = {
+            "claudeAiOauth": {
+                "accessToken": "synthetic-never-real",
+                "refreshToken": "synthetic-never-real",
+                "expiresAt": (time.time() + 20000) * 1000,
+                "scopes": ["user:profile", "user:inference"],
+                "subscriptionType": "max",
+            }
+        }
+        config = {
+            "oauthAccount": {
+                "accountUuid": "11111111-1111-4111-8111-111111111111",
+                "organizationUuid": "22222222-2222-4222-8222-222222222222",
+                "hasExtraUsageEnabled": False,
+            },
+            "hasCompletedOnboarding": True,
+        }
+        prefix = "generations/" + self.policy["authentication"]["generation_id"] + "/config/"
+        with claude_native_auth.store(self.native, create=True) as storage:
+            (self.native / prefix).mkdir(mode=0o700, parents=True)
+            (self.native / "generations").chmod(0o700)
+            (self.native / "generations" / self.policy["authentication"]["generation_id"]).chmod(0o700)
+            storage.write(prefix + ".credentials.json", credentials)
+            storage.write(prefix + ".claude.json", config)
+            _, account = claude_native_auth.native_records(credentials, config, 900)
+            storage.write(
+                "registration.json",
+                {
+                    "authentication": self.policy["authentication"],
+                    "cli": self.policy["cli"],
+                    "native_exit": 0,
+                    "interactive": True,
+                    "account": account,
+                    "lineage": [],
+                    "retained_capability_generations": [],
+                    "files": {
+                        prefix + name: claude_native_auth._digest(storage.raw(prefix + name))
+                        for name in (".credentials.json", ".claude.json")
+                    },
+                },
+            )
+            storage.write(
+                "setup-attempt.json",
+                {"schema_version": 2, "authentication": self.policy["authentication"], "status": "completed"},
+            )
+            recorded = time.time()
+            storage.write(
+                "receipt.json",
+                {
+                    "schema_version": 1,
+                    "authentication": self.policy["authentication"],
+                    "account": account,
+                    "paid_usage_disabled": True,
+                    "recorded_at": recorded,
+                    "expires_at": recorded + claude_native_auth.RECEIPT_SECONDS,
+                },
+            )
+        import claude_owned_auth
+
+        with claude_owned_auth.snapshot(self.policy) as owned:
+            proposal = activation.preview(
+                self.repo, self.policy, name="synthetic-owned", tested_head="a" * 40, owned_auth=owned
+            )
+            activation.apply(self.repo, proposal, preview_digest=proposal["preview_digest"], owned_auth=owned)
+        self.enterContext(
+            patch.object(review_claude.review_cli, "executable", return_value="/synthetic/claude")
+        )
+        # Only binary inspection and process output are doubles, not policy,
+        # preflight, snapshot, final checks, telemetry, journal or replay.
+        self.enterContext(patch.object(review_claude, "check_controls"))
+        self.enterContext(patch.object(review_claude.review_process, "capture", side_effect=self.response))
+        self.enterContext(patch.object(subprocess, "Popen", side_effect=AssertionError("No subprocess")))
+        self.enterContext(patch.object(socket.socket, "connect", side_effect=AssertionError("No network")))
+
+    def response(self, args, **kwargs):
+        from test_capacity_native_v1 import raw, stream
+        from test_reporting_preflight import controls
+
+        with self.assertRaisesRegex(WorkflowError, "registration is busy"):
+            with claude_native_auth.store(self.native):
+                self.fail("Original lock must remain held")
+        if args[-1] in ("--version", "--help"):
+            return controls(args, **kwargs)
+        self.calls += 1
+        workspace = Path(kwargs["cwd"])
+        session = args[args.index("--session-id") + 1]
+        rows = stream(workspace)
+        for row in rows:
+            row["session_id"] = session
+        progress = next(
+            i
+            for i, row in enumerate(rows)
+            if row["type"] == "assistant" and row["message"]["content"][0]["type"] == "text"
+        )
+        rows[progress]["message"]["content"] = [
+            {
+                "type": "tool_use",
+                "id": "final-navigation",
+                "name": "Glob",
+                "input": {"pattern": "capability/fixture.txt"},
+            }
+        ]
+        rows.insert(
+            progress + 1,
+            {
+                "type": "user",
+                "uuid": "final-navigation-result",
+                "session_id": session,
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "final-navigation",
+                            "content": "capability/fixture.txt",
+                            "is_error": False,
+                        }
+                    ]
+                },
+            },
+        )
+        outside = workspace.parent / "outside-refusal-canary.txt"
+        if outside.exists():
+            fixture = json.loads(
+                (Path(__file__).parent / "fixtures/claude-refusal-2.1.282-v5.json").read_text()
+            )["positive"]
+            fixture["tool"]["message"]["content"][0]["input"]["file_path"] = str(outside)
+            fixture["denials"][0]["tool_input"]["file_path"] = str(outside)
+            message = f"{outside} is outside {workspace}; --restricted confines the file tools to the working directory."
+            fixture["advisory"]["message"] = message
+            fixture["result"]["message"]["content"][0]["content"] = message
+            for key in ("tool", "advisory", "result"):
+                fixture[key]["session_id"] = session
+                fixture[key].setdefault(
+                    "uuid",
+                    "11111111-1111-4111-8111-"
+                    + {"tool": "000000000021", "advisory": "000000000022", "result": "000000000023"}[key],
+                )
+            rows[progress:progress] = [fixture["tool"], fixture["advisory"], fixture["result"]]
+            rows[-1]["permission_denials"] = fixture["denials"]
+        if self.mutate:
+            self.mutate(rows)
+        return subprocess.CompletedProcess(args, 0, raw(rows), b"")
+
+    def test_real_owned_four_slots_and_independent_admission(self):
+        import claude_owned_auth
+        import reporting_admission_v6 as admission
+
+        for number in (20, 21, 22, 23):
+            outcome = self.diagnostic.run(self.repo, number=number)
+            self.assertTrue(outcome["qualified"], outcome)
+            self.assertEqual(activation.outcome(self.repo, number), outcome)
+        self.assertEqual(self.calls, 4)
+        with claude_owned_auth.snapshot(self.policy) as owned:
+            record = admission.check(self.repo, owned_auth=owned, capacity_required=True)
+        self.assertEqual(record["schema_version"], 6)
+        self.assertEqual(set(record["outcomes"]), {"20", "21", "22", "23"})
+        self.assertLessEqual(record["empirical_receipt"]["estimate"]["planned_total"], 1000000)
+        with self.assertRaises(WorkflowError):
+            admission.require_packet(None, {})
+
+    def test_final_receipt_mutation_stops_before_native_capture(self):
+        import claude_reporting_execution as execution
+
+        original = execution.reserve
+
+        def mutate(*args, **kwargs):
+            result = original(*args, **kwargs)
+            path = self.native / "receipt.json"
+            receipt = json.loads(path.read_text())
+            receipt["expires_at"] = receipt["recorded_at"] + 1
+            path.write_text(json.dumps(receipt))
+            return result
+
+        with patch.object(execution, "reserve", side_effect=mutate), self.assertRaises(WorkflowError):
+            self.diagnostic.run(self.repo, number=20)
+        self.assertEqual(self.calls, 0)
+        self.assertTrue((activation.root(self.repo) / "attempt-20.json").exists())
+        with self.assertRaises(WorkflowError):
+            self.diagnostic.run(self.repo, number=21)
+        self.assertFalse((activation.root(self.repo) / "attempt-21.json").exists())
+
+    def test_observer_refusal_preserves_exact_capture_and_stops(self):
+        import review
+
+        for number in (20, 21):
+            self.assertTrue(self.diagnostic.run(self.repo, number=number)["qualified"])
+
+        def missing_counter(rows):
+            # Frozen parser accepts incomplete optional counters; the observer
+            # must refuse, leaving the original sanitized evidence untouched.
+            for row in rows:
+                if row["type"] == "assistant":
+                    row["message"].get("usage", {}).pop("cache_read_input_tokens", None)
+
+        self.mutate = missing_counter
+        with self.assertRaises(WorkflowError):
+            self.diagnostic.run(self.repo, number=22)
+        directory = activation.root(self.repo) / "evidence-22"
+        raw = (directory / "review-capture.json").read_bytes()
+        capture = json.loads(raw)
+        self.assertEqual(capture["body"], capture["reporting"]["report"])
+        self.assertFalse((directory / self.diagnostic.OWNED).exists())
+        for number in (22, 23):
+            with self.assertRaises(WorkflowError):
+                self.diagnostic.run(self.repo, number=number)
+        self.assertEqual((directory / "review-capture.json").read_bytes(), raw)
+        self.assertEqual(self.calls, 3)
+        with self.assertRaises(WorkflowError):
+            review.qualification(directory, require=True)
+
+    def test_independent_durable_capture_sidecar_and_source_mutations(self):
+        import claude_owned_auth
+        import reporting_admission_v6 as admission
+
+        for number in (20, 21, 22):
+            self.assertTrue(self.diagnostic.run(self.repo, number=number)["qualified"])
+        directory = activation.root(self.repo) / "evidence-22"
+        for name, key, value in (
+            (self.diagnostic.OWNED, "capture_sha256", "f" * 64),
+            (self.diagnostic.OWNED, "completion_sha256", "f" * 64),
+            (self.diagnostic.SIDECAR, "schema_version", True),
+            ("review-capture.json", "body", "{}"),
+            ("reporting-finished.json", "elapsed_seconds", 1000),
+            ("reporting-execution.json", "input_digest", "f" * 64),
+        ):
+            path = directory / name
+            raw = path.read_bytes()
+            record = json.loads(raw)
+            record[key] = value
+            path.write_text(json.dumps(record))
+            try:
+                with self.subTest(name=name, key=key), self.assertRaises((WorkflowError, ValueError)):
+                    activation.outcome(self.repo, 22)
+            finally:
+                path.write_bytes(raw)
+        with (
+            claude_owned_auth.snapshot(self.policy) as owned,
+            patch(
+                "reporting_activation_v2.harness",
+                return_value={"head": "f" * 40, "files": {"synthetic.py": "b" * 64}},
+            ),
+            self.assertRaises(WorkflowError),
+        ):
+            admission.check(self.repo, owned_auth=owned)
+        self.assertTrue(activation.outcome(self.repo, 22)["qualified"])
+
+    def test_cli_closed_catalog_and_legacy_sidecar_refusal(self):
+        import reporting_cli_v6 as cli
+        import review
+        from workflow import WorkflowError
+
+        for operation in ("prepare", "run", "recover"):
+            for number in (20, 21, 22, 23):
+                self.assertEqual(cli.parser().parse_args([operation, "--number", str(number)]).number, number)
+        repo = SimpleNamespace(assert_main=lambda: None)
+        with (
+            patch.object(self.diagnostic, "catalog", side_effect=WorkflowError("closed catalog")),
+            patch("claude_owned_auth.snapshot", side_effect=AssertionError("No auth")),
+            self.assertRaisesRegex(WorkflowError, "closed catalog"),
+        ):
+            cli.dispatch(
+                repo,
+                cli.parser().parse_args(
+                    ["preview", "--policy", "absent", "--name", "x", "--tested-head", "a" * 40]
+                ),
+            )
+        directory = self.diagnostic.prepare(self.repo, number=20)
+        meta = json.loads((directory / "metadata.json").read_bytes())
+        meta["purpose"] = "issue-31-reporting-recovery-v5"
+        (directory / "metadata.json").write_text(json.dumps(meta))
+        with self.assertRaisesRegex(WorkflowError, "Legacy packet"):
+            review.verify_packet(directory)
+
+    def test_final_source_mutation_stops_before_capture(self):
+        import claude_reporting_execution as execution
+        import reporting_activation_v2
+
+        original = execution.reserve
+
+        def mutate(*args, **kwargs):
+            result = original(*args, **kwargs)
+            reporting_activation_v2.harness.return_value["files"]["synthetic.py"] = "f" * 64
+            return result
+
+        with patch.object(execution, "reserve", side_effect=mutate), self.assertRaises(WorkflowError):
+            self.diagnostic.run(self.repo, number=20)
+        self.assertEqual(self.calls, 0)
+        self.assertTrue((activation.root(self.repo) / "attempt-20.json").exists())
+
+    def test_whole_window_refuses_short_credentials_without_reservation(self):
+        prefix = "generations/" + self.policy["authentication"]["generation_id"] + "/config/"
+        import time
+
+        with claude_native_auth.store(self.native) as storage:
+            credentials = storage.read(prefix + ".credentials.json")
+            credentials["claudeAiOauth"]["expiresAt"] = (time.time() + 5000) * 1000
+            (self.native / prefix / ".credentials.json").write_text(json.dumps(credentials))
+            registration = storage.read("registration.json")
+            registration["files"][prefix + ".credentials.json"] = claude_native_auth._digest(
+                storage.raw(prefix + ".credentials.json")
+            )
+            (self.native / "registration.json").write_text(json.dumps(registration))
+        with self.assertRaises(WorkflowError):
+            self.diagnostic.run(self.repo, number=20)
+        self.assertEqual(self.calls, 0)
+        self.assertFalse((activation.root(self.repo) / "attempt-20.json").exists())

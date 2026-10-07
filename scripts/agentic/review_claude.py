@@ -9,6 +9,7 @@ import re
 import stat
 import tempfile
 import uuid
+from contextlib import nullcontext
 from pathlib import Path
 
 import claude_native_auth
@@ -192,10 +193,19 @@ def check_controls(binary, settings, policy=None):
         raise WorkflowError("Pinned builtin plugin registrar differs from the audited controls") from None
 
 
-def preflight(repo, policy, *, reporting_diagnostic=False):
+def preflight(repo, policy, *, reporting_diagnostic=False, v6_context=None):
     from review_policy import require_current_adapter
 
-    if reporting_diagnostic:
+    if v6_context is not None:
+        from claude_reporting_versions import validate_v6_diagnostic
+
+        if not reporting_diagnostic or type(v6_context) is not tuple or len(v6_context) != 4:
+            raise WorkflowError("Invalid V6 owned preflight context")
+        directory, meta, dispatch, owned_auth = v6_context
+        if digest(policy) != digest(meta.get("review_policy")):
+            raise WorkflowError("V6 preflight policy differs")
+        validate_v6_diagnostic(repo, directory, meta, dispatch, owned_auth=owned_auth)
+    elif reporting_diagnostic:
         from claude_reporting_versions import validate_diagnostic
 
         validate_diagnostic(policy)
@@ -347,10 +357,16 @@ def validate_canary(path, workspace, root, env):
         raise WorkflowError("Unsafe or native-exempt diagnostic canary location") from None
 
 
-def execute(repo, directory, meta, *, diagnostic=False, dispatch_context=None):
+def execute(repo, directory, meta, *, diagnostic=False, dispatch_context=None, owned_auth=None):
+    from reporting_diagnostic_v6 import PURPOSE as V6_PURPOSE
     from review import digest as file_digest
     from review_diagnostics import require_activation
 
+    v6 = meta.get("purpose") == V6_PURPOSE
+    if v6 and not diagnostic:
+        raise WorkflowError("V6 has no standalone ordinary execution route")
+    if owned_auth is not None and not v6:
+        raise WorkflowError("Legacy execution cannot accept an external owned snapshot")
     policy = meta["review_policy"]
     structured = policy.get("schema_version") == 2
     if structured:
@@ -375,7 +391,8 @@ def execute(repo, directory, meta, *, diagnostic=False, dispatch_context=None):
 
             if type(dispatch_context) is not Dispatch:
                 raise WorkflowError("Reporting diagnostic requires a fresh journal dispatch")
-            dispatch_context.claim(repo, directory, meta)
+            if not v6:
+                dispatch_context.claim(repo, directory, meta)
         else:
             require_reporting_activation(repo, meta)
             from reporting_admission import retain
@@ -389,9 +406,13 @@ def execute(repo, directory, meta, *, diagnostic=False, dispatch_context=None):
         else:
             diagnostic_tool_contract.validate_meta(meta)
     binary = (
-        preflight(repo, policy, reporting_diagnostic=True)
-        if structured and diagnostic
-        else preflight(repo, policy)
+        None
+        if v6
+        else (
+            preflight(repo, policy, reporting_diagnostic=True)
+            if structured and diagnostic
+            else preflight(repo, policy)
+        )
     )
     if not diagnostic and not structured:
         require_activation(repo, policy)
@@ -400,7 +421,7 @@ def execute(repo, directory, meta, *, diagnostic=False, dispatch_context=None):
 
     snapshot = claude_owned_auth.snapshot if structured else claude_native_auth.snapshot
     with (
-        snapshot(policy) as authentication,
+        nullcontext(claude_owned_auth.require(owned_auth)) if v6 else snapshot(policy) as authentication,
         tempfile.TemporaryDirectory(prefix="agentic-claude-") as temporary,
     ):
         if structured:
@@ -409,6 +430,14 @@ def execute(repo, directory, meta, *, diagnostic=False, dispatch_context=None):
         else:
             owned_auth = None
             env, recheck_auth = authentication
+        if v6:
+            dispatch_context.claim(repo, directory, meta, owned_auth=owned_auth)
+            binary = preflight(
+                repo,
+                policy,
+                reporting_diagnostic=True,
+                v6_context=(directory, meta, dispatch_context, owned_auth),
+            )
         root = Path(temporary)
         home = Path(env["HOME"])
         if structured:
@@ -451,6 +480,10 @@ def execute(repo, directory, meta, *, diagnostic=False, dispatch_context=None):
             if structured and diagnostic
             else meta.get("diagnostic_purpose")
         )
+        if v6:
+            from claude_reporting_versions import validate_v6_diagnostic
+
+            purpose = validate_v6_diagnostic(repo, directory, meta, dispatch_context, owned_auth=owned_auth)
         if diagnostic and purpose == "isolation-refusal":
             refusal_path = root / "outside-refusal-canary.txt"
             with refusal_path.open("x", encoding="utf-8") as canary:
@@ -542,7 +575,21 @@ def execute(repo, directory, meta, *, diagnostic=False, dispatch_context=None):
                 diagnostics["reasons"].append("unverified_managed_controls")
         except OSError:
             diagnostics["reasons"].append("reviewer_workspace_unreadable")
-        if structured and diagnostic:
+        if v6:
+            from reporting_diagnostic_v6 import persist_owned_capture
+
+            persist_owned_capture(
+                dispatch_context,
+                meta,
+                owned_auth,
+                response.stdout,
+                workspace,
+                session_id,
+                body,
+                diagnostics,
+                captured[2],
+            )
+        elif structured and diagnostic:
             dispatch_context.finish(meta, session_id, body, diagnostics, captured[2])
     result = body, diagnostics, policy["cli"]["version"]
     return (*result, captured[2]) if structured else result

@@ -1,6 +1,6 @@
-"""V6 diagnostic identities and durable replay; actual dispatch is not wired.
+"""V6 diagnostic identities, owned capture and durable replay.
 
-The final catalog and owned-capture adapters remain explicit closed dependencies.
+The final catalog adapter remains an explicit closed dependency.
 Neither a local journal nor a synthetic capture attests a live provider. Storage
 replay never obtains credentials, launches a process, or invents a missing call.
 """
@@ -11,6 +11,7 @@ import copy
 import hashlib
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import claude_context_observation_v1 as observer
 import claude_partial_observation_v2 as partial
@@ -299,10 +300,10 @@ class Dispatch:
             raise WorkflowError("V6 prerequisite checks exhausted immutable window")
         return number
 
-    def claim(self, repo, directory, meta):
+    def claim(self, repo, directory, meta, *, owned_auth=None):
         if self.claimed or repo is not self.repo or Path(directory) != self.directory:
             raise WorkflowError("V6 dispatch is not a fresh owned reservation")
-        self._check(meta)
+        self._check(meta, owned_auth)
         self.claimed = True
 
     def recheck(self, meta, *, owned_auth=None):
@@ -405,13 +406,123 @@ def completion(directory, capture, reservation):
     ] and finished - launched <= seconds and elapsed <= seconds
 
 
-def owned_capture(directory, meta, capture):
-    """Do not infer complete native correlation from stored numeric assertions.
+OWNED = "v6-owned-capture.json"
+SIDECAR = "v6-context-observation.json"
 
-    The actual review_claude owned-capture path must persist and bind the observer
-    plus independent exact execution/capture records before this route can open.
+
+def observation_bindings(grant, meta, capture):
+    """Recompute expected identities from independently loaded durable inputs."""
+    return {
+        "input_sha256": capture["input_digest"],
+        "policy_sha256": capacity.sha(capacity.encoded(meta["review_policy"])),
+        "execution_sha256": capacity.sha(capacity.encoded(capture["execution"])),
+        "fixture_sha256": meta["v6_fixture"]["fixture_sha256"],
+        "source_sha256": capacity.sha(capacity.encoded(grant["binding"]["harness"])),
+        "descriptor_sha256": capacity.sha(observer._bytes(observer.DESCRIPTOR)),
+        "report_sha256": capacity.sha(capture["body"].encode("utf-8")),
+        "proof_sha256": capacity.sha(capacity.encoded(capture["reporting"])),
+        "diagnostic_sha256": capacity.sha(capacity.encoded(capture["diagnostics"])),
+    }
+
+
+def persist_owned_capture(dispatch, meta, owned_auth, raw, workspace, session_id, body, diagnostics, proof):
+    """Sanitized output is durable before any observer or completion refusal.
+
+    Raw native events are transient. This function runs inside the existing
+    snapshot, and never obtains another registration lock or retains raw events.
     """
-    raise WorkflowError("V6 diagnostic/capacity replay is not implemented: owned capture persistence")
+    import os
+
+    import claude_owned_auth
+
+    owned = claude_owned_auth.require(owned_auth)
+    directory = dispatch.directory
+    # save_result writes the exact capture before assessing it. Its assessment
+    # may refuse, but cannot erase a consumed invocation's sanitized output.
+    review.save_result(
+        directory, meta, body, diagnostics, meta["review_policy"]["cli"]["version"], reporting=proof
+    )
+    dispatch.finish(meta, session_id, body, diagnostics, proof)
+    owned.recheck()
+    grant, number = identity(dispatch.repo, directory, meta)
+    capture = review.read_result_artifact(directory, "review-capture.json", meta)
+    bindings = observation_bindings(grant, meta, capture)
+    capture_bytes = review.exact_reporting_bytes(directory / "review-capture.json", 8000000)
+    receipt = {
+        "schema_version": 6,
+        "bindings": bindings,
+        "capture_sha256": capacity.sha(capture_bytes),
+        "completion_sha256": digest(activation.read(directory / FINISHED)),
+        "observation": None,
+    }
+    if number >= 22:
+        sidecar, correlation = capacity.bridge(
+            raw, directory / "packet", workspace, meta["review_policy"], session_id, bindings
+        )
+        # Write exact canonical observer bytes, never a reserialized projection.
+        fd = os.open(plain_path(directory / SIDECAR), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(sidecar)
+            stream.flush()
+            os.fsync(stream.fileno())
+        receipt["observation"] = {
+            "completion": observer.completion(sidecar, capacity.sha(capture_bytes)),
+            "correlation": correlation,
+        }
+    owned.recheck()
+    exclusive(directory / OWNED, receipt, limit=100000)
+
+
+def owned_capture(directory, meta, capture):
+    """Offline integrity replay is not an attestation of discarded native events."""
+    directory = Path(directory)
+    if not plain_path(directory / OWNED).exists():
+        raise WorkflowError("V6 diagnostic/capacity replay is not implemented: owned capture persistence")
+    # No current credentials or network: the immutable application is storage.
+    # The directory must be the exact namespace child already checked by identity.
+    repo = SimpleNamespace(main=directory.parent.parent.parent)
+    grant, _ = activation.load(repo)
+    number = meta["reporting_activation"]["number"]
+    activation.slot(number)
+    if directory != activation.root(repo) / f"evidence-{number}":
+        raise WorkflowError("V6 owned capture location differs")
+    bindings = observation_bindings(grant, meta, capture)
+    raw = review.exact_reporting_bytes(directory / "review-capture.json", 8000000)
+    if digest(review_coverage.strict_json(raw.decode("utf-8"))) != digest(capture):
+        raise WorkflowError("V6 durable capture differs")
+    receipt = activation.read(directory / OWNED)
+    observation = receipt.get("observation")
+    expected = {
+        "schema_version": 6,
+        "bindings": bindings,
+        "capture_sha256": capacity.sha(raw),
+        "completion_sha256": digest(activation.read(directory / FINISHED)),
+        "observation": observation,
+    }
+    if digest(receipt) != digest(expected):
+        raise WorkflowError("V6 owned capture binding differs")
+    if number < 22:
+        if observation is not None or plain_path(directory / SIDECAR).exists():
+            raise WorkflowError("Unexpected V6 capability observation")
+        return None
+    if type(observation) is not dict or set(observation) != {"completion", "correlation"}:
+        raise WorkflowError("Missing V6 capacity observation")
+    sidecar = review.exact_reporting_bytes(directory / SIDECAR, observer.MAX_BYTES)
+    observer.replay_completed(
+        sidecar,
+        observation["completion"],
+        capacity.sha(raw),
+        bindings,
+        capture["diagnostics"]["usage"]["counters"],
+        observation["correlation"],
+    )
+    return {
+        "sidecar": sidecar,
+        "completion": observation["completion"],
+        "capture": raw,
+        "counters": capture["diagnostics"]["usage"]["counters"],
+        "correlation": observation["correlation"],
+    }
 
 
 def assess_capture(directory, meta, capture, reservation):
@@ -486,10 +597,14 @@ def replay(repo, grant, reservation, finished):
     identity(repo, directory, meta)
     predecessor(repo, number)
     capture = review.read_result_artifact(directory, "review-capture.json", meta)
+    from claude_reporting_execution import validate_capture
+
+    validate_capture(directory, meta, capture)
+    review.qualification(directory)  # Exact retained report/proof/diagnostic artifacts, not PR readiness.
     timing, assessment, qualified = assess_capture(directory, meta, capture, reservation)
     if finished < timing["finished"] or finished - timing["finished"] > 180:
         raise WorkflowError("V6 offline replay allocation exceeded")
-    owned_capture(directory, meta, capture)  # Remains closed until actual persistence wiring.
+    owned_capture(directory, meta, capture)
     ended_wall, ended_monotonic = activation.clock(time.time()), time.monotonic()
     elapsed = ended_monotonic - replay_monotonic
     if (
@@ -513,15 +628,39 @@ def replay(repo, grant, reservation, finished):
 
 def recover(repo, *, number):
     activation.slot(number)
-    # No auth/provider, capture reconstruction, reservation, or automatic successor.
+    # Materialize retained exact bytes only; never reconstruct missing native evidence.
+    directory = activation.root(repo) / f"evidence-{number}"
+    if (directory / "review-capture.json").exists():
+        review.recover_review(repo, directory)
+    # No auth/provider, reservation, or automatic successor.
     if (activation.root(repo) / f"outcome-{number}.json").exists():
         return activation.outcome(repo, number)
     return activation.complete(repo, number=number)
 
 
 def run(repo, *, number):
+    import claude_owned_auth
+    from review_claude import execute
+
     activation.slot(number)
-    raise WorkflowError("V6 actual owned-capture dispatch wiring is not implemented")
+    # The final production catalog must exist before touching authentication.
+    try:
+        catalog(repo)
+    except WorkflowError as error:
+        raise WorkflowError("V6 actual owned-capture dispatch wiring requires final catalog") from error
+    if (activation.root(repo) / f"attempt-{number}.json").exists():
+        return recover(repo, number=number)
+    predecessor(repo, number)
+    directory = activation.root(repo) / f"evidence-{number}"
+    if not directory.exists():
+        prepare(repo, number=number)
+    meta = review.verify_packet(directory)
+    identity(repo, directory, meta)
+    with claude_owned_auth.snapshot(meta["review_policy"]) as owned:
+        reservation = activation.reserve(repo, number=number, input_digest=digest(meta), owned_auth=owned)
+        dispatch = Dispatch(repo, directory, reservation)
+        execute(repo, directory, meta, diagnostic=True, dispatch_context=dispatch, owned_auth=owned)
+    return recover(repo, number=number)
 
 
 def validate_profile(repo, directory, meta, dispatch, *, owned_auth):

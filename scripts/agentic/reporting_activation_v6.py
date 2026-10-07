@@ -1,8 +1,7 @@
 """Finite V6 authority and durable accounting; provider dispatch remains disabled.
 
-The future exact fixture/profile/owned-window adapter and diagnostic evaluator
-are deliberately closed dependencies. No caller-supplied success or context can
-activate this module. Synthetic tests replace those seams only in disposable
+The final exact catalog/check adapter remains a deliberately closed dependency.
+No caller-supplied success or context can activate this module. Synthetic tests replace those seams only in disposable
 repositories; they provide no native qualification. Historical APIs are unchanged.
 """
 
@@ -184,11 +183,11 @@ def _binding(value):
             raise WorkflowError("Invalid V6 fixture binding")
 
 
-def preview(repo, policy, *, name, tested_head, now=None):
+def preview(repo, policy, *, name, tested_head, now=None, owned_auth=None):
     if root(repo).exists():
         raise WorkflowError("Prior V6 application cannot be repeated")
     start = clock(time.time() if now is None else now)
-    binding = context(repo, policy)
+    binding = context(repo, policy, owned_auth=owned_auth)
     if tested_head != binding["harness"]["head"]:
         raise WorkflowError("V6 tested source differs")
     grant = {
@@ -241,7 +240,7 @@ def validate_grant(grant):
         raise WorkflowError("V6 bounds or identity changed")
 
 
-def apply(repo, proposal, *, preview_digest, now=None):
+def apply(repo, proposal, *, preview_digest, now=None, owned_auth=None):
     started = clock(time.time() if now is None else now)
     # Even an empty or torn namespace is not silently adopted or reset.
     if root(repo).exists():
@@ -255,7 +254,8 @@ def apply(repo, proposal, *, preview_digest, now=None):
         or proposal["preview_digest"] != preview_digest
         or digest(grant) != preview_digest
         or not grant["not_before"] <= started <= grant["expires_at"] - 7380
-        or digest(context(repo, grant["binding"]["policy"])) != digest(grant["binding"])
+        or digest(context(repo, grant["binding"]["policy"], owned_auth=owned_auth))
+        != digest(grant["binding"])
     ):
         raise WorkflowError("Stale V6 preview or context")
     checked = started if now is not None else clock(time.time())
@@ -328,7 +328,7 @@ def _reservation(grant, number, input_digest, started):
     }
 
 
-def reserve(repo, *, number, input_digest, now=None):
+def reserve(repo, *, number, input_digest, now=None, owned_auth=None):
     from reporting_recovery_history_v6 import known_usage
 
     slot(number)
@@ -356,7 +356,12 @@ def reserve(repo, *, number, input_digest, now=None):
     if not previous_finished <= started <= application["deadline"] - remaining(number):
         raise WorkflowError("V6 remaining allocation does not fit or clock rolled back")
     if digest(
-        context(repo, grant["binding"]["policy"], remaining_seconds=application["deadline"] - started)
+        context(
+            repo,
+            grant["binding"]["policy"],
+            remaining_seconds=application["deadline"] - started,
+            owned_auth=owned_auth,
+        )
     ) != digest(grant["binding"]):
         raise WorkflowError("V6 source, authority, history, fixtures or generation changed")
     checked = started if now is not None else clock(time.time())
@@ -369,7 +374,7 @@ def reserve(repo, *, number, input_digest, now=None):
 
 
 def evaluate(repo, grant, reservation, finished):
-    """Refuse until the exact V6 diagnostic/capacity offline evaluator exists."""
+    """Recompute exact V6 diagnostic/capacity evidence within immutable bounds."""
     validate_grant(grant)
     number = reservation.get("number")
     slot(number)

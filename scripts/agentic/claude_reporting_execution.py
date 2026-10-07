@@ -110,10 +110,15 @@ def reserve(directory, meta, session_id, prompt, attempt, *, diagnostic=None):
 
 def retained(directory, meta):
     """Read only, bounded and typed; no credential store or provider access."""
+    from reporting_diagnostic_v6 import OWNED, PURPOSE, SIDECAR
     from review import exact_reporting_bytes
     from review_coverage import strict_json
     from review_prompt import native
 
+    if meta.get("purpose") != PURPOSE and any(
+        plain_path(Path(directory) / name).exists() for name in (OWNED, SIDECAR)
+    ):
+        raise WorkflowError("Legacy execution cannot contain V6 sidecars")
     path = plain_path(Path(directory) / FILENAME)
     if not path.exists():
         return None
