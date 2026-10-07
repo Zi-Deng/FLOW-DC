@@ -841,7 +841,7 @@ def full_checks(repo, directory, meta):
     return {"local": digest(evidence), "hosted": digest(receipts), "source": digest(current)}
 
 
-def catalog(repo, *, plan_only=False, packet_target=None):
+def catalog(repo, *, plan_only=False, packet_target=None, batch_directory=None):
     """Actual source/check adapter; no readiness flag or provisional catalog input.
 
     The coordinator supplies a prepared full packet plus retained check artifacts
@@ -909,14 +909,19 @@ def catalog(repo, *, plan_only=False, packet_target=None):
         or context["pull_request"]["base"]["sha"] != meta["base_sha"]
     ):
         refuse("saved PR identity differs")
-    for key, endpoint in [
-        ("reviews", "pulls/32/reviews"),
-        ("inline_comments", "pulls/32/comments"),
-        ("pr_comments", "issues/32/comments"),
-        ("issue_comments", "issues/31/comments"),
-    ]:
-        if digest(context[key]) != digest(repo.api(endpoint, paginate=True)):
-            refuse("public findings/dispositions/context changed")
+    if batch_directory is not None:
+        if packet_target is not None or plan_only:
+            refuse("batch reconciliation cannot prepare or replace the initial catalog")
+        reconcile_public_context(repo, batch_directory, context)
+    else:
+        for key, endpoint in [
+            ("reviews", "pulls/32/reviews"),
+            ("inline_comments", "pulls/32/comments"),
+            ("pr_comments", "issues/32/comments"),
+            ("issue_comments", "issues/31/comments"),
+        ]:
+            if digest(context[key]) != digest(repo.api(endpoint, paginate=True)):
+                refuse("public findings/dispositions/context changed")
     # Rebuild current Git snapshots and the complete original obligation inventory.
     with tempfile.TemporaryDirectory(prefix="agentic-catalog-") as temporary:
         packet = Path(temporary)
@@ -1107,17 +1112,24 @@ def integration_reports(plan, reports, dependencies, *, existing_projection_byte
 
 
 def replay_prefix(repo, directory, plan, window):
-    """Closed production seam for the next batch9 execution/publication slice.
+    """Recompute the complete published first-window prefix, without repairs or imports."""
+    if not (Path(directory) / "batch.json").exists():
+        refuse("prefix adapter requires actual complete batch9 preparation")
+    batch = load_preparation(directory)
+    if type(window) is not int or window != 0 or digest(plan) != digest(batch["plan"]):
+        refuse("only the exact original first window can replay")
+    value = component_prefix(repo, directory)
+    if value["pending"] is not None or [r["unit"] for r in value["rows"]] != plan["schedule"]["windows"][0]:
+        refuse("incomplete published window or active/uncertain reservation")
+    return value["rows"]
 
-    Must independently requalify every exact child, verify global claims, known
-    usage and publications and refuse any active/uncertain reservation. There is
-    deliberately no receipt, boolean or callback parameter to bypass this gate.
-    """
-    refuse("batch9 execution/publication prefix adapter is not implemented")
 
-
-def current_plan(repo, plan):
-    source = catalog(repo)
+def current_plan(repo, plan, *, directory=None):
+    source = (
+        catalog(repo, batch_directory=directory)
+        if directory is not None and _has_publications(directory)
+        else catalog(repo)
+    )
     if source["dependencies"]["assignments"] != plan["catalog_digest"]:
         refuse("current source/catalog/check provenance changed")
 
@@ -1171,6 +1183,8 @@ def pause(repo, directory, *, owned, now):
     """Stop only after current source and independently published prefix replay."""
     import claude_owned_auth
 
+    if (Path(directory) / "batch.json").exists():
+        refuse("production stopped-window transitions await the lineage adapter")
     plan, applied = load(directory)
     current_plan(repo, plan)
     rows = journal(directory, plan, applied)
@@ -1198,6 +1212,8 @@ def resume_window(repo, directory, *, owned, now):
     """Manual stopped renewal only; owned verifier covers the whole next window."""
     import claude_owned_auth
 
+    if (Path(directory) / "batch.json").exists():
+        refuse("production stopped-window transitions await the lineage adapter")
     plan, applied = load(directory)
     current_plan(repo, plan)
     rows = journal(directory, plan, applied)
@@ -1474,7 +1490,6 @@ def prepare_child(repo, directory, unit_id, *, owned_auth):
     import time
 
     import claude_owned_auth
-    import reporting_admission_v6 as admission
     import review
     import review_claims
     from tasks import atomic_json, atomic_text
@@ -1483,19 +1498,23 @@ def prepare_child(repo, directory, unit_id, *, owned_auth):
     directory = plain_path(Path(directory))
     batch = load_preparation(directory)
     plan = batch["plan"]
-    # Until prefix replay is implemented, any changed public context (including
-    # newly published children) remains closed. No arbitrary exclusion is applied.
-    current_plan(repo, plan)
+    # Rebuild the original catalog, accounting only for independently replayed
+    # publications from this batch. Unrelated public changes still refuse.
+    current_plan(repo, plan, directory=directory)
     units = plan["catalog"]["components"] + [plan["catalog"]["integration"]]
     matches = [unit for unit in units if unit["id"] == unit_id]
     if len(matches) != 1:
         refuse("unknown child or renamed assignment")
     unit = matches[0]
+    if unit_id == "integration":
+        refuse("integration preparation remains closed outside the current complete window")
+    if unit != units[0]:
+        component_prefix(repo, directory, before=unit_id)
     target = plain_path(directory / "units" / unit_id)
     if target.exists():
         refuse("child exists or is torn; no repeat preparation")
     rows = journal(directory, plan, batch["application"])
-    if len(rows) % 2:
+    if rows:
         refuse("cannot prepare inside a paused window")
     window = len(rows) // 2
     if unit_id not in plan["schedule"]["windows"][window]:
@@ -1540,7 +1559,7 @@ def prepare_child(repo, directory, unit_id, *, owned_auth):
         )
         extra = integration_reports(plan, reports, dependencies, existing_projection_bytes=existing)
     owned = claude_owned_auth.require(owned_auth)
-    actual_admission = admission.check(repo, owned_auth=owned, capacity_required=True)
+    actual_admission = _component_admission(repo, directory, owned_auth=owned)
     if digest(actual_admission) != digest(batch["admission"]):
         refuse("current V6 admission differs; renewal runtime is not available")
     if (
@@ -1548,7 +1567,7 @@ def prepare_child(repo, directory, unit_id, *, owned_auth):
         != batch["unit_policy"]["authentication"]
     ):
         refuse("current whole-window authentication changed")
-    current_plan(repo, plan)
+    current_plan(repo, plan, directory=directory)
     checked = time.time()
     window_clock(plan, batch["application"], rows, window, checked)
     if not started <= checked <= started + 840 or not 0 <= time.monotonic() - monotonic <= 840:
@@ -1821,7 +1840,6 @@ class ChildDispatch:
 
     def recheck(self, meta, *, owned_auth):
         import claude_owned_auth
-        import reporting_admission_v6 as admission
 
         self.check_clock()
         owned = claude_owned_auth.require(owned_auth)
@@ -1833,9 +1851,9 @@ class ChildDispatch:
         ) or digest(reservation) != digest(self.reservation):
             refuse("dispatch packet, assignment, source or preparation changed")
         self.check_clock()
-        current_plan(self.repo, batch["plan"])
+        current_plan(self.repo, batch["plan"], directory=self.directory.parent.parent)
         self.check_clock()
-        if digest(admission.check(self.repo, owned_auth=owned, capacity_required=True)) != digest(
+        if digest(_component_admission(self.repo, self.directory.parent.parent, owned_auth=owned)) != digest(
             batch["admission"]
         ):
             refuse("actual V6 admission changed; successor lineage awaits published prefix")
@@ -1847,7 +1865,8 @@ class ChildDispatch:
         unit = meta["batch_unit"]["unit"]
         components = batch["plan"]["catalog"]["components"]
         if unit != components[0]:
-            refuse("later component runtime awaits independent published prefix replay")
+            component_prefix(self.repo, parent, before=unit["id"])
+            self.check_clock()
         window_clock(batch["plan"], batch["application"], rows, 0, self.check_clock())
         if (
             owned.current_binding(900, batch["plan"]["schedule"]["window_seconds"][0] - 360)
@@ -2009,12 +2028,12 @@ def persist_child_capture(dispatch, meta, owned_auth, raw, workspace, session, b
 
 
 def run_child(repo, directory):
-    """Initial component only. No batch-wide CLI or publication/readiness credit."""
+    """First-window components only. No batch-wide CLI or aggregate readiness credit."""
     import claude_owned_auth
     import review_claude
 
     dispatch = ChildDispatch(repo, directory)
-    current_plan(repo, dispatch.batch["plan"])
+    current_plan(repo, dispatch.batch["plan"], directory=Path(directory).parent.parent)
     dispatch.check_clock()
     if any(
         plain_path(Path(directory) / name).exists()
@@ -2420,9 +2439,11 @@ def _publication_identity(repo, directory):
     unit = meta["batch_unit"]["unit"]
     components = batch["plan"]["catalog"]["components"]
     sequence = next(i for i, item in enumerate(components) if item == unit)
-    # Later components cannot execute yet. Publication must not open that route.
-    if sequence != 0:
-        refuse("later component publication awaits exact prefix replay")
+    # Only first-window components; stopped and integration routes remain closed.
+    if unit["id"] not in batch["plan"]["schedule"]["windows"][0] or journal(
+        directory.parent.parent, batch["plan"], batch["application"]
+    ):
+        refuse("only unpaused first-window component publication is available")
     report = review.exact_reporting_bytes(directory / "review.md", 10000)
     if review.coverage.checksum(report.decode("utf-8")) != meta["review_sha256"]:
         refuse("publication report differs")
@@ -2522,13 +2543,18 @@ def _publication_intent(repo, directory, timer):
     }
     if (
         type(intent) is not dict
-        or set(intent) != keys
-        or type(intent["schema_version"]) is not int
-        or intent["schema_version"] != 1
+        or type(intent.get("schema_version")) is not int
+        or intent["schema_version"] not in (1, 2)
+        or set(intent) != keys | ({"prefix"} if intent["schema_version"] == 2 else set())
     ):
         refuse("torn or unsupported publication intent")
     identity, report, meta, _ = _publication_identity(repo, directory)
     timer.check()
+    if (intent["schema_version"] == 1 and identity["sequence"] != 0) or (
+        intent["schema_version"] == 2
+        and (type(intent["prefix"]) is not list or len(intent["prefix"]) != identity["sequence"])
+    ):
+        refuse("publication version/sequence/prefix differs")
     body, marker = _publication_body(identity, report, intent["operation"])
     if (
         intent["identity"] != identity
@@ -2655,6 +2681,20 @@ def _publication_result(intent, remote):
 
 
 def verify_component_publication(repo, directory):
+    parent = Path(directory).parent.parent
+    batch = load_preparation(parent)
+    if (
+        sum(
+            (parent / "units" / u["id"] / PUBLICATION_ACK).exists()
+            for u in batch["plan"]["catalog"]["components"]
+        )
+        > 1
+    ):
+        value = component_prefix(repo, parent)
+        for intent, ack in value["records"]:
+            if intent["identity"]["directory"] == str(Path(directory)):
+                return _publication_result(intent, ack["remote"])
+        refuse("requested publication is not in the actual prefix")
     timer = PublicationClock(directory)
     intent, _ = _publication_intent(repo, directory, timer)
     ack = read(Path(directory) / PUBLICATION_ACK)
@@ -2695,6 +2735,11 @@ def recover_component_publication(repo, directory):
     timer = PublicationClock(directory)
     intent, meta = _publication_intent(repo, directory, timer)
     remote = _publication_remote(repo, intent, timer)
+    if intent["schema_version"] == 2:
+        component_prefix(
+            repo, directory.parent.parent, before=intent["identity"]["unit"], publication=directory
+        )
+        timer.check()
     _publication_identity(repo, directory)
     timer.check()
     if _publication_source(repo, meta, timer) != intent["source"]:
@@ -2714,7 +2759,6 @@ def publish_component(repo, directory):
     import uuid
 
     import claude_owned_auth
-    import reporting_admission_v6 as admission
 
     directory = plain_path(Path(directory))
     if any(
@@ -2724,11 +2768,15 @@ def publish_component(repo, directory):
     timer = PublicationClock(directory)
     identity, report, meta, batch = _publication_identity(repo, directory)
     timer.check()
+    preceding = []
+    if identity["sequence"]:
+        preceding = component_prefix(repo, directory.parent.parent, before=identity["unit"])["rows"]
+        timer.check()
     source = _publication_source(repo, meta, timer)
-    current_plan(repo, batch["plan"])
+    current_plan(repo, batch["plan"], directory=directory.parent.parent)
     timer.check()
     with claude_owned_auth.snapshot(meta["review_policy"]) as owned:
-        if digest(admission.check(repo, owned_auth=owned, capacity_required=True)) != digest(
+        if digest(_component_admission(repo, directory.parent.parent, owned_auth=owned)) != digest(
             batch["admission"]
         ):
             refuse("publication current V6 admission changed")
@@ -2746,14 +2794,14 @@ def publish_component(repo, directory):
         body, marker = _publication_body(identity, report, operation)
         if any(f":{digest(identity)} -->" in (row.get("body") or "") for row in context[PUBLIC_CONTEXT[0]]):
             refuse("preexisting component publication requires its original intent; no new POST")
-        current_plan(repo, batch["plan"])
+        current_plan(repo, batch["plan"], directory=directory.parent.parent)
         timer.check()
         if (
             source != _publication_source(repo, meta, timer)
             or identity != _publication_identity(repo, directory)[0]
         ):
             refuse("publication source or child changed before intent")
-        if digest(admission.check(repo, owned_auth=owned, capacity_required=True)) != digest(
+        if digest(_component_admission(repo, directory.parent.parent, owned_auth=owned)) != digest(
             batch["admission"]
         ):
             refuse("publication final V6 admission changed")
@@ -2775,6 +2823,8 @@ def publish_component(repo, directory):
             },
             "clocks": copy.deepcopy(timer.rows),
         }
+        if identity["sequence"]:
+            intent.update(schema_version=2, prefix=preceding)
         exclusive(directory / PUBLICATION_INTENT, intent, limit=2000000)
         try:
             timer.check()
@@ -2793,6 +2843,11 @@ def publish_component(repo, directory):
             if type(posted) is not dict or type(posted.get("id")) is not int:
                 refuse("unsupported publication write response")
             remote = _publication_remote(repo, intent, timer, returned_id=posted["id"])
+            if identity["sequence"]:
+                component_prefix(
+                    repo, directory.parent.parent, before=identity["unit"], publication=directory
+                )
+                timer.check()
             if posted != remote:
                 refuse("write response and independently fetched publication differ")
             if identity != _publication_identity(repo, directory)[0] or source != _publication_source(
@@ -2827,3 +2882,277 @@ def publish_component(repo, directory):
                     limit=2000000,
                 )
             raise
+
+
+class PrefixClock:
+    """Charge replay to the existing active first window, never an old child's new allowance."""
+
+    def __init__(self, directory):
+        import time
+
+        self.plan, self.applied = load(directory)
+        if journal(directory, self.plan, self.applied):
+            refuse("stopped-window prefix requires the separate lineage adapter")
+        self.wall, self.mono = time.time(), time.monotonic()
+        self.last, self.last_mono = self.wall, self.mono
+        self.check()
+
+    def check(self):
+        import time
+
+        now, mono = clock(time.time()), clock(time.monotonic())
+        if now < self.last or mono < self.last_mono or abs(now - self.wall - (mono - self.mono)) > 1:
+            refuse("prefix operation clock rollback")
+        window_clock(self.plan, self.applied, [], 0, now)
+        self.last, self.last_mono = now, mono
+        return now
+
+
+def _stored_publication(repo, child, timer):
+    """Historical evidence replay: original clocks remain bound, not restarted."""
+    import hashlib
+    import time
+
+    identity, report, meta, batch = _publication_identity(repo, child)
+    timer.check()
+    intent = read(child / PUBLICATION_INTENT)
+    if type(intent) is not dict:
+        refuse("unsupported or torn prefix publication intent")
+    version = intent.get("schema_version")
+    keys = {
+        "schema_version",
+        "identity",
+        "operation",
+        "body",
+        "body_sha256",
+        "marker",
+        "actor",
+        "source",
+        "context",
+        "clocks",
+    }
+    if (
+        type(version) is not int
+        or version not in (1, 2)
+        or set(intent) != keys | ({"prefix"} if version == 2 else set())
+    ):
+        refuse("unsupported or torn prefix publication intent")
+    if version == 1 and identity["sequence"] != 0:
+        refuse("legacy publication cannot represent a later child")
+    body, marker = _publication_body(identity, report, intent["operation"])
+    if (
+        intent["identity"] != identity
+        or intent["body"] != body
+        or intent["marker"] != marker
+        or intent["body_sha256"] != hashlib.sha256(body.encode("utf-8")).hexdigest()
+        or intent["actor"] != _publication_actor(intent["actor"])
+    ):
+        refuse("prefix publication identity, actor or exact body changed")
+    if intent["source"] != _publication_source(repo, meta, timer):
+        refuse("prefix current source changed")
+    _publication_clocks(child, intent["clocks"])
+    ack = read(child / PUBLICATION_ACK)
+    if (
+        type(ack) is not dict
+        or set(ack) != {"schema_version", "intent_sha256", "remote", "clocks"}
+        or type(ack["schema_version"]) is not int
+        or ack["schema_version"] != 1
+        or ack["intent_sha256"] != digest(intent)
+    ):
+        refuse("prefix publication acknowledgment missing or changed")
+    _publication_clocks(child, ack["clocks"])
+    if ack["clocks"][: len(intent["clocks"])] != intent["clocks"]:
+        refuse("prefix acknowledgment lost original operation clocks")
+    last = ack["clocks"][-1]
+    origin = read(child / "batch-preparation-clock.json")
+    now, mono = timer.check(), time.monotonic()
+    if (
+        now < last["wall"]
+        or mono < last["monotonic"]
+        or abs(now - origin["wall_started"] - (mono - origin["monotonic_started"])) > 1
+    ):
+        refuse("prefix clock predates completed child or rolled back")
+    failure_path = child / PUBLICATION_FAILURE
+    if failure_path.exists():
+        failure = read(failure_path)
+        if (
+            type(failure) is not dict
+            or set(failure) != {"schema_version", "intent_sha256", "status", "clocks", "clock_exhausted"}
+            or type(failure["schema_version"]) is not int
+            or failure["schema_version"] != 1
+            or failure["intent_sha256"] != digest(intent)
+            or failure["status"] != "uncertain-no-repeat"
+            or failure["clock_exhausted"] is not False
+        ):
+            refuse("prefix publication has an unresolved failure")
+        _publication_clocks(child, failure["clocks"])
+    qualified = qualify_child(repo, child)
+    timer.check()
+    row = {
+        "unit": identity["unit"],
+        "binding": batch["plan"]["catalog_digest"],
+        "claim": identity["claim"],
+        "report": identity["artifacts"]["review.md"],
+        "publication": digest(ack),
+        "execution": identity["artifacts"]["reporting-execution.json"],
+        "capture": identity["artifacts"]["review-capture.json"],
+        "observer": identity["artifacts"][OBSERVATION],
+        "usage": qualified["usage"],
+    }
+    return intent, ack, row
+
+
+def component_prefix(repo, directory, *, before=None, publication=None):
+    """Actual first-window publications only; no imported rows or readiness callbacks.
+
+    A single prepared/active tail may exist for its current operation. It is never
+    returned as qualified prefix. Explicit replay_prefix requires the whole window.
+    The publication argument is only the current tail's own uncertain write: its
+    exact scoped remote artifact is independently verified, never imported.
+    """
+    directory = plain_path(Path(directory))
+    batch = load_preparation(directory)
+    plan = batch["plan"]
+    timer = PrefixClock(directory)
+    components = plan["catalog"]["components"]
+    names = [u["id"] for u in components]
+    first = plan["schedule"]["windows"][0]
+    units_root = plain_path(directory / "units")
+    paths = sorted(units_root.iterdir()) if units_root.exists() else []
+    if any(p.is_symlink() or not p.is_dir() or p.name not in first for p in paths):
+        refuse("hidden, copied or out-of-window child/import")
+    import review_claims
+
+    claims = read(directory / "batch-claims.json")
+    for unit in components + [plan["catalog"]["integration"]]:
+        review_claims.verify(repo, batch, unit, claims[unit["id"]])
+        execution = review_claims.root(repo) / "batch9-executions" / (digest(claims[unit["id"]]) + ".json")
+        if execution.exists():
+            child = units_root / unit["id"]
+            if child not in paths:
+                refuse("hidden or torn executable reservation outside the child prefix")
+            runtime_reservation(repo, child)
+        timer.check()
+    present = [p.name for p in paths]
+    if present != names[: len(present)]:
+        refuse("child preparation is not an exact lexical prefix")
+    records, rows, pending = [], [], None
+    for path in paths:
+        timer.check()
+        verify_child(repo, path)
+        timer.check()
+        if not (path / PUBLICATION_ACK).exists():
+            if pending is not None or path != paths[-1]:
+                refuse("unpublished or active child inside required prefix")
+            pending = path
+            continue
+        if pending is not None:
+            refuse("published child after an unresolved reservation")
+        intent, ack, row = _stored_publication(repo, path, timer)
+        if intent["identity"]["sequence"] != len(rows):
+            refuse("prefix sequence changed")
+        if intent["schema_version"] == 2 and intent["prefix"] != rows:
+            refuse("declared publication prefix changed or omitted")
+        records.append((intent, ack))
+        rows.append(row)
+    if before is not None:
+        if before not in first or len(rows) != names.index(before):
+            refuse("required preceding component is missing, active or unpublished")
+        if pending is not None and pending.name != before:
+            refuse("competing active component")
+    context = _publication_context(repo, timer)
+    if publication is not None:
+        own = plain_path(Path(publication))
+        if pending != own or before != own.name:
+            refuse("scoped publication is not the current unresolved tail")
+        # The caller's own intent is not prefix credit. Verify its remote identity
+        # through the existing exact own-artifact adapter before removing it.
+        own_timer = PublicationClock(own)
+        own_intent, _ = _publication_intent(repo, own, own_timer)
+        own_remote = _publication_remote(repo, own_intent, own_timer)
+        timer.check()
+        if [r for r in context[PUBLIC_CONTEXT[0]] if r["id"] == own_remote["id"]] != [own_remote]:
+            refuse("current publication changed between independent context reads")
+        context[PUBLIC_CONTEXT[0]] = [r for r in context[PUBLIC_CONTEXT[0]] if r["id"] != own_remote["id"]]
+        if own_intent.get("prefix") != rows:
+            refuse("current publication prefix differs from independent replay")
+    remote_ids = []
+    for intent, ack in records:
+        remote = ack["remote"]
+        if type(remote) is not dict:
+            refuse("unsupported prefix remote acknowledgment")
+        identifier = remote.get("id")
+        if type(identifier) is not int or identifier <= 0 or identifier in remote_ids:
+            refuse("copied or ambiguous prefix publication ID")
+        matches = [r for r in context[PUBLIC_CONTEXT[0]] if intent["marker"] in (r.get("body") or "")]
+        if matches != [remote]:
+            refuse("prefix listed publication missing, altered or ambiguous")
+        timer.check()
+        fetched = repo.api(f"pulls/32/reviews/{identifier}")
+        timer.check()
+        if (
+            matches != [remote]
+            or fetched != remote
+            or remote.get("body") != intent["body"]
+            or remote.get("state") != "COMMENTED"
+            or remote.get("commit_id") != batch["binding"]["head_sha"]
+            or _publication_actor(remote.get("user")) != intent["actor"]
+        ):
+            refuse("prefix remote ID/body/actor/head/state differs")
+        remote_ids.append(identifier)
+    for index, (intent, _ack) in enumerate(records):
+        baseline = intent["context"]
+        if type(baseline) is not dict or set(baseline) != set(PUBLIC_CONTEXT):
+            refuse("prefix initial context binding missing")
+        for endpoint, current in context.items():
+            binding = baseline[endpoint]
+            if type(binding) is not dict or set(binding) != {"sha256", "ids"}:
+                refuse("prefix context binding malformed")
+            prior = (
+                [r for r in current if r["id"] not in remote_ids[index:]]
+                if endpoint == PUBLIC_CONTEXT[0]
+                else current
+            )
+            if binding != {"sha256": digest(prior), "ids": [r["id"] for r in prior]}:
+                refuse("unrelated or altered original public context")
+        if [r["id"] for r in context[PUBLIC_CONTEXT[0]]] != baseline[PUBLIC_CONTEXT[0]]["ids"] + remote_ids[
+            index:
+        ]:
+            refuse("remote publication sequence reordered or hidden")
+    timer.check()
+    return {"rows": rows, "records": records, "context": context, "pending": pending}
+
+
+def reconcile_public_context(repo, directory, original):
+    """Compare every initial object unchanged; remove only independently replayed new reviews."""
+    evidence = component_prefix(repo, directory)
+    ids = {ack["remote"]["id"] for _, ack in evidence["records"]}
+    for key, endpoint in (
+        ("reviews", "pulls/32/reviews"),
+        ("inline_comments", "pulls/32/comments"),
+        ("pr_comments", "issues/32/comments"),
+        ("issue_comments", "issues/31/comments"),
+    ):
+        current = evidence["context"][endpoint]
+        if key == "reviews":
+            current = [row for row in current if row["id"] not in ids]
+        if digest(current) != digest(original[key]):
+            refuse("immutable original public context changed")
+    # Contract title/body is checked independently, without volatile issue counts.
+    issue = evidence["context"]["issues/31"][0]
+    if any(issue.get(k) != original["issue"].get(k) for k in ("id", "title", "body")):
+        refuse("immutable original issue changed")
+    return evidence
+
+
+def _has_publications(directory):
+    root = Path(directory) / "units"
+    return root.exists() and any((p / PUBLICATION_ACK).exists() for p in root.iterdir())
+
+
+def _component_admission(repo, directory, *, owned_auth):
+    import reporting_admission_v6 as admission
+
+    if _has_publications(directory):
+        return admission.check_batch(repo, directory, owned_auth=owned_auth)
+    return admission.check(repo, owned_auth=owned_auth, capacity_required=True)

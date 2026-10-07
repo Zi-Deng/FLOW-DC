@@ -1981,3 +1981,330 @@ class ComponentPublicationTests(unittest.TestCase):
         self.repo.api = changed_issue
         with self.assertRaisesRegex(WorkflowError, "unrelated public context"):
             windows.verify_component_publication(self.repo, self.child)
+
+
+class FirstWindowPrefixTests(unittest.TestCase):
+    """Two actual owned children; remote/native/catalog authority are explicit doubles."""
+
+    response = OwnedComponentTests.response
+    api = ComponentPublicationTests.api
+    publish = ComponentPublicationTests.publish
+
+    def setUp(self):
+        from unittest.mock import patch
+
+        import reporting_admission_v6 as admission
+
+        partition = windows.partition
+
+        def two_components(packet, items, binding):
+            if not any(item["id"] == "3" * 24 for item in items):
+                (packet / "second.txt").write_bytes(b"Second actual source\n")
+                items.append(
+                    {
+                        **items[0],
+                        "id": "3" * 24,
+                        "path": "scripts/agentic/reporting_versions.py",
+                        "artifact": "second.txt",
+                        "bytes": 21,
+                    }
+                )
+                inventory = json.loads((packet / "required-material.json").read_bytes())
+                inventory["required"] = copy.deepcopy(items)
+                (packet / "required-material.json").write_text(json.dumps(inventory))
+                (packet / "inventory-sha256.txt").write_text(
+                    hashlib.sha256((packet / "required-material.json").read_bytes()).hexdigest() + "\n"
+                )
+            return partition(packet, items, binding)
+
+        with patch.object(windows, "partition", side_effect=two_components):
+            ComponentPublicationTests.setUp(self)
+        self.assertEqual(len(self.fixture.plan["catalog"]["components"]), 2)
+        self.first = self.child
+        self.remote.append(
+            {
+                "id": 90,
+                "body": "Original finding\nOriginal disposition\n",
+                "state": "COMMENTED",
+                "commit_id": self.fixture.meta["head_sha"],
+                "user": {"id": 89, "login": "original"},
+            }
+        )
+        self.initial = {
+            "reviews": copy.deepcopy(self.remote),
+            "inline_comments": [],
+            "pr_comments": [],
+            "issue_comments": [],
+            "issue": self.api("issues/31"),
+        }
+        export = windows.catalog.side_effect
+
+        def current_catalog(repo, *, batch_directory=None, **kwargs):
+            if batch_directory is not None:
+                windows.reconcile_public_context(repo, batch_directory, self.initial)
+            return export(repo, **kwargs)
+
+        self.enterContext(patch.object(windows, "catalog", side_effect=current_catalog))
+        self.enterContext(
+            patch.object(
+                admission,
+                "check_batch",
+                create=True,
+                side_effect=lambda *a, **k: copy.deepcopy(self.fixture.evidence),
+            )
+        )
+
+    def test_two_real_children_publish_and_replay_in_order(self):
+        import claude_owned_auth
+        import review
+
+        original = (self.first / "packet/required-material.json").read_bytes()
+        self.publish()
+        with claude_owned_auth.snapshot(self.policy) as owned:
+            self.child = windows.prepare_child(
+                self.repo,
+                self.fixture.target,
+                self.fixture.plan["catalog"]["components"][1]["id"],
+                owned_auth=owned,
+            )
+        windows.run_child(self.repo, self.child)
+        self.publish()
+        rows = windows.replay_prefix(self.repo, self.fixture.target, self.fixture.plan, 0)
+        self.assertEqual(
+            [r["unit"] for r in rows], [u["id"] for u in self.fixture.plan["catalog"]["components"]]
+        )
+        self.assertEqual((self.child / "packet/required-material.json").read_bytes(), original)
+        self.assertEqual((self.first / "packet/required-material.json").read_bytes(), original)
+        self.assertEqual((self.child / "packet/second.txt").read_bytes(), b"Second actual source\n")
+        self.assertTrue(review.verify_publication(self.repo, self.first)["component_qualified"])
+        self.assertTrue(review.verify_publication(self.repo, self.child)["component_qualified"])
+        self.assertEqual((self.calls, self.posts), (2, 2))
+        with self.assertRaises(WorkflowError):
+            windows.run_child(self.repo, self.first)
+        with self.assertRaises(WorkflowError):
+            self.publish()
+        with self.assertRaises(WorkflowError):
+            review.qualification(self.fixture.target)
+
+    def prepare_second(self):
+        import claude_owned_auth
+
+        with claude_owned_auth.snapshot(self.policy) as owned:
+            self.child = windows.prepare_child(
+                self.repo,
+                self.fixture.target,
+                self.fixture.plan["catalog"]["components"][1]["id"],
+                owned_auth=owned,
+            )
+
+    def pair(self):
+        self.publish()
+        self.prepare_second()
+        windows.run_child(self.repo, self.child)
+        self.publish()
+
+    def replay(self):
+        return windows.replay_prefix(self.repo, self.fixture.target, self.fixture.plan, 0)
+
+    def test_unpublished_active_or_lost_ack_predecessor_blocks_next_child(self):
+        with self.assertRaisesRegex(WorkflowError, "missing, active or unpublished"):
+            self.prepare_second()
+        self.publish()
+        ack = self.first / windows.PUBLICATION_ACK
+        original = ack.read_bytes()
+        ack.unlink()
+        with self.assertRaises(WorkflowError):
+            self.prepare_second()
+        ack.write_bytes(original)
+        self.prepare_second()
+        with self.assertRaises(WorkflowError):
+            self.replay()
+        self.assertEqual((self.calls, self.posts), (1, 1))
+
+    def test_original_bodies_additions_deletions_and_order_are_exact(self):
+        self.pair()
+        original = copy.deepcopy(self.remote)
+        for change in (
+            lambda: self.remote.reverse(),
+            lambda: self.remote.pop(0),
+            lambda: self.remote.append({"id": 999, "body": "unrelated finding"}),
+            lambda: self.remote[0].update(body="changed"),
+            lambda: self.remote[0].update(user={"id": 999, "login": "other"}),
+            lambda: self.remote[0].update(commit_id="f" * 40),
+            lambda: self.remote[0].update(state="APPROVED"),
+        ):
+            self.remote = copy.deepcopy(original)
+            change()
+            with self.assertRaises(WorkflowError):
+                self.replay()
+        self.remote = original
+        for key in ("reviews", "inline_comments", "pr_comments", "issue_comments"):
+            original_context = copy.deepcopy(self.initial)
+            original_context[key].append({"id": 111, "body": "omitted original obligation"})
+            with self.assertRaisesRegex(WorkflowError, "original public context"):
+                windows.reconcile_public_context(self.repo, self.fixture.target, original_context)
+        self.assertEqual(
+            windows.reconcile_public_context(self.repo, self.fixture.target, self.initial)["rows"],
+            self.replay(),
+        )
+
+    def test_historical_child_deadline_is_not_restarted_or_used_as_current_allowance(self):
+        import time
+        from unittest.mock import patch
+
+        import review
+
+        self.pair()
+        wall, mono = time.time(), time.monotonic()
+        with (
+            patch.object(time, "time", return_value=wall + 1741),
+            patch.object(time, "monotonic", return_value=mono + 1741),
+        ):
+            self.assertEqual(len(self.replay()), 2)
+            self.assertTrue(review.verify_publication(self.repo, self.first)["component_qualified"])
+        with (
+            patch.object(time, "time", return_value=wall + 20000),
+            patch.object(time, "monotonic", return_value=mono + 20000),
+        ):
+            with self.assertRaisesRegex(WorkflowError, "allocation overrun"):
+                self.replay()
+        self.assertEqual((self.calls, self.posts), (2, 2))
+
+    def test_prefix_artifact_identity_and_usage_mutations_refuse(self):
+        self.pair()
+        for name in (
+            "packet/assignment.json",
+            "review-capture.json",
+            windows.OBSERVATION,
+            "batch-runtime-acknowledged.json",
+            "reporting-execution.json",
+            windows.PUBLICATION_ACK,
+            windows.PUBLICATION_INTENT,
+            windows.RUNTIME,
+        ):
+            path = self.first / name
+            old = path.read_bytes()
+            path.write_bytes(b"{}")
+            with self.subTest(name=name), self.assertRaises((WorkflowError, KeyError, TypeError)):
+                self.replay()
+            path.write_bytes(old)
+        intent = self.child / windows.PUBLICATION_INTENT
+        old = intent.read_bytes()
+        value = json.loads(old)
+        value["prefix"][0]["usage"] = {"status": "unknown"}
+        intent.write_text(json.dumps(value))
+        with self.assertRaises(WorkflowError):
+            self.replay()
+        intent.write_bytes(old)
+
+    def test_copied_hidden_and_torn_global_execution_refuse(self):
+        import shutil
+
+        import review_claims
+
+        self.pair()
+        copied = self.child.parent / "copied-import"
+        shutil.copytree(self.first, copied)
+        with self.assertRaisesRegex(WorkflowError, "hidden, copied"):
+            self.replay()
+        shutil.rmtree(copied)  # Disposable synthetic copy only.
+        claims = json.loads((self.fixture.target / "batch-claims.json").read_bytes())
+        path = review_claims.root(self.repo) / "batch9-executions" / (digest(claims["integration"]) + ".json")
+        path.write_text("{}")
+        with self.assertRaisesRegex(WorkflowError, "hidden or torn executable"):
+            self.replay()
+        self.assertEqual((self.calls, self.posts), (2, 2))
+
+    def test_later_uncertain_publication_recovers_without_prefix_repair_or_repeat(self):
+        self.publish()
+        self.prepare_second()
+        windows.run_child(self.repo, self.child)
+        self.lose_response = True
+        with self.assertRaisesRegex(WorkflowError, "lost response"):
+            self.publish()
+        with self.assertRaises(WorkflowError):
+            self.replay()
+        self.assertTrue(windows.recover_component_publication(self.repo, self.child)["component_qualified"])
+        self.assertEqual(len(self.replay()), 2)
+        self.assertEqual((self.calls, self.posts), (2, 2))
+
+    def test_stopped_window_and_integration_remain_closed(self):
+        import claude_owned_auth
+
+        self.pair()
+        with claude_owned_auth.snapshot(self.policy) as owned:
+            with self.assertRaisesRegex(WorkflowError, "stopped-window transitions"):
+                windows.pause(self.repo, self.fixture.target, owned=owned, now=0)
+            with self.assertRaisesRegex(WorkflowError, "integration preparation"):
+                windows.prepare_child(self.repo, self.fixture.target, "integration", owned_auth=owned)
+        with self.assertRaises(WorkflowError):
+            windows.replay_prefix(self.repo, self.fixture.target, self.fixture.plan, 1)
+
+    def test_repeated_prefix_overhead_exhausts_current_child_without_launch(self):
+        import time
+        from unittest.mock import patch
+
+        self.publish()
+        self.prepare_second()
+        wall, mono = time.time(), time.monotonic()
+        replay = windows.component_prefix
+        spent = [False]
+
+        def expensive(*args, **kwargs):
+            value = replay(*args, **kwargs)
+            spent[0] = True
+            return value
+
+        with (
+            patch.object(time, "time", side_effect=lambda: wall + (841 if spent[0] else 0)),
+            patch.object(time, "monotonic", side_effect=lambda: mono + (841 if spent[0] else 0)),
+            patch.object(windows, "component_prefix", side_effect=expensive),
+        ):
+            with self.assertRaisesRegex(WorkflowError, "allocation exhausted"):
+                windows.run_child(self.repo, self.child)
+        self.assertEqual((self.calls, self.posts), (1, 1))
+
+
+class FirstWindowAdmissionTests(unittest.TestCase):
+    response = OwnedComponentTests.response
+
+    def test_actual_four_outcomes_replay_same_generation_without_diagnostic_context_change(self):
+        from unittest.mock import patch
+
+        import claude_owned_auth
+        import reporting_activation_v6 as activation
+        import reporting_admission_v6 as admission
+        import reporting_diagnostic_v6 as diagnostic
+
+        # Real disposable activation, four frozen capture/outcome/observer replays
+        # and owned lock. Only external authority/history/catalog/native services
+        # use the existing explicitly synthetic fixture adapters.
+        OwnedComponentTests.setup_fixture(self, actual_admission=True)
+        source = diagnostic.catalog(self.repo)
+        with patch.object(windows, "catalog", return_value=source):
+            with claude_owned_auth.snapshot(self.policy) as owned:
+                actual = admission.check_batch(self.repo, self.fixture.target, owned_auth=owned)
+                self.assertEqual(actual, self.actual_admission)
+                self.assertEqual(self.calls, 4)
+                original = activation.outcome
+
+                def unknown(repo, number):
+                    value = original(repo, number)
+                    return {**value, "usage": {"status": "unknown"}} if number == 23 else value
+
+                with patch.object(activation, "outcome", side_effect=unknown):
+                    with self.assertRaisesRegex(WorkflowError, "predecessor qualification"):
+                        admission.check_batch(self.repo, self.fixture.target, owned_auth=owned)
+                changed = copy.deepcopy(source)
+                changed["dependencies"]["source"] = "d" * 64
+                with patch.object(windows, "catalog", return_value=changed):
+                    with self.assertRaisesRegex(WorkflowError, "source/fixtures"):
+                        admission.check_batch(self.repo, self.fixture.target, owned_auth=owned)
+                with patch.object(
+                    owned,
+                    "current_binding",
+                    return_value={**self.policy["authentication"], "generation_id": "wrong"},
+                ):
+                    with self.assertRaisesRegex(WorkflowError, "original V6 generation"):
+                        admission.check_batch(self.repo, self.fixture.target, owned_auth=owned)
+        self.assertEqual(self.calls, 4)

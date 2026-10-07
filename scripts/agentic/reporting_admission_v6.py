@@ -53,3 +53,72 @@ def check(repo, *, owned_auth, capacity_required=False):
 
 def require_packet(directory, meta, *, repo=None, owned_auth=None):
     raise WorkflowError("V6 has no standalone ordinary route; batch9 admission consumer is unavailable")
+
+
+def check_batch(repo, directory, *, owned_auth):
+    """Same-generation first-window consumer; original diagnostic check is unchanged."""
+    import review_batch_windows_v1 as windows
+    from reporting_activation_v2 import harness
+    from reporting_recovery_history import semantics
+
+    owned = claude_owned_auth.require(owned_auth)
+    batch = windows.load_preparation(directory)
+    timer = windows.PrefixClock(directory)
+    source = windows.catalog(repo, batch_directory=directory)
+    timer.check()
+    grant, _ = activation.load(repo)
+    policy = grant["binding"]["policy"]
+    activation.validate_policy(policy)
+    current = {"policy": copy.deepcopy(policy)}
+    current["authorization"] = activation.authorization(repo)
+    timer.check()
+    current["history"] = activation.historical(repo)
+    timer.check()
+    current["harness"] = harness()
+    timer.check()
+    current["fixtures"] = {
+        n: diagnostic.fixture_binding(files) for n, files in diagnostic.packets(source).items()
+    }
+    timer.check()
+    activation._binding(current)
+    if (
+        digest(current) != digest(grant["binding"])
+        or semantics(policy) != current["history"]["stopped_v4"]["policy_semantics"]
+    ):
+        raise WorkflowError("Batch9 original V6 source/fixtures/authority/history differs")
+    if (
+        owned.current_binding(900, batch["plan"]["schedule"]["window_seconds"][0] - 360)
+        != policy["authentication"]
+    ):
+        raise WorkflowError("Batch9 first window requires the original V6 generation")
+    timer.check()
+    outcomes, cases, bindings = {}, {}, {}
+    for number in (20, 21, 22, 23):
+        outcome = activation.outcome(repo, number)
+        allocation = activation.slot(number)
+        if outcome.get("qualified") is not True or not diagnostic.known_usage(
+            outcome.get("usage"), allocation["native_seconds"], allocation["reference_usd"]
+        ):
+            raise WorkflowError("Batch9 actual V6 predecessor qualification incomplete")
+        outcomes[str(number)] = digest(outcome)
+        if number >= 22:
+            path = activation.root(repo) / f"evidence-{number}"
+            meta = review.verify_packet(path)
+            diagnostic.identity(repo, path, meta)
+            capture = review.read_result_artifact(path, "review-capture.json", meta)
+            cases[number] = diagnostic.owned_capture(path, meta, capture)
+            bindings[number] = diagnostic.observation_bindings(grant, meta, capture)
+        timer.check()
+    actual = {
+        "schema_version": 6,
+        "grant_digest": digest(grant),
+        "binding_digest": digest(current),
+        "outcomes": outcomes,
+        "empirical_receipt": capacity.empirical_receipt(cases, bindings),
+        "authentication": copy.deepcopy(policy["authentication"]),
+    }
+    if actual != batch["admission"]:
+        raise WorkflowError("Batch9 original admission/capacity evidence changed")
+    owned.recheck()
+    timer.check()
+    return actual
