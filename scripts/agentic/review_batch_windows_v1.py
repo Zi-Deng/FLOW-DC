@@ -1105,10 +1105,78 @@ def integration_reports(plan, reports, dependencies, *, existing_projection_byte
         files[artifact], files[item["artifact"]] = raw, projection
         items.append(item)
         projections.append(projection)
-    material.packet_budget(projections, existing_projection_bytes)
+    material.packet_budget(projections, existing_projection_bytes + sum(map(len, reports.values())))
     if len(items) + len(plan["catalog"]["integration"]["required_ids"]) > 128:
         refuse("integration report and cross-boundary IDs exceed bound")
     return {"items": items, "files": files, "dependencies": copy.deepcopy(dependencies)}
+
+
+def integration_material(repo, directory, batch):
+    """Rebuild exact report inputs from the immutable complete component seal.
+
+    Every component is independently qualified locally. Remote publication and
+    current source are separately re-fetched by the encompassing prefix adapter.
+    No current clock, admission or source context is reconstructed here.
+    """
+    import review
+
+    directory = Path(directory)
+    plan = batch["plan"]
+    index = len(plan["schedule"]["windows"]) - 2
+    transitions = journal(directory, plan, batch["application"])
+    if len(transitions) < index * 2:
+        refuse("integration requires its independently sealed and resumed complete prefix")
+    sealed = transitions[index * 2 - 2]["value"]["children"]
+    names = [u["id"] for u in plan["catalog"]["components"]]
+    if [r["unit"] for r in sealed] != names:
+        refuse("integration seal omits or reorders a component")
+    reports, dependencies = {}, {}
+    for name, row in zip(names, sealed, strict=True):
+        child = directory / "units" / name
+        qualified = qualify_child(repo, child)
+        meta, _, reservation = runtime_reservation(repo, child)
+        ack = read(child / PUBLICATION_ACK)
+        intent = read(child / PUBLICATION_INTENT)
+        if (
+            row["binding"] != plan["catalog_digest"]
+            or row["claim"] != reservation["material_claim"]
+            or row["report"] != review.digest(child / "review.md")
+            or row["publication"] != digest(ack)
+            or row["execution"] != review.digest(child / "reporting-execution.json")
+            or row["capture"] != review.digest(child / "review-capture.json")
+            or row["observer"] != review.digest(child / OBSERVATION)
+            or row["usage"] != qualified["usage"]
+            or ack["intent_sha256"] != digest(intent)
+        ):
+            refuse("integration component dependency differs from complete stopped seal")
+        dependencies[name] = {
+            **{
+                key: meta[key]
+                for key in (
+                    "review_sha256",
+                    "diagnostics_sha256",
+                    "coverage_sha256",
+                    "reporting_sha256",
+                    "terminal_sha256",
+                )
+            },
+            "execution_sha256": row["execution"],
+            "publication_sha256": review.coverage.checksum(intent["body"]),
+        }
+        reports[name] = review.exact_reporting_bytes(child / "review.md", 10000)
+    existing = sum(
+        (directory / "packet" / name).stat().st_size
+        for name in plan["catalog"]["files"]
+        if name.startswith(("projections/", "whole-report-projections/", "component-reports/"))
+    )
+    extra = integration_reports(plan, reports, dependencies, existing_projection_bytes=existing)
+    extra["dependencies"] = {
+        "schema_version": 1,
+        "components": dependencies,
+        "prefix": copy.deepcopy(sealed),
+        "transition": digest(transitions[index * 2 - 1]),
+    }
+    return extra
 
 
 def replay_prefix(repo, directory, plan, window):
@@ -1118,10 +1186,10 @@ def replay_prefix(repo, directory, plan, window):
     batch = load_preparation(directory)
     if (
         type(window) is not int
-        or not 0 <= window < len(plan["schedule"]["windows"]) - 2
+        or not 0 <= window < len(plan["schedule"]["windows"]) - 1
         or digest(plan) != digest(batch["plan"])
     ):
-        refuse("only the exact original component windows can replay")
+        refuse("only the exact original component/integration windows can replay")
     value = component_prefix(repo, directory)
     if value["pending"] is not None or [r["unit"] for r in value["rows"]] != [
         u for w in plan["schedule"]["windows"][: window + 1] for u in w
@@ -1530,8 +1598,10 @@ def prepare_child(repo, directory, unit_id, *, owned_auth):
     if len(matches) != 1:
         refuse("unknown child or renamed assignment")
     unit = matches[0]
-    if unit_id == "integration":
-        refuse("integration preparation remains closed outside the current complete window")
+    if unit_id == "integration" and len(journal(directory, plan, batch["application"])) != 2 * (
+        len(plan["schedule"]["windows"]) - 2
+    ):
+        refuse("integration preparation requires its current complete window and verified resume")
     if unit != units[0]:
         component_prefix(repo, directory, before=unit_id)
     target = plain_path(directory / "units" / unit_id)
@@ -1557,34 +1627,7 @@ def prepare_child(repo, directory, unit_id, *, owned_auth):
         review_claims.verify(repo, batch, candidate, claims[candidate["id"]])
     extra = {"items": [], "files": {}, "dependencies": {}}
     if unit_id == "integration":
-        # This production gate is deliberately still closed, not a receipt flag.
-        replay_prefix(repo, directory, plan, len(plan["schedule"]["windows"]) - 3)
-        reports, dependencies = {}, {}
-        for component in plan["catalog"]["components"]:
-            child = directory / "units" / component["id"]
-            child_meta = review.verify_packet(child)
-            publication = review.verify_publication(repo, child)
-            dependencies[component["id"]] = {
-                **{
-                    key: child_meta[key]
-                    for key in (
-                        "review_sha256",
-                        "diagnostics_sha256",
-                        "coverage_sha256",
-                        "reporting_sha256",
-                        "terminal_sha256",
-                    )
-                },
-                "execution_sha256": review.digest(child / "reporting-execution.json"),
-                "publication_sha256": publication["body_sha256"],
-            }
-            reports[component["id"]] = (child / "review.md").read_bytes()
-        existing = sum(
-            (directory / "packet" / name).stat().st_size
-            for name in plan["catalog"]["files"]
-            if name.startswith("projections/")
-        )
-        extra = integration_reports(plan, reports, dependencies, existing_projection_bytes=existing)
+        extra = integration_material(repo, directory, batch)
     policy, transition = child_window_policy(directory, batch, unit_id)
     owned = claude_owned_auth.require(owned_auth)
     actual_admission = _component_admission(repo, directory, owned_auth=owned)
@@ -1694,21 +1737,26 @@ def verify_child(repo, directory):
     ):
         refuse("child metadata/assignment changed")
     unit = assignment.get("unit")
-    units = batch["plan"]["catalog"]["components"]
+    units = batch["plan"]["catalog"]["components"] + [batch["plan"]["catalog"]["integration"]]
     if not any(digest(unit) == digest(candidate) for candidate in units):
-        refuse("integration child verification awaits qualified prefix replay")
+        refuse("child is outside the exact component/integration catalog")
     if directory != parent / "units" / unit["id"]:
         refuse("copied or renamed child")
     claims = read(parent / "batch-claims.json")
     review_claims.verify(repo, batch, unit, claims[unit["id"]])
     policy, transition = child_window_policy(parent, batch, unit["id"])
+    extra = (
+        integration_material(repo, parent, batch)
+        if unit["id"] == "integration"
+        else {"items": [], "files": {}, "dependencies": {}}
+    )
     expected = {
         "schema_version": 9,
         "batch_sha256": digest(batch),
         "unit": unit,
-        "required_ids": unit["required_ids"],
+        "required_ids": unit["required_ids"] + [item["id"] for item in extra["items"]],
         "context_ids": surrounding_ids(batch["plan"]["catalog"], unit),
-        "dependencies": {},
+        "dependencies": extra["dependencies"],
         "material_claim": digest(claims[unit["id"]]),
         "policy_digest": digest(policy),
         "authorization_digest": digest(batch["authorization"]),
@@ -1721,6 +1769,19 @@ def verify_child(repo, directory):
         **batch["plan"]["catalog"]["files"],
         "assignment.json": review.digest(directory / "packet/assignment.json"),
     }
+    if extra["items"]:
+        import hashlib
+        import json
+
+        inventory = read(parent / "packet/required-material.json")
+        inventory["required"].extend(extra["items"])
+        raw = (json.dumps(inventory, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
+        extra_files = {
+            **extra["files"],
+            "required-material.json": raw,
+            "inventory-sha256.txt": (hashlib.sha256(raw).hexdigest() + "\n").encode(),
+        }
+        expected_files.update({name: hashlib.sha256(raw).hexdigest() for name, raw in extra_files.items()})
     if meta["files"] != expected_files or meta["review_policy"] != policy:
         refuse("child omits or changes surrounding material or policy")
     timing = read(directory / "batch-preparation.json")
@@ -2247,7 +2308,9 @@ def _replay_child(repo, directory):
         refuse("component observed input exceeds fixed bound")
     return {
         "schema_version": 1,
-        "scope": "component-only",
+        "scope": "integration-only"
+        if meta["batch_unit"]["unit"]["id"] == "integration"
+        else "component-only",
         "required_ids": sorted(required),
         "qualified": True,
         "usage": result["diagnostics"]["usage"],
@@ -2495,7 +2558,7 @@ def _publication_identity(repo, directory):
     if meta["repository"] != repo.name:
         refuse("publication repository differs")
     unit = meta["batch_unit"]["unit"]
-    components = batch["plan"]["catalog"]["components"]
+    components = batch["plan"]["catalog"]["components"] + [batch["plan"]["catalog"]["integration"]]
     sequence = next(i for i, item in enumerate(components) if item == unit)
     # Historical publications remain replayable across declared stopped boundaries.
     child_window_policy(directory.parent.parent, batch, unit["id"])
@@ -2537,9 +2600,10 @@ def _publication_body(identity, report, operation):
 
     if type(operation) is not str or str(uuid.UUID(operation)) != operation:
         refuse("invalid publication operation identity")
-    marker = f"<!-- agentic-batch9-component:{operation}:{digest(identity)} -->"
+    scope = "integration" if identity["unit"] == "integration" else "component"
+    marker = f"<!-- agentic-batch9-{scope}:{operation}:{digest(identity)} -->"
     body = (
-        "Scoped model review — component only; the full PR review remains incomplete.\n"
+        f"Scoped model review — {scope} only; the full PR review remains incomplete.\n"
         f"Unit: {identity['unit']}; sequence: {identity['sequence']}; "
         f"head: {identity['binding']['head_sha']}.\n"
         "Observed reads do not prove understanding. This COMMENT is not human approval.\n\n"
@@ -2730,8 +2794,9 @@ def _publication_result(intent, remote):
         "body_sha256": hashlib.sha256(intent["body"].encode("utf-8")).hexdigest(),
         "body_bytes": len(intent["body"].encode("utf-8")),
         "coverage_qualified": False,
-        "component_qualified": True,
-        "scope": "component-only",
+        "component_qualified": intent["identity"]["unit"] != "integration",
+        **({"integration_qualified": True} if intent["identity"]["unit"] == "integration" else {}),
+        "scope": "integration-only" if intent["identity"]["unit"] == "integration" else "component-only",
     }
 
 
@@ -2741,7 +2806,7 @@ def verify_component_publication(repo, directory):
     if (
         sum(
             (parent / "units" / u["id"] / PUBLICATION_ACK).exists()
-            for u in batch["plan"]["catalog"]["components"]
+            for u in batch["plan"]["catalog"]["components"] + [batch["plan"]["catalog"]["integration"]]
         )
         > 1
     ):
@@ -3094,11 +3159,11 @@ def component_prefix(repo, directory, *, before=None, publication=None):
     plan = batch["plan"]
     timer = PrefixClock(directory)
     components = plan["catalog"]["components"]
-    names = [u["id"] for u in components]
+    names = [u["id"] for u in components] + ["integration"]
     transitions = journal(directory, plan, batch["application"])
     window = len(transitions) // 2
-    if window >= len(plan["schedule"]["windows"]) - 2:
-        refuse("integration/final prefix remains closed")
+    if window >= len(plan["schedule"]["windows"]) - 1:
+        refuse("final validation prefix remains closed")
     first = [u for w in plan["schedule"]["windows"][: window + 1] for u in w]
     units_root = plain_path(directory / "units")
     paths = sorted(units_root.iterdir()) if units_root.exists() else []
@@ -3116,6 +3181,7 @@ def component_prefix(repo, directory, *, before=None, publication=None):
                 refuse("hidden or torn executable reservation outside the child prefix")
             runtime_reservation(repo, child)
         timer.check()
+    paths.sort(key=lambda p: names.index(p.name))
     present = [p.name for p in paths]
     if present != names[: len(present)]:
         refuse("child preparation is not an exact lexical prefix")
@@ -3252,14 +3318,14 @@ def _component_admission(repo, directory, *, owned_auth):
 def active_component_window(directory, batch):
     rows = journal(Path(directory), batch["plan"], batch["application"])
     window = len(rows) // 2
-    if len(rows) % 2 or window >= len(batch["plan"]["schedule"]["windows"]) - 2:
+    if len(rows) % 2 or window >= len(batch["plan"]["schedule"]["windows"]) - 1:
         refuse("no active declared component window")
     return window
 
 
 def child_window_policy(directory, batch, unit_id):
     """Derive policy from the immutable declared resume, never rewrite ancestors."""
-    windows = batch["plan"]["schedule"]["windows"][:-2]
+    windows = batch["plan"]["schedule"]["windows"][:-1]
     indices = [i for i, units in enumerate(windows) if unit_id in units]
     if len(indices) != 1:
         refuse("unknown component window")
@@ -3342,10 +3408,10 @@ def component_transition(repo, directory, *, owned, now, resuming):
         refuse("already paused or missing complete stopped boundary")
     window = len(rows) // 2
     next_window = window + 1
-    if next_window >= len(plan["schedule"]["windows"]) - 2:
-        refuse("production stopped-window transitions to integration remain closed")
+    if next_window >= len(plan["schedule"]["windows"]) - 1:
+        refuse("production stopped-window transitions to final validation remain closed")
     if abs(clock(now) - start["wall"]) > 1:
-        refuse("transition requires the actual current clock")
+        refuse("stopped-window transitions require the actual current clock")
     owned = claude_owned_auth.require(owned)
     timer = PrefixClock(directory)
     current_plan(repo, plan, directory=directory)

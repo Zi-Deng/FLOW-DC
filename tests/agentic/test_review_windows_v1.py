@@ -2752,3 +2752,354 @@ class StoppedActualAdmissionTests(unittest.TestCase):
                     actual(self.repo, self.fixture.target, owned_auth=owned), self.actual_admission
                 )
         self.assertEqual((self.calls, self.posts), (10, 6))
+
+
+class IntegrationWindowTests(unittest.TestCase):
+    """Actual local adapters; only external services and catalog authority are doubled."""
+
+    response = OwnedComponentTests.response
+    api = ComponentPublicationTests.api
+    publish = ComponentPublicationTests.publish
+    pair = FirstWindowPrefixTests.pair
+    prepare_second = FirstWindowPrefixTests.prepare_second
+
+    def setUp(self):
+        from unittest.mock import patch
+
+        import reporting_admission_v6 as admission
+
+        FirstWindowPrefixTests.setUp(self)
+        self.enterContext(
+            patch.object(
+                admission, "check_pause", side_effect=lambda *a, **k: copy.deepcopy(self.fixture.evidence)
+            )
+        )
+
+    def enter_integration(self):
+        import time
+
+        import claude_owned_auth
+
+        self.pair()
+        with claude_owned_auth.snapshot(self.policy) as owned:
+            windows.pause(self.repo, self.fixture.target, owned=owned, now=time.time())
+            windows.resume_window(self.repo, self.fixture.target, owned=owned, now=time.time())
+            self.child = windows.prepare_child(
+                self.repo, self.fixture.target, "integration", owned_auth=owned
+            )
+
+    def test_actual_complete_reports_integration_transition(self):
+        self.enter_integration()
+        self.assertEqual(
+            windows.verify_child(self.repo, self.child)["batch_unit"]["unit"]["id"], "integration"
+        )
+        import review
+        import review_report_material_v1 as material
+
+        assignment = windows.read(self.child / "packet/assignment.json")
+        inventory = windows.read(self.child / "packet/required-material.json")
+        reports = [i for i in inventory["required"] if "whole_report_projection" in i]
+        self.assertEqual(len(reports), 2)
+        for item in reports:
+            raw = (self.child / "packet" / item["path"]).read_bytes()
+            projection = (self.child / "packet" / item["artifact"]).read_bytes()
+            self.assertEqual(material.reconstruct(projection), raw)
+            self.assertEqual(
+                raw, (self.fixture.target / "units" / Path(item["path"]).stem / "review.md").read_bytes()
+            )
+            self.assertIn(item["id"], assignment["required_ids"])
+        result = windows.run_child(self.repo, self.child)
+        self.assertTrue(result["qualified"])
+        self.assertEqual(result["scope"], "integration-only")
+        self.publish()
+        publication = review.verify_publication(self.repo, self.child)
+        self.assertTrue(publication["integration_qualified"])
+        self.assertFalse(publication["coverage_qualified"])
+        rows = windows.replay_prefix(self.repo, self.fixture.target, self.fixture.plan, 1)
+        self.assertEqual(
+            [r["unit"] for r in rows],
+            [u["id"] for u in self.fixture.plan["catalog"]["components"]] + ["integration"],
+        )
+        self.assertEqual((self.calls, self.posts), (3, 3))
+        self.assertEqual(
+            len(windows.reconcile_public_context(self.repo, self.fixture.target, self.initial)["rows"]), 3
+        )
+        with self.assertRaises(WorkflowError):
+            review.qualification(self.fixture.target, require=True)
+        with self.assertRaises(WorkflowError):
+            windows.run_child(self.repo, self.child)
+
+    def test_integration_exact_dependencies_and_all_packet_bytes_refuse_mutation(self):
+        self.enter_integration()
+        original_inventory = windows.read(self.child / "packet/required-material.json")
+        reports = [i for i in original_inventory["required"] if "whole_report_projection" in i]
+        paths = [self.child / "packet/assignment.json", self.child / "packet/required-material.json"]
+        paths += [self.child / "packet" / i[key] for i in reports for key in ("path", "artifact")]
+        first = self.first
+        paths += [
+            first / name
+            for name in (
+                "review.md",
+                "reporting-proof.json",
+                windows.OBSERVATION,
+                "review-capture.json",
+                windows.COMPLETION,
+                "batch-runtime-acknowledged.json",
+                windows.PUBLICATION_ACK,
+            )
+        ]
+        for path in paths:
+            original = path.read_bytes()
+            with self.subTest(path=path.name):
+                path.write_bytes(original + b"changed")
+                with self.assertRaises((WorkflowError, ValueError)):
+                    windows.verify_child(self.repo, self.child)
+                path.unlink()
+                with self.assertRaises((WorkflowError, ValueError, OSError)):
+                    windows.verify_child(self.repo, self.child)
+                path.write_bytes(original)
+        assignment = self.child / "packet/assignment.json"
+        original = assignment.read_bytes()
+        mutations = (
+            lambda v: v["dependencies"]["prefix"].reverse(),
+            lambda v: v["dependencies"]["prefix"][0].update(claim="f" * 64),
+            lambda v: v["dependencies"]["prefix"][0].update(usage={"status": "unknown"}),
+            lambda v: v["dependencies"].update(transition="f" * 64),
+            lambda v: v["required_ids"].pop(),
+        )
+        for mutate in mutations:
+            value = json.loads(original)
+            mutate(value)
+            assignment.write_text(json.dumps(value))
+            with self.assertRaises(WorkflowError):
+                windows.verify_child(self.repo, self.child)
+        assignment.write_bytes(original)
+        self.assertEqual((self.calls, self.posts), (2, 2))
+        self.assertFalse((self.child / windows.RUNTIME).exists())
+
+    def test_missing_projection_read_stays_incomplete_after_owned_capture(self):
+        self.enter_integration()
+
+        def omit(rows):
+            skipped = set()
+            for row in rows:
+                if row.get("type") == "assistant":
+                    for block in row.get("message", {}).get("content", []):
+                        if block.get("name") == "Read" and "whole-report-projections/" in block["input"].get(
+                            "file_path", ""
+                        ):
+                            skipped.add(block["id"])
+            rows[:] = [
+                row
+                for row in rows
+                if not (
+                    row.get("type") == "assistant"
+                    and any(b.get("id") in skipped for b in row.get("message", {}).get("content", []))
+                    or row.get("type") == "user"
+                    and any(
+                        b.get("tool_use_id") in skipped for b in row.get("message", {}).get("content", [])
+                    )
+                )
+            ]
+
+        self.mutation = omit
+        with self.assertRaises(WorkflowError):
+            windows.run_child(self.repo, self.child)
+        self.assertTrue((self.child / windows.OUTPUT).exists())
+        with self.assertRaises(WorkflowError):
+            self.publish()
+        self.assertEqual((self.calls, self.posts), (3, 2))
+
+    def test_integration_uncertain_comment_recovers_read_only_and_replays_all(self):
+        from unittest.mock import patch
+
+        import claude_owned_auth
+        import review
+
+        self.enter_integration()
+        windows.run_child(self.repo, self.child)
+        self.lose_response = True
+        with self.assertRaisesRegex(WorkflowError, "lost response"):
+            self.publish()
+        with self.assertRaises(WorkflowError):
+            windows.replay_prefix(self.repo, self.fixture.target, self.fixture.plan, 1)
+        before = {p.name: p.read_bytes() for p in self.child.iterdir() if p.is_file()}
+        with patch.object(
+            claude_owned_auth, "snapshot", side_effect=AssertionError("Recovery cannot authenticate or infer")
+        ):
+            result = windows.recover_component_publication(self.repo, self.child)
+        self.assertTrue(result["integration_qualified"])
+        for name, raw in before.items():
+            self.assertEqual((self.child / name).read_bytes(), raw)
+        self.assertEqual(len(windows.replay_prefix(self.repo, self.fixture.target, self.fixture.plan, 1)), 3)
+        for field, value in (
+            ("body", "changed"),
+            ("commit_id", "f" * 40),
+            ("state", "APPROVED"),
+            ("id", 999),
+            ("user", {"id": 999, "login": "wrong"}),
+        ):
+            original = copy.deepcopy(self.remote[-1])
+            self.remote[-1][field] = value
+            with self.assertRaises(WorkflowError):
+                review.verify_publication(self.repo, self.child)
+            self.remote[-1] = original
+        self.remote.append(copy.deepcopy(self.remote[-1]))
+        with self.assertRaises(WorkflowError):
+            windows.recover_component_publication(self.repo, self.child)
+        self.remote.pop()
+        with self.assertRaises(WorkflowError):
+            self.publish()
+        self.assertEqual((self.calls, self.posts), (3, 3))
+
+    def test_integration_window_clock_and_generation_never_reset(self):
+        import time
+        from unittest.mock import patch
+
+        import claude_native_auth as auth
+
+        self.enter_integration()
+        wall, mono = time.time(), time.monotonic()
+        with (
+            patch.object(time, "time", return_value=wall + 841),
+            patch.object(time, "monotonic", return_value=mono + 841),
+        ):
+            with self.assertRaises(WorkflowError):
+                windows.run_child(self.repo, self.child)
+        self.assertEqual((self.calls, self.posts), (2, 2))
+        with auth.store(self.native) as storage:
+            record = storage.read("registration.json")
+            record["authentication"]["generation_id"] = "33333333-3333-4333-8333-333333333333"
+            storage.write("registration.json", record, replace=True)
+        with self.assertRaises(WorkflowError):
+            windows.run_child(self.repo, self.child)
+        self.assertEqual(self.calls, 2)
+
+    def test_raw_reports_count_toward_projection_packet_bound(self):
+        import review_report_material_v1 as material
+
+        self.enter_integration()
+        batch = windows.load_preparation(self.fixture.target)
+        extra = windows.integration_material(self.repo, self.fixture.target, batch)
+        reports = {
+            u["id"]: (self.fixture.target / "units" / u["id"] / "review.md").read_bytes()
+            for u in batch["plan"]["catalog"]["components"]
+        }
+        projection_bytes = sum(
+            len(raw) for name, raw in extra["files"].items() if name.startswith("whole-report-projections/")
+        )
+        with self.assertRaisesRegex(ValueError, "storage bound"):
+            windows.integration_reports(
+                batch["plan"],
+                reports,
+                extra["dependencies"]["components"],
+                existing_projection_bytes=material.MAX_PACKET_PROJECTION_BYTES - projection_bytes,
+            )
+
+
+class IntegrationActualAdmissionTests(unittest.TestCase):
+    response = OwnedComponentTests.response
+    api = ComponentPublicationTests.api
+    publish = ComponentPublicationTests.publish
+    pair = FirstWindowPrefixTests.pair
+    prepare_second = FirstWindowPrefixTests.prepare_second
+    renew_fixture = StoppedComponentWindowTests.renew_fixture
+
+    def test_real_v6_lineage_consumer_into_owned_integration(self):
+        import time
+        from unittest.mock import patch
+
+        import claude_owned_auth
+        import reporting_admission_v6 as admission
+        import reporting_diagnostic_v6 as diagnostic
+
+        setup = OwnedComponentTests.setup_fixture
+        real_check, real_pause = admission.check_batch, admission.check_pause
+        with patch.object(
+            OwnedComponentTests, "setup_fixture", lambda obj, **kw: setup(obj, actual_admission=True)
+        ):
+            FirstWindowPrefixTests.setUp(self)
+        self.fixture.evidence = copy.deepcopy(self.actual_admission)
+        self.pair()
+        source = diagnostic.catalog(self.repo)
+
+        def consumer(checker, repo, directory, *, owned_auth):
+            def catalog(repo, *, batch_directory):
+                windows.reconcile_public_context(repo, batch_directory, self.initial)
+                return copy.deepcopy(source)
+
+            with patch.object(windows, "catalog", side_effect=catalog):
+                return checker(repo, directory, owned_auth=owned_auth)
+
+        with patch.object(
+            admission, "check_pause", side_effect=lambda *a, **k: consumer(real_pause, *a, **k)
+        ):
+            with claude_owned_auth.snapshot(self.policy) as owned:
+                windows.pause(self.repo, self.fixture.target, owned=owned, now=time.time())
+        originals = {
+            p: p.read_bytes()
+            for u in self.fixture.plan["catalog"]["components"]
+            for p in (self.fixture.target / "units" / u["id"]).iterdir()
+            if p.is_file()
+        }
+        self.renew_fixture()
+        with patch.object(
+            admission, "check_batch", side_effect=lambda *a, **k: consumer(real_check, *a, **k)
+        ):
+            with claude_owned_auth.snapshot(self.policy) as owned:
+                resumed = windows.resume_window(self.repo, self.fixture.target, owned=owned, now=time.time())
+                self.assertEqual(resumed["value"]["required_seconds"], 2100)
+                self.child = windows.prepare_child(
+                    self.repo, self.fixture.target, "integration", owned_auth=owned
+                )
+            result = windows.run_child(self.repo, self.child)
+            self.assertTrue(result["qualified"])
+            self.publish()
+        rows = windows.replay_prefix(self.repo, self.fixture.target, self.fixture.plan, 1)
+        self.assertEqual(len(rows), 3)
+        self.assertEqual((self.calls, self.posts), (7, 3))
+        for path, raw in originals.items():
+            self.assertEqual(path.read_bytes(), raw)
+        with claude_owned_auth.snapshot(self.policy) as owned:
+            with self.assertRaises(WorkflowError):
+                windows.pause(self.repo, self.fixture.target, owned=owned, now=time.time())
+
+
+class IntegrationPartialReadTests(unittest.TestCase):
+    response = OwnedComponentTests.response
+    api = ComponentPublicationTests.api
+    publish = ComponentPublicationTests.publish
+    pair = FirstWindowPrefixTests.pair
+    prepare_second = FirstWindowPrefixTests.prepare_second
+    setUp = IntegrationWindowTests.setUp
+    enter_integration = IntegrationWindowTests.enter_integration
+
+    def test_last_projected_line_is_independently_required(self):
+        self.enter_integration()
+        shortened = []
+
+        def partial(rows):
+            for row in rows:
+                for block in row.get("message", {}).get("content", []):
+                    if (
+                        block.get("name") == "Read"
+                        and "whole-report-projections/" in block["input"].get("file_path", "")
+                        and not shortened
+                    ):
+                        self.assertGreater(block["input"]["limit"], 1)
+                        block["input"]["limit"] -= 1
+                        shortened.append(block["id"])
+                    elif block.get("tool_use_id") in shortened:
+                        block["content"] = "\n".join(block["content"].splitlines()[:-1])
+
+        self.mutation = partial
+        with self.assertRaises(WorkflowError):
+            windows.run_child(self.repo, self.child)
+        self.assertEqual(len(shortened), 1)
+        capture = windows.read(self.child / "review-capture.json")
+        self.assertEqual(capture["diagnostics"]["reasons"], [])
+        self.assertTrue(capture["reporting"]["accepted"])
+        self.assertTrue((self.child / windows.OUTPUT).exists())
+        with self.assertRaises(WorkflowError):
+            windows.qualify_child(self.repo, self.child)
+        self.assertEqual((self.calls, self.posts), (3, 2))
