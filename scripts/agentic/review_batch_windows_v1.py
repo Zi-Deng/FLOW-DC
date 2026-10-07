@@ -2555,6 +2555,12 @@ class PublicationClock:
 
 def _publication_identity(repo, directory):
     """Requalify all owned artifacts and global claims, without another invocation."""
+    identity, report, meta, batch, _ = _publication_evidence(repo, directory)
+    return identity, report, meta, batch
+
+
+def _publication_evidence(repo, directory):
+    """Return internally replayed qualification with its same-sweep identity."""
     import review
 
     directory = plain_path(Path(directory))
@@ -2597,7 +2603,7 @@ def _publication_identity(repo, directory):
         "qualification": digest(qualified),
         "artifacts": {name: review.digest(directory / name) for name in artifacts},
     }
-    return identity, report, meta, batch
+    return identity, report, meta, batch, qualified
 
 
 def _publication_body(identity, report, operation):
@@ -3609,8 +3615,7 @@ def aggregate_current(repo, directory, *, owned_auth):
 
         started, mono = time.time(), time.monotonic()
         child = directory / "units" / name
-        identity, report, meta, _ = _publication_identity(repo, child)
-        qualified = qualify_child(repo, child)
+        identity, report, meta, _, qualified = _publication_evidence(repo, child)
         covered.update(qualified["required_ids"])
         members.append(
             {

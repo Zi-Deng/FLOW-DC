@@ -3402,3 +3402,37 @@ class FinalEntrypointTests(unittest.TestCase):
         self.assertEqual(result, 0, errors.getvalue())
         resolve.assert_called_once_with(control, str(self.child))
         self.assertEqual((self.calls, self.posts), (1, 1))
+
+
+class FreshPublicationEvidenceTests(unittest.TestCase):
+    setUp = ComponentPublicationTests.setUp
+    response = OwnedComponentTests.response
+    api = ComponentPublicationTests.api
+
+    def test_fresh_qualification_identity_and_late_report_mutation(self):
+        from unittest.mock import patch
+
+        original = windows.qualify_child
+        with patch.object(windows, "qualify_child", wraps=original) as calls:
+            identity, report, meta, batch, qualified = windows._publication_evidence(self.repo, self.child)
+            self.assertEqual(calls.call_count, 1)
+            self.assertEqual(identity["qualification"], windows.digest(qualified))
+            self.assertEqual(
+                windows._publication_identity(self.repo, self.child), (identity, report, meta, batch)
+            )
+            self.assertEqual(calls.call_count, 2)
+        path = self.child / "batch-runtime-acknowledged.json"
+        saved = path.read_bytes()
+        path.write_text("{}")
+        with self.assertRaises(WorkflowError):
+            windows._publication_evidence(self.repo, self.child)
+        path.write_bytes(saved)
+
+        def changed_after_qualification(*args, **kwargs):
+            result = original(*args, **kwargs)
+            (self.child / "review.md").write_bytes(b"changed after qualification")
+            return result
+
+        with patch.object(windows, "qualify_child", side_effect=changed_after_qualification):
+            with self.assertRaises(WorkflowError):
+                windows._publication_evidence(self.repo, self.child)
