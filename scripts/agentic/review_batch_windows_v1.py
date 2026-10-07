@@ -2343,7 +2343,13 @@ def recover_child(repo, directory):
 PUBLICATION_INTENT = "batch-publication-intent.json"
 PUBLICATION_ACK = "batch-publication-acknowledged.json"
 PUBLICATION_FAILURE = "batch-publication-uncertain.json"
-PUBLIC_CONTEXT = ("pulls/32/reviews", "pulls/32/comments", "issues/32/comments", "issues/31/comments")
+PUBLIC_CONTEXT = (
+    "pulls/32/reviews",
+    "pulls/32/comments",
+    "issues/32/comments",
+    "issues/31/comments",
+    "issues/31",
+)
 
 
 def publication_actor(repo):
@@ -2474,7 +2480,7 @@ def _publication_context(repo, timer):
     value = {}
     for endpoint in PUBLIC_CONTEXT:
         timer.check()
-        rows = repo.api(endpoint, paginate=True)
+        rows = [repo.api(endpoint)] if endpoint == "issues/31" else repo.api(endpoint, paginate=True)
         timer.check()
         if type(rows) is not list or any(type(r) is not dict or type(r.get("id")) is not int for r in rows):
             refuse("unsupported remote context shape")

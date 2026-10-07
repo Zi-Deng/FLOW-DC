@@ -1644,6 +1644,8 @@ class ComponentPublicationTests(unittest.TestCase):
             if self.lose_response:
                 raise WorkflowError("synthetic lost response")
             return copy.deepcopy(value)
+        if suffix == "issues/31":
+            return {"id": 31, "title": "fixture issue", "body": "immutable original contract"}
         if suffix == "pulls/32/reviews":
             return copy.deepcopy(self.remote)
         if suffix.startswith("pulls/32/reviews/"):
@@ -1965,3 +1967,17 @@ class ComponentPublicationTests(unittest.TestCase):
         with self.assertRaisesRegex(WorkflowError, "current source differs"):
             windows.verify_component_publication(self.repo, self.child)
         self.assertEqual(self.posts, 1)
+
+    def test_issue_body_change_is_not_hidden_by_comment_reconciliation(self):
+        self.publish()
+        original_api = self.repo.api
+
+        def changed_issue(suffix, **kwargs):
+            value = original_api(suffix, **kwargs)
+            if suffix == "issues/31":
+                value["body"] = "changed original contract"
+            return value
+
+        self.repo.api = changed_issue
+        with self.assertRaisesRegex(WorkflowError, "unrelated public context"):
+            windows.verify_component_publication(self.repo, self.child)
