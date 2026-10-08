@@ -925,6 +925,910 @@ def _full_checks(repo, directory, meta, *, suite_profile):
     return {"local": digest(evidence), "hosted": digest(receipts), "source": digest(current)}
 
 
+def full_checks_g16(repo, directory, meta):
+    import check_runner
+    import reporting_activation_v6 as activation
+
+    current = activation.authorization(repo)
+    before = check_runner.source(repo.root)
+    if (
+        current["contract_digest"] != activation.G16_CONTRACT_DIGEST
+        or type(meta["plan_comment"]) is not int
+        or meta["plan_comment"] != 6064513854
+    ):
+        refuse("generation16 full gates require current literal authority")
+    result = _full_checks_g16(repo, directory, meta, suite_profile="issue31-suite1800-v1")
+    if activation.authorization(repo) != current or check_runner.source(repo.root) != before:
+        refuse("full gate authority or source changed")
+    return result
+
+
+def _full_checks_g16(repo, directory, meta, *, suite_profile):
+    """Validate retained local execution records and fresh hosted associations.
+
+    Local artifacts are owner-writable bookkeeping, not execution attestations.
+    Hosted receipts are independently fetched through the existing collector.
+    No test runner, installer or provider is invoked by this read-only adapter.
+    """
+    import hashlib
+
+    import check_runner
+    import ci_evidence
+
+    evidence = read(plain_path(directory) / "full-checks.json")
+    commands = {
+        "serial": "python3 -B scripts/agentic/check.py --jobs 1",
+        "parallel": "make check-agentic",
+        "full": "make check",
+        "clean": "make check-clean",
+        "installed": "installed-full-suite",
+        "lint": "ruff check",
+        "format": "ruff format --check",
+        "repository": "python3 -B scripts/check_repository.py",
+    }
+    if suite_profile is not None:
+        commands["serial"] += " --suite-profile issue31-suite1800-v1"
+        for name in ("parallel", "full"):
+            commands[name] += " AGENTIC_SUITE_PROFILE=issue31-suite1800-v1"
+    current = check_runner.source(repo.root)
+    if (
+        type(evidence) is not dict
+        or set(evidence) != {"head", "source", "commands", "installed_files"}
+        or evidence["head"] != meta["head_sha"]
+        or evidence["source"] != current
+        or type(evidence["commands"]) is not dict
+        or set(evidence["commands"]) != set(commands)
+    ):
+        refuse("full check evidence is missing, stale or partial")
+    for name, command in commands.items():
+        record = evidence["commands"][name]
+        if (
+            type(record) is not dict
+            or set(record) != {"command", "exit_status", "artifacts"}
+            or record["command"] != command
+            or type(record["exit_status"]) is not int
+            or record["exit_status"] != 0
+            or type(record["artifacts"]) is not dict
+            or not record["artifacts"]
+        ):
+            refuse("required command provenance differs")
+        for relative, expected in record["artifacts"].items():
+            if type(relative) is not str or Path(relative).is_absolute() or ".." in Path(relative).parts:
+                refuse("unsafe check evidence path")
+            checksum(expected)
+            if hashlib.sha256(plain_path(directory / relative).read_bytes()).hexdigest() != expected:
+                refuse("check artifact changed")
+    # Both standard runner records must reconcile every occurrence and worker.
+    rows = None
+    for name, jobs in [("serial", 1), ("parallel", 2)]:
+        request = read(directory / name / "request.json")
+        expected = runner_request(repo.root, jobs, suite_profile=suite_profile)
+        if expected["source"] != current:
+            refuse("source changed during descriptor reconstruction")
+        rows = expected["rows"]
+        if digest(request) != digest(expected):
+            refuse("complete runner request differs from current discovery")
+        if suite_profile is not None:
+            suite_summary(directory / name, request, jobs)
+        for index in range(jobs):
+            result = check_runner.reconcile(
+                request, index, plain_path(directory / name / f"worker-{index}.jsonl"), 0
+            )
+            if result["successful"] is not True:
+                refuse("incomplete runner occurrence or fixture execution")
+    import install
+
+    expected_payload = {
+        str(p): hashlib.sha256((repo.root / p).read_bytes()).hexdigest() for p in install.payload(repo.root)
+    }
+    if digest(evidence["installed_files"]) != digest(expected_payload):
+        refuse("current installed payload closure differs")
+    validate_installed_adoption(repo.root, directory, rows)
+    checks = repo.api(
+        f"commits/{meta['head_sha']}/check-runs?per_page=100", paginate=True, page_key="check_runs"
+    )
+    receipts = ci_evidence.collect(repo, meta["head_sha"], checks, meta["base_sha"])
+    for name in ("flowdc-tests", "agentic-quality"):
+        found = [r for r in receipts if r.get("check") == name]
+        if len(found) != 1:
+            refuse("missing or ambiguous hosted execution")
+        receipt = found[0]
+        if (
+            receipt.get("state") != "observed"
+            or receipt.get("run_attempt") != 1
+            or type(receipt.get("run_attempt")) is not int
+            or receipt.get("test_status") != "success"
+            or receipt.get("clean_status") != "success"
+            or receipt.get("pr_head_sha") != meta["head_sha"]
+            or receipt.get("pr_base_sha") != meta["base_sha"]
+        ):
+            refuse("hosted first-attempt test/clean evidence incomplete")
+        # Preserve actual merge checkout separately from the head association.
+        if type(receipt.get("tested_checkout_sha")) is not str or not re.fullmatch(
+            "[0-9a-f]{40}", receipt["tested_checkout_sha"]
+        ):
+            refuse("unknown hosted checkout")
+    return {"local": digest(evidence), "hosted": digest(receipts), "source": digest(current)}
+
+
+# Installed adoption v1 is deliberately separate from historical installed readers.
+ADOPTION_PROFILE = "installed-adoption-v1"
+ADOPTION_INTEGRATION = ("Makefile", ".github/workflows/flowdc-tests.yml")
+ADOPTION_CONFIG = (
+    b"[core]\n\trepositoryformatversion = 0\n\tfilemode = true\n\tbare = false\n\tlogallrefupdates = false\n"
+)
+ADOPTION_INDEX_OPTIONS = (
+    "-c",
+    "index.threads=1",
+    "-c",
+    "index.recordEndOfIndexEntries=false",
+    "-c",
+    "index.recordOffsetTable=false",
+    "-c",
+    "core.splitIndex=false",
+    "-c",
+    "core.untrackedCache=false",
+    "-c",
+    "core.fsmonitor=false",
+)
+
+
+def adoption_environment():
+    import os
+
+    if any(key.startswith("GIT_") for key in os.environ):
+        refuse("inherited Git environment is not permitted")
+    return {
+        **os.environ,
+        "LC_ALL": "C",
+        "TZ": "UTC",
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_CONFIG_GLOBAL": "/dev/null",
+    }
+
+
+def adoption_tree(root):
+    import stat
+
+    root = plain_path(root)
+    files, directories = {}, []
+    if not root.is_dir():
+        refuse("missing adoption root")
+    for path in sorted(root.rglob("*")):
+        relative = path.relative_to(root).as_posix()
+        mode = path.lstat().st_mode
+        if stat.S_ISDIR(mode):
+            directories.append(relative)
+        elif stat.S_ISREG(mode):
+            files[relative] = {
+                "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                "mode": stat.S_IMODE(mode),
+            }
+        else:
+            refuse("adoption symlink or special file")
+    return {"files": files, "directories": directories}
+
+
+def adoption_path(name):
+    if type(name) is not str or not name or "\0" in name or Path(name).is_absolute():
+        refuse("invalid adoption path")
+    if any(part in ("", ".", "..", ".git") for part in name.split("/")):
+        refuse("invalid adoption path component")
+    return name.encode("utf-8")
+
+
+def adoption_objects(contents):
+    """Independently serialize every expected object and the extension-free index."""
+    import struct
+
+    objects, blobs, trees = {}, {}, []
+
+    def obj(kind, data):
+        framed = kind.encode() + b" " + str(len(data)).encode() + b"\0" + data
+        oid = hashlib.sha1(framed).hexdigest()
+        if oid in objects and objects[oid] != framed:
+            refuse("object collision")
+        objects[oid] = framed
+        return oid
+
+    for name, (data, mode) in contents.items():
+        adoption_path(name)
+        if type(data) is not bytes or type(mode) is not int or mode not in (0o600, 0o644, 0o755):
+            refuse("unsupported adoption file mode or bytes")
+        blobs[name] = (0o100755 if mode & 0o111 else 0o100644, obj("blob", data))
+
+    def tree(prefix):
+        entries = {}
+        for name, value in blobs.items():
+            if not name.startswith(prefix):
+                continue
+            base, slash, _ = name[len(prefix) :].partition("/")
+            if base in entries:
+                if not slash or entries[base][0] != 0o40000:
+                    refuse("file directory collision")
+                continue
+            entries[base] = (0o40000, tree(prefix + base + "/")) if slash else value
+        ordered = sorted(
+            entries.items(), key=lambda row: row[0].encode() + (b"/" if row[1][0] == 0o40000 else b"\0")
+        )
+        raw = b"".join(
+            f"{mode:o} ".encode() + name.encode() + b"\0" + bytes.fromhex(oid)
+            for name, (mode, oid) in ordered
+        )
+        value = obj("tree", raw)
+        stdin = b"".join(
+            f"{mode:06o} {'tree' if mode == 0o40000 else 'blob'} {oid}\t{name}".encode() + b"\0"
+            for name, (mode, oid) in ordered
+        )
+        trees.append((value, stdin))
+        return value
+
+    top = tree("")
+    person = b"Installed Qualification <installed-qualification@example.invalid> 946684800 +0000\n"
+    commit = obj(
+        "commit",
+        b"tree "
+        + top.encode()
+        + b"\nauthor "
+        + person
+        + b"committer "
+        + person
+        + b"\ninstalled-adoption-v1\n",
+    )
+    index = b"DIRC" + struct.pack("!II", 2, len(blobs))
+    for name, (mode, oid) in sorted(blobs.items(), key=lambda row: row[0].encode()):
+        path = adoption_path(name)
+        entry = (
+            struct.pack("!10I", 0, 0, 0, 0, 0, 0, mode, 0, 0, 0)
+            + bytes.fromhex(oid)
+            + struct.pack("!H", min(len(path), 4095))
+            + path
+            + b"\0"
+        )
+        index += entry + b"\0" * (-len(entry) % 8)
+    index += hashlib.sha1(index).digest()
+    return {"objects": objects, "blobs": blobs, "trees": trees, "tree": top, "commit": commit, "index": index}
+
+
+def adoption_git(root, args, *, env, deadline, journal, data=None, identity=False):
+    import subprocess
+    import time
+
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        refuse("adoption operation deadline")
+    child_env = env.copy()
+    if identity:
+        child_env.update(
+            {
+                f"GIT_{role}_{key}": value
+                for role in ("AUTHOR", "COMMITTER")
+                for key, value in (
+                    ("NAME", "Installed Qualification"),
+                    ("EMAIL", "installed-qualification@example.invalid"),
+                    ("DATE", "2000-01-01T00:00:00+0000"),
+                )
+            }
+        )
+    argv = ["git", "-C", str(root), *args]
+    started = time.monotonic()
+    result = subprocess.run(argv, input=data, capture_output=True, env=child_env, timeout=remaining)
+    journal.append(
+        {
+            "argv": argv,
+            "exit_status": result.returncode,
+            "elapsed_seconds": time.monotonic() - started,
+            "input_digest": hashlib.sha256(data).hexdigest() if data is not None else None,
+        }
+    )
+    if result.returncode or time.monotonic() > deadline:
+        refuse("adoption Git operation failed or exceeded deadline")
+    return result.stdout
+
+
+def adoption_expected(source, *, env, deadline, journal):
+    import stat
+
+    import install
+
+    source = plain_path(source)
+    head = (
+        adoption_git(source, ["rev-parse", "HEAD"], env=env, deadline=deadline, journal=journal)
+        .decode()
+        .strip()
+    )
+    rows = adoption_git(
+        source, ["ls-tree", "-rz", "--full-tree", head], env=env, deadline=deadline, journal=journal
+    )
+    tracked = {}
+    for row in rows.split(b"\0"):
+        if not row:
+            continue
+        info, rawname = row.split(b"\t", 1)
+        mode, kind, oid = info.decode().split()
+        tracked[rawname.decode()] = (mode, kind, oid)
+    contents = {}
+    names = [str(path) for path in install.payload(source)] + list(ADOPTION_INTEGRATION)
+    if len(set(names)) != len(names):
+        refuse("duplicate integration payload")
+    for name in names:
+        adoption_path(name)
+        path = plain_path(source / name)
+        data = path.read_bytes()
+        mode = stat.S_IMODE(path.stat().st_mode)
+        entry = tracked.get(name)
+        framed = b"blob " + str(len(data)).encode() + b"\0" + data
+        if entry != ("100755" if mode & 0o111 else "100644", "blob", hashlib.sha1(framed).hexdigest()):
+            refuse("adoption payload not exact committed source")
+        contents[name] = (data, mode)
+    return head, contents
+
+
+def adoption_verify_git(root, expected):
+    import zlib
+
+    root = plain_path(root)
+    git = root / ".git"
+    snapshot = adoption_tree(git)
+    fixed = {
+        "HEAD": b"ref: refs/heads/installed-fixture\n",
+        "config": ADOPTION_CONFIG,
+        "index": expected["index"],
+        "refs/heads/installed-fixture": expected["commit"].encode() + b"\n",
+    }
+    object_paths = {f"objects/{oid[:2]}/{oid[2:]}": data for oid, data in expected["objects"].items()}
+    if set(snapshot["files"]) != set(fixed) | set(object_paths):
+        refuse("unexpected Git metadata or object closure")
+    for name, data in fixed.items():
+        if (git / name).read_bytes() != data:
+            refuse("Git metadata or extension-free index differs")
+    for name, framed in object_paths.items():
+        decoder = zlib.decompressobj()
+        raw = (git / name).read_bytes()
+        decoded = decoder.decompress(raw, len(framed) + 1)
+        if decoded != framed or not decoder.eof or decoder.unused_data or decoder.unconsumed_tail:
+            refuse("Git object framing or bytes differ")
+    dirs = {"objects", "objects/info", "objects/pack", "refs", "refs/heads", "refs/tags"}
+    dirs.update(f"objects/{oid[:2]}" for oid in expected["objects"])
+    if set(snapshot["directories"]) != dirs:
+        refuse("unexpected Git directory")
+    return snapshot
+
+
+def adoption_manifest(contents):
+    return {
+        name: {"sha256": hashlib.sha256(data).hexdigest(), "mode": mode}
+        for name, (data, mode) in contents.items()
+    }
+
+
+def adoption_verify_worktree(root, contents, *, git=False):
+    value = adoption_tree(root)
+    files = {name: row for name, row in value["files"].items() if not (git and name.startswith(".git/"))}
+    dirs = {str(parent) for name in contents for parent in Path(name).parents if str(parent) != "."}
+    actual_dirs = {
+        name for name in value["directories"] if not (git and (name == ".git" or name.startswith(".git/")))
+    }
+    if files != adoption_manifest(contents) or actual_dirs != dirs:
+        refuse("installed adoption worktree missing changed or extra files")
+    return {"files": files, "directories": sorted(actual_dirs)}
+
+
+def adoption_origin(payload):
+    """Exact unchanged install.install/tasks.atomic_json output, independent of disk."""
+    import json
+
+    value = {
+        "schema_version": 1,
+        "source": "agentic-github-template",
+        "files": {name: hashlib.sha256(data).hexdigest() for name, (data, _) in payload.items()},
+    }
+    return (json.dumps(value, indent=2, ensure_ascii=False) + "\n").encode("utf-8"), 0o600
+
+
+def adoption_require_origin(path, expected):
+    import stat
+
+    path = plain_path(path)
+    if path.read_bytes() != expected[0] or stat.S_IMODE(path.stat().st_mode) != expected[1]:
+        refuse("installed canonical origin bytes or mode differ")
+
+
+def prepare_installed_adoption(source, directory):
+    """Explicit bounded software fixture preparation; no suite/provider invocation."""
+    import datetime
+    import os
+    import shutil
+    import time
+
+    import install
+    from tasks import atomic_json
+
+    env = adoption_environment()
+    start = time.monotonic()
+    deadline = start + 180
+    utc = datetime.datetime.now(datetime.UTC).isoformat()
+    directory = plain_path(directory)
+    journal = []
+    head, contents = adoption_expected(source, env=env, deadline=deadline, journal=journal)
+    pristine, execution, template = (
+        directory / n for n in ("installed-root", "installed-execution-root", "empty-template")
+    )
+    if any(path.exists() for path in (pristine, execution, template)):
+        refuse("adoption fixture already exists")
+    template.mkdir()
+    install.install(source, pristine, apply=True)
+    payload = {name: value for name, value in contents.items() if name not in ADOPTION_INTEGRATION}
+    origin = pristine / ".agentic/template-origin.json"
+    origin_value = adoption_origin(payload)
+    adoption_require_origin(origin, origin_value)
+    payload[".agentic/template-origin.json"] = origin_value
+    pristine_map = adoption_verify_worktree(pristine, payload)
+    shutil.copytree(pristine, execution)
+    for name in ADOPTION_INTEGRATION:
+        target = execution / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(contents[name][0])
+        os.chmod(target, contents[name][1])
+    contents[".agentic/template-origin.json"] = payload[".agentic/template-origin.json"]
+    expected = adoption_objects(contents)
+    git_version = (
+        adoption_git(execution, ["--version"], env=env, deadline=deadline, journal=journal).decode().strip()
+    )
+    adoption_git(
+        execution,
+        [
+            "init",
+            f"--template={template}",
+            "--object-format=sha1",
+            "--initial-branch=installed-fixture",
+            str(execution),
+        ],
+        env=env,
+        deadline=deadline,
+        journal=journal,
+    )
+    (execution / ".git/config").write_bytes(ADOPTION_CONFIG)
+    for name, (_, oid) in expected["blobs"].items():
+        if (
+            adoption_git(
+                execution,
+                ["hash-object", "-w", "--stdin"],
+                env=env,
+                deadline=deadline,
+                journal=journal,
+                data=contents[name][0],
+            )
+            .decode()
+            .strip()
+            != oid
+        ):
+            refuse("real Git blob differs")
+    for oid, data in expected["trees"]:
+        if (
+            adoption_git(execution, ["mktree", "-z"], env=env, deadline=deadline, journal=journal, data=data)
+            .decode()
+            .strip()
+            != oid
+        ):
+            refuse("real Git tree differs")
+    stdin = b"".join(
+        f"{mode:o} {oid}\t{name}".encode() + b"\0"
+        for name, (mode, oid) in sorted(expected["blobs"].items(), key=lambda row: row[0].encode())
+    )
+    adoption_git(
+        execution,
+        [*ADOPTION_INDEX_OPTIONS, "update-index", "--index-version=2", "-z", "--index-info"],
+        env=env,
+        deadline=deadline,
+        journal=journal,
+        data=stdin,
+    )
+    commit = (
+        adoption_git(
+            execution,
+            ["-c", "commit.gpgSign=false", "commit-tree", expected["tree"]],
+            env=env,
+            deadline=deadline,
+            journal=journal,
+            data=b"installed-adoption-v1\n",
+            identity=True,
+        )
+        .decode()
+        .strip()
+    )
+    if commit != expected["commit"]:
+        refuse("real Git commit differs")
+    adoption_git(
+        execution,
+        ["update-ref", "refs/heads/installed-fixture", commit, "0" * 40],
+        env=env,
+        deadline=deadline,
+        journal=journal,
+    )
+    git_map = adoption_verify_git(execution, expected)
+    worktree_map = adoption_verify_worktree(execution, contents, git=True)
+    if adoption_verify_worktree(pristine, payload) != pristine_map or time.monotonic() > deadline:
+        refuse("preparation changed pristine or exceeded deadline")
+    result = {
+        "schema_version": 1,
+        "profile": ADOPTION_PROFILE,
+        "source_head": head,
+        "payload_files": adoption_manifest(
+            {n: v for n, v in payload.items() if n != ".agentic/template-origin.json"}
+        ),
+        "integration_files": adoption_manifest({n: contents[n] for n in ADOPTION_INTEGRATION}),
+        "pristine_manifest": pristine_map,
+        "execution_worktree_manifest": worktree_map,
+        "git_manifest_before": git_map,
+        "fixture_commit": commit,
+        "fixture_tree": expected["tree"],
+        "git_version": git_version,
+        "commands": journal,
+        "argv": ["install.install", str(source), str(pristine), "apply=True"],
+        "cwd": str(source),
+        "safe_environment": {
+            "git_keys_before": [],
+            "configuration": {
+                "LC_ALL": "C",
+                "TZ": "UTC",
+                "GIT_CONFIG_NOSYSTEM": "1",
+                "GIT_CONFIG_GLOBAL": "/dev/null",
+            },
+        },
+        "utc_start": utc,
+        "utc_end": datetime.datetime.now(datetime.UTC).isoformat(),
+        "elapsed_seconds": time.monotonic() - start,
+        "cap_seconds": 180,
+        "exit_status": 0,
+    }
+    atomic_json(directory / "adoption-preparation.json", result)
+    return result
+
+
+def adoption_descriptor(root):
+    """Fresh installed interpreter; no imported source-test objects are reused."""
+    import json
+    import subprocess
+
+    code = """import hashlib,json,sys
+from pathlib import Path
+root=Path.cwd()
+sys.path.insert(0,str(root/'scripts/agentic'))
+import check_runner as r
+source=r.source(root)
+suite,rows,objects,errors=r.discover(root)
+policy,assignments=r.assignment_policy(root,suite,rows,objects,source,1)
+request=dict(version=r.SUITE_VERSION,jobs=1,source=source,rows=rows,assignments=assignments,assignment_policy=policy,errors=errors,evidence_limit=r.EVIDENCE_BYTES,execution_limits=r.execution_limits('issue31-suite1800-v1',1800,r.TEXT_BYTES,r.EVIDENCE_BYTES))
+owned={p.stem for d in ('scripts/agentic','tests/agentic') for p in (root/d).glob('*.py')}
+modules={};system={}
+for name,module in sorted(sys.modules.items()):
+    path=getattr(module,'__file__',None)
+    if not path or path.startswith('<'):continue
+    path=Path(path).resolve()
+    if name.split('.')[0] in owned or path.is_relative_to(root):
+        if not path.is_relative_to(root):raise SystemExit('outside installed module origin')
+        modules[name]=dict(path=str(path.relative_to(root)),sha256=hashlib.sha256(path.read_bytes()).hexdigest())
+    else:system[name]=dict(path=str(path),version=str(getattr(module,'__version__','unknown')))
+print(json.dumps(dict(request=request,origins=dict(python=sys.executable,modules=modules,system_modules=system))))
+"""
+    import os
+
+    if os.environ.get("PYTHONPATH") is not None:
+        refuse("descriptor caller PYTHONPATH must be absent")
+    result = subprocess.run(
+        ["/usr/bin/python3", "-B", "-c", code],
+        cwd=root,
+        capture_output=True,
+        timeout=180,
+    )
+    if result.returncode:
+        refuse("installed descriptor interpreter failed")
+    value = json.loads(result.stdout)
+    if value["request"]["errors"]:
+        refuse("installed discovery errors")
+    return value
+
+
+def adoption_execution(record, root):
+    import datetime
+
+    keys = {
+        "argv",
+        "cwd",
+        "safe_environment",
+        "utc_start",
+        "utc_end",
+        "elapsed_seconds",
+        "cap_seconds",
+        "exit_status",
+    }
+    argv = [
+        "/usr/bin/python3",
+        "-B",
+        str(root / "scripts/agentic/check.py"),
+        "--jobs",
+        "1",
+        "--suite-profile",
+        "issue31-suite1800-v1",
+    ]
+    if (
+        type(record) is not dict
+        or set(record) != keys
+        or record["argv"] != argv
+        or record["cwd"] != str(root)
+    ):
+        refuse("installed execution command differs")
+    if digest(record["safe_environment"]) != digest({"PYTHONPATH": None, "git_keys": []}):
+        refuse("installed execution environment differs")
+    if (
+        type(record["cap_seconds"]) is not int
+        or record["cap_seconds"] != 1860
+        or type(record["exit_status"]) is not int
+        or record["exit_status"] != 0
+    ):
+        refuse("installed execution failed or wrong cap")
+    elapsed = clock(record["elapsed_seconds"])
+    if elapsed > 1860:
+        refuse("installed outer duration exceeded")
+    try:
+        start, end = (datetime.datetime.fromisoformat(record[k]) for k in ("utc_start", "utc_end"))
+        if (
+            start.utcoffset() != datetime.timedelta(0)
+            or end.utcoffset() != datetime.timedelta(0)
+            or abs((end - start).total_seconds() - elapsed) > 2
+        ):
+            refuse("installed execution clock mismatch")
+    except (TypeError, ValueError):
+        refuse("invalid installed execution clock")
+
+
+def validate_installed_adoption(source, directory, source_rows):
+    """No suite launch; all receipt assertions are replayed against complete roots."""
+    import time
+
+    import check_runner
+
+    env = adoption_environment()
+    env["GIT_OPTIONAL_LOCKS"] = "0"
+    deadline = time.monotonic() + 180
+    directory = plain_path(directory)
+    pristine, execution = (directory / n for n in ("installed-root", "installed-execution-root"))
+    receipt = read(directory / "installed-adoption.json")
+    keys = {
+        "schema_version",
+        "profile",
+        "source_head",
+        "source_files",
+        "payload_files",
+        "integration_files",
+        "pristine_manifest",
+        "execution_worktree_manifest",
+        "git_manifest_before",
+        "git_manifest_after",
+        "fixture_commit",
+        "fixture_tree",
+        "preparation",
+        "execution",
+        "request_digest",
+        "summary_digest",
+        "journal_digest",
+        "origins",
+    }
+    if (
+        type(receipt) is not dict
+        or set(receipt) != keys
+        or type(receipt["schema_version"]) is not int
+        or receipt["schema_version"] != 1
+        or receipt["profile"] != ADOPTION_PROFILE
+    ):
+        refuse("unsupported installed adoption receipt")
+    journal = []
+    head, contents = adoption_expected(source, env=env, deadline=deadline, journal=journal)
+    payload = {n: v for n, v in contents.items() if n not in ADOPTION_INTEGRATION}
+    origin_value = adoption_origin(payload)
+    for root in (pristine, execution):
+        adoption_require_origin(root / ".agentic/template-origin.json", origin_value)
+    contents[".agentic/template-origin.json"] = origin_value
+    payload_with_origin = {**payload, ".agentic/template-origin.json": origin_value}
+    expected = adoption_objects(contents)
+    git_map = adoption_verify_git(execution, expected)
+    current_source = check_runner.source(source)
+    actual = {
+        "source_head": head,
+        "source_files": current_source,
+        "payload_files": adoption_manifest(payload),
+        "integration_files": adoption_manifest({n: contents[n] for n in ADOPTION_INTEGRATION}),
+        "pristine_manifest": adoption_verify_worktree(pristine, payload_with_origin),
+        "execution_worktree_manifest": adoption_verify_worktree(execution, contents, git=True),
+        "git_manifest_before": git_map,
+        "git_manifest_after": git_map,
+        "fixture_commit": expected["commit"],
+        "fixture_tree": expected["tree"],
+    }
+    for key, value in actual.items():
+        if digest(receipt[key]) != digest(value):
+            refuse("installed adoption binding differs: " + key)
+    template = plain_path(directory / "empty-template")
+    if not template.is_dir() or list(template.iterdir()):
+        refuse("nonempty or missing Git template")
+    prep = read(directory / "adoption-preparation.json")
+    prep_keys = {
+        "schema_version",
+        "profile",
+        "source_head",
+        "payload_files",
+        "integration_files",
+        "pristine_manifest",
+        "execution_worktree_manifest",
+        "git_manifest_before",
+        "fixture_commit",
+        "fixture_tree",
+        "git_version",
+        "commands",
+        "argv",
+        "cwd",
+        "safe_environment",
+        "utc_start",
+        "utc_end",
+        "elapsed_seconds",
+        "cap_seconds",
+        "exit_status",
+    }
+    if type(prep) is not dict or set(prep) != prep_keys or digest(prep) != digest(receipt["preparation"]):
+        refuse("preparation shape or receipt differs")
+    if (
+        type(prep["schema_version"]) is not int
+        or prep["schema_version"] != 1
+        or prep["profile"] != ADOPTION_PROFILE
+        or type(prep["exit_status"]) is not int
+        or prep["exit_status"] != 0
+        or type(prep["cap_seconds"]) is not int
+        or prep["cap_seconds"] != 180
+        or clock(prep["elapsed_seconds"]) > 180
+    ):
+        refuse("invalid preparation bounds")
+    if (
+        prep["argv"] != ["install.install", str(source), str(pristine), "apply=True"]
+        or prep["cwd"] != str(source)
+        or digest(prep["safe_environment"])
+        != digest(
+            {
+                "git_keys_before": [],
+                "configuration": {
+                    "LC_ALL": "C",
+                    "TZ": "UTC",
+                    "GIT_CONFIG_NOSYSTEM": "1",
+                    "GIT_CONFIG_GLOBAL": "/dev/null",
+                },
+            }
+        )
+    ):
+        refuse("preparation environment or installer invocation differs")
+    import datetime
+
+    try:
+        started, ended = (datetime.datetime.fromisoformat(prep[k]) for k in ("utc_start", "utc_end"))
+        if (
+            started.utcoffset() != datetime.timedelta(0)
+            or ended.utcoffset() != datetime.timedelta(0)
+            or abs((ended - started).total_seconds() - prep["elapsed_seconds"]) > 2
+        ):
+            refuse("preparation UTC and monotonic clocks differ")
+    except (TypeError, ValueError):
+        refuse("invalid preparation UTC")
+    for key in actual.keys() & prep.keys():
+        if digest(prep[key]) != digest(actual[key]):
+            refuse("preparation binding changed")
+    # Closed sequence reconstructed from the expected source and every object.
+    expected_commands = [
+        (["git", "-C", str(source), "rev-parse", "HEAD"], None),
+        (["git", "-C", str(source), "ls-tree", "-rz", "--full-tree", head], None),
+    ]
+
+    def command(args, data=None):
+        expected_commands.append(
+            (
+                ["git", "-C", str(execution), *args],
+                hashlib.sha256(data).hexdigest() if data is not None else None,
+            )
+        )
+
+    command(["--version"])
+    command(
+        [
+            "init",
+            f"--template={template}",
+            "--object-format=sha1",
+            "--initial-branch=installed-fixture",
+            str(execution),
+        ]
+    )
+    for name in expected["blobs"]:
+        command(["hash-object", "-w", "--stdin"], contents[name][0])
+    for _, data in expected["trees"]:
+        command(["mktree", "-z"], data)
+    index_stdin = b"".join(
+        f"{mode:o} {oid}\t{name}".encode() + b"\0"
+        for name, (mode, oid) in sorted(expected["blobs"].items(), key=lambda row: row[0].encode())
+    )
+    command([*ADOPTION_INDEX_OPTIONS, "update-index", "--index-version=2", "-z", "--index-info"], index_stdin)
+    command(["-c", "commit.gpgSign=false", "commit-tree", expected["tree"]], b"installed-adoption-v1\n")
+    command(["update-ref", "refs/heads/installed-fixture", expected["commit"], "0" * 40])
+    if type(prep["commands"]) is not list or len(prep["commands"]) != len(expected_commands):
+        refuse("preparation Git command sequence differs")
+    for row, (argv, data_digest) in zip(prep["commands"], expected_commands, strict=True):
+        if (
+            type(row) is not dict
+            or set(row) != {"argv", "input_digest", "exit_status", "elapsed_seconds"}
+            or row["argv"] != argv
+            or row["input_digest"] != data_digest
+            or type(row["exit_status"]) is not int
+            or row["exit_status"] != 0
+            or clock(row["elapsed_seconds"]) > 180
+        ):
+            refuse("preparation command record differs")
+    if (
+        adoption_git(execution, ["--version"], env=env, deadline=deadline, journal=journal).decode().strip()
+        != prep["git_version"]
+    ):
+        refuse("Git runtime version differs")
+    if (
+        adoption_git(execution, ["rev-parse", "HEAD"], env=env, deadline=deadline, journal=journal)
+        .decode()
+        .strip()
+        != expected["commit"]
+    ):
+        refuse("actual fixture checkout differs")
+    stage = adoption_git(
+        execution, ["ls-files", "--stage", "-z"], env=env, deadline=deadline, journal=journal
+    )
+    expected_stage = b"".join(
+        f"{mode:o} {oid} 0\t{name}".encode() + b"\0"
+        for name, (mode, oid) in sorted(expected["blobs"].items(), key=lambda row: row[0].encode())
+    )
+    if stage != expected_stage:
+        refuse("actual Git index stage listing differs")
+    adoption_execution(receipt["execution"], execution)
+    observed = adoption_descriptor(execution)
+    request = read(directory / "installed/request.json")
+    if (
+        digest(observed["origins"]) != digest(receipt["origins"])
+        or digest(observed["request"]) != digest(request)
+        or digest(request["rows"]) != digest(source_rows)
+    ):
+        refuse("installed origins or complete request differs")
+    for field, name in (
+        ("request_digest", "request.json"),
+        ("summary_digest", "summary.json"),
+        ("journal_digest", "worker-0.jsonl"),
+    ):
+        if (
+            receipt[field]
+            != hashlib.sha256(plain_path(directory / "installed" / name).read_bytes()).hexdigest()
+        ):
+            refuse("installed execution artifact changed")
+    suite_summary(directory / "installed", request, 1)
+    if (
+        check_runner.reconcile(request, 0, plain_path(directory / "installed/worker-0.jsonl"), 0)[
+            "successful"
+        ]
+        is not True
+    ):
+        refuse("installed full suite failed")
+    if (
+        digest(adoption_verify_git(execution, expected)) != digest(git_map)
+        or digest(adoption_verify_worktree(pristine, payload_with_origin))
+        != digest(actual["pristine_manifest"])
+        or digest(adoption_verify_worktree(execution, contents, git=True))
+        != digest(actual["execution_worktree_manifest"])
+        or check_runner.source(source) != current_source
+        or time.monotonic() > deadline
+    ):
+        refuse("installed replay changed source or exceeded deadline")
+    return digest(receipt)
+
+
 def catalog(repo, *, plan_only=False, packet_target=None, batch_directory=None):
     """Actual source/check adapter; no readiness flag or provisional catalog input.
 
@@ -947,7 +1851,12 @@ def catalog(repo, *, plan_only=False, packet_target=None, batch_directory=None):
         refuse("catalog authority changed during selection")
     # Authorization rejects unknown generations before this literal selection.
     # Keep the historical catalog API independent of its authorization receipt shape.
-    if type(state.get("contract_generation")) is int and state["contract_generation"] == 15:
+    if type(state.get("contract_generation")) is int and state["contract_generation"] == 16:
+        current_contract = activation.G16_CONTRACT
+        current_digest = activation.G16_CONTRACT_DIGEST
+        if digest(current_contract) != current_digest or authority["contract_digest"] != current_digest:
+            refuse("catalog generation16 contract differs")
+    elif type(state.get("contract_generation")) is int and state["contract_generation"] == 15:
         current_contract = activation.G15_CONTRACT
         current_digest = activation.G15_CONTRACT_DIGEST
         if digest(current_contract) != current_digest or authority["contract_digest"] != current_digest:
@@ -993,7 +1902,9 @@ def catalog(repo, *, plan_only=False, packet_target=None, batch_directory=None):
         refuse("current issue/plan changed")
     review.current_pr(repo, 32, meta["head_sha"], meta["base_sha"])
     gates = (
-        full_checks_g15(repo, directory, meta)
+        full_checks_g16(repo, directory, meta)
+        if current_digest == activation.G16_CONTRACT_DIGEST
+        else full_checks_g15(repo, directory, meta)
         if current_digest == activation.G15_CONTRACT_DIGEST
         else full_checks_g14(repo, directory, meta)
         if current_digest == activation.G14_CONTRACT_DIGEST

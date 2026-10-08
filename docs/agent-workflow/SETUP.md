@@ -270,3 +270,13 @@ can import that harness; pristine-installed CLI runs select their installed
 runtime. Parent environment stays unchanged. Default840/version2, opt-in1800/
 version3 and all live budgets remain exact. Generation15 requires its own actual
 authority and complete primary T plus g13 predecessors; old grants do not transfer.
+
+Generation16 installed qualification uses `installed-adoption-v1`: retain the
+unchanged installer's pristine payload and origin in `installed-root`, then derive
+`installed-execution-root` with exactly the pinned Makefile and product CI file
+plus real isolated fixture Git metadata. The fixture commit is distinct from the
+source commit. Existing repository-dependent tests run with their original bytes.
+The old pristine installed qualification remains historical and cannot qualify the
+new route. Fixture preparation refuses any inherited `GIT_*` variable; a separately
+recorded caller environment must meet that precondition. No automatic cleanup,
+retry, developer import path or inherited Git configuration is accepted.

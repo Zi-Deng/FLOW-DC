@@ -320,3 +320,11 @@ can import that harness; pristine-installed CLI runs select their installed
 runtime. Parent environment stays unchanged. Default840/version2, opt-in1800/
 version3 and all live budgets remain exact. Generation15 requires its own actual
 authority and complete primary T plus g13 predecessors; old grants do not transfer.
+
+Generation16 binds a separate `installed-adoption-v1` receipt to both the pristine
+installation and its closed execution fixture. Preparation uses real `mktree`
+objects and an independently checked extension-free index. Full source and installed
+occurrences, exact module origins, execution records and fresh hosted checks remain
+required. Phase75's pristine failure is retained; tiny fixture tests are software
+regressions and do not establish complete installed or review readiness. Existing
+1800-second software deadlines and all live reviewer budgets remain unchanged.
