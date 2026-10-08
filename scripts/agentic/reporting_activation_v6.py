@@ -73,6 +73,31 @@ G14_HISTORY_ROWS = (
     (6035844223, "ae8e4b2ff106d44908e471d1f36be74b5d9f632f1d0b92b32e5261193a245cd8"),
     (6045434332, "0cf9de4afdbd048248941023eaf66b4d4f7be70108d11026c69b30a085bd7605"),
 )
+G15_CONTRACT = {
+    "issue": 31,
+    "plan_comment": 6062530466,
+    "issue_digest": "1875464d1340e35cd90fae86ad70e87be1b13108587ef138ce8130cc9263c03f",
+    "plan_digest": "915e46d413f2d19b0ee2b69ce6ef903fa787d777ebad442d4236781bb2120436",
+}
+G15_CONTRACT_DIGEST = "729bca73b3fcc64ad044e7dd876657436c8cb614df871876fc855fbff2e93105"
+G15_APPROVAL_DIGEST = "248965ba97be950afe274bb9f76780f2811837030420b1cd9968370d9b1d36f5"
+G15_HISTORY_DIGEST = "33b77694522896b294ccc364d6194c4f43c80bc708ca64da9758ecfd948df4fb"
+G15_HISTORY_ROWS = (
+    (5900844013, "5eba73542750e24757e47f0cd7bd6143ca0f430c0439a8b0c9becb6b50ba7f98"),
+    (5966428269, "c1006c694d96ef8487ee6742d54e427d8394ae10365b8a52275e6b0acc66ac35"),
+    (6001819615, "6c9709afe5e931fd88340bc30b75558a1c51cc1467831691bdb82e4169b7f67e"),
+    (6008093895, "8cb40e9af7f48c2f9522c4e146c7efd4e6dad24d2d71bcac667def8a8764f566"),
+    (6009076812, "3143727dc6cf38b8f54cb4c3f017fbde7557006a9a0ac569d61f531149f872d7"),
+    (6009865197, "65ea7d798151f777a1e6682d7cda05f14b6722bd0c36f455febaabe8d7f2023d"),
+    (6010775261, "004ea3142aed88ca9fa955d5ef808ce1285486dff8f73de5c84e48d9ed25c1e6"),
+    (6011162252, "177ba4f77027e22b0f2510fd918ad66ebf1c6fdf2fb5e0abaf67a81e9fb1aabc"),
+    (6012492318, "061e2149206692cdff0e8c013872a30c3dd205c678c8bbb6db81b7d05b795970"),
+    (6013795098, "a3d1f17e7f3b3884d40859b9622a1bd172e0d05978e5515552171ed7be214e97"),
+    (6014789492, "111069f7b7474052c5055b2b9f69cf73b2df8b5aba2f5c719550fb20bad37a71"),
+    (6035844223, "ae8e4b2ff106d44908e471d1f36be74b5d9f632f1d0b92b32e5261193a245cd8"),
+    (6045434332, "0cf9de4afdbd048248941023eaf66b4d4f7be70108d11026c69b30a085bd7605"),
+    (6061320190, "4e6725fa686b93c38afcc3eec46c5ff5583cc28f319105b9eefb77051dea40bc"),
+)
 PURPOSE = "issue-31-reporting-recovery-v6"
 SEQUENCE = {
     20: "isolation-refusal",
@@ -154,9 +179,28 @@ def _g14_history(state):
         raise WorkflowError("V6 generation14 ordered approval history differs")
 
 
+def _g15_history(state):
+    rows = state.get("approval_history")
+    if (
+        type(rows) is not list
+        or len(rows) != 14
+        or digest(rows) != G15_HISTORY_DIGEST
+        or any(
+            type(row) is not dict
+            or type(row.get("plan_comment")) is not int
+            or row["plan_comment"] != comment
+            or digest(row) != expected
+            for row, (comment, expected) in zip(rows, G15_HISTORY_ROWS, strict=True)
+        )
+    ):
+        raise WorkflowError("V6 generation15 ordered approval history differs")
+
+
 def selected_contract(repo):
     """Select only an internally verified, literal current contract."""
     authority = authorization(repo)
+    if authority["contract_digest"] == G15_CONTRACT_DIGEST:
+        return copy.deepcopy(G15_CONTRACT)
     if authority["contract_digest"] == G14_CONTRACT_DIGEST:
         return copy.deepcopy(G14_CONTRACT)
     contract = NEXT_CONTRACT if authority["contract_digest"] == NEXT_CONTRACT_DIGEST else CONTRACT
@@ -166,6 +210,23 @@ def selected_contract(repo):
 def authorization(repo):
     state = read(repo.main / ".agentic-local/tasks/issue-31.json")
     approval = state.get("approval")
+    if type(state.get("contract_generation")) is int and state["contract_generation"] == 15:
+        if (
+            repo.name != "Zi-Deng/FLOW-DC"
+            or state.get("repository") != repo.name
+            or state.get("key") != "issue-31"
+            or digest(G15_CONTRACT) != G15_CONTRACT_DIGEST
+            or type(approval) is not dict
+            or type(approval.get("issue")) is not int
+            or approval["issue"] != 31
+            or type(approval.get("plan_comment")) is not int
+            or approval["plan_comment"] != 6062530466
+            or digest(approval.get("contract")) != G15_CONTRACT_DIGEST
+            or digest(approval) != G15_APPROVAL_DIGEST
+        ):
+            raise WorkflowError("V6 requires the exact generation15 approval")
+        _g15_history(state)
+        return {"contract_digest": G15_CONTRACT_DIGEST, "approval_digest": G15_APPROVAL_DIGEST}
     if type(state.get("contract_generation")) is int and state["contract_generation"] == 14:
         if (
             repo.name != "Zi-Deng/FLOW-DC"
@@ -256,6 +317,8 @@ def context(repo, policy, *, remaining_seconds=7380, owned_auth=None):
     )
     if current["contract_digest"] == G14_CONTRACT_DIGEST:
         expected_approval = G14_APPROVAL_DIGEST
+    if current["contract_digest"] == G15_CONTRACT_DIGEST:
+        expected_approval = G15_APPROVAL_DIGEST
     if current["approval_digest"] != expected_approval:
         raise WorkflowError("V6 exact standing approval differs")
     actual_harness = harness()
@@ -286,12 +349,14 @@ def _binding(value):
     if (
         type(auth) is not dict
         or set(auth) != {"contract_digest", "approval_digest"}
-        or auth["contract_digest"] not in (CONTRACT_DIGEST, NEXT_CONTRACT_DIGEST, G14_CONTRACT_DIGEST)
+        or auth["contract_digest"]
+        not in (CONTRACT_DIGEST, NEXT_CONTRACT_DIGEST, G14_CONTRACT_DIGEST, G15_CONTRACT_DIGEST)
         or (
             auth["contract_digest"] == NEXT_CONTRACT_DIGEST
             and auth["approval_digest"] != NEXT_APPROVAL_DIGEST
         )
         or (auth["contract_digest"] == G14_CONTRACT_DIGEST and auth["approval_digest"] != G14_APPROVAL_DIGEST)
+        or (auth["contract_digest"] == G15_CONTRACT_DIGEST and auth["approval_digest"] != G15_APPROVAL_DIGEST)
         or not _hex(auth["approval_digest"])
     ):
         raise WorkflowError("Invalid V6 authority binding")

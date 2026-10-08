@@ -761,6 +761,18 @@ def full_checks_g14(repo, directory, meta):
     return result
 
 
+def full_checks_g15(repo, directory, meta):
+    import reporting_activation_v6 as activation
+
+    current = activation.authorization(repo)
+    if current["contract_digest"] != activation.G15_CONTRACT_DIGEST or meta["plan_comment"] != 6062530466:
+        refuse("generation15 full gates require current literal authority")
+    result = _full_checks(repo, directory, meta, suite_profile="issue31-suite1800-v1")
+    if activation.authorization(repo) != current:
+        refuse("full gate authority changed")
+    return result
+
+
 def _full_checks(repo, directory, meta, *, suite_profile):
     """Validate retained local execution records and fresh hosted associations.
 
@@ -935,7 +947,12 @@ def catalog(repo, *, plan_only=False, packet_target=None, batch_directory=None):
         refuse("catalog authority changed during selection")
     # Authorization rejects unknown generations before this literal selection.
     # Keep the historical catalog API independent of its authorization receipt shape.
-    if type(state.get("contract_generation")) is int and state["contract_generation"] == 14:
+    if type(state.get("contract_generation")) is int and state["contract_generation"] == 15:
+        current_contract = activation.G15_CONTRACT
+        current_digest = activation.G15_CONTRACT_DIGEST
+        if digest(current_contract) != current_digest or authority["contract_digest"] != current_digest:
+            refuse("catalog generation15 contract differs")
+    elif type(state.get("contract_generation")) is int and state["contract_generation"] == 14:
         current_contract = activation.G14_CONTRACT
         current_digest = activation.G14_CONTRACT_DIGEST
         if digest(current_contract) != current_digest or authority["contract_digest"] != current_digest:
@@ -976,7 +993,9 @@ def catalog(repo, *, plan_only=False, packet_target=None, batch_directory=None):
         refuse("current issue/plan changed")
     review.current_pr(repo, 32, meta["head_sha"], meta["base_sha"])
     gates = (
-        full_checks_g14(repo, directory, meta)
+        full_checks_g15(repo, directory, meta)
+        if current_digest == activation.G15_CONTRACT_DIGEST
+        else full_checks_g14(repo, directory, meta)
         if current_digest == activation.G14_CONTRACT_DIGEST
         else full_checks(repo, directory, meta)
     )

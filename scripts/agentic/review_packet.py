@@ -225,6 +225,40 @@ def predecessor_contract(repo, context):
     return raw
 
 
+def g15_predecessors(repo, context):
+    """Two fixed complete public contracts; verification is not authority."""
+    plan = context.get("designated_plan_comment")
+    if type(plan) is not dict or plan.get("id") != 6062530466:
+        return None
+    if type(plan.get("id")) is not int:
+        raise WorkflowError("Invalid generation15 plan identity")
+    rows = context.get("issue_comments")
+    if repo.name != "Zi-Deng/FLOW-DC" or type(rows) is not list:
+        raise WorkflowError("Missing generation15 predecessor context")
+    result = []
+    for number, size, expected in (
+        (6061320190, 11837, "cc222e50c5ef6511333f2e60226d0903c8d5f36e3053f11c59e90196dbb0d131"),
+        (6045434332, 59994, "9afa53484f6a1c88347e9b7f9d6069cd423ddcdbfdb8fc59979203260c690094"),
+    ):
+        matches = [row for row in rows if type(row) is dict and row.get("id") == number]
+        if len(matches) != 1:
+            raise WorkflowError("Missing or ambiguous generation15 predecessor")
+        row = matches[0]
+        if (
+            type(row.get("id")) is not int
+            or row.get("issue_url") != "https://api.github.com/repos/Zi-Deng/FLOW-DC/issues/31"
+            or type(row.get("user")) is not dict
+            or row["user"].get("login") != "Zi-Deng"
+            or type(row.get("body")) is not str
+        ):
+            raise WorkflowError("Invalid generation15 predecessor identity")
+        raw = row["body"].encode("utf-8")
+        if len(raw) != size or hashlib.sha256(raw).hexdigest() != expected:
+            raise WorkflowError("Generation15 predecessor bytes differ")
+        result.append((number, raw))
+    return result
+
+
 def build(repo, packet, head, ancestor, head_index, base_index, context, cfg, prior=None, provider="copilot"):
     packet = Path(packet)
     required = []
@@ -358,6 +392,12 @@ def build(repo, packet, head, ancestor, head_index, base_index, context, cfg, pr
         name = "contract-predecessor-6045434332.txt"
         (packet / name).write_bytes(predecessor)
         add(name, "contract")
+    predecessors = g15_predecessors(repo, context)
+    if predecessors is not None:
+        for number, raw in predecessors:
+            name = f"contract-predecessor-{number}.txt"
+            (packet / name).write_bytes(raw)
+            add(name, "contract")
     # Keep every issue line in required material; extracting acceptance text is
     # navigation, never an authoritative reinterpretation of its requirements.
     body = issue.get("body", "")

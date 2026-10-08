@@ -252,3 +252,183 @@ class PredecessorTests(unittest.TestCase):
                 covered.extend(range(item["start_line"], item["end_line"] + 1))
             self.assertEqual(covered, list(range(1, len(lines) + 1)))
             self.assertEqual(len({i["id"] for i in entries}), len(entries))
+
+
+class WorkerChildImportTests(unittest.TestCase):
+    setUp = legacy.RunnerTests.setUp
+    module = legacy.RunnerTests.module
+
+    def test_absent_path_child_import(self):
+        self.module(
+            "test_child.py",
+            "import subprocess, sys, unittest\n"
+            "class Child(unittest.TestCase):\n"
+            " def test_import(self):\n"
+            "  subprocess.run([sys.executable, '-B', '-c', 'import check_runner'], check=True)\n",
+        )
+        env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
+        result = subprocess.run(
+            [sys.executable, "-B", str(self.root / "scripts/agentic/check.py"), "--jobs", "1"],
+            cwd=self.root,
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            timeout=20,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout.decode())
+
+
+PUBLIC_T = "c$}45?QY!0lKroz=!Gv38yQZ|w<K$`fMUyua2-oml5h3{3#o@}&M@MT44c$=^6S3C?i1c8*;7^BBqe(<c7p`5C9=D^>(r@JReYr`oonrUs<gVkna|YU|MuVN?ya(4syvIcM(wv{ZX?%bja6l3Ytv+9VRDsNljK=pkB&ZMU#wHF=F_92>$<E;XA_l{wY;gSc8!JjEoF*CZEWEenJ%!1%Qgl7?MxM=%63(5ceZHcc`RbT*tnIK+h$wVS#!YRd0y_FYPOkERh>N<*p}2LZN}<dSu|PE!qz(5WMt^MYigrDf4+P_nVN}BkEhY{cw(dDg`Gs}<Mk|>&FyMsPUoxTe5JBNWsOs{-DIw@HO`Xx3)+|UV^do@Qm!#IcG;*nx2BlS(_}fHFPE!$alBlc`E<En+v#MIt|#fq`Xo)v@qE58<D;WjuhiXitS*bK#Ys#NTfP%V7Zq<!vB7r3OEz>+dhF=vjt*;ZHwoPj`KPwd<p&rXmvvR*9ZOeY)w`=-u0LMfUHGe4o9SFtxhd3ttR{=)V!oKqXaD(n+ccGXtMw*pw(WWxmplFMS@hl(8~x$q)vwX}cbX6G^nCh?|Aa?q>!@Gl&B#0X^WBFNwJwvx^7Qm{u|B{Qef#tIY`IborzSPa`Ql`euFNz(Ihikx?dkeBJxx}V)oGk8X7eP8lXaTls$wi~d^(%VXRArPI-N{T7Y`#9!>P528}%@m+2a#qr}I@ZS*@n4WIa1Qj?>k0W#)EzoUW3UwF`K2hIJ+hesHonHA!kuXD7+(boww>=Xs7hV+Y{2|Dtd7HN5$wzEviUZN*+0sWdARc-V~;?!77N1H4|gb!;`x*66A(%T(JhFe)nBrfTU&0AhU5J2;}wOs;E02m-`8_VKpenIhWRdIN02FB|r;<Fhef?HAfz-F@f!;FGWmp%zT=kMirZG>mbTjhpNVC~E7P@X<$0l@$(<1E#x>AWy;0`q9=-n+oqgnVc}cGk||vcqon)gAV_eh3!@}yibqBJpjZHq~L)hfDY(PY>dN~^$3v-gSto!=%yG|$)PYi@IwwHJDcMaSfe){mSn|PUDKj&tL{ABnr&USn=Qk=Gj}z?KM{dXZCX<&U=;ggYaFYR*L73lVKRZ<8(7FhQ{)D|(d$EH90ihTWSKF=o>g=;4gRzBcWyq3cJSE?M(l!B;Y#xi(RlUg<G-n<<n0hW;5NKMG?L;;b$j*U?$`613w3vKd#7$cU*25|co$AdGaU87(~nT_^aMwInj$7D!+uUO7neBYL3d0E-~m)|mS@7E0Y3DuqhBRJH95>NPK9LwWO$(2m$WcWVskbW01@oiBF;-koagP)oGlFKyvgF|_txa(uXmT~w{neV7E8Gyy#C&%rp+6j+YREwW12jU#o-*f)RRT9EC9MG<1(L}sqm8g_GB>y`DTdV+NQ0e)jyT&CQ~#P?nuKu<KS-<L;Fic5t$#Rvy-riju9~~l4zPu{{FZBnt5}XC<{6!qMTnO_zQkJ5ALjSEoBD42@f%jw<WSg5~c7Qcp1kXtDl)T2-`TGN==sIB{?8*wqNWw7*SC4Jz87!A!?eY&erTt0Py_dN0n39<=IZM6Gtk$?XBX=PeYP*dD%EQ)EuG5;X0p8G{|(M@>0whQB>sS08D^YY|~c!>lDVQeT{n~X86-=F~T08-t+5AU70MwBQb>yj%{)*`u%Exz^Gv|Ahic&mV2!8J#Qd%up!Sl9Wdyy4EYUct+G1v*I_mr<Xc?!avu5J^`Dl|2eAc;!NTn3!tQZ#DRMH!7@pYyia7Cz!B8ah|AvTqS0*+mihjxxtVC?0eK_fNA1{5T#ZgSWB~pFNup=}Jyt8G#UYi=WF)g?_qtoJck?c*jBTlsbR>_Td>+mPgK@NstboJ~^I^lrTz(^6h$}4~wWJ=C5sjQkP6J3PlQvyzAjhLqZt`m23^k>2ZjEo=efi-Z?`1a!6)u;EjKM<towZC56++JRN`T?QnLa@MFxUusD>lX-Wam0|R0=ImNT6ootg}i~_Fzm0{l5urVuOA|LDf&lCJ-j(nrFRmAk(kH6H1#?IuIdAb<teMnf>TLA30=JC#2oa_n8yhy)R1e%1Ku#7ZOE%8-_vc!+Y(pn$OL&3v~4NE=mc~%0PH~lgNSH{EQ4PvXx5A!imXrMRJ6#`ST=AHvLg~SY1#xK3)~e5Z9)XGeV$9)kuG3j#g$V|^g^;rYT>40Q=K6Lmn0pXF3LhS)qmK!)CGkBEYZa2cv82;V^Qvl@V4{Br`8tcfWj-YM}EBcLI#1gJOaW2)^=;2GT6-s18v&yAY1!&#y>jx><E9qx1@5m@CO3OwYwd;3MP>&=aSdxI#_{=E5_=_j5blRK)Xvv_nxz$_2W9L8mbIPGB}`VXQqKD`~fK{D{|fl5z(~dHZcZ|bji#ArU5s}>H=B{cQ{0T1kr$aw)K-89{Ni&pZ${ksKc|<75)Z9P?G2`=?P%eFslJ!Ye)MRB>ZYnIMCu?HYGj8*tH~Kdhz1?-OoZHK5=ps7brg3Se_ut$MdWPE<W8|BJ%@4WkDGtoKh%-lqZ2MOAMX6zqwJLguEK<^FLGzYAKGRszgvA(0&y|#Eoie+}3(!!*mojJyXHM>x|$Y+#fj8rm0t#U4YVg$~9jv2PO;#rNhl*b>r0sOl&LEB_uraB!FkugH1{wq&Zj;pmnA^;PsABp(#!@4qk*ONX5cQQkkv6m`Ml;2#u06b!|E1q3@c0SHp}zFQ;ZrNtsk2+s!~G3q9+O)olx|e9D-%Btk?1!&ebus$npB0Y<Duei={!T^tF^Xakj6DPaubrJ1Sd<p4D==vinwE`d4U2JIyoXls*}fG78c82!aOTILdy;P{@j9?pLvRK2@rC3$~+bM@i!<HZAf#`4Qk!<i72=LszT?Hs_BkWEMt)O*-QUM^MO|FQZIf<HFk3nHY49gLDEBCiV7H!b?%o2kM_2pm9Hh1Cb^{eRXulbW33WJgO5ikW9=hgTO~$0-mPc^(OD%AAAF6ReLyl3^rnh0UeTe#Tp5|6&=+0@A=;taNM%$wi3<#iV*sYD3Pqd43;A0Q9}K^?Wws&?S6}n<AW+F%P9#gTm}SYT<hThp<$_s9MMi3ip}54*m`iJ?$)gDd1r_-xQsIgwbdqv`{O?f@0CVP<0imK#=3XV-uE8X_Lg!Fu%Cz#1{kXWw9KlhDyi{y>!br>=naMw8WGtH>0koqec2kajfF(KCpTS<vvkx{$MacLBNYt<WNxn#x8g2`bI8VtdoEr=0p;0bIP(rn&8_?2=J>~`{?KsSCj;>uS)f|N?07XD0i-(3A>6q4BvWye-k2pq{h;)(cR_g7cLwhb~$&HaJoBGP%jrH6ms|Kp1k?Q*L(l8;%)lh(G5~sx%cf4d1Bzd`?YD}?Y)S8cmFh{U;Ayn^oM|V!JFEz<K-n^WSKVL78`B2D}bAWoeGpm27JqI-nKIFqiw$0tn27RU9%`OVuDQP5cV!h%Gj?Qg^Sd;7k8hp$2)<+)%C^A`Q7EGpQ4{WU%tPfACqn*VNCIaPy^?6?Mh10tTAHg%Ivp936%&C;`?n^3rZOw6^%r!&*X@<Ja-z{YdCfX(M1U*AsHb8QbG-((q#r`kt>l0Hk9^2V*@du5eQh!s~N>9DP$muqyy(ZZfb>RxP>w-F~{nPEL|?CFc&o|Vw4u~wUBQ}_Bk`W+SMUU37tFXZ}&{y_kk(zJ);MpQ6X3)QU5YEXZgJzr_X9%0jYG7yAB_{Kpn44s!o_Moi`2dkvfqJ>TVUqc1ksYrw-f@mhbvnlEnvYYYlI4r!W9`L`iwbFooIS^`8(7h)ynP0zx4z^E67b4PQPIKxoA&`Pm>=*hZU7=MioXJ`2$#nhs!MQlyC8)2R`AGlfF&?&kd69amG+x%zbRuXl<iDV5|S^>AO1fc8s0j1=c|o7F?K(jVY5>UmIGWT2`;tHNRNsm6wyHYvG#+N)SGpME3WBpCs~O=r&!(nqEz(?9&}`s(SvyEFO&%+~j7>CgsZLB>PelpD3KA;n1Oh9VX|AU4|+*&kMr*g4fZ8B8@4o{sulB0a(Nc#ajQPTGnQVD%ma>n0N1^u5ZiCG~-;03X(!;lWOBM{rw2qg09?yRc)ncic4S@Pi=7OH8J6ztAG4%Tb-q<*vaRnGG_OB(THnx%4nNpX$5O<YsK|QdsZXGa+#@E6M1C8Yv<o`Xh2n8;qM9<lz**T!V~}oahv=CA6Vsa<hSy;Zab_rxQqzeNSV6FarL)oLx&U>~s({GB^nQ6*-Y(!YN&k!l&U#PWdd0D8sP~v-9V`l2zGHjd70=E}fc^2o9S16r_`%U)rv9&9jQGD~7$XFtiDMR4z40@kxhu)b~`S`6mpY@X@6o>Rz-9byv9f6S<eJr3#lTZiz6jcVWf4eDYHz$$k&j0SAYn(U1SDz)(>H!RORe{h#_eXF*o>^=o&ihz{lFg}GVd%oUPvK%#U7?C=syy?LUl@%J{X?N{|}s6{1J`O4b&Od*)snDiF5R4<y|bO9`teQhi3pAA}(0F}+D-0K*P-O(FXnL}QhL<`aBFus7I6E&e(bPF*9aC_g&l!K;O?V89mjokr`(jDeh^u5$4q&M{%#gpz-X)RYkN!!VoiZU}_r<6gVITUm?CpzCr8bH;xYe<nM^p2@i15Uh{pbkTb(vio`*CU&L#3#Tf?lv`(JLTXYd_5PB86@|9KIo*q0|5?~Gy)(EVuc8~e6MNr#98Z11)}vjTbtcF+q7ltI{6+7`)AVcJ2%jm6z5iP&U4&u;}h`|lBZm(WgI0PgMut!`c9sWemc2GBi$5#7@?e%%;mdAzTyi0Nuo|z##<x}dc>dDLzhQ-{v<3acw$Txefi#L--eNT*YAx*q(G%|q4pvITNZXNgTJ!s#_qc^Fs$#|jMZN$pB)DCJrQsnS%rX*v}_fP6T~ucso^m?cYubYNu<+a<B%CThu_IeSPw>_DEWL1ph5<&?YhkXUC)^!Ub*kJ^T%$faYBC`HXqerX4L!(6OzVmr1lFbe`wpF<;jg=z?VNR@L5uj(zidQ5kIIhufKvk4-Ya+>I;P@r&*B+qWSy~v+E!9X}{~hLBkkqOh2Q)^NbIaUP)gk6%b)ZpjS!DX|dq?UD4DCioM-cK4z)lTtG-jX9o${OKTu$V?rHGYpWXiKS<VrER_MDZ&CSn6kTp*lX*94vy94&;Yjz*28KK1o@C<t7NG+hvcgkl`uKSF@lsP?y|%vvUZJ}Zc^&3n+>0;RDj>pSvUc1$S#@CFbQuhMtFV42VkDjEW?x1=4Rk3u^zYr-08PH{^(>jvwMi?4CW%ZhCI=Il9OvAHeq-O0@7nQg5m+F!Q2aE)Pvp-0U28GzW#@d*`)<sxveJ;}7H8MkJQJA`_IcJ&WWVOjq9|~;6kMD}+Um@6cxVvlu1Uq;)QH6CbK1ZVCTLfcg|tkB^Z;gDCUX@{Id+`MM0=feT7J=KS;SjJ@#d=p9i$kr9kI0R@7SlBLBPG_|6X5vZVI<A#UHD_FsAWxkQ$F*2AS_9C4!nMEk6(hm9Lt^$3xvjklUMXnE8!Qwg^I7H{y*zmNjnkiH_1kOJu6JN{3-Jw?dsC{Sb&Lejx(zo|K)0cnJof1wK|N#i{97OK_j{!RP~6zCu!A8L!eQiZqWrRbG}fJ61HKWz~+&@5+X}_cF%(M0I-7e+z)Cim!cS(<0z5M1zq=nve=O>8364WKEEeIu)y4v$WJVZJHtwXlOzYH2VDZPWRnTon&dMeK*9@lUE_4x#;&i+MrQRTy8C&+IP@6W3c{V$a^BW`gAc+zF9+^AOC{ay`cjvf|xUO7zMIEe?H5AjHst4t4ZXCxO?huC8bOUp2gyz$=HyJrd%wD^NmR)Z5mdw0w$Iqam#Ai<lUUd=`i=#t^sfx`k$?9{nc0}jG^!hPQ<*^4O@nVwvVR4_YV{aJ^lV;EOLq(0Gv^UllQQMB6%{QMC4Cos6P(OQ%!g4%T?B%JTK#f=37u<Dk{Yolm=@Tj=@n^mRZgX19oR*@XoKrJEtd;!Fd^OJ;vUQhTMfcD70+UGaqT5?$aA_4rAh3c41%y;JofYan>;?nJ;JM`F`K!@ww|{@@DjGjKQa1_-YaUvg+)ZCY;Xftm-N&yeU-+tomm8z$M!27wumD&}J04jyvsdppHzu^{4dR)rK4K*ygPJzyplQnVJ}sBv-?}?P%C_-IwWf&JBI#cIBh(3k+6L9f!(AhC-AYV-58~y06wm_>MxEMRN-NuCDiy2-p!(@d?Cz8B0C^Q1tQXsoGgU1uGxV`cH6><um?XXID}y6!(KdCC_YqyzD>W3H=g^DxOZi8S&R7CL|QUvN(W80hE<n7bXY%*<RFDYJ*-cz<<Tq?oKZ?K*~a#Key>xx=F~7G)ZErANl9{(!on;-}JD9)(6jF8Xu7Xd42am#_@w;H-F1RT$cIL;TQAeTb~M@1&8z{BAJ6|ESm2JGJH@t`fsobYZK=`a_9mf=$AAUO){tH8Wqp_s2s7GSM>f9AO6ls22I_Uz5`{;&&g+${qP6bsg!OMPxD9^n?!0RUz>5$z2oj~8bROmQOQ@<!!!5^6<ZHIAWMjpVz-5UtF3AJ8NTe&JR8>XF_L24Oq*Cy7SDQUT&R!LWy)o#&qH#lw3-`rQ0<G_;YVX#4w89H7`P8U1kI%lj%`bX07@Oajh&rUzSN;h`{#d(qHY4%&D!2BR&g?0r?bdRm#b*8NKd2FX>6k9Y;rt1jaTVOGEq_VFGv3aPT1H^"
+
+
+class WorkerOriginTests(unittest.TestCase):
+    setUp = legacy.RunnerTests.setUp
+    module = legacy.RunnerTests.module
+    evidence = legacy.RunnerTests.evidence
+
+    def test_real_profiles_and_relocated_child_origins(self):
+        original = dict(os.environ)
+        runtime = self.root / "scripts/agentic"
+        self.module(
+            "test_origin.py",
+            "import subprocess, sys, unittest\nfrom pathlib import Path\n"
+            "class Origin(unittest.TestCase):\n"
+            " def test_child(self):\n"
+            "  actual = subprocess.check_output([sys.executable, '-B', '-c', "
+            "'import check_runner; print(check_runner.__file__)'], text=True).strip()\n"
+            f"  self.assertEqual(Path(actual).resolve(), Path({str(runtime / 'check_runner.py')!r}))\n",
+        )
+        for jobs, supplied, profile in ((1, None, False), (2, "", True), (1, "/unrelated/nonexistent", True)):
+            env = dict(os.environ)
+            env.pop("PYTHONPATH", None)
+            if supplied is not None:
+                env["PYTHONPATH"] = supplied
+            cmd = [sys.executable, "-B", str(runtime / "check.py"), "--jobs", str(jobs)]
+            if profile:
+                cmd += ["--suite-profile", runner.SUITE_PROFILE]
+            result = subprocess.run(
+                cmd, cwd=self.root, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=20
+            )
+            self.assertEqual(result.returncode, 0, result.stdout.decode())
+            directory, summary = self.evidence(result)
+            request = json.loads((directory / "request.json").read_text())
+            self.assertEqual(request["version"], 3 if profile else 2)
+            self.assertEqual(summary["process_exits"], [0] * jobs)
+            if profile:
+                self.assertEqual(request["execution_limits"]["seconds"], 1800)
+            else:
+                self.assertNotIn("execution_limits", request)
+        self.assertEqual(dict(os.environ), original)
+
+    def test_original_window_case_once_under_real_worker(self):
+        source = Path(__file__).resolve().parents[2]
+        self.module(
+            "test_original.py",
+            "import sys, unittest\n"
+            f"sys.path.insert(0, {str(source / 'scripts/agentic')!r})\n"
+            f"sys.path.insert(0, {str(source / 'tests/agentic')!r})\n"
+            "import test_review_windows_v1 as original\n"
+            "class Selected(unittest.TestCase):\n"
+            " test_original = original.WindowTests.test_actual_runner_journals_and_fresh_external_ci_adapter\n",
+        )
+        # Execute the repository harness over the disposable selected fixture.
+        env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
+        code = (
+            "import sys; from pathlib import Path; "
+            f"sys.path.insert(0, {str(source / 'scripts/agentic')!r}); "
+            "import check_runner; "
+            f"raise SystemExit(check_runner.run(Path({str(self.root)!r}), 1))"
+        )
+        result = subprocess.run(
+            [sys.executable, "-B", "-c", code],
+            cwd=self.root,
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            timeout=30,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout.decode())
+        directory, summary = self.evidence(result)
+        self.assertEqual(summary["occurrences"], 1)
+        self.assertTrue(summary["successful"])
+
+
+class Generation15PredecessorTests(unittest.TestCase):
+    def test_both_fixed_predecessors_and_primary_ranges(self):
+        import base64
+        import tempfile
+        import zlib
+
+        bodies = [zlib.decompress(base64.b85decode(v)) for v in (PUBLIC_T, PUBLIC_G13)]
+        numbers = [6061320190, 6045434332]
+        rows = [
+            {
+                "id": n,
+                "issue_url": "https://api.github.com/repos/Zi-Deng/FLOW-DC/issues/31",
+                "user": {"login": "Zi-Deng"},
+                "body": raw.decode(),
+            }
+            for n, raw in zip(numbers, bodies, strict=True)
+        ]
+        context = {
+            "designated_plan_comment": {"id": 6062530466, "body": "U"},
+            "issue": {"title": "31", "body": "acceptance"},
+            "issue_comments": rows,
+            "reviews": [],
+            "inline_comments": [],
+            "pr_comments": [],
+            "pull_request": {"head": {"sha": "a" * 40}},
+            "commit_statuses": [],
+            "check_runs": [],
+        }
+        repo = SimpleNamespace(name="Zi-Deng/FLOW-DC", root=Path.cwd())
+        self.assertEqual(
+            review_packet.g15_predecessors(repo, context), list(zip(numbers, bodies, strict=True))
+        )
+        for index in range(2):
+            for key, value in (
+                ("id", True),
+                ("id", float(numbers[index])),
+                ("body", None),
+                ("body", rows[index]["body"] + "\n"),
+                ("user", None),
+                ("user", {"login": "wrong"}),
+                ("issue_url", "wrong"),
+            ):
+                bad = copy.deepcopy(context)
+                bad["issue_comments"][index][key] = value
+                with self.assertRaises(WorkflowError):
+                    review_packet.g15_predecessors(repo, bad)
+            for duplicate in (False, True):
+                bad = copy.deepcopy(context)
+                if duplicate:
+                    bad["issue_comments"].append(copy.deepcopy(rows[index]))
+                else:
+                    bad["issue_comments"].pop(index)
+                with self.assertRaises(WorkflowError):
+                    review_packet.g15_predecessors(repo, bad)
+        with tempfile.TemporaryDirectory() as tmp:
+            packet = Path(tmp)
+            for name in ("repository-policy.txt", "review-policy.txt", "domain-policy.txt"):
+                (packet / name).write_text("policy\n")
+            with patch.object(review_packet, "run", return_value=SimpleNamespace(stdout="")):
+                review_packet.build(
+                    repo,
+                    packet,
+                    "a" * 40,
+                    "b" * 40,
+                    [],
+                    [],
+                    context,
+                    {"required_checks": [], "max_snapshot_bytes": 1000000},
+                )
+            inventory = json.loads((packet / "required-material.json").read_text())["required"]
+            for number, raw in zip(numbers, bodies, strict=True):
+                name = f"contract-predecessor-{number}.txt"
+                self.assertEqual((packet / name).read_bytes(), raw)
+                entries = [v for v in inventory if v["path"] == name]
+                self.assertTrue(entries)
+                self.assertTrue(all(v["kind"] == "contract" and not v.get("omitted") for v in entries))
+                covered = [i for v in entries for i in range(v["start_line"], v["end_line"] + 1)]
+                self.assertEqual(covered, list(range(1, len(raw.decode().splitlines()) + 1)))
+                self.assertEqual(len({v["id"] for v in entries}), len(entries))

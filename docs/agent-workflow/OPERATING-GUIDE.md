@@ -312,3 +312,11 @@ Generation14 readiness requires full current version3 serial/parallel/installed
 records and current hosted receipts, plus the entire fixed public g13 predecessor
 as primary contract material. Historical failures remain failures; this change
 provides no completion, live capability, independent-review or scientific credit.
+
+
+Approved U makes each software-suite worker inherit PYTHONPATH containing only
+the resolved directory of its executing check_runner.py. Fresh child interpreters
+can import that harness; pristine-installed CLI runs select their installed
+runtime. Parent environment stays unchanged. Default840/version2, opt-in1800/
+version3 and all live budgets remain exact. Generation15 requires its own actual
+authority and complete primary T plus g13 predecessors; old grants do not transfer.

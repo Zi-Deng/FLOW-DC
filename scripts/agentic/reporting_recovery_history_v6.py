@@ -80,6 +80,10 @@ def stopped(repo):
     rows = state.get("approval_history")
     next_generation = type(state.get("contract_generation")) is int and state["contract_generation"] == 13
     g14 = type(state.get("contract_generation")) is int and state["contract_generation"] == 14
+    g15 = type(state.get("contract_generation")) is int and state["contract_generation"] == 15
+    if g15:
+        current.authorization(repo)
+        current._g15_history(state)
     if g14:
         current.authorization(repo)
         current._g14_history(state)
@@ -88,7 +92,7 @@ def stopped(repo):
         current._next_history(state)
     if (
         type(rows) is not list
-        or len(rows) != (13 if g14 else 12 if next_generation else 11)
+        or len(rows) != (14 if g15 else 13 if g14 else 12 if next_generation else 11)
         or sum(type(row) is dict and row.get("plan_comment") == 6014789492 for row in rows) != 1
     ):
         raise WorkflowError("V5 historical approval is ambiguous")

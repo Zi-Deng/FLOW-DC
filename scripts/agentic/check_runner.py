@@ -1069,7 +1069,11 @@ def run(
                         str(output / f"worker-{index}.jsonl"),
                     ],
                     cwd=root,
-                    env={**os.environ, "TMPDIR": str(temporary)},
+                    env={
+                        **os.environ,
+                        "TMPDIR": str(temporary),
+                        "PYTHONPATH": str(Path(__file__).resolve().parent),
+                    },
                     stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT,
                     start_new_session=True,
