@@ -235,7 +235,14 @@ class DiagnosticCliTests(unittest.TestCase):
 class DiagnosticIntegrationTests(unittest.TestCase):
     def test_make_treats_optional_value_as_data(self):
         result = subprocess.run(
-            ["make", "-n", "test-agentic", "PYTHON=python3"],
+            [
+                "make",
+                "--no-print-directory",
+                "-n",
+                "test-agentic",
+                "AGENTIC_SUITE_PROFILE=legacy",
+                "PYTHON=python3",
+            ],
             cwd=legacy.SOURCE,
             capture_output=True,
             timeout=10,
