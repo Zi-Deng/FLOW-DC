@@ -328,3 +328,36 @@ occurrences, exact module origins, execution records and fresh hosted checks rem
 required. Phase75's pristine failure is retained; tiny fixture tests are software
 regressions and do not establish complete installed or review readiness. Existing
 1800-second software deadlines and all live reviewer budgets remain unchanged.
+
+## Bounded hosted runner diagnostics (W generation17)
+
+The scoped issue31 CI profile keeps its1800-second suite and two workers. An optional
+`AGENTIC_EVIDENCE_DIRECTORY` passes a fresh controlled temporary `runner` path through
+Make to `check.py --evidence-directory`; omission preserves the default command.
+The separate diagnostic artifact retains only request/summary, two journals and two
+logs, with a60-second collector and128MiB inclusive bound. Missing, unsafe or oversized
+files make collection fail; partial bytes remain diagnostic data. The original hosted
+receipt artifact and readiness rules remain unchanged. Failed tests stay failed even
+when copying succeeds; hard job termination can leave diagnostics unavailable.
+
+Actual PR head/base and tested merge checkout are distinct. These owner-writable
+records do not certify independent execution, scientific validity or review completeness.
+Generation17 requires the exact published W approval/history and complete V/U/T/g13
+primary predecessors. Earlier failures and generation-specific readers remain historical;
+no timeout, scheduling, native grant or evidence credit is reset by retention work.
+
+
+### Scoped trusted CI temporary-root diagnostics (X / generation18)
+
+For the designated issue31 workflow, a fresh owner-only staging directory contains
+`suite-tmp`; only the software Make child receives it as `TMPDIR`. The baseline
+CLI, Make recipe and runner retain their default temporary-directory behavior.
+Collection selects exactly one top-level `agentic-check-*` directory and copies
+only six named raw records, with source/request identity checked independently.
+Malformed or stale requests remain unbound diagnostics with a nonzero result.
+The collector's single60-second deadline includes metadata and finalization;
+expiry may leave partial bytes and no complete manifest. Diagnostics do not replace
+test outcomes or the separate hosted receipt. PR head and tested checkout differ.
+This is trusted-owner, quiescent integrity bookkeeping, not protection against
+an active owner rewriting files. The earlier uncommitted W output-option design
+is superseded; source/installed/hosted gates and independent review remain required.
