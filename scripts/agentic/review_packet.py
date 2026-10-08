@@ -196,6 +196,35 @@ def source_ranges(path, text, hunks, revision):
     return ranges(selected)
 
 
+def predecessor_contract(repo, context):
+    """Fixed public g13 predecessor; content verification grants no authority."""
+    plan = context.get("designated_plan_comment", {})
+    if plan.get("id") != 6061320190:
+        return None
+    rows = context.get("issue_comments")
+    if repo.name != "Zi-Deng/FLOW-DC" or type(rows) is not list:
+        raise WorkflowError("Missing fixed predecessor context")
+    matches = [row for row in rows if type(row) is dict and row.get("id") == 6045434332]
+    if len(matches) != 1:
+        raise WorkflowError("Missing or ambiguous fixed predecessor")
+    row = matches[0]
+    if (
+        type(row.get("id")) is not int
+        or row.get("issue_url") != "https://api.github.com/repos/Zi-Deng/FLOW-DC/issues/31"
+        or row.get("user", {}).get("login") != "Zi-Deng"
+        or type(row.get("body")) is not str
+    ):
+        raise WorkflowError("Fixed predecessor identity differs")
+    raw = row["body"].encode("utf-8")
+    if (
+        len(raw) != 59994
+        or hashlib.sha256(raw).hexdigest()
+        != "9afa53484f6a1c88347e9b7f9d6069cd423ddcdbfdb8fc59979203260c690094"
+    ):
+        raise WorkflowError("Fixed predecessor bytes differ")
+    return raw
+
+
 def build(repo, packet, head, ancestor, head_index, base_index, context, cfg, prior=None, provider="copilot"):
     packet = Path(packet)
     required = []
@@ -324,6 +353,11 @@ def build(repo, packet, head, ancestor, head_index, base_index, context, cfg, pr
     issue, plan = context["issue"], context["designated_plan_comment"]
     text_artifact("issue.txt", f"{issue.get('title', '')}\n\n{issue.get('body', '')}\n", "contract")
     text_artifact("plan.txt", plan.get("body", "") + "\n", "contract")
+    predecessor = predecessor_contract(repo, context)
+    if predecessor is not None:
+        name = "contract-predecessor-6045434332.txt"
+        (packet / name).write_bytes(predecessor)
+        add(name, "contract")
     # Keep every issue line in required material; extracting acceptance text is
     # navigation, never an authoritative reinterpretation of its requirements.
     body = issue.get("body", "")

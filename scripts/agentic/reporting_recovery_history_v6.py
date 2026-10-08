@@ -79,12 +79,16 @@ def stopped(repo):
     state = old.read(repo.main / ".agentic-local/tasks/issue-31.json")
     rows = state.get("approval_history")
     next_generation = type(state.get("contract_generation")) is int and state["contract_generation"] == 13
+    g14 = type(state.get("contract_generation")) is int and state["contract_generation"] == 14
+    if g14:
+        current.authorization(repo)
+        current._g14_history(state)
     if next_generation:
         current.authorization(repo)
         current._next_history(state)
     if (
         type(rows) is not list
-        or len(rows) != (12 if next_generation else 11)
+        or len(rows) != (13 if g14 else 12 if next_generation else 11)
         or sum(type(row) is dict and row.get("plan_comment") == 6014789492 for row in rows) != 1
     ):
         raise WorkflowError("V5 historical approval is ambiguous")

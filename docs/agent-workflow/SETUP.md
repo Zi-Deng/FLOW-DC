@@ -247,3 +247,18 @@ Old packets remain inspectable with their original semantics but cannot satisfy 
 new readiness gate. Do not regenerate historical provenance hashes or adopt unmerged
 PR policy into the trusted control checkout. See [the migration runbook](COVERAGE.md)
 and [dated verification notes](COVERAGE-VERIFICATION.md).
+
+
+For issue31/PR32 only, approved T adds the explicit software suite profile
+`issue31-suite1800-v1`: `python3 -B scripts/agentic/check.py --jobs 1
+--suite-profile issue31-suite1800-v1` (on one command line), or
+`make check-agentic AGENTIC_SUITE_PROFILE=issue31-suite1800-v1`.
+It records version3 requests with an1800-second full-suite deadline; default
+callers retain840seconds and version2. Only the exact Zi-Deng/FLOW-DC PR32
+head branch `issue-31-bounded-review-units` pull-request CI selects this profile
+and a45-minute agentic-quality job. Other events retain15minutes; product CI
+remains10minutes. All live local840/native/credential/grant budgets are unchanged.
+Generation14 readiness requires full current version3 serial/parallel/installed
+records and current hosted receipts, plus the entire fixed public g13 predecessor
+as primary contract material. Historical failures remain failures; this change
+provides no completion, live capability, independent-review or scientific credit.

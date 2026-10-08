@@ -674,12 +674,14 @@ def partition(packet, inventory, binding):
     return value
 
 
-def runner_request(root, jobs):
+def runner_request(root, jobs, *, suite_profile=None):
     """Fresh interpreter avoids importing installed tests from the source checkout."""
     import subprocess
     import sys
     import tempfile
 
+    if suite_profile not in (None, "issue31-suite1800-v1"):
+        refuse("unknown runner descriptor profile")
     code = """import json, sys
 from pathlib import Path
 sys.path.insert(0, sys.argv[1])
@@ -691,12 +693,16 @@ policy, assignments = runner.assignment_policy(root, suite, rows, objects, sourc
 value = dict(version=runner.VERSION, jobs=jobs, source=source, rows=rows,
              assignments=assignments, assignment_policy=policy, errors=errors,
              evidence_limit=runner.EVIDENCE_BYTES)
+if len(sys.argv) == 6:
+    value["version"] = runner.SUITE_VERSION
+    value["execution_limits"] = runner.execution_limits(sys.argv[5], 1800, runner.TEXT_BYTES, runner.EVIDENCE_BYTES)
 Path(sys.argv[4]).write_text(json.dumps(value, allow_nan=False))
 """
     with tempfile.TemporaryDirectory(prefix="agentic-descriptor-") as temporary:
         target = Path(temporary) / "request.json"
         result = subprocess.run(
-            [sys.executable, "-B", "-c", code, str(Path(__file__).parent), str(root), str(jobs), str(target)],
+            [sys.executable, "-B", "-c", code, str(Path(__file__).parent), str(root), str(jobs), str(target)]
+            + ([suite_profile] if suite_profile is not None else []),
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             timeout=180,
@@ -709,7 +715,53 @@ Path(sys.argv[4]).write_text(json.dumps(value, allow_nan=False))
         return value
 
 
+def suite_summary(directory, request, jobs):
+    import check_runner
+
+    value = read(directory / "summary.json")
+    limits = check_runner.execution_limits(
+        "issue31-suite1800-v1", 1800, check_runner.TEXT_BYTES, check_runner.EVIDENCE_BYTES
+    )
+    if (
+        type(value) is not dict
+        or type(value.get("version")) is not int
+        or value["version"] != 3
+        or request.get("version") != 3
+        or digest(request.get("execution_limits")) != digest(limits)
+        or digest(value.get("execution_limits")) != digest(limits)
+        or value.get("request_digest") != check_runner.digest(request)
+        or type(value.get("jobs")) is not int
+        or value["jobs"] != jobs
+        or value.get("successful") is not True
+        or value.get("error") is not None
+        or type(value.get("process_exits")) is not list
+        or len(value["process_exits"]) != jobs
+        or any(type(code) is not int or code != 0 for code in value["process_exits"])
+        or type(value.get("elapsed_seconds")) not in (int, float)
+        or not 0 <= value["elapsed_seconds"] <= 1800
+        or type(value.get("occurrences")) is not int
+        or value["occurrences"] != len(request["rows"])
+    ):
+        refuse("incomplete or wrong-deadline suite summary")
+
+
 def full_checks(repo, directory, meta):
+    return _full_checks(repo, directory, meta, suite_profile=None)
+
+
+def full_checks_g14(repo, directory, meta):
+    import reporting_activation_v6 as activation
+
+    current = activation.authorization(repo)
+    if current["contract_digest"] != activation.G14_CONTRACT_DIGEST or meta["plan_comment"] != 6061320190:
+        refuse("generation14 full gates require current literal authority")
+    result = _full_checks(repo, directory, meta, suite_profile="issue31-suite1800-v1")
+    if activation.authorization(repo) != current:
+        refuse("full gate authority changed")
+    return result
+
+
+def _full_checks(repo, directory, meta, *, suite_profile):
     """Validate retained local execution records and fresh hosted associations.
 
     Local artifacts are owner-writable bookkeeping, not execution attestations.
@@ -732,6 +784,10 @@ def full_checks(repo, directory, meta):
         "format": "ruff format --check",
         "repository": "python3 -B scripts/check_repository.py",
     }
+    if suite_profile is not None:
+        commands["serial"] += " --suite-profile issue31-suite1800-v1"
+        for name in ("parallel", "full"):
+            commands[name] += " AGENTIC_SUITE_PROFILE=issue31-suite1800-v1"
     current = check_runner.source(repo.root)
     if (
         type(evidence) is not dict
@@ -764,12 +820,14 @@ def full_checks(repo, directory, meta):
     rows = None
     for name, jobs in [("serial", 1), ("parallel", 2)]:
         request = read(directory / name / "request.json")
-        expected = runner_request(repo.root, jobs)
+        expected = runner_request(repo.root, jobs, suite_profile=suite_profile)
         if expected["source"] != current:
             refuse("source changed during descriptor reconstruction")
         rows = expected["rows"]
         if digest(request) != digest(expected):
             refuse("complete runner request differs from current discovery")
+        if suite_profile is not None:
+            suite_summary(directory / name, request, jobs)
         for index in range(jobs):
             result = check_runner.reconcile(
                 request, index, plain_path(directory / name / f"worker-{index}.jsonl"), 0
@@ -802,12 +860,25 @@ def full_checks(repo, directory, meta):
     if retained_payload != expected_payload:
         refuse("retained installed payload changed or contains extra/private files")
     installed_source = check_runner.source(installed_root)
-    expected_installed = runner_request(installed_root, 1)
+    expected_installed = runner_request(installed_root, 1, suite_profile=suite_profile)
     if expected_installed["source"] != installed_source or digest(expected_installed["rows"]) != digest(rows):
         refuse("installed discovery differs from the complete source suite")
     installed_request = read(directory / "installed" / "request.json")
     if digest(installed_request) != digest(expected_installed):
         refuse("installed complete runner request differs")
+    if suite_profile is not None:
+        suite_summary(directory / "installed", installed_request, 1)
+        installed_argv = read(directory / "installed" / "argv.json")
+        if installed_argv != [
+            "python3",
+            "-B",
+            "scripts/agentic/check.py",
+            "--jobs",
+            "1",
+            "--suite-profile",
+            suite_profile,
+        ]:
+            refuse("installed actual suite command differs")
     if (
         check_runner.reconcile(installed_request, 0, plain_path(directory / "installed/worker-0.jsonl"), 0)[
             "successful"
@@ -864,7 +935,12 @@ def catalog(repo, *, plan_only=False, packet_target=None, batch_directory=None):
         refuse("catalog authority changed during selection")
     # Authorization rejects unknown generations before this literal selection.
     # Keep the historical catalog API independent of its authorization receipt shape.
-    if type(state.get("contract_generation")) is int and state["contract_generation"] == 13:
+    if type(state.get("contract_generation")) is int and state["contract_generation"] == 14:
+        current_contract = activation.G14_CONTRACT
+        current_digest = activation.G14_CONTRACT_DIGEST
+        if digest(current_contract) != current_digest or authority["contract_digest"] != current_digest:
+            refuse("catalog generation14 contract differs")
+    elif type(state.get("contract_generation")) is int and state["contract_generation"] == 13:
         current_contract = activation.NEXT_CONTRACT
         current_digest = activation.NEXT_CONTRACT_DIGEST
         if digest(current_contract) != current_digest or authority["contract_digest"] != current_digest:
@@ -899,7 +975,11 @@ def catalog(repo, *, plan_only=False, packet_target=None, batch_directory=None):
     if digest(issue_contract(repo, 31, current_contract["plan_comment"])) != current_digest:
         refuse("current issue/plan changed")
     review.current_pr(repo, 32, meta["head_sha"], meta["base_sha"])
-    gates = full_checks(repo, directory, meta)
+    gates = (
+        full_checks_g14(repo, directory, meta)
+        if current_digest == activation.G14_CONTRACT_DIGEST
+        else full_checks(repo, directory, meta)
+    )
     original = directory / "packet"
     context = read(original / "context.json")
     saved_contract = {

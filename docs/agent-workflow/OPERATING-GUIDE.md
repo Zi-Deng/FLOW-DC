@@ -297,3 +297,18 @@ From the control checkout, use `python3 -B scripts/agentic/review.py` with these
 - `batch9-recover DIRECTORY/units/UNIT` recovers only retained capture material. Add `--publication` for GET-only scoped publication recovery, or use `batch9-recover DIRECTORY --publication` for the aggregate. Unknown writes never trigger another POST; missing capture/final acknowledgment is not reconstructed.
 
 All repeated source/history/admission/remote/replay work consumes the original allocation. Components and integration retain900 native+840 local seconds, action1740; final validation allows180 seconds per child plus360 margins (maximum9180). Pauses are at most1800 seconds; original36-hour and combined48-hour expiries and finite aggregate budgets still apply. Renew only while stopped, with the existing dedicated same account, verified lineage and a fresh disabled-paid receipt covering the whole next window plus300+60 margins. In-flight changes, torn records, unknown usage, changed source/context or exhausted clocks stop without refund/reset/extension. Preserve evidence and stop adoption on failure.
+
+
+For issue31/PR32 only, approved T adds the explicit software suite profile
+`issue31-suite1800-v1`: `python3 -B scripts/agentic/check.py --jobs 1
+--suite-profile issue31-suite1800-v1` (on one command line), or
+`make check-agentic AGENTIC_SUITE_PROFILE=issue31-suite1800-v1`.
+It records version3 requests with an1800-second full-suite deadline; default
+callers retain840seconds and version2. Only the exact Zi-Deng/FLOW-DC PR32
+head branch `issue-31-bounded-review-units` pull-request CI selects this profile
+and a45-minute agentic-quality job. Other events retain15minutes; product CI
+remains10minutes. All live local840/native/credential/grant budgets are unchanged.
+Generation14 readiness requires full current version3 serial/parallel/installed
+records and current hosted receipts, plus the entire fixed public g13 predecessor
+as primary contract material. Historical failures remain failures; this change
+provides no completion, live capability, independent-review or scientific credit.

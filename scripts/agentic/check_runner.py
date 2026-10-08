@@ -726,14 +726,69 @@ class Result(unittest.TextTestResult):
         super().addSubTest(test, subtest, err)
 
 
+SUITE_PROFILE = "issue31-suite1800-v1"
+SUITE_SECONDS = 1800
+SUITE_VERSION = 3
+
+
+def execution_limits(profile, seconds, text_limit, evidence_limit):
+    if (
+        type(profile) is not str
+        or profile != SUITE_PROFILE
+        or type(seconds) not in (int, float)
+        or not math.isfinite(seconds)
+        or not 0 < seconds <= SUITE_SECONDS
+        or type(text_limit) is not int
+        or not 0 < text_limit <= TEXT_BYTES
+        or type(evidence_limit) is not int
+        or not 0 < evidence_limit <= EVIDENCE_BYTES
+    ):
+        raise RunnerError("Invalid suite execution limits")
+    return dict(
+        schema_version=1,
+        profile=SUITE_PROFILE,
+        cap_seconds=SUITE_SECONDS,
+        seconds=seconds,
+        text_limit=text_limit,
+        evidence_limit=evidence_limit,
+    )
+
+
+def request_limits(request):
+    version = request.get("version")
+    if type(version) is not int or version not in (VERSION, SUITE_VERSION):
+        raise RunnerError("Unsupported result protocol version")
+    if version == VERSION:
+        if "execution_limits" in request:
+            raise RunnerError("Legacy request cannot carry suite limits")
+        return {}
+    limits = request.get("execution_limits")
+    if (
+        type(limits) is not dict
+        or set(limits)
+        != {"schema_version", "profile", "cap_seconds", "seconds", "text_limit", "evidence_limit"}
+        or type(limits["schema_version"]) is not int
+        or limits["schema_version"] != 1
+    ):
+        raise RunnerError("Invalid suite limit descriptor")
+    expected = execution_limits(
+        limits["profile"], limits["seconds"], limits["text_limit"], limits["evidence_limit"]
+    )
+    if canonical(limits) != canonical(expected) or limits["evidence_limit"] != request["evidence_limit"]:
+        raise RunnerError("Suite limit descriptor differs")
+    return {"execution_limits": expected}
+
+
 def worker(root, request_path, index, evidence):
     request = strict(request_path.read_bytes())
+    limits = request_limits(request)
     suite, rows, objects, errors = discover(root)
     identity = source(root)
     policy, assignments = assignment_policy(root, suite, rows, objects, identity, request["jobs"])
     if canonical(request) != canonical(
         {
-            "version": VERSION,
+            "version": request["version"],
+            **limits,
             "jobs": request["jobs"],
             "source": identity,
             "assignment_policy": policy,
@@ -754,7 +809,9 @@ def worker(root, request_path, index, evidence):
     chosen = [(r, o) for r, o in zip(rows, objects, strict=True) if r["position"][0] in groups]
     journal = Journal(evidence, request["evidence_limit"])
     try:
-        journal.emit({"event": "header", "version": VERSION, "worker": index, "request": digest(request)})
+        journal.emit(
+            {"event": "header", "version": request["version"], "worker": index, "request": digest(request)}
+        )
         result = unittest.TextTestRunner(
             verbosity=2,
             resultclass=lambda *args, **kw: Result(
@@ -774,12 +831,11 @@ def worker(root, request_path, index, evidence):
 
 
 def reconcile(request, index, path, exit_status):
-    if type(request.get("version")) is not int or request["version"] != VERSION:
-        raise RunnerError("Unsupported result protocol version")
+    request_limits(request)
     if path.stat().st_size > request["evidence_limit"]:
         raise RunnerError("Structured evidence overflow")
     records = [strict(line) for line in path.read_bytes().splitlines()]
-    header = {"event": "header", "version": VERSION, "worker": index, "request": digest(request)}
+    header = {"event": "header", "version": request["version"], "worker": index, "request": digest(request)}
     if not records or canonical(records[0]) != canonical(header):
         raise RunnerError("Worker header differs")
     end = records[-1]
@@ -922,13 +978,28 @@ def terminate(processes):
         process.wait()
 
 
-def run(root, jobs=2, *, output=None, seconds=SECONDS, text_limit=TEXT_BYTES, evidence_limit=EVIDENCE_BYTES):
+def run(
+    root,
+    jobs=2,
+    *,
+    output=None,
+    seconds=SECONDS,
+    text_limit=TEXT_BYTES,
+    evidence_limit=EVIDENCE_BYTES,
+    suite_profile=None,
+):
     if type(jobs) is not int or jobs not in (1, 2):
         raise RunnerError("Worker count must be 1 or 2")
+    limits = (
+        {}
+        if suite_profile is None
+        else {"execution_limits": execution_limits(suite_profile, seconds, text_limit, evidence_limit)}
+    )
+    version = SUITE_VERSION if limits else VERSION
     if (
         type(seconds) not in (int, float)
         or not math.isfinite(seconds)
-        or not 0 < seconds <= SECONDS
+        or not 0 < seconds <= (SUITE_SECONDS if limits else SECONDS)
         or type(text_limit) is not int
         or not 0 < text_limit <= TEXT_BYTES
         or type(evidence_limit) is not int
@@ -948,7 +1019,7 @@ def run(root, jobs=2, *, output=None, seconds=SECONDS, text_limit=TEXT_BYTES, ev
     usage_before = resource.getrusage(resource.RUSAGE_CHILDREN)
     processes, logs, sizes = [], [], [0] * jobs
     selector = selectors.DefaultSelector()
-    summary = {"version": VERSION, "jobs": jobs, "successful": False, "workers": [], "error": None}
+    summary = {"version": version, **limits, "jobs": jobs, "successful": False, "workers": [], "error": None}
     old_handlers = {s: signal.getsignal(s) for s in (signal.SIGALRM, signal.SIGTERM, signal.SIGINT)}
 
     def interrupted(signum, frame):
@@ -965,7 +1036,8 @@ def run(root, jobs=2, *, output=None, seconds=SECONDS, text_limit=TEXT_BYTES, ev
         policy, assignments = assignment_policy(root, suite, rows, objects, identity, jobs)
         summary["assignment_policy"] = policy
         request = {
-            "version": VERSION,
+            "version": version,
+            **limits,
             "jobs": jobs,
             "source": identity,
             "rows": rows,
