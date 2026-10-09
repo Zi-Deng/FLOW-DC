@@ -8,34 +8,10 @@ import uuid
 from pathlib import PurePosixPath
 
 import providers
-from workflow import WorkflowError, write_json
+from workflow import ROOT, WorkflowError, write_json
 
-SCHEMA = {
-    "type": "object",
-    "additionalProperties": False,
-    "required": ["summary", "findings", "inspected", "limitations"],
-    "properties": {
-        "summary": {"type": "string"},
-        "inspected": {"type": "array", "items": {"type": "string"}},
-        "limitations": {"type": "array", "items": {"type": "string"}},
-        "findings": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "additionalProperties": False,
-                "required": ["severity", "path", "line", "claim", "evidence", "fix"],
-                "properties": {
-                    "severity": {"type": "string", "enum": ["P0", "P1", "P2", "P3"]},
-                    "path": {"type": "string"},
-                    "line": {"type": "integer", "minimum": 1},
-                    "claim": {"type": "string"},
-                    "evidence": {"type": "string"},
-                    "fix": {"type": "string"},
-                },
-            },
-        },
-    },
-}
+SCHEMA = json.loads((ROOT / ".agentic/schemas/review-report.json").read_text())
+EXCLUDED = ("archives/", "playground/", "files/output/", "benchmark/results/", "memory/", ".agentic-local/")
 
 
 def safe_path(name):
@@ -56,20 +32,7 @@ def snapshot(repo, head, output, config):
         descriptor, name = row.split("\t", 1)
         mode, kind, oid = descriptor.split()
         safe_path(name)
-        if (
-            kind != "blob"
-            or mode not in {"100644", "100755"}
-            or name.startswith(
-                (
-                    "archives/",
-                    "playground/",
-                    "files/output/",
-                    "benchmark/results/",
-                    "memory/",
-                    ".agentic-local/",
-                )
-            )
-        ):
+        if kind != "blob" or mode not in {"100644", "100755"} or name.startswith(EXCLUDED):
             omitted.append(name)
             continue
         size = int(repo.git("cat-file", "-s", oid))
@@ -94,6 +57,17 @@ def snapshot(repo, head, output, config):
         target.chmod(0o400)
         included.append(name)
     return {"included": included, "omitted": omitted, "bytes": total}
+
+
+def safe_diff(repo, base, head, config, source_bytes=0):
+    revision = f"{base}...{head}"
+    names = repo.git("diff", "--name-only", "-z", revision).split("\0")
+    if any(name.startswith(EXCLUDED) for name in names):
+        raise WorkflowError("Diff touches excluded private/data paths; refuse transmission")
+    diff = repo.git("diff", "--no-ext-diff", "--no-textconv", "--no-renames", revision)
+    if not diff.strip() or source_bytes + len(diff.encode()) > config["max_snapshot_bytes"]:
+        raise WorkflowError("Empty diff or source-plus-diff budget exceeded")
+    return diff
 
 
 def validate_report(body):
@@ -156,7 +130,7 @@ def prepare(repo, pr, config, *, issue=None, plan=None, context_key=None, **over
     packet.mkdir(parents=True, mode=0o700)
     policy = providers.selection(repo, config, **overrides)
     source = snapshot(repo, head, packet / "source", config)
-    diff = repo.git("diff", "--no-ext-diff", "--no-textconv", "--no-renames", f"{base}...{head}")
+    diff = safe_diff(repo, base, head, config, source["bytes"])
     (packet / "diff.txt").write_text(diff)
     context = {
         "pr": pr,

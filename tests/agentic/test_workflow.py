@@ -216,6 +216,28 @@ class SnapshotTests(unittest.TestCase):
             with self.subTest(path=path), self.assertRaises(WorkflowError):
                 review.safe_path(path)
 
+    def test_private_diff_refused_and_snapshot_omits_private_file(self):
+        (self.root / "memory").mkdir()
+        (self.root / "memory/private.txt").write_text("private fixture")
+        self.git("add", ".")
+        self.git("commit", "-m", "private fixture")
+        head = self.git("rev-parse", "HEAD")
+        data = review.snapshot(self.repo, head, self.output, self.config)
+        self.assertIn("memory/private.txt", data["omitted"])
+        with self.assertRaisesRegex(WorkflowError, "private/data"):
+            review.safe_diff(self.repo, self.head, head, self.config)
+
+    def test_empty_and_oversized_diff_refused(self):
+        with self.assertRaises(WorkflowError):
+            review.safe_diff(self.repo, self.head, self.head, self.config)
+        (self.root / "a.py").write_text("new committed text\n")
+        self.git("add", ".")
+        self.git("commit", "-m", "public change")
+        head = self.git("rev-parse", "HEAD")
+        self.assertIn("new committed text", review.safe_diff(self.repo, self.head, head, self.config))
+        with self.assertRaises(WorkflowError):
+            review.safe_diff(self.repo, self.head, head, self.config, self.config["max_snapshot_bytes"])
+
 
 class ExecutionTests(unittest.TestCase):
     def test_timeout_kills_owned_process(self):
