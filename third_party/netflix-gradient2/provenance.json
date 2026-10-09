@@ -1,0 +1,56 @@
+{
+  "revision": "78a74b9878d38c4c048b0304ce12a162ab7b7222",
+  "origin": "https://github.com/Netflix/concurrency-limits",
+  "files": [
+    {
+      "path": "src/com/netflix/concurrency/limits/limit/Gradient2Limit.java",
+      "upstream_path": "concurrency-limits-core/src/main/java/com/netflix/concurrency/limits/limit/Gradient2Limit.java",
+      "sha256": "06ab7b29b503a3809ae2fde51ba5953ab71dff5530c978b65314481df2bd556d"
+    },
+    {
+      "path": "src/com/netflix/concurrency/limits/MetricIds.java",
+      "upstream_path": "concurrency-limits-core/src/main/java/com/netflix/concurrency/limits/MetricIds.java",
+      "sha256": "41c33bba15abcb5fc54f6a6bb0426615ad39eff070f5b7f40b3392136d5ac2ad"
+    },
+    {
+      "path": "src/com/netflix/concurrency/limits/MetricRegistry.java",
+      "upstream_path": "concurrency-limits-core/src/main/java/com/netflix/concurrency/limits/MetricRegistry.java",
+      "sha256": "6d440431b1c448bf9fd0fe212cefe0b8508c2e0d1c589314f8a10cf217ab1b3d"
+    },
+    {
+      "path": "src/com/netflix/concurrency/limits/internal/EmptyMetricRegistry.java",
+      "upstream_path": "concurrency-limits-core/src/main/java/com/netflix/concurrency/limits/internal/EmptyMetricRegistry.java",
+      "sha256": "8ddeb2a8ab727aee8d7a963951995d366772dfcade1b26c8409e71309bc28b33"
+    },
+    {
+      "path": "src/com/netflix/concurrency/limits/internal/Preconditions.java",
+      "upstream_path": "concurrency-limits-core/src/main/java/com/netflix/concurrency/limits/internal/Preconditions.java",
+      "sha256": "3201d6ffaf809cbac626dcd074d5134402f9a88350dad75c875353e9666ce101"
+    },
+    {
+      "path": "src/com/netflix/concurrency/limits/limit/measurement/ExpAvgMeasurement.java",
+      "upstream_path": "concurrency-limits-core/src/main/java/com/netflix/concurrency/limits/limit/measurement/ExpAvgMeasurement.java",
+      "sha256": "4ca53c513388e994edbbb7b0f2987964f29769cb5d2a79b6d799a6f93c8457a0"
+    },
+    {
+      "path": "src/com/netflix/concurrency/limits/limit/measurement/Measurement.java",
+      "upstream_path": "concurrency-limits-core/src/main/java/com/netflix/concurrency/limits/limit/measurement/Measurement.java",
+      "sha256": "34bb14248846eabafd86a98151278e8475fd6669c94a00719e3b4cd8f6e77ee8"
+    },
+    {
+      "path": "src/com/netflix/concurrency/limits/limit/AbstractLimit.java",
+      "upstream_path": "concurrency-limits-core/src/main/java/com/netflix/concurrency/limits/limit/AbstractLimit.java",
+      "sha256": "76405d23fa9ea152214276bd260cefe48ecba0c25b4e5a310f0b86e805abe31a"
+    },
+    {
+      "path": "src/com/netflix/concurrency/limits/Limit.java",
+      "upstream_path": "concurrency-limits-core/src/main/java/com/netflix/concurrency/limits/Limit.java",
+      "sha256": "afde3872da879fc3b3a748c1a329a5af23cc08505e625e9835e215caba1023fd"
+    },
+    {
+      "path": "LICENSE",
+      "upstream_path": "LICENSE",
+      "sha256": "39e838b90f657019a5cd5954ab588139806a4b08537d870b2fbdb9102ae91a20"
+    }
+  ]
+}

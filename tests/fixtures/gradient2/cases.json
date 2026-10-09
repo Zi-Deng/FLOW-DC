@@ -1,0 +1,15 @@
+[
+  {"id":"warmup", "options":{}, "segments":[[10000000,20,false,10],[15000000,20,false,2]]},
+  {"id":"utilization", "options":{}, "segments":[[10000000,0,false,1],[10000000,9,false,1],[10000000,10,false,2],[10000000,11,false,1]]},
+  {"id":"warmup-decay", "options":{"min_limit":1,"smoothing":0}, "segments":[[300,20,false,1],[100,20,false,1],[50,20,false,1],[100,20,false,8]]},
+  {"id":"decay-after-warmup", "options":{}, "segments":[[1000,20,false,10],[1,200,false,3]]},
+  {"id":"lower-clipping", "options":{"initial_limit":5,"min_limit":4,"queue_size":0,"smoothing":1,"rtt_tolerance":1}, "segments":[[1,5,false,1],[100000,5,false,3]]},
+  {"id":"upper-clipping", "options":{"initial_limit":19,"min_limit":1,"max_limit":20,"smoothing":1}, "segments":[[100,19,false,3]]},
+  {"id":"truncation", "options":{"initial_limit":1,"min_limit":1,"queue_size":1}, "segments":[[100,10,false,20]]},
+  {"id":"changed-parameters", "options":{"initial_limit":6,"min_limit":2,"max_limit":40,"queue_size":3,"smoothing":0.7,"long_window":2,"rtt_tolerance":1.1}, "segments":[[100,40,false,10],[1000,40,false,3],[20,40,false,3],[100,40,false,3]]},
+  {"id":"zero-smoothing", "options":{"smoothing":0}, "segments":[[100,20,false,12],[10000,20,false,3]]},
+  {"id":"drop-false", "options":{"initial_limit":100,"min_limit":1}, "segments":[[100,200,false,10],[10000,200,false,15],[10,200,false,15]]},
+  {"id":"drop-true", "options":{"initial_limit":100,"min_limit":1}, "segments":[[100,200,true,10],[10000,200,true,15],[10,200,true,15]]},
+  {"id":"long-window", "options":{}, "segments":[[10000000,200,false,10],[11000000,200,false,1800]]},
+  {"id":"maximum-delay", "options":{"smoothing":0}, "segments":[[9007199254740991,20,false,12],[1,20,false,2]]}
+]
