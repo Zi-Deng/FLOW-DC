@@ -246,6 +246,8 @@ def _run_verified(command, directory, truth, verify, *, cwd, deadline, cleanup, 
             process_resources = sampler.close()
 
     verification_started = time.monotonic_ns()
+    verifier_sampler = ResourceSampler(os.getpid(), descendants=False)
+    verifier_cpu_started = time.process_time()
     try:
         require(failure != "cleanup_failed", "artifact verification unavailable before process quiescence")
         index = verify()
@@ -256,6 +258,9 @@ def _run_verified(command, directory, truth, verify, *, cwd, deadline, cleanup, 
             "artifacts_valid": False,
             "errors": [f"{type(exc).__name__}: {exc}"],
         }
+    verifier_resources = verifier_sampler.close()
+    verifier_resources["observed_cpu_seconds"] = time.process_time() - verifier_cpu_started
+    verifier_resources["interpretation"] = "Sampled whole harness RSS during verification, including retained fixture/origin state; CPU is process-time delta. Brief peaks may be missed."
     rows = index["rows"]
     require(
         [row["row_id"] for row in rows] == [row["row_id"] for row in truth["rows"]],
@@ -299,7 +304,7 @@ def _run_verified(command, directory, truth, verify, *, cwd, deadline, cleanup, 
         "verification_ns": ended - verification_started,
         "boundary": "process launch through closed and checked common outcome index",
         "outcome_index_sha256": digest(raw_index),
-        "resources": {"acquisition_process_tree": process_resources},
+        "resources": {"acquisition_process_tree": process_resources, "verification_harness": verifier_resources},
         "resource_status": "sampled" if process_resources is not None else "unavailable",
         "attempt_attribution": "origin aggregate; duplicate-row attribution unavailable",
         "provenance": provenance,

@@ -1,5 +1,38 @@
 # Controlled-origin and retained study tools
 
+## Current research workload and primary analysis
+
+Use the explicit [finite research profile](WORKLOAD.md) for mechanism qualification.
+`benchmark/calibrate.py --output NEW_PRIVATE_DIRECTORY --seed SEED --wall-seconds
+4500` tests ascending fixed-concurrency workloads for the three primary scenarios.
+Its protocol is written before execution. Every infeasible, failed and tested
+candidate remains visible; selection stops at the first qualifying candidate.
+The wall limit reserves a full acquisition/cleanup window before starting another
+run. Origin realization and fixed-client observations do not establish exercised
+adaptive decisions or cloud resource fit. Use the existing `study.py calibrate`
+instrumentation on/off pair separately to measure origin logging overhead.
+
+`benchmark/analyze.py --plan PLAN --study-root ROOT --protocol PROTOCOL --output
+NEW_DIRECTORY` independently re-verifies the original first attempt of every
+planned primary cell, including archived original-byte outputs and retained HTTP
+observations. It writes the complete inventory, CSV and PDF/PNG figure. Later
+attempts are listed and cannot replace the first. Known terminal failures remain
+accounted; missing observations, uncertain attempts, process interruptions and
+invalid artifacts cannot enter complete-run intervals. Run-level p95 requires at
+least 100 eligible observations. Pilot/engineering analyses cannot assert a
+confirmatory claim.
+
+The primary family is gradient versus base PAARC, fixed, ratio and the Gradient2
+adaptation in capacity drop/recovery, mixed sizes and sustained overload: 12 paired
+contrasts with Holm adjustment. Ordinary paired 95% intervals are labeled
+separately. Coverage and latency use 24 simultaneous one-sided Bonferroni lower
+bounds: candidate coverage minus reference plus .01, and 1.10 times reference p95
+minus candidate p95. A supported claim needs positive goodput, adjusted efficacy
+and both safeguards. Requests are not independent replicates. Confirmatory block
+count is frozen once after measured pilots and limited to 60; no outcomes drive
+additional repetitions. Maintainer-approved provisional defaults must retain that
+authority rather than invent named-advisor approval.
+
 This is engineering software for milestones A–C of issue #26. Local V1 fixtures
 test state/accounting; V2 requires the real localhost executions described below.
 There is no efficacy result, frozen scientific protocol or live cloud authorization

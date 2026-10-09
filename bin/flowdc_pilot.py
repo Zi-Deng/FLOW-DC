@@ -6,6 +6,7 @@ a fresh, identity-validated provider observation confirms SHELVED_OFFLOADED.
 """
 
 import math
+from uuid import UUID
 from dataclasses import dataclass, replace
 
 ALLOWANCE_SECONDS = 7200
@@ -54,26 +55,49 @@ class Allowance:
     sample: ClockSample | None = None
     shutdown_at_consumed: float | None = None
     uncertain: bool = False
+    campaign_id: str | None = None
+    campaign_limit: float | None = None
+    campaign_expires_utc: float | None = None
+    campaign_window_seconds: int | None = None
 
     def __post_init__(self):
         finite_seconds(self.limit)
         finite_seconds(self.consumed)
         if not 0 < self.limit <= ALLOWANCE_SECONDS:
             raise AccountingError("invalid_allowance")
+        campaign = (self.campaign_id, self.campaign_limit, self.campaign_expires_utc, self.campaign_window_seconds)
+        if any(value is not None for value in campaign):
+            try:
+                canonical_id = str(UUID(self.campaign_id)) == self.campaign_id
+            except (ValueError, TypeError, AttributeError):
+                canonical_id = False
+            if (not canonical_id
+                    or self.campaign_limit is None or self.campaign_expires_utc is None
+                    or type(self.campaign_window_seconds) is not int
+                    or not 601 <= self.campaign_window_seconds <= 1800):
+                raise AccountingError("invalid_campaign_account")
+            finite_seconds(self.campaign_limit)
+            finite_seconds(self.campaign_expires_utc)
+            if not self.limit <= self.campaign_limit <= 604800:
+                raise AccountingError("invalid_campaign_allowance")
         if type(self.obligation) is not bool or type(self.uncertain) is not bool:
             raise AccountingError("invalid_account")
         if self.obligation:
             if not isinstance(self.sample, ClockSample) or self.shutdown_at_consumed is None:
                 raise AccountingError("missing_obligation_history")
             finite_seconds(self.shutdown_at_consumed)
-            if self.shutdown_at_consumed > self.limit - SHUTDOWN_RESERVE_SECONDS:
+            if self.shutdown_at_consumed > self.effective_limit - SHUTDOWN_RESERVE_SECONDS:
                 raise AccountingError("invalid_shutdown_threshold")
         elif self.sample is not None or self.shutdown_at_consumed is not None:
             raise AccountingError("unexpected_obligation_history")
 
     @property
+    def effective_limit(self):
+        return self.campaign_limit if self.campaign_id is not None else self.limit
+
+    @property
     def remaining(self):
-        return max(0, self.limit - self.consumed)
+        return max(0, self.effective_limit - self.consumed)
 
     def account(self, now):
         """Charge unknown time as active; fail closed on discontinuity/reboot.
@@ -96,7 +120,7 @@ class Allowance:
         )
         consumed = self.consumed + max(0, elapsed, wall)
         if ambiguous:
-            consumed = max(self.limit, consumed)
+            consumed = max(self.effective_limit, consumed)
         return replace(self, consumed=consumed, sample=now, uncertain=self.uncertain or ambiguous)
 
     def activation_intent(self, now, *, window_seconds, inspection=False):
@@ -112,7 +136,10 @@ class Allowance:
             raise AccountingError("outstanding_obligation")
         if self.uncertain:
             raise AccountingError("ambiguous_history")
-        maximum = min(self.remaining, INSPECTION_SECONDS if inspection else self.limit)
+        maximum = min(self.remaining, INSPECTION_SECONDS if inspection else self.effective_limit)
+        if self.campaign_id is not None:
+            if window_seconds > self.campaign_window_seconds or now.utc + window_seconds > self.campaign_expires_utc:
+                raise AccountingError("campaign_expired_or_window_exceeded")
         if not SHUTDOWN_RESERVE_SECONDS < window_seconds <= maximum:
             raise AccountingError("insufficient_allowance_or_invalid_window")
         return replace(
@@ -124,7 +151,8 @@ class Allowance:
 
     def shutdown_due(self, now):
         current = self.account(now)
-        return current.obligation and (current.uncertain or current.consumed >= current.shutdown_at_consumed)
+        return current.obligation and (current.uncertain or current.consumed >= current.shutdown_at_consumed
+            or (current.campaign_id is not None and now.utc >= current.campaign_expires_utc - SHUTDOWN_RESERVE_SECONDS))
 
     def observe(self, now, *, state):
         """Caller must validate observation identity/freshness before this call.

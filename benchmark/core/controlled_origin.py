@@ -43,7 +43,8 @@ class ServiceModel:
         )
 
     def advance(self, now):
-        require(type(now) in (int, float) and self.now <= now <= 300, "invalid origin clock")
+        require(type(now) in (int, float) and self.now <= now <= self.limits.acquisition_seconds + 60,
+                "invalid origin clock")
         self.now = now
         while self.position < len(self.schedule) and self.schedule[self.position][0] <= now:
             planned, self.slots = self.schedule[self.position]

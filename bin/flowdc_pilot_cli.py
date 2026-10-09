@@ -61,6 +61,7 @@ MODULES = (
     "flowdc_pilot_provider.py",
     "flowdc_pilot_supervisor.py",
     "flowdc_pilot_cli.py",
+    "flowdc_campaign.py",
 )
 
 
@@ -76,6 +77,8 @@ def arguments(commands):
         "supervise",
         "upgrade-supervisor",
         "extend-allowance",
+        "campaign-preview",
+        "campaign-apply",
         "runtime-check",
         "topology-preview",
         "topology-apply",
@@ -100,7 +103,7 @@ def arguments(commands):
                 "--candidate-source", help="Absolute directory of the reviewed supervisor module closure."
             )
             parser.add_argument("--recover", choices=("complete", "rollback"))
-        if action == "extend-allowance":
+        if action in ("extend-allowance", "campaign-preview", "campaign-apply"):
             parser.add_argument("--grant", required=True)
         if action == "start":
             parser.add_argument("--window-seconds", type=int, default=1800)
@@ -524,9 +527,9 @@ def verify_grant_local(journal, record, *, clock=sample_clock):
         raise failure("supervisor_not_ready")
 
 
-def grant_outcome(receipt, applied, record):
+def grant_outcome(receipt, applied, record, *, campaign=False):
     return ops.outcome(
-        "pilot extend-allowance",
+        "pilot campaign-apply" if campaign else "pilot extend-allowance",
         "ok",
         data={
             "result": "applied" if applied else "already_applied",
@@ -543,12 +546,17 @@ def grant_outcome(receipt, applied, record):
     ), 0
 
 
-def extend_allowance(journal, path, *, clock=sample_clock):
-    request_value = load_grant_request(path)
+def extend_allowance(journal, path, *, clock=sample_clock, campaign=False):
+    if campaign:
+        from flowdc_campaign import preview, validate_request, find_receipt
+        request_value = validate_request(ops.read_document(path))
+    else:
+        request_value = load_grant_request(path)
+        find_receipt = find_grant_receipt
     record = journal.read()
-    receipt = find_grant_receipt(record, request_value)
+    receipt = find_receipt(record, request_value)
     if receipt is not None:
-        return grant_outcome(receipt, False, record)
+        return grant_outcome(receipt, False, record, campaign=campaign)
     # Match the experiment owner protocol without importing uninstalled modules.
     # Fixed lock order: experiment, maintenance, then the short journal I/O lock.
     with (
@@ -558,9 +566,9 @@ def extend_allowance(journal, path, *, clock=sample_clock):
         private_lock(parent, "maintenance.lock", blocking=False),
     ):
         record = journal.read()
-        receipt = find_grant_receipt(record, request_value)
+        receipt = find_receipt(record, request_value)
         if receipt is not None:
-            return grant_outcome(receipt, False, record)
+            return grant_outcome(receipt, False, record, campaign=campaign)
         try:
             with ops.open_private_at(runs, "active-experiment.json") as fd:
                 owner = ops.fields(ops.parse_json(ops.read_bounded_file(fd)), ("run_id",))
@@ -568,7 +576,10 @@ def extend_allowance(journal, path, *, clock=sample_clock):
                 raise failure("active_experiment_owner")
         except FileNotFoundError:
             pass
-        require_grant_expectation(record, request_value)
+        if campaign:
+            preview(record, request_value, clock())
+        else:
+            require_grant_expectation(record, request_value)
         require_grant_idle(record)
         verify_grant_controller(journal, record, clock=clock)
         start = clock()
@@ -578,14 +589,15 @@ def extend_allowance(journal, path, *, clock=sample_clock):
         # the latest heartbeat here; commit still compares to the original proof
         # snapshot and refuses every other intervening state change.
         verify_grant_controller(journal, journal.read(), clock=clock)
-        receipt, applied, current = journal.extend_allowance(
+        apply = journal.authorize_campaign if campaign else journal.extend_allowance
+        receipt, applied, current = apply(
             request_value,
             record,
             start,
             clock=clock,
             recheck=lambda current: verify_grant_local(journal, current, clock=clock),
         )
-        return grant_outcome(receipt, applied, current)
+        return grant_outcome(receipt, applied, current, campaign=campaign)
 
 
 def prepare(args):
@@ -665,6 +677,7 @@ def status(journal, operation="pilot status"):
             "registration_id": record["registration_id"],
             "allowance_binding_sha256": allowance_binding_sha256(record),
             "allowance_grants": [event["data"] for event in grant_receipts(record)],
+            "campaign_authorizations": [event["data"] for event in record["events"] if event["kind"] == "campaign_authorized"],
             "context": record["spec"]["context"],
             "desired": record["desired"],
             "supervisor_ready": ready,
@@ -802,6 +815,13 @@ def run(args):
                 },
             ), 0
         journal = Journal(args.state_root)
+        if args.pilot_command == "campaign-preview":
+            from flowdc_campaign import preview, validate_request
+            _, receipt, applicable = preview(journal.read(), validate_request(ops.read_document(args.grant)), sample_clock())
+            return ops.outcome("pilot campaign-preview", "ok", data={"receipt": receipt,
+                "applicable": applicable, "state_changed": False, "cloud_readiness": "not_assessed"}), 0
+        if args.pilot_command == "campaign-apply":
+            return extend_allowance(journal, args.grant, campaign=True)
         if args.pilot_command == "extend-allowance":
             return extend_allowance(journal, args.grant)
         if args.pilot_command == "upgrade-supervisor":

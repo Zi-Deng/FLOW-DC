@@ -110,6 +110,8 @@ def make_plan(
     require(purpose in ("engineering", "provisional-pilot", "confirmatory"), "unknown study purpose")
     require((purpose == "engineering") == (namespace == "engineering"), "engineering needs its own namespace")
     limits = workload(research_workload)
+    if research_workload is not None and purpose == "confirmatory":
+        require(blocks <= 60, "research confirmation is limited to 60 frozen blocks")
     require(type(rows) is int and 1 <= rows <= limits.max_rows, "rows exceed finite workload")
     from .controlled_origin import SCENARIOS, RESEARCH_SCENARIOS
 

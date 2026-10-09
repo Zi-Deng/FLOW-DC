@@ -390,6 +390,8 @@ def validate_record(record):
                 ):
                     raise ValueError
         validate_grant_receipts(record)
+        from flowdc_campaign import validate_receipts
+        validate_receipts(record)
         migration_ids = set()
         for event in record["events"]:
             if event["kind"] != "topology_migrated":
@@ -621,6 +623,28 @@ class Journal:
                 preserved["vms"][vm["id"]]["account"]["limit"] = old
             if encode(preserved) != encode(current):
                 raise failure("invalid_allowance_transition")
+            connection.execute("UPDATE pilot SET body=? WHERE id=1", (encode(candidate),))
+            connection.commit()
+            return copy.deepcopy(receipt), True, candidate
+
+    def authorize_campaign(self, request, snapshot, verification_start, *, clock, recheck):
+        from flowdc_campaign import preview
+        from flowdc_pilot_supervisor import OBSERVATION_SECONDS
+
+        with self.connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute("SELECT body FROM pilot WHERE id=1").fetchone()
+            if row is None:
+                raise failure("missing_journal_history")
+            current = validate_record(ops.parse_json(row[0]))
+            candidate, receipt, applied = preview(current, request, clock())
+            if not applied:
+                return receipt, False, current
+            if encode(dict(current, heartbeat=None)) != encode(dict(snapshot, heartbeat=None)):
+                raise failure("campaign_state_changed")
+            recheck(current)
+            require_grant_interval(verification_start, clock(), OBSERVATION_SECONDS)
+            validate_record(candidate)
             connection.execute("UPDATE pilot SET body=? WHERE id=1", (encode(candidate),))
             connection.commit()
             return copy.deepcopy(receipt), True, candidate

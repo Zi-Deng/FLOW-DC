@@ -30,6 +30,12 @@ See the [cleanup reliability evidence](docs/jetstream2/CLEANUP-RELIABILITY-EVIDE
 and [runtime requirements](docs/jetstream2/README.md#explicit-offload-runtime-prerequisite)
 before a separately authorized deployment or activation.
 
+The [finite campaign extension](docs/jetstream2/CAMPAIGN.md) provides offline
+`pilot campaign-preview --grant PATH` and explicitly authorized
+`pilot campaign-apply --grant PATH`. It preserves pilot limits and all consumption,
+with a separate finite campaign ceiling, expiry, selected UUIDs, budget and receipt.
+It does not activate VMs or establish scientific validity.
+
 ## Installation
 
 ### Prerequisites
