@@ -3,6 +3,7 @@
 import hashlib
 import importlib.util
 import json
+import subprocess
 import sys
 import unittest
 from pathlib import Path
@@ -23,6 +24,27 @@ spec.loader.exec_module(reference)
 
 
 class Gradient2Tests(unittest.TestCase):
+    def test_optimized_python_still_rejects_corrupt_reference_and_jar(self):
+        script = """import importlib.util,pathlib,tempfile
+spec=importlib.util.spec_from_file_location('reference','scripts/verify_gradient2.py')
+m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
+rows=pathlib.Path('tests/fixtures/gradient2/reference.csv').read_text().splitlines()
+columns=rows[1].split(',');columns[12]='9999';rows[1]=','.join(columns)
+try: m.compare(('\\n'.join(rows)+'\\n').encode())
+except AssertionError: pass
+else: raise RuntimeError('Optimized execution accepted corrupt decisions')
+with tempfile.TemporaryDirectory() as folder:
+ jar=pathlib.Path(folder)/'wrong.jar';jar.write_bytes(b'corrupt')
+ try: m.reference('unused-java','unused-javac',jar)
+ except AssertionError as e:
+  if str(e)!='Wrong pinned SLF4J artifact': raise
+ else: raise RuntimeError('Optimized execution accepted corrupt jar')
+"""
+        result = subprocess.run(
+            [sys.executable, "-O", "-c", script], cwd=ROOT, capture_output=True, timeout=10
+        )
+        self.assertEqual(result.returncode, 0, result.stderr.decode())
+
     def test_actual_java_fixture_decisions_and_state(self):
         raw = (ROOT / "tests/fixtures/gradient2/reference.csv").read_bytes()
         self.assertEqual(
