@@ -170,6 +170,9 @@ def prepare(
 ):
     number, issue_number, plan_comment = map(positive, (number, issue_number, plan_comment))
     cfg = configuration(repo.root)
+    import review_public_catalog_v1 as public_catalog
+
+    public_profile = public_catalog.selected(repo, issue_number, plan_comment)
     selection = review_policy.resolve(
         repo, cfg, review_provider=review_provider, review_model=review_model, review_effort=review_effort
     )
@@ -257,8 +260,9 @@ def prepare(
     private_directory(directory, exist_ok=False)
     packet = directory / "packet"
     packet.mkdir()
-    manifest = snapshot(repo, head, packet / "source", cfg)
-    base_manifest = snapshot(repo, ancestor, packet / "base-source", cfg)
+    snapshot_reader = public_catalog.snapshot if public_profile else snapshot
+    manifest = snapshot_reader(repo, head, packet / "source", cfg)
+    base_manifest = snapshot_reader(repo, ancestor, packet / "base-source", cfg)
     write_json(packet / "source-index.json", manifest)
     write_json(packet / "base-source-index.json", base_manifest)
     (packet / "diff.txt").write_text(diff, encoding="utf-8")
@@ -307,6 +311,7 @@ def prepare(
     )
     files = {str(p.relative_to(packet)): digest(p) for p in packet.rglob("*") if p.is_file()}
     metadata = {
+        **({"public_catalog_profile": public_catalog.PROFILE} if public_profile else {}),
         **({"reporting_readiness_version": 1} if reporting is not None else {}),
         "schema_version": 7 if reporting is not None else 6,
         "kind": "single",
@@ -376,6 +381,9 @@ def verify_packet(directory):
         key in metadata for key in ("reporting_sha256", "terminal_sha256")
     ):
         raise WorkflowError("Structured reporting cannot reinterpret historical metadata")
+    from review_public_catalog_v1 import verify_metadata
+
+    verify_metadata(metadata)
     packet = directory / "packet"
     actual = {name: digest(path) for name, path in packet_tree.files(packet)}
     if actual != metadata["files"]:

@@ -4321,3 +4321,87 @@ class Generation19Tests(unittest.TestCase):
                             )
                             covered = [i for v in entries for i in range(v["start_line"], v["end_line"] + 1)]
                             self.assertEqual(covered, list(range(1, len(b.decode().splitlines()) + 1)))
+
+
+G20_APPROVAL = {
+    "issue": 31,
+    "plan_comment": 6074133818,
+    "contract": {
+        "issue": 31,
+        "plan_comment": 6074133818,
+        "issue_digest": "1875464d1340e35cd90fae86ad70e87be1b13108587ef138ce8130cc9263c03f",
+        "plan_digest": "3ccfbc3b81942e4259fa853ed199f9c5583753b0b31c9e2c3dde46a8536d6a7e",
+    },
+    "source": "Operator reconciliation October9,2026 under the maintainer's explicit standing "
+    "override approving all necessary decisions/plans/actions and paid processes through "
+    "the private coauthor-review manuscript, stored at "
+    "memory/FLOW-DC-standing-authorization.md, and latest Login renewed continuation. Exact "
+    "published complete-public-catalog-v1 contract addresses actual2.200996MB "
+    "public-context reader failure, omitted308865-byte test Git source, and measured "
+    "complete1984ID/10.236207MB/175292line scope. Authorizes a forward-only closed "
+    "profile/public reader/snapshot/full obligation normalization and coherent35-candidate "
+    "component partition, actual new literal authority/history and specified narrow source "
+    "hooks/tests, with historical APIs/defaults/readers/assertions and whole "
+    "G19/X/source6072002965/W/V/U/T/g13 preserved. New4MB public-only read/500KB "
+    "source/12MB range/2400ID/220000line ceilings are finite and independently remeasured; "
+    "no generic private/report cap or permission expansion. "
+    "Existing48component/49wrapper/native300or900/local840/extraAPI0, suite1800 and "
+    "scopedCI45 remain unchanged. All prior failed attempts, software passes and charges "
+    "remain historical. Full new-source/local/installed/coordinator/first-hosted gates and "
+    "actual independent component/integration review remain required; no promised fit or "
+    "grant/model/scientific claim. Actual history19 appends actual G19 approval once "
+    "preserving prior18 and original executor/worktree. This records explicit user "
+    "authority, not namedadvisor/coauthor agreement, human GitHub approval, native "
+    "activation or scientific evidence.\n",
+    "recorded_at": "2026-10-09T04:15:51.057555+00:00",
+    "note": "Operator assertion of prior human authorization; not public approval proof.",
+}
+
+
+class Generation20Tests(unittest.TestCase):
+    write_state = QualificationTests.write_state
+
+    def setUp(self):
+        QualificationTests.setUp(self)
+        self.repo.root = self.repo.main
+        self.state = copy.deepcopy(G17_STATE)
+        self.state.update(
+            contract_generation=20,
+            approval=copy.deepcopy(G20_APPROVAL),
+            approval_history=copy.deepcopy(G19_HISTORY + [G19_APPROVAL]),
+        )
+        self.write_state(self.state)
+
+    def test_actual_g20_history_and_prepost_authority(self):
+        import review_batch_windows_v1 as windows
+
+        pair = activation.authorization(self.repo)
+        self.assertEqual(
+            pair,
+            dict(
+                contract_digest=activation.G20_CONTRACT_DIGEST, approval_digest=activation.G20_APPROVAL_DIGEST
+            ),
+        )
+        self.assertEqual(self.state["approval_history"][:-1], G19_HISTORY)
+        self.assertEqual(self.state["approval_history"][-1], G19_APPROVAL)
+
+        def changed(*args, **kwargs):
+            self.write_state(copy.deepcopy(G17_STATE))
+
+        with patch.object(windows, "_full_checks_g20", side_effect=changed):
+            with self.assertRaisesRegex(WorkflowError, "authority or source changed"):
+                windows.full_checks_g20(self.repo, self.repo.main, {"plan_comment": 6074133818})
+        for mutate in (
+            lambda v: v.update(contract_generation=True),
+            lambda v: v.update(contract_generation=21),
+            lambda v: v["approval_history"].append(copy.deepcopy(v["approval_history"][-1])),
+            lambda v: v["approval"].update(plan_comment=True),
+            lambda v: v["approval_history"].reverse(),
+            lambda v: v["approval_history"].pop(),
+            lambda v: v.update(approval=copy.deepcopy(G19_APPROVAL)),
+        ):
+            state = copy.deepcopy(self.state)
+            mutate(state)
+            self.write_state(state)
+            with self.assertRaises(WorkflowError):
+                activation.authorization(self.repo)

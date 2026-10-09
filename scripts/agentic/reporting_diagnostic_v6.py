@@ -121,8 +121,18 @@ def packets(source):
         raise WorkflowError("V6 catalog overwrites fixed guidance")
     files.update(source["files"])
     items.extend(copy.deepcopy(source["items"]))
+    from review_public_catalog_v1 import PROFILE
+
+    declared_profile = source["dependencies"].get("profile")
+    if "profile" in source["dependencies"] and declared_profile != digest(PROFILE):
+        raise WorkflowError("Unknown public catalog profile")
+    largest = (
+        capacity.largest_fixture_public_catalog_v1
+        if declared_profile == digest(PROFILE)
+        else capacity.largest_fixture
+    )
     generated = {
-        22: capacity.largest_fixture(source["components"], items, files, source["dependencies"]),
+        22: largest(source["components"], items, files, source["dependencies"]),
         23: capacity.integration_fixture(items, files, source["dependencies"]),
     }
     result = {}

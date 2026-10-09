@@ -277,7 +277,7 @@ def plan_catalog(catalog):
 
 def application(plan, qualification_applied, now, *, qualification_finished):
     """Pure immutable accounting; this does not apply a grant or invoke a model."""
-    validate_plan(plan)
+    validate_current_plan(plan)
     start, now = clock(qualification_applied), clock(now)
     finished = clock(qualification_finished)
     if not start <= finished <= start + 7380 or not finished <= now <= finished + 1800:
@@ -2214,6 +2214,14 @@ def catalog(repo, *, plan_only=False, packet_target=None, batch_directory=None):
     at the task's v6_catalog directory after final source gates. All inventory is
     regenerated from Git and exact public context, not imported assignments.
     """
+    import reporting_activation_v6 as current_authority
+
+    if current_authority.authorization(repo)["contract_digest"] == current_authority.G20_CONTRACT_DIGEST:
+        from review_public_catalog_v1 import catalog as public_catalog
+
+        return public_catalog(
+            repo, plan_only=plan_only, packet_target=packet_target, batch_directory=batch_directory
+        )
     import hashlib
     import tempfile
 
@@ -2509,7 +2517,7 @@ def integration_reports(plan, reports, dependencies, *, existing_projection_byte
     """Materialize every whole report; dependency qualification is a separate gate."""
     import review_report_material_v1 as material
 
-    validate_plan(plan)
+    validate_current_plan(plan)
     names = [u["id"] for u in plan["catalog"]["components"]]
     if (
         type(reports) is not dict
@@ -2768,7 +2776,7 @@ def finite_authorization(value, plan, policy, now):
         or set(value) != {"name", "plan_digest", "policy_digest", "funding", "expires_at"}
         or type(value["name"]) is not str
         or re.fullmatch("[a-z0-9][a-z0-9-]{0,79}", value["name"]) is None
-        or value["plan_digest"] != digest(validate_plan(plan))
+        or value["plan_digest"] != digest(validate_current_plan(plan))
         or value["policy_digest"] != digest(policy)
         or digest(value["funding"]) != digest(plan["schedule"])
         or not clock(now) + plan["schedule"]["wall_seconds"] <= clock(value["expires_at"])
@@ -2801,8 +2809,8 @@ def select_preparation(repo, directory, authorization, *, owned_auth):
         exported = Path(temporary) / "packet"
         actual = catalog(repo, packet_target=exported)
         plan, meta = actual["plan"], actual["metadata"]
-        validate_plan(plan)
-        if set(plan["catalog"]["binding"]) != {
+        validate_current_plan(plan)
+        if set(plan["catalog"]["binding"]) != ({"profile"} if plan["schema_version"] == 10 else set()) | {
             "local",
             "hosted",
             "source",
@@ -3090,7 +3098,7 @@ def prepare_child(repo, directory, unit_id, *, owned_auth):
         "batch_sha256": digest(batch),
         "unit": unit,
         "required_ids": unit["required_ids"] + [item["id"] for item in extra["items"]],
-        "context_ids": surrounding_ids(plan["catalog"], unit),
+        "context_ids": surrounding_current_ids(plan, unit),
         "dependencies": extra["dependencies"],
         "material_claim": digest(claims[unit_id]),
         "policy_digest": digest(policy),
@@ -3181,7 +3189,7 @@ def verify_child(repo, directory):
         "batch_sha256": digest(batch),
         "unit": unit,
         "required_ids": unit["required_ids"] + [item["id"] for item in extra["items"]],
-        "context_ids": surrounding_ids(batch["plan"]["catalog"], unit),
+        "context_ids": surrounding_current_ids(batch["plan"], unit),
         "dependencies": extra["dependencies"],
         "material_claim": digest(claims[unit["id"]]),
         "policy_digest": digest(policy),
@@ -5539,3 +5547,147 @@ def command(repo, args):
     # run_child obtains and verifies its own owned lock through capture, preserving
     # the preparation origin and refusing any intervening generation/source change.
     return run_child(current, child)
+
+
+def full_checks_g20(repo, directory, meta):
+    import check_runner
+    import reporting_activation_v6 as activation
+
+    current = activation.authorization(repo)
+    before = check_runner.source(repo.root)
+    if (
+        current["contract_digest"] != activation.G20_CONTRACT_DIGEST
+        or type(meta["plan_comment"]) is not int
+        or meta["plan_comment"] != 6074133818
+    ):
+        refuse("generation20 full gates require current literal authority")
+    result = _full_checks_g20(repo, directory, meta, suite_profile="issue31-suite1800-v1")
+    if activation.authorization(repo) != current or check_runner.source(repo.root) != before:
+        refuse("full gate authority or source changed")
+    return result
+
+
+def _full_checks_g20(repo, directory, meta, *, suite_profile):
+    """Validate retained local execution records and fresh hosted associations.
+
+    Local artifacts are owner-writable bookkeeping, not execution attestations.
+    Hosted receipts are independently fetched through the existing collector.
+    No test runner, installer or provider is invoked by this read-only adapter.
+    """
+    import hashlib
+
+    import check_runner
+    import ci_evidence
+
+    evidence = read(plain_path(directory) / "full-checks.json")
+    commands = {
+        "serial": "python3 -B scripts/agentic/check.py --jobs 1",
+        "parallel": "make check-agentic",
+        "full": "make check",
+        "clean": "make check-clean",
+        "installed": "installed-full-suite",
+        "lint": "ruff check",
+        "format": "ruff format --check",
+        "repository": "python3 -B scripts/check_repository.py",
+    }
+    if suite_profile is not None:
+        commands["serial"] += " --suite-profile issue31-suite1800-v1"
+        for name in ("parallel", "full"):
+            commands[name] += " AGENTIC_SUITE_PROFILE=issue31-suite1800-v1"
+    current = check_runner.source(repo.root)
+    if (
+        type(evidence) is not dict
+        or set(evidence) != {"head", "source", "commands", "installed_files"}
+        or evidence["head"] != meta["head_sha"]
+        or evidence["source"] != current
+        or type(evidence["commands"]) is not dict
+        or set(evidence["commands"]) != set(commands)
+    ):
+        refuse("full check evidence is missing, stale or partial")
+    for name, command in commands.items():
+        record = evidence["commands"][name]
+        if (
+            type(record) is not dict
+            or set(record) != {"command", "exit_status", "artifacts"}
+            or record["command"] != command
+            or type(record["exit_status"]) is not int
+            or record["exit_status"] != 0
+            or type(record["artifacts"]) is not dict
+            or not record["artifacts"]
+        ):
+            refuse("required command provenance differs")
+        for relative, expected in record["artifacts"].items():
+            if type(relative) is not str or Path(relative).is_absolute() or ".." in Path(relative).parts:
+                refuse("unsafe check evidence path")
+            checksum(expected)
+            if hashlib.sha256(plain_path(directory / relative).read_bytes()).hexdigest() != expected:
+                refuse("check artifact changed")
+    # Both standard runner records must reconcile every occurrence and worker.
+    rows = None
+    for name, jobs in [("serial", 1), ("parallel", 2)]:
+        request = read(directory / name / "request.json")
+        expected = runner_request(repo.root, jobs, suite_profile=suite_profile)
+        if expected["source"] != current:
+            refuse("source changed during descriptor reconstruction")
+        rows = expected["rows"]
+        if digest(request) != digest(expected):
+            refuse("complete runner request differs from current discovery")
+        if suite_profile is not None:
+            suite_summary(directory / name, request, jobs)
+        for index in range(jobs):
+            result = check_runner.reconcile(
+                request, index, plain_path(directory / name / f"worker-{index}.jsonl"), 0
+            )
+            if result["successful"] is not True:
+                refuse("incomplete runner occurrence or fixture execution")
+    import install
+
+    expected_payload = {
+        str(p): hashlib.sha256((repo.root / p).read_bytes()).hexdigest() for p in install.payload(repo.root)
+    }
+    if digest(evidence["installed_files"]) != digest(expected_payload):
+        refuse("current installed payload closure differs")
+    validate_installed_adoption(repo.root, directory, rows)
+    checks = repo.api(
+        f"commits/{meta['head_sha']}/check-runs?per_page=100", paginate=True, page_key="check_runs"
+    )
+    receipts = ci_evidence.collect(repo, meta["head_sha"], checks, meta["base_sha"])
+    for name in ("flowdc-tests", "agentic-quality"):
+        found = [r for r in receipts if r.get("check") == name]
+        if len(found) != 1:
+            refuse("missing or ambiguous hosted execution")
+        receipt = found[0]
+        if (
+            receipt.get("state") != "observed"
+            or receipt.get("run_attempt") != 1
+            or type(receipt.get("run_attempt")) is not int
+            or receipt.get("test_status") != "success"
+            or receipt.get("clean_status") != "success"
+            or receipt.get("pr_head_sha") != meta["head_sha"]
+            or receipt.get("pr_base_sha") != meta["base_sha"]
+        ):
+            refuse("hosted first-attempt test/clean evidence incomplete")
+        # Preserve actual merge checkout separately from the head association.
+        if type(receipt.get("tested_checkout_sha")) is not str or not re.fullmatch(
+            "[0-9a-f]{40}", receipt["tested_checkout_sha"]
+        ):
+            refuse("unknown hosted checkout")
+    return {"local": digest(evidence), "hosted": digest(receipts), "source": digest(current)}
+
+
+def validate_current_plan(plan):
+    if type(plan) is dict and type(plan.get("schema_version")) is int and plan["schema_version"] == 10:
+        from review_public_catalog_v1 import validate_plan as validate_public_plan
+
+        return validate_public_plan(plan)
+    return validate_plan(plan)
+
+
+def surrounding_current_ids(plan, unit):
+    validate_current_plan(plan)
+    if plan["schema_version"] == 9:
+        return surrounding_ids(plan["catalog"], unit)
+    catalog = plan["catalog"]
+    if unit not in catalog["components"] + [catalog["integration"]]:
+        refuse("unknown current context owner")
+    return sorted({i["id"] for i in catalog["items"]} - set(unit["required_ids"]))

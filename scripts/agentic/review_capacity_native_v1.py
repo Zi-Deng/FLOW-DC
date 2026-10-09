@@ -587,3 +587,107 @@ def empirical_receipt(cases, expected_bindings):
         "cases": hashes,
         "estimate": estimate(maxima),
     }
+
+
+def largest_fixture_public_catalog_v1(catalog, additional_items, additional_files, dependencies):
+    """Select by bytes, lines, then ascending lexical ID; retain every source range.
+
+    Catalog adapter entries are {id, items, files}; no supplied size is trusted.
+    Additional ranges carry actual guidance/schema/diagnostic/cross-boundary input.
+    """
+    import reporting_activation_v6 as authority
+    from review_public_catalog_v1 import PROFILE, validate_binding
+    from tasks import digest
+
+    validate_binding(dependencies, assignments=True)
+    if (
+        type(dependencies) is not dict
+        or dependencies.get("profile") != digest(PROFILE)
+        or dependencies.get("contract") != authority.G20_CONTRACT_DIGEST
+        or dependencies.get("authorization")
+        != digest(
+            {
+                "contract_digest": authority.G20_CONTRACT_DIGEST,
+                "approval_digest": authority.G20_APPROVAL_DIGEST,
+            }
+        )
+    ):
+        fail()
+    if type(catalog) is not list or not 1 <= len(catalog) <= 48:
+        fail()
+    choices, identifiers, total_items, total_bytes, total_lines = [], set(), 0, 0, 0
+    primary_ids = set()
+    for component in catalog:
+        if (
+            type(component) is not dict
+            or set(component) != {"id", "items", "files"}
+            or type(component["id"]) is not str
+            or not component["id"]
+            or component["id"] in identifiers
+        ):
+            fail()
+        identifiers.add(component["id"])
+        size, lines = _ranges(component["items"], component["files"], 128)
+        ids = {item["id"] for item in component["items"]}
+        if primary_ids.intersection(ids):
+            fail()
+        primary_ids.update(ids)
+        if size > 500000 or lines > 9000:
+            fail()
+        total_items += len(component["items"])
+        total_bytes += size
+        total_lines += lines
+        choices.append((-size, -lines, component["id"], component))
+    extra_bytes, extra_lines = _ranges(additional_items, additional_files, 128 - len(catalog))
+    if extra_bytes > 500000 or primary_ids.intersection(item["id"] for item in additional_items):
+        fail()
+    total_items += len(additional_items)
+    total_bytes += extra_bytes
+    total_lines += extra_lines
+    if total_items > 2400 or total_bytes > 12000000 or total_lines > 220000:
+        fail()
+    neg_size, neg_lines, _, selected = min(choices, key=lambda row: row[:3])
+    size, lines = -neg_size, -neg_lines
+    items, files = copy.deepcopy(selected["items"]), dict(selected["files"])
+    missing_bytes, missing_lines = 500000 - size, 9000 - lines
+    if missing_bytes or missing_lines:
+        if len(items) == 128 or missing_lines == 0 or missing_bytes < missing_lines:
+            fail()
+        path = "capacity/supplement.txt"
+        if path in files:
+            fail()
+        files[path] = public_bytes("supplement", missing_bytes - missing_lines) + b"\n" * missing_lines
+        items.append(
+            {
+                "id": sha(f"{SEED}:supplement".encode())[:24],
+                "artifact": path,
+                "start_line": 1,
+                "end_line": missing_lines,
+            }
+        )
+    if _ranges(items, files, 128) != (500000, 9000):
+        fail()
+    _ranges(additional_items, additional_files, 200)
+    if set(files).intersection(additional_files):
+        fail()
+    files.update(additional_files)
+    items.extend(copy.deepcopy(additional_items))
+    if type(dependencies) is not dict or "catalog_sha256" in dependencies:
+        fail()
+    return _bundle(
+        22,
+        items,
+        files,
+        {
+            **dependencies,
+            "catalog_sha256": sha(
+                encoded(
+                    [
+                        {k: v for k, v in c.items() if k != "files"}
+                        | {"files": {p: sha(b) for p, b in c["files"].items()}}
+                        for c in catalog
+                    ]
+                )
+            ),
+        },
+    )

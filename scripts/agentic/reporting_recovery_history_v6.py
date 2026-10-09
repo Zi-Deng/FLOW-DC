@@ -85,6 +85,10 @@ def stopped(repo):
     g17 = type(state.get("contract_generation")) is int and state["contract_generation"] == 17
     g18 = type(state.get("contract_generation")) is int and state["contract_generation"] == 18
     g19 = type(state.get("contract_generation")) is int and state["contract_generation"] == 19
+    g20 = type(state.get("contract_generation")) is int and state["contract_generation"] == 20
+    if g20:
+        current.authorization(repo)
+        current._g20_history(state)
     if g19:
         current.authorization(repo)
         current._g19_history(state)
@@ -110,7 +114,9 @@ def stopped(repo):
         type(rows) is not list
         or len(rows)
         != (
-            18
+            19
+            if g20
+            else 18
             if g19
             else 17
             if g18

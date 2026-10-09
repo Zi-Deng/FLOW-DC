@@ -406,6 +406,57 @@ def g19_predecessors(repo, context):
     return result
 
 
+def g20_predecessors(repo, context):
+    """Nine fixed complete public contracts; verification is not authority."""
+    plan = context.get("designated_plan_comment")
+    if type(plan) is not dict or plan.get("id") != 6074133818:
+        return None
+    if type(plan.get("id")) is not int:
+        raise WorkflowError("Invalid generation20 plan identity")
+    if (
+        type(plan.get("user")) is not dict
+        or plan["user"].get("login") != "Zi-Deng"
+        or plan.get("issue_url") != "https://api.github.com/repos/Zi-Deng/FLOW-DC/issues/31"
+        or type(plan.get("body")) is not str
+        or len(plan["body"].encode("utf-8")) != 11857
+        or hashlib.sha256(plan["body"].encode("utf-8")).hexdigest()
+        != "321402ce9af5ef89a186e03b355391cf6725e78506fd5418464a69526fa83c53"
+    ):
+        raise WorkflowError("Generation20 whole designated contract differs")
+    rows = context.get("issue_comments")
+    if repo.name != "Zi-Deng/FLOW-DC" or type(rows) is not list:
+        raise WorkflowError("Missing generation20 predecessor context")
+    result = []
+    for number, size, expected in (
+        (6072111969, 59052, "b95262d11a49abb5e82baffea069ce716d4a9a2635ded69201d2837a7bf37654"),
+        (6074219127, 3948, "12ff82a218ce3b6d064b49669ecc61a5260d8472acafe264ab762c85c1f74a6a"),
+        (6068705967, 52551, "9c9285d24d6b8ff9609a737474ff7c27f548c18fe6e1ef867341ffcfe96b310d"),
+        (6072002965, 9957, "0ded08099e7fb0dc354f4eef6992cacafca05a4ac9388a2eb9e4ca5a493bdbc0"),
+        (6068144159, 28497, "6a7a7186c5edbc2199763d9204e788d743d9f2078c8aa7170265a8dabe4d732f"),
+        (6064513854, 17466, "8949c427934a19c483af202a77c8df570f76d74a6bbbde0301ef7b2814fb07c3"),
+        (6062530466, 10290, "c47fbc3aef3daaaa5431c7ffa1b32ed20150a6e63c21c7566ff2c4be258b31ff"),
+        (6061320190, 11837, "cc222e50c5ef6511333f2e60226d0903c8d5f36e3053f11c59e90196dbb0d131"),
+        (6045434332, 59994, "9afa53484f6a1c88347e9b7f9d6069cd423ddcdbfdb8fc59979203260c690094"),
+    ):
+        matches = [row for row in rows if type(row) is dict and row.get("id") == number]
+        if len(matches) != 1:
+            raise WorkflowError("Missing or ambiguous generation20 predecessor")
+        row = matches[0]
+        if (
+            type(row.get("id")) is not int
+            or row.get("issue_url") != "https://api.github.com/repos/Zi-Deng/FLOW-DC/issues/31"
+            or type(row.get("user")) is not dict
+            or row["user"].get("login") != "Zi-Deng"
+            or type(row.get("body")) is not str
+        ):
+            raise WorkflowError("Invalid generation20 predecessor identity")
+        raw = row["body"].encode("utf-8")
+        if len(raw) != size or hashlib.sha256(raw).hexdigest() != expected:
+            raise WorkflowError("Generation20 predecessor bytes differ")
+        result.append((number, raw))
+    return result
+
+
 def build(repo, packet, head, ancestor, head_index, base_index, context, cfg, prior=None, provider="copilot"):
     packet = Path(packet)
     required = []
@@ -539,7 +590,9 @@ def build(repo, packet, head, ancestor, head_index, base_index, context, cfg, pr
         name = "contract-predecessor-6045434332.txt"
         (packet / name).write_bytes(predecessor)
         add(name, "contract")
-    predecessors = g19_predecessors(repo, context)
+    predecessors = g20_predecessors(repo, context)
+    if predecessors is None:
+        predecessors = g19_predecessors(repo, context)
     if predecessors is None:
         predecessors = g18_predecessors(repo, context)
     if predecessors is None:
@@ -663,6 +716,12 @@ def build(repo, packet, head, ancestor, head_index, base_index, context, cfg, pr
                     if artifact_path
                     else None
                 )
+                if (
+                    plan.get("id") == 6074133818
+                    and artifact_path
+                    and (packet / artifact_path).stat().st_size > 250000
+                ):
+                    intervals = [(1, len((packet / artifact_path).read_text().splitlines()))]
                 add(
                     artifact_path,
                     "changed-source",
@@ -886,6 +945,10 @@ def build(repo, packet, head, ancestor, head_index, base_index, context, cfg, pr
             return "agentic:" + stem
         return item["path"]
 
+    if type(plan.get("id")) is int and plan["id"] == 6074133818:
+        from review_public_catalog_v1 import whole_source_mapping
+
+        whole_source_mapping(packet, required)
     ordered = sorted(
         required,
         key=lambda item: (

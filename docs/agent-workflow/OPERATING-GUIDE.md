@@ -383,3 +383,15 @@ run37862968014 remains failed despite successful diagnostic transport. PR head,
 base, tested merge checkout and installed fixture commit are distinct identities.
 Generation19 authority/history binds actual reconciled approval; it conveys no
 native grant, scientific finding, independent review or merge authority.
+
+### G20 complete public catalog profile
+
+The explicitly designated issue31 complete-public-catalog-v1 route uses catalog/plan
+schema10 while batch execution remains protocol9. Public context has its own4MB
+reader and immutable Git snapshots admit source files up to500KB, retaining the
+12MB snapshot bound. Historical public/private/report readers and default snapshots
+retain their original limits. Complete obligations and line mappings, coherent
+family continuations and cross-boundary relations are validated before catalog
+admission. Source changes require fresh full software gates and independent review;
+local synthetic fixtures and storage capacity do not establish native context fit,
+provider capability, scientific validity or human approval.
