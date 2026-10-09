@@ -25,6 +25,8 @@ def refuse(message):
 
 
 def selected(repo, issue, plan):
+    if type(plan) is int and plan == 6076545397:
+        return selected_g21(repo, issue, plan)
     if type(issue) is not int or type(plan) is not int:
         refuse("invalid contract identity")
     if plan != 6074133818:
@@ -151,6 +153,8 @@ def snapshot(repo, commit, output, config):
 
 
 def verify_metadata(meta):
+    if type(meta.get("plan_comment")) is int and meta["plan_comment"] == 6076545397:
+        return verify_metadata_g21(meta)
     declared = meta.get("public_catalog_profile")
     current = type(meta.get("plan_comment")) is int and meta["plan_comment"] == 6074133818
     if declared is None and not current:
@@ -209,6 +213,10 @@ def plan_catalog(catalog):
 
 
 def validate_binding(binding, *, assignments=False):
+    import reporting_activation_v6 as current
+
+    if type(binding) is dict and binding.get("contract") == current.G21_CONTRACT_DIGEST:
+        return validate_binding_g21(binding, assignments=assignments)
     import reporting_activation_v6 as authority
 
     keys = {
@@ -1233,3 +1241,524 @@ def normalize(packet, inventory):
         )
     )
     return result
+
+
+def selected_g21(repo, issue, plan):
+    if type(issue) is not int or type(plan) is not int:
+        refuse("invalid contract identity")
+    if plan != 6076545397:
+        return False
+    import reporting_activation_v6 as authority
+
+    if issue != 31 or authority.authorization(repo) != {
+        "contract_digest": authority.G21_CONTRACT_DIGEST,
+        "approval_digest": authority.G21_APPROVAL_DIGEST,
+    }:
+        refuse("current G21 authority required")
+    return True
+
+
+def read_context_g21(path):
+    """Public JSON only: a bounded, quiescent, no-follow exact read."""
+    path = Path(path)
+    if path.is_symlink():
+        refuse("unsafe public context")
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    try:
+        before = os.fstat(fd)
+        if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1 or before.st_size > CONTEXT_BYTES:
+            refuse("public context bounds or identity")
+        parts, total = [], 0
+        while True:
+            chunk = os.read(fd, min(65536, CONTEXT_BYTES + 1 - total))
+            if not chunk:
+                break
+            parts.append(chunk)
+            total += len(chunk)
+            if total > CONTEXT_BYTES:
+                refuse("public context exceeds bound")
+        after = os.fstat(fd)
+        current = path.lstat()
+        fields = ("st_dev", "st_ino", "st_mode", "st_nlink", "st_size", "st_mtime_ns", "st_ctime_ns")
+        if any(
+            getattr(before, k) != getattr(after, k) or getattr(after, k) != getattr(current, k)
+            for k in fields
+        ):
+            refuse("public context changed")
+        value = strict_json(b"".join(parts).decode("utf-8"))
+    finally:
+        os.close(fd)
+    expected = {
+        "pull_request",
+        "issue",
+        "designated_plan_comment",
+        "issue_comments",
+        "pr_comments",
+        "inline_comments",
+        "reviews",
+        "check_runs",
+        "note",
+        "commit_statuses",
+        "hosted_receipts",
+    }
+    if type(value) is not dict or set(value) != expected:
+        refuse("public context shape")
+    for key in (
+        "issue_comments",
+        "pr_comments",
+        "inline_comments",
+        "reviews",
+        "check_runs",
+        "commit_statuses",
+    ):
+        if type(value[key]) is not list:
+            refuse("public context collection")
+    for key in ("issue", "designated_plan_comment", "pull_request"):
+        if type(value[key]) is not dict:
+            refuse("public context identity")
+    for key in ("issue", "designated_plan_comment", "pull_request"):
+        if type(value[key].get("id")) is not int or value[key]["id"] <= 0:
+            refuse("public context record ID")
+    for key in ("issue_comments", "pr_comments", "inline_comments", "reviews"):
+        ids = []
+        for row in value[key]:
+            if type(row) is not dict or type(row.get("id")) is not int or row["id"] <= 0:
+                refuse("public context comment ID")
+            ids.append(row["id"])
+        if len(ids) != len(set(ids)):
+            refuse("duplicate public context record")
+    if type(value["note"]) is not str or type(value["hosted_receipts"]) is not list:
+        refuse("public context auxiliary fields")
+    issue, plan, pr = (value[k] for k in ("issue", "designated_plan_comment", "pull_request"))
+    if (
+        type(issue.get("number")) is not int
+        or issue["number"] != 31
+        or type(pr.get("number")) is not int
+        or pr["number"] != 32
+        or plan["id"] != 6076545397
+        or issue.get("html_url") != "https://github.com/Zi-Deng/FLOW-DC/issues/31"
+        or pr.get("html_url") != "https://github.com/Zi-Deng/FLOW-DC/pull/32"
+        or plan.get("issue_url") != "https://api.github.com/repos/Zi-Deng/FLOW-DC/issues/31"
+        or type(plan.get("user")) is not dict
+        or plan["user"].get("login") != "Zi-Deng"
+        or type(plan["user"].get("id")) is not int
+        or plan["user"]["id"] != 29555112
+        or type(plan.get("body")) is not str
+        or type(issue.get("title")) is not str
+        or type(issue.get("body")) is not str
+    ):
+        refuse("public context designated identity")
+    for side in ("head", "base"):
+        ref = pr.get(side)
+        if (
+            type(ref) is not dict
+            or type(ref.get("sha")) is not str
+            or re.fullmatch(r"[0-9a-f]{40}", ref["sha"]) is None
+        ):
+            refuse("public context Git identity")
+    return value
+
+
+def verify_metadata_g21(meta):
+    declared = meta.get("public_catalog_profile")
+    current = type(meta.get("plan_comment")) is int and meta["plan_comment"] == 6076545397
+    if declared is None and not current:
+        return
+    if declared != PROFILE or not current or type(meta.get("issue")) is not int or meta["issue"] != 31:
+        refuse("profile/contract mismatch")
+    if (
+        meta.get("repository") != "Zi-Deng/FLOW-DC"
+        or type(meta.get("schema_version")) is not int
+        or meta["schema_version"] != 7
+    ):
+        refuse("profile metadata mismatch")
+
+
+def validate_binding_g21(binding, *, assignments=False):
+    import reporting_activation_v6 as authority
+
+    keys = {
+        "local",
+        "hosted",
+        "source",
+        "authorization",
+        "context",
+        "contract",
+        "identity",
+        "policy",
+        "inventory",
+        "profile",
+    }
+    if assignments:
+        keys.add("assignments")
+    if type(binding) is not dict or set(binding) != keys:
+        refuse("closed catalog provenance required")
+    if any(
+        type(value) is not str or re.fullmatch(r"[0-9a-f]{64}", value) is None for value in binding.values()
+    ):
+        refuse("invalid catalog provenance digest")
+    if (
+        binding["profile"] != digest(PROFILE)
+        or binding["contract"] != authority.G21_CONTRACT_DIGEST
+        or binding["authorization"]
+        != digest(
+            {
+                "contract_digest": authority.G21_CONTRACT_DIGEST,
+                "approval_digest": authority.G21_APPROVAL_DIGEST,
+            }
+        )
+    ):
+        refuse("catalog profile/authority mismatch")
+
+
+def catalog_observation_g21(repo):
+    import check_runner
+    import reporting_activation_v6 as activation
+    from reporting_activation_v2 import read
+
+    state = read(repo.main / ".agentic-local/tasks/issue-31.json")
+    authority = activation.authorization(repo)
+    if authority != {
+        "contract_digest": activation.G21_CONTRACT_DIGEST,
+        "approval_digest": activation.G21_APPROVAL_DIGEST,
+    }:
+        refuse("final catalog requires actual G21 authority")
+    return {"source": check_runner.source(repo.root), "authority": authority, "task": digest(state)}
+
+
+def catalog_g21(repo, *, plan_only=False, packet_target=None, batch_directory=None):
+    """Actual source/check adapter; no readiness flag or provisional catalog input.
+
+    The coordinator supplies a prepared full packet plus retained check artifacts
+    at the task's v6_catalog directory after final source gates. All inventory is
+    regenerated from Git and exact public context, not imported assignments.
+    """
+    import hashlib
+    import tempfile
+
+    import reporting_activation_v6 as activation
+    import review
+    import review_packet
+    from reporting_activation_v2 import read
+    from review_batch_windows_v1 import (
+        full_checks,
+        full_checks_g14,
+        full_checks_g15,
+        full_checks_g16,
+        full_checks_g17,
+        full_checks_g18,
+        full_checks_g19,
+        full_checks_g21,
+        reconcile_public_context,
+    )
+    from tasks import issue_contract, plain_path
+    from workflow import configuration, run, write_json
+
+    initial = catalog_observation_g21(repo)
+    state = read(repo.main / ".agentic-local/tasks/issue-31.json")
+    authority = activation.authorization(repo)
+    if digest(state) != initial["task"] or authority != initial["authority"]:
+        refuse("catalog initial authority changed")
+    if digest(read(repo.main / ".agentic-local/tasks/issue-31.json")) != digest(state):
+        refuse("catalog authority changed during selection")
+    # Authorization rejects unknown generations before this literal selection.
+    # Keep the historical catalog API independent of its authorization receipt shape.
+    if type(state.get("contract_generation")) is int and state["contract_generation"] == 19:
+        current_contract = activation.G19_CONTRACT
+        current_digest = activation.G19_CONTRACT_DIGEST
+        if digest(current_contract) != current_digest or authority["contract_digest"] != current_digest:
+            refuse("catalog generation19 contract differs")
+    elif type(state.get("contract_generation")) is int and state["contract_generation"] == 18:
+        current_contract = activation.G18_CONTRACT
+        current_digest = activation.G18_CONTRACT_DIGEST
+        if digest(current_contract) != current_digest or authority["contract_digest"] != current_digest:
+            refuse("catalog generation18 contract differs")
+    elif type(state.get("contract_generation")) is int and state["contract_generation"] == 17:
+        current_contract = activation.G17_CONTRACT
+        current_digest = activation.G17_CONTRACT_DIGEST
+        if digest(current_contract) != current_digest or authority["contract_digest"] != current_digest:
+            refuse("catalog generation17 contract differs")
+    elif type(state.get("contract_generation")) is int and state["contract_generation"] == 16:
+        current_contract = activation.G16_CONTRACT
+        current_digest = activation.G16_CONTRACT_DIGEST
+        if digest(current_contract) != current_digest or authority["contract_digest"] != current_digest:
+            refuse("catalog generation16 contract differs")
+    elif type(state.get("contract_generation")) is int and state["contract_generation"] == 15:
+        current_contract = activation.G15_CONTRACT
+        current_digest = activation.G15_CONTRACT_DIGEST
+        if digest(current_contract) != current_digest or authority["contract_digest"] != current_digest:
+            refuse("catalog generation15 contract differs")
+    elif type(state.get("contract_generation")) is int and state["contract_generation"] == 14:
+        current_contract = activation.G14_CONTRACT
+        current_digest = activation.G14_CONTRACT_DIGEST
+        if digest(current_contract) != current_digest or authority["contract_digest"] != current_digest:
+            refuse("catalog generation14 contract differs")
+    elif type(state.get("contract_generation")) is int and state["contract_generation"] == 13:
+        current_contract = activation.NEXT_CONTRACT
+        current_digest = activation.NEXT_CONTRACT_DIGEST
+        if digest(current_contract) != current_digest or authority["contract_digest"] != current_digest:
+            refuse("catalog current contract differs")
+    else:
+        current_contract = activation.CONTRACT
+        current_digest = activation.CONTRACT_DIGEST
+    if authority["contract_digest"] != activation.G21_CONTRACT_DIGEST:
+        refuse("G21 required")
+    current_contract = activation.G21_CONTRACT
+    current_digest = activation.G21_CONTRACT_DIGEST
+    pointer = state.get("v6_catalog")
+    if type(pointer) is not str or not pointer:
+        refuse("actual final catalog/full-check designation is absent")
+    directory = plain_path(Path(pointer))
+    meta = review.verify_packet(directory)
+    if digest(meta.get("config")) != digest(configuration(repo.root)):
+        refuse("packet limits/configuration differ from trusted current source")
+    if (
+        meta.get("schema_version") != 7
+        or meta.get("kind") not in {"single", "batch-parent"}
+        or meta.get("issue") != 31
+        or meta.get("plan_comment") != current_contract["plan_comment"]
+        or meta.get("repository") != repo.name
+        or meta.get("pr") != 32
+        or meta.get("batch_unit")
+        or meta.get("prior_review")
+        or meta.get("reporting_activation")
+    ):
+        refuse("final catalog requires full current metadata7 parent")
+    if repo.git("status", "--porcelain").strip() or repo.git("rev-parse", "HEAD") != meta["head_sha"]:
+        refuse("catalog source is dirty or stale")
+    ancestor = repo.git("merge-base", meta["base_sha"], meta["head_sha"])
+    if ancestor != meta["merge_base_sha"]:
+        refuse("catalog merge base differs")
+    if digest(issue_contract(repo, 31, current_contract["plan_comment"])) != current_digest:
+        refuse("current issue/plan changed")
+    review.current_pr(repo, 32, meta["head_sha"], meta["base_sha"])
+    gates = (
+        full_checks_g21(repo, directory, meta)
+        if current_digest == activation.G21_CONTRACT_DIGEST
+        else full_checks_g19(repo, directory, meta)
+        if current_digest == activation.G19_CONTRACT_DIGEST
+        else full_checks_g18(repo, directory, meta)
+        if current_digest == activation.G18_CONTRACT_DIGEST
+        else full_checks_g17(repo, directory, meta)
+        if current_digest == activation.G17_CONTRACT_DIGEST
+        else full_checks_g16(repo, directory, meta)
+        if current_digest == activation.G16_CONTRACT_DIGEST
+        else full_checks_g15(repo, directory, meta)
+        if current_digest == activation.G15_CONTRACT_DIGEST
+        else full_checks_g14(repo, directory, meta)
+        if current_digest == activation.G14_CONTRACT_DIGEST
+        else full_checks(repo, directory, meta)
+    )
+    original = directory / "packet"
+    context = read_context_g21(original / "context.json")
+    saved_contract = {
+        "issue": 31,
+        "plan_comment": current_contract["plan_comment"],
+        "issue_digest": digest(
+            {"title": context["issue"]["title"], "body": context["issue"].get("body") or ""}
+        ),
+        "plan_digest": digest(
+            {
+                "id": context["designated_plan_comment"]["id"],
+                "body": context["designated_plan_comment"].get("body") or "",
+            }
+        ),
+    }
+    if digest(saved_contract) != current_digest:
+        refuse("saved issue/plan contract differs")
+    if (
+        context["pull_request"]["head"]["sha"] != meta["head_sha"]
+        or context["pull_request"]["base"]["sha"] != meta["base_sha"]
+    ):
+        refuse("saved PR identity differs")
+    if batch_directory is not None:
+        if packet_target is not None or plan_only:
+            refuse("batch reconciliation cannot prepare or replace the initial catalog")
+        reconcile_public_context(repo, batch_directory, context)
+    else:
+        for key, endpoint in [
+            ("reviews", "pulls/32/reviews"),
+            ("inline_comments", "pulls/32/comments"),
+            ("pr_comments", "issues/32/comments"),
+            ("issue_comments", "issues/31/comments"),
+        ]:
+            if digest(context[key]) != digest(repo.api(endpoint, paginate=True)):
+                refuse("public findings/dispositions/context changed")
+    # Rebuild current Git snapshots and the complete original obligation inventory.
+    with tempfile.TemporaryDirectory(prefix="agentic-catalog-") as temporary:
+        packet = Path(temporary)
+        head_index = snapshot(repo, meta["head_sha"], packet / "source", meta["config"])
+        base_index = snapshot(repo, ancestor, packet / "base-source", meta["config"])
+        write_json(packet / "source-index.json", head_index)
+        write_json(packet / "base-source-index.json", base_index)
+        for name in ("source-index.json", "base-source-index.json"):
+            if digest(review.coverage.read_json(packet / name)) != digest(
+                review.coverage.read_json(original / name)
+            ):
+                refuse("snapshot inventory differs from Git")
+        diff = run(
+            [
+                "git",
+                "-C",
+                repo.root,
+                "diff",
+                "--no-ext-diff",
+                "--no-textconv",
+                "--no-renames",
+                ancestor,
+                meta["head_sha"],
+            ]
+        ).stdout
+        (packet / "diff.txt").write_text(diff, encoding="utf-8")
+        write_json(packet / "context.json", context)
+        for source, target in [
+            ("AGENTS.md", "repository-policy.txt"),
+            ("docs/agent-workflow/REVIEW.md", "review-policy.txt"),
+            (meta["config"]["domain_rubric"], "domain-policy.txt"),
+            (".agentic/schemas/review-report.json", "report-schema.json"),
+        ]:
+            raw = plain_path(repo.root / source).read_bytes()
+            if raw != (original / target).read_bytes():
+                refuse("trusted policy/schema differs")
+            (packet / target).write_bytes(raw)
+        review_packet.build(
+            repo,
+            packet,
+            meta["head_sha"],
+            ancestor,
+            head_index,
+            base_index,
+            context,
+            meta["config"],
+            provider="claude-code",
+        )
+        inventory = read(packet / "required-material.json")["required"]
+        if digest(inventory) != digest(read(original / "required-material.json")["required"]):
+            refuse("prepared packet omits or changes regenerated obligations")
+        # Every whole original response remains primary, including coverage/accounting
+        # omitted by the legacy finding navigation rendering. No inherited credit.
+        for surface in ("reviews", "inline_comments", "pr_comments"):
+            for record in context[surface]:
+                body = record.get("body") or ""
+                if not body:
+                    continue
+                name = "whole-responses/" + digest([surface, record["id"]]) + ".txt"
+                raw = body.encode("utf-8")
+                (packet / name).parent.mkdir(exist_ok=True)
+                (packet / name).write_bytes(raw)
+                inventory.append(
+                    {
+                        "id": digest([surface, record["id"], hashlib.sha256(raw).hexdigest()])[:24],
+                        "path": f"{surface}:{record['id']}",
+                        "kind": "finding",
+                        "artifact": name,
+                        "start_line": 1,
+                        "end_line": len(body.splitlines()),
+                        "bytes": len(raw),
+                    }
+                )
+        # Current final guidance is mandatory in capacity/integration as well as
+        # retaining its original primary obligations. Distinct cross-boundary IDs
+        # make this additional inspection explicit, not an optional substitution.
+        for original_name in (
+            "repository-policy.txt",
+            "review-policy.txt",
+            "domain-policy.txt",
+            "report-schema.json",
+        ):
+            raw = (packet / original_name).read_bytes()
+            name = "final-guidance/" + original_name
+            (packet / name).parent.mkdir(exist_ok=True)
+            (packet / name).write_bytes(raw)
+            inventory.append(
+                {
+                    "id": digest(["integration-guidance", name, hashlib.sha256(raw).hexdigest()])[:24],
+                    "path": name,
+                    "kind": "cross-boundary",
+                    "artifact": name,
+                    "start_line": 1,
+                    "end_line": len(raw.decode("utf-8").splitlines()),
+                    "bytes": len(raw),
+                }
+            )
+        inventory = normalize(packet, inventory)
+        binding = {
+            **gates,
+            "authorization": digest(authority),
+            "context": digest(context),
+            "contract": current_digest,
+            "identity": digest(
+                {
+                    k: meta[k]
+                    for k in (
+                        "repository",
+                        "pr",
+                        "issue",
+                        "plan_comment",
+                        "head_sha",
+                        "base_sha",
+                        "merge_base_sha",
+                    )
+                }
+            ),
+            "policy": digest(meta["review_policy"]),
+            "inventory": digest(inventory),
+        }
+        # Export the complete regenerated inventory, including whole responses and
+        # additional cross-boundary guidance. The same bytes bind every consumer.
+        write_json(packet / "required-material.json", {"schema_version": 3, "required": inventory})
+        (packet / "inventory-sha256.txt").write_text(review.digest(packet / "required-material.json") + "\n")
+        binding["profile"] = digest(PROFILE)
+        preliminary = partition(packet, inventory, binding)
+        add_relations(packet, inventory, preliminary, context=context)
+        binding["inventory"] = digest(inventory)
+        write_json(packet / "required-material.json", {"schema_version": 3, "required": inventory})
+        (packet / "inventory-sha256.txt").write_text(review.digest(packet / "required-material.json") + "\n")
+        planned = partition(packet, inventory, binding)
+        planned_record = plan_catalog(planned)
+        if packet_target is not None:
+            import shutil
+
+            target = plain_path(Path(packet_target))
+            if target.exists():
+                refuse("catalog export must be exclusive")
+            shutil.copytree(packet, target)
+            return final_catalog_result_g21(
+                repo, initial, {"plan": planned_record, "metadata": copy.deepcopy(meta)}
+            )
+        if plan_only:
+            return final_catalog_result_g21(repo, initial, planned_record)
+        components = []
+        lookup = {i["id"]: i for i in planned["items"]}
+        for unit in planned["components"]:
+            rows = [
+                {k: lookup[key][k] for k in ("id", "artifact", "start_line", "end_line")}
+                for key in unit["required_ids"]
+            ]
+            components.append(
+                {
+                    "id": unit["id"],
+                    "items": rows,
+                    "files": {r["artifact"]: (packet / r["artifact"]).read_bytes() for r in rows},
+                }
+            )
+        additional = [
+            {k: lookup[key][k] for k in ("id", "artifact", "start_line", "end_line")}
+            for key in planned["integration"]["required_ids"]
+        ]
+        return final_catalog_result_g21(
+            repo,
+            initial,
+            {
+                "components": components,
+                "items": additional,
+                "files": {r["artifact"]: (packet / r["artifact"]).read_bytes() for r in additional},
+                "dependencies": {**binding, "assignments": digest(planned)},
+            },
+        )
+
+
+def final_catalog_result_g21(repo, initial, value):
+    if catalog_observation_g21(repo) != initial:
+        refuse("catalog source or authority changed during assembly")
+    return value

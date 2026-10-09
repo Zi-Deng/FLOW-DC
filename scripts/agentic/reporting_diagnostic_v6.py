@@ -131,6 +131,11 @@ def packets(source):
         if declared_profile == digest(PROFILE)
         else capacity.largest_fixture
     )
+    if (
+        declared_profile == digest(PROFILE)
+        and source["dependencies"].get("contract") == activation.G21_CONTRACT_DIGEST
+    ):
+        largest = capacity.largest_fixture_public_catalog_g21
     generated = {
         22: largest(source["components"], items, files, source["dependencies"]),
         23: capacity.integration_fixture(items, files, source["dependencies"]),

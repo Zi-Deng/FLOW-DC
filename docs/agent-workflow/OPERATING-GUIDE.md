@@ -395,3 +395,28 @@ family continuations and cross-boundary relations are validated before catalog
 admission. Source changes require fresh full software gates and independent review;
 local synthetic fixtures and storage capacity do not establish native context fit,
 provider capability, scientific validity or human approval.
+
+### Issue31 designated G21 hosted software experiment
+
+The exact PR32 repository/event/branch guard selects `issue31-hosted-suite3600-v1`
+(request schema4, one3600-second runner deadline, two workers,75-minute job).
+Local `issue31-suite1800-v1`/schema3 and legacy840/schema2 retain their defaults.
+Both scoped profiles use the same frozen80 scheduling seed; no timing retuning or
+per-worker deadline reset is performed. This ceiling does not guarantee completion.
+
+G21 preserves the public catalog v1/schema10 material bounds. Its primary closure
+includes whole contract6076545397, scope6076704991, G20 and all inherited material.
+The G21 full-check adapter additionally requires coordinator-retained `hosted/`
+raw six-file diagnostics and manifest plus `hosted-diagnostics.zip`, whose SHA256
+must match the independently fetched Actions artifact. Both original first-attempt
+hosted receipts must report test/cleanup success, share the verified merge checkout,
+and match current source and canonical complete schema4 requests/journals. Local
+records remain owner-writable bookkeeping; diagnostics alone establish no readiness.
+A missing archive digest, incomplete journal, different merge tree or stale source
+refuses qualification. Local installed-adoption evidence remains schema3/1800.
+
+The earlier dc708 hosted1800 failure remains incomplete. Source changes require
+fresh local gates and the first new-head hosted attempt; no automatic retry or cap
+increase follows another failure. Native limits, funding, authentication and
+independent component/integration review requirements are unchanged. Software
+checks provide no scientific or review-completeness claim.

@@ -170,10 +170,10 @@ class Tiny(unittest.TestCase):
         cfg = yaml.load((root / ".github/workflows/agentic-quality.yml").read_text(), Loader=yaml.BaseLoader)
         job = cfg["jobs"]["agentic-quality"]
         condition = "github.repository == 'Zi-Deng/FLOW-DC' && github.event_name == 'pull_request' && github.event.pull_request.number == 32 && github.event.pull_request.head.ref == 'issue-31-bounded-review-units'"
-        self.assertEqual(job["timeout-minutes"], "${{ " + condition + " && 45 || 15 }}")
+        self.assertEqual(job["timeout-minutes"], "${{ " + condition + " && 75 || 15 }}")
         self.assertEqual(
             job["env"]["AGENTIC_SUITE_PROFILE"],
-            "${{ " + condition + " && 'issue31-suite1800-v1' || 'legacy' }}",
+            "${{ " + condition + " && 'issue31-hosted-suite3600-v1' || 'legacy' }}",
         )
         self.assertEqual(cfg["permissions"], {"contents": "read"})
         product = yaml.load((root / ".github/workflows/flowdc-tests.yml").read_text(), Loader=yaml.BaseLoader)

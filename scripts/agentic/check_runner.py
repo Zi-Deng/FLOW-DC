@@ -879,7 +879,7 @@ def assignment_policy(root, suite, rows, objects, identity, jobs, *, suite_profi
     if suite_profile is None:
         entries = scheduling_seed()
         seed, seed_digest = _SCHEDULING_SEED, _SEED_DIGEST
-    elif type(suite_profile) is str and suite_profile == SUITE_PROFILE:
+    elif type(suite_profile) is str and suite_profile in (SUITE_PROFILE, HOSTED_SUITE_PROFILE):
         entries = scoped_scheduling_seed()
         seed, seed_digest = _SCOPED_SCHEDULING_SEED, _SCOPED_SEED_DIGEST
     else:
@@ -1116,6 +1116,8 @@ SUITE_VERSION = 3
 
 
 def execution_limits(profile, seconds, text_limit, evidence_limit):
+    if type(profile) is str and profile == HOSTED_SUITE_PROFILE:
+        return hosted_execution_limits(profile, seconds, text_limit, evidence_limit)
     if (
         type(profile) is not str
         or profile != SUITE_PROFILE
@@ -1140,6 +1142,8 @@ def execution_limits(profile, seconds, text_limit, evidence_limit):
 
 def request_limits(request):
     version = request.get("version")
+    if type(version) is int and version == HOSTED_SUITE_VERSION:
+        return hosted_request_limits(request)
     if type(version) is not int or version not in (VERSION, SUITE_VERSION):
         raise RunnerError("Unsupported result protocol version")
     if version == VERSION:
@@ -1155,6 +1159,8 @@ def request_limits(request):
         or limits["schema_version"] != 1
     ):
         raise RunnerError("Invalid suite limit descriptor")
+    if limits["profile"] != SUITE_PROFILE:
+        raise RunnerError("Suite profile/version mismatch")
     expected = execution_limits(
         limits["profile"], limits["seconds"], limits["text_limit"], limits["evidence_limit"]
     )
@@ -1387,11 +1393,15 @@ def run(
         if suite_profile is None
         else {"execution_limits": execution_limits(suite_profile, seconds, text_limit, evidence_limit)}
     )
-    version = SUITE_VERSION if limits else VERSION
+    version = (
+        (HOSTED_SUITE_VERSION if suite_profile == HOSTED_SUITE_PROFILE else SUITE_VERSION)
+        if limits
+        else VERSION
+    )
     if (
         type(seconds) not in (int, float)
         or not math.isfinite(seconds)
-        or not 0 < seconds <= (SUITE_SECONDS if limits else SECONDS)
+        or not 0 < seconds <= (limits["execution_limits"]["cap_seconds"] if limits else SECONDS)
         or type(text_limit) is not int
         or not 0 < text_limit <= TEXT_BYTES
         or type(evidence_limit) is not int
@@ -1536,6 +1546,54 @@ def run(
         if summary["error"]:
             print(summary["error"], file=sys.stderr)
     return 0 if summary["successful"] else 1
+
+
+HOSTED_SUITE_PROFILE = "issue31-hosted-suite3600-v1"
+HOSTED_SUITE_SECONDS = 3600
+HOSTED_SUITE_VERSION = 4
+
+
+def hosted_execution_limits(profile, seconds, text_limit, evidence_limit):
+    if (
+        type(profile) is not str
+        or profile != HOSTED_SUITE_PROFILE
+        or type(seconds) not in (int, float)
+        or not math.isfinite(seconds)
+        or not 0 < seconds <= HOSTED_SUITE_SECONDS
+        or type(text_limit) is not int
+        or not 0 < text_limit <= TEXT_BYTES
+        or type(evidence_limit) is not int
+        or not 0 < evidence_limit <= EVIDENCE_BYTES
+    ):
+        raise RunnerError("Invalid suite execution limits")
+    return dict(
+        schema_version=1,
+        profile=HOSTED_SUITE_PROFILE,
+        cap_seconds=HOSTED_SUITE_SECONDS,
+        seconds=seconds,
+        text_limit=text_limit,
+        evidence_limit=evidence_limit,
+    )
+
+
+def hosted_request_limits(request):
+    if type(request.get("version")) is not int or request["version"] != HOSTED_SUITE_VERSION:
+        raise RunnerError("Hosted profile/version mismatch")
+    limits = request.get("execution_limits")
+    if (
+        type(limits) is not dict
+        or set(limits)
+        != {"schema_version", "profile", "cap_seconds", "seconds", "text_limit", "evidence_limit"}
+        or type(limits["schema_version"]) is not int
+        or limits["schema_version"] != 1
+    ):
+        raise RunnerError("Invalid suite limit descriptor")
+    expected = hosted_execution_limits(
+        limits["profile"], limits["seconds"], limits["text_limit"], limits["evidence_limit"]
+    )
+    if canonical(limits) != canonical(expected) or limits["evidence_limit"] != request["evidence_limit"]:
+        raise RunnerError("Suite limit descriptor differs")
+    return {"execution_limits": expected}
 
 
 if __name__ == "__main__":

@@ -3,6 +3,8 @@ ifeq ($(AGENTIC_SUITE_PROFILE),legacy)
 AGENTIC_SUITE_ARGS :=
 else ifeq ($(AGENTIC_SUITE_PROFILE),issue31-suite1800-v1)
 AGENTIC_SUITE_ARGS := --suite-profile issue31-suite1800-v1
+else ifeq ($(AGENTIC_SUITE_PROFILE),issue31-hosted-suite3600-v1)
+AGENTIC_SUITE_ARGS := --suite-profile issue31-hosted-suite3600-v1
 else
 $(error Unsupported AGENTIC_SUITE_PROFILE)
 endif

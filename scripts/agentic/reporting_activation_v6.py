@@ -431,6 +431,8 @@ def _g20_history(state):
 def selected_contract(repo):
     """Select only an internally verified, literal current contract."""
     authority = authorization(repo)
+    if authority["contract_digest"] == G21_CONTRACT_DIGEST:
+        return copy.deepcopy(G21_CONTRACT)
     if authority["contract_digest"] == G20_CONTRACT_DIGEST:
         return copy.deepcopy(G20_CONTRACT)
     if authority["contract_digest"] == G19_CONTRACT_DIGEST:
@@ -452,6 +454,23 @@ def selected_contract(repo):
 def authorization(repo):
     state = read(repo.main / ".agentic-local/tasks/issue-31.json")
     approval = state.get("approval")
+    if type(state.get("contract_generation")) is int and state["contract_generation"] == 21:
+        if (
+            repo.name != "Zi-Deng/FLOW-DC"
+            or state.get("repository") != repo.name
+            or state.get("key") != "issue-31"
+            or digest(G21_CONTRACT) != G21_CONTRACT_DIGEST
+            or type(approval) is not dict
+            or type(approval.get("issue")) is not int
+            or approval["issue"] != 31
+            or type(approval.get("plan_comment")) is not int
+            or approval["plan_comment"] != 6076545397
+            or digest(approval.get("contract")) != G21_CONTRACT_DIGEST
+            or digest(approval) != G21_APPROVAL_DIGEST
+        ):
+            raise WorkflowError("V6 requires the exact generation21 approval")
+        _g21_history(state)
+        return {"contract_digest": G21_CONTRACT_DIGEST, "approval_digest": G21_APPROVAL_DIGEST}
     if type(state.get("contract_generation")) is int and state["contract_generation"] == 20:
         if (
             repo.name != "Zi-Deng/FLOW-DC"
@@ -642,7 +661,9 @@ def context(repo, policy, *, remaining_seconds=7380, owned_auth=None):
         if current["contract_digest"] == NEXT_CONTRACT_DIGEST
         else "ae8e4b2ff106d44908e471d1f36be74b5d9f632f1d0b92b32e5261193a245cd8"
     )
-    if current["contract_digest"] == G20_CONTRACT_DIGEST:
+    if current["contract_digest"] == G21_CONTRACT_DIGEST:
+        expected_approval = G21_APPROVAL_DIGEST
+    elif current["contract_digest"] == G20_CONTRACT_DIGEST:
         expected_approval = G20_APPROVAL_DIGEST
     elif current["contract_digest"] == G19_CONTRACT_DIGEST:
         expected_approval = G19_APPROVAL_DIGEST
@@ -693,6 +714,7 @@ def _binding(value):
             G14_CONTRACT_DIGEST,
             G15_CONTRACT_DIGEST,
             G16_CONTRACT_DIGEST,
+            G21_CONTRACT_DIGEST,
             G20_CONTRACT_DIGEST,
             G19_CONTRACT_DIGEST,
             G18_CONTRACT_DIGEST,
@@ -703,6 +725,7 @@ def _binding(value):
             and auth["approval_digest"] != NEXT_APPROVAL_DIGEST
         )
         or (auth["contract_digest"] == G14_CONTRACT_DIGEST and auth["approval_digest"] != G14_APPROVAL_DIGEST)
+        or (auth["contract_digest"] == G21_CONTRACT_DIGEST and auth["approval_digest"] != G21_APPROVAL_DIGEST)
         or (auth["contract_digest"] == G20_CONTRACT_DIGEST and auth["approval_digest"] != G20_APPROVAL_DIGEST)
         or (auth["contract_digest"] == G19_CONTRACT_DIGEST and auth["approval_digest"] != G19_APPROVAL_DIGEST)
         or (auth["contract_digest"] == G18_CONTRACT_DIGEST and auth["approval_digest"] != G18_APPROVAL_DIGEST)
@@ -967,3 +990,32 @@ def complete(repo, *, number, now=None):
     )
     exclusive(root(repo) / f"outcome-{number}.json", record)
     return record
+
+
+G21_CONTRACT = {
+    "issue": 31,
+    "plan_comment": 6076545397,
+    "issue_digest": "1875464d1340e35cd90fae86ad70e87be1b13108587ef138ce8130cc9263c03f",
+    "plan_digest": "e546187ed633f98cdf2bf2f7c5735834c56d5b6475171faa65a98c653baabe12",
+}
+G21_CONTRACT_DIGEST = "d529a2959478b4b8458eddf9e2f126f6ecdf826be3d31fc8e2b5d8adbd6d8826"
+G21_APPROVAL_DIGEST = "38bb461dcd91f1f5f75666cae44d4c729eaddf9e8a7cd2a4c32e4b5370d6fcfb"
+G21_HISTORY_DIGEST = "9dbaea4d66cb5998550a1ff65601f3674b0b9881a63a79d81da5549548242c48"
+G21_HISTORY_ROWS = G20_HISTORY_ROWS + ((6074133818, G20_APPROVAL_DIGEST),)
+
+
+def _g21_history(state):
+    rows = state.get("approval_history")
+    if (
+        type(rows) is not list
+        or len(rows) != 20
+        or digest(rows) != G21_HISTORY_DIGEST
+        or any(
+            type(row) is not dict
+            or type(row.get("plan_comment")) is not int
+            or row["plan_comment"] != comment
+            or digest(row) != expected
+            for row, (comment, expected) in zip(rows, G21_HISTORY_ROWS, strict=True)
+        )
+    ):
+        raise WorkflowError("V6 generation21 ordered approval history differs")

@@ -4433,3 +4433,125 @@ class Generation20Tests(unittest.TestCase):
                     with self.assertRaises(WorkflowError):
                         windows.catalog(self.repo, plan_only=True)
                     selected.assert_not_called()
+
+
+G21_APPROVAL = {
+    "issue": 31,
+    "plan_comment": 6076545397,
+    "contract": {
+        "issue": 31,
+        "plan_comment": 6076545397,
+        "issue_digest": "1875464d1340e35cd90fae86ad70e87be1b13108587ef138ce8130cc9263c03f",
+        "plan_digest": "e546187ed633f98cdf2bf2f7c5735834c56d5b6475171faa65a98c653baabe12",
+    },
+    "source": "Direct coordinating user standing override: I approve of all things/decisions/plans/actions needed for us to get the finished manuscript that is ready for co-author review, please remember this for future decisions/approval, this is an explicit overrite. Applied by coordinator to exact posted hosted-suite3600 contract https://github.com/Zi-Deng/FLOW-DC/issues/31#issuecomment-6076545397 (whole SHA256 727af52fc98cfcc4ed046427a2579639dc7b4f407637b56da0d7f0e2ce36339a), one finite software recovery allocation14490seconds; no provider/native grant, waiver or human GitHub approval.",
+    "recorded_at": "2026-10-09T07:34:09.396975+00:00",
+    "note": "Operator assertion of prior human authorization; not public approval proof.",
+}
+
+
+class Generation21Tests(unittest.TestCase):
+    write_state = QualificationTests.write_state
+
+    def setUp(self):
+        QualificationTests.setUp(self)
+        self.repo.root = self.repo.main
+        self.state = copy.deepcopy(G17_STATE)
+        self.state.update(
+            contract_generation=21,
+            approval=copy.deepcopy(G21_APPROVAL),
+            approval_history=copy.deepcopy(G19_HISTORY + [G19_APPROVAL, G20_APPROVAL]),
+        )
+        self.write_state(self.state)
+
+    def test_actual_g21_history_and_mutation_refusal(self):
+        expected = dict(
+            contract_digest=activation.G21_CONTRACT_DIGEST, approval_digest=activation.G21_APPROVAL_DIGEST
+        )
+        self.assertEqual(activation.authorization(self.repo), expected)
+        self.assertEqual(activation.selected_contract(self.repo), activation.G21_CONTRACT)
+        self.assertEqual(self.state["approval_history"][:-1], G19_HISTORY + [G19_APPROVAL])
+        self.assertEqual(self.state["approval_history"][-1], G20_APPROVAL)
+        for mutate in (
+            lambda s: s.update(contract_generation=True),
+            lambda s: s.update(contract_generation=22),
+            lambda s: s["approval"].update(plan_comment=True),
+            lambda s: s["approval_history"].reverse(),
+            lambda s: s["approval_history"].pop(),
+            lambda s: s["approval_history"].append(copy.deepcopy(G20_APPROVAL)),
+            lambda s: s.update(approval=copy.deepcopy(G20_APPROVAL)),
+        ):
+            bad = copy.deepcopy(self.state)
+            mutate(bad)
+            self.write_state(bad)
+            with self.assertRaises(WorkflowError):
+                activation.authorization(self.repo)
+
+    def test_g21_dispatch_and_final_source_authority_guards(self):
+        import ast
+
+        import review_batch_windows_v1 as windows
+        import review_public_catalog_v1 as public
+
+        pair = activation.authorization(self.repo)
+        self.assertTrue(public.selected(self.repo, 31, 6076545397))
+        with patch.object(public, "catalog_g21", side_effect=WorkflowError("inert downstream")) as selected:
+            with self.assertRaisesRegex(WorkflowError, "inert downstream"):
+                windows.catalog(self.repo, plan_only=True)
+            selected.assert_called_once_with(
+                self.repo, plan_only=True, packet_target=None, batch_directory=None
+            )
+        initial = public.catalog_observation_g21(self.repo)
+        self.assertEqual(initial["authority"], pair)
+        for value in ({"plan": {}, "metadata": {}}, {"schema_version": 10}, {"components": []}):
+            self.assertIs(public.final_catalog_result_g21(self.repo, initial, value), value)
+            (self.repo.root / "Makefile").write_text("changed")
+            with self.assertRaises(WorkflowError):
+                public.final_catalog_result_g21(self.repo, initial, value)
+            (self.repo.root / "Makefile").unlink()
+            changed = copy.deepcopy(self.state)
+            changed["extra"] = "changed"
+            self.write_state(changed)
+            with self.assertRaises(WorkflowError):
+                public.final_catalog_result_g21(self.repo, initial, value)
+            self.write_state(self.state)
+        tree = ast.parse(Path(public.__file__).read_text())
+        function = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "catalog_g21")
+        returns = [n for n in ast.walk(function) if isinstance(n, ast.Return)]
+        self.assertEqual(len(returns), 3)
+        self.assertTrue(
+            all(
+                isinstance(n.value, ast.Call)
+                and isinstance(n.value.func, ast.Name)
+                and n.value.func.id == "final_catalog_result_g21"
+                for n in returns
+            )
+        )
+
+    def test_g21_full_gate_requires_hosted_proof_and_final_authority(self):
+        import review_batch_windows_v1 as windows
+
+        meta = {"plan_comment": 6076545397}
+        with (
+            patch.object(
+                windows, "_full_checks_g20", return_value={"local": "a", "hosted": "b", "source": "c"}
+            ),
+            patch.object(windows, "hosted_checks_g21", side_effect=WorkflowError("missing hosted proof")),
+        ):
+            with self.assertRaisesRegex(WorkflowError, "missing hosted proof"):
+                windows.full_checks_g21(self.repo, self.repo.main, meta)
+
+        def mutation(*args):
+            changed = copy.deepcopy(self.state)
+            changed["approval_history"].pop()
+            self.write_state(changed)
+            return {}
+
+        with (
+            patch.object(
+                windows, "_full_checks_g20", return_value={"local": "a", "hosted": "b", "source": "c"}
+            ),
+            patch.object(windows, "hosted_checks_g21", side_effect=mutation),
+        ):
+            with self.assertRaises(WorkflowError):
+                windows.full_checks_g21(self.repo, self.repo.main, meta)

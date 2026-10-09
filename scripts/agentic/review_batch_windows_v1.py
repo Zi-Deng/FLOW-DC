@@ -2216,8 +2216,14 @@ def catalog(repo, *, plan_only=False, packet_target=None, batch_directory=None):
     """
     import reporting_activation_v6 as current_authority
 
-    if current_authority.authorization(repo).get("contract_digest") == current_authority.G20_CONTRACT_DIGEST:
+    if current_authority.authorization(repo).get("contract_digest") in (
+        current_authority.G20_CONTRACT_DIGEST,
+        current_authority.G21_CONTRACT_DIGEST,
+    ):
         from review_public_catalog_v1 import catalog as public_catalog
+
+        if current_authority.authorization(repo)["contract_digest"] == current_authority.G21_CONTRACT_DIGEST:
+            from review_public_catalog_v1 import catalog_g21 as public_catalog
 
         return public_catalog(
             repo, plan_only=plan_only, packet_target=packet_target, batch_directory=batch_directory
@@ -5691,3 +5697,293 @@ def surrounding_current_ids(plan, unit):
     if unit not in catalog["components"] + [catalog["integration"]]:
         refuse("unknown current context owner")
     return sorted({i["id"] for i in catalog["items"]} - set(unit["required_ids"]))
+
+
+def full_checks_g21(repo, directory, meta):
+    import check_runner
+    import reporting_activation_v6 as activation
+
+    current = activation.authorization(repo)
+    before = check_runner.source(repo.root)
+    if (
+        current["contract_digest"] != activation.G21_CONTRACT_DIGEST
+        or type(meta["plan_comment"]) is not int
+        or meta["plan_comment"] != 6076545397
+    ):
+        refuse("generation21 full gates require current literal authority")
+    result = _full_checks_g20(repo, directory, meta, suite_profile="issue31-suite1800-v1")
+    hosted = hosted_checks_g21(repo, directory, meta)
+    result = {**result, "hosted": digest({"receipts": result["hosted"], "complete": hosted})}
+    if activation.authorization(repo) != current or check_runner.source(repo.root) != before:
+        refuse("full gate authority or source changed")
+    return result
+
+
+def hosted_runner_request(root, jobs, *, suite_profile="issue31-hosted-suite3600-v1"):
+    """Fresh interpreter avoids importing installed tests from the source checkout."""
+    import subprocess
+    import sys
+    import tempfile
+
+    if type(suite_profile) is not str or suite_profile != "issue31-hosted-suite3600-v1":
+        refuse("unknown runner descriptor profile")
+    code = """import json, sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+import check_runner as runner
+root, jobs = Path(sys.argv[2]), int(sys.argv[3])
+source = runner.source(root)
+suite, rows, objects, errors = runner.discover(root)
+policy, assignments = runner.assignment_policy(root, suite, rows, objects, source, jobs, suite_profile=sys.argv[5] if len(sys.argv) == 6 else None)
+value = dict(version=runner.VERSION, jobs=jobs, source=source, rows=rows,
+             assignments=assignments, assignment_policy=policy, errors=errors,
+             evidence_limit=runner.EVIDENCE_BYTES)
+if len(sys.argv) == 6:
+    value["version"] = runner.HOSTED_SUITE_VERSION
+    value["execution_limits"] = runner.execution_limits(sys.argv[5], 3600, runner.TEXT_BYTES, runner.EVIDENCE_BYTES)
+Path(sys.argv[4]).write_text(json.dumps(value, allow_nan=False))
+"""
+    with tempfile.TemporaryDirectory(prefix="agentic-descriptor-") as temporary:
+        target = Path(temporary) / "request.json"
+        result = subprocess.run(
+            [sys.executable, "-B", "-c", code, str(Path(__file__).parent), str(root), str(jobs), str(target)]
+            + ([suite_profile] if suite_profile is not None else []),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=180,
+        )
+        if result.returncode:
+            refuse("fresh complete descriptor reconstruction failed")
+        value = read(target)
+        if value["errors"]:
+            refuse("fresh complete discovery failed")
+        return value
+
+
+def hosted_suite_summary(directory, request, jobs):
+    import check_runner
+
+    value = read(directory / "summary.json")
+    limits = check_runner.execution_limits(
+        "issue31-hosted-suite3600-v1", 3600, check_runner.TEXT_BYTES, check_runner.EVIDENCE_BYTES
+    )
+    if (
+        type(value) is not dict
+        or type(value.get("version")) is not int
+        or value["version"] != 4
+        or request.get("version") != 4
+        or digest(request.get("execution_limits")) != digest(limits)
+        or digest(value.get("execution_limits")) != digest(limits)
+        or value.get("request_digest") != check_runner.digest(request)
+        or type(value.get("jobs")) is not int
+        or value["jobs"] != jobs
+        or value.get("successful") is not True
+        or value.get("error") is not None
+        or type(value.get("process_exits")) is not list
+        or len(value["process_exits"]) != jobs
+        or any(type(code) is not int or code != 0 for code in value["process_exits"])
+        or type(value.get("elapsed_seconds")) not in (int, float)
+        or not 0 <= value["elapsed_seconds"] <= 3600
+        or type(value.get("occurrences")) is not int
+        or value["occurrences"] != len(request["rows"])
+    ):
+        refuse("incomplete or wrong-deadline suite summary")
+
+
+def hosted_records_g21(directory):
+    """Read only the seven named diagnostic artifacts under their existing bounds."""
+    import os
+    import stat
+
+    import ci_diagnostics
+
+    result = {}
+    for name, cap in {**ci_diagnostics.LIMITS, "manifest.json": ci_diagnostics.MANIFEST_LIMIT}.items():
+        path = plain_path(Path(directory) / name)
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        try:
+            before = os.fstat(fd)
+            if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1 or before.st_size > cap:
+                refuse("hosted record bounds or identity")
+            chunks, total = [], 0
+            while True:
+                chunk = os.read(fd, min(65536, cap + 1 - total))
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > cap:
+                    refuse("hosted record overflow")
+                chunks.append(chunk)
+            after, current = os.fstat(fd), path.stat()
+            fields = ("st_dev", "st_ino", "st_mode", "st_size", "st_nlink", "st_mtime_ns", "st_ctime_ns")
+            if any(
+                getattr(before, k) != getattr(after, k) or getattr(after, k) != getattr(current, k)
+                for k in fields
+            ):
+                refuse("hosted record changed")
+            result[name] = b"".join(chunks)
+        finally:
+            os.close(fd)
+    return result
+
+
+def hosted_checks_g21(repo, directory, meta):
+    """Bind retained complete records to independently fetched first-attempt receipts.
+
+    The raw archive is supplied by the coordinator, never downloaded by this reader.
+    Its bytes must match the fresh GitHub artifact SHA256; local flags alone cannot
+    turn a diagnostic archive into hosted qualification.
+    """
+    import hashlib
+    import io
+    import math
+    import zipfile
+
+    import check_runner
+    import ci_diagnostics
+    import ci_evidence
+
+    checks = repo.api(
+        f"commits/{meta['head_sha']}/check-runs?per_page=100", paginate=True, page_key="check_runs"
+    )
+    receipts = ci_evidence.collect(repo, meta["head_sha"], checks, meta["base_sha"])
+    observed = {}
+    for name in ("agentic-quality", "flowdc-tests"):
+        selected = [r for r in receipts if r.get("check") == name]
+        if len(selected) != 1:
+            refuse("ambiguous first hosted receipt")
+        r = selected[0]
+        if (
+            r.get("state") != "observed"
+            or type(r.get("run_attempt")) is not int
+            or r["run_attempt"] != 1
+            or r.get("test_status") != "success"
+            or r.get("clean_status") != "success"
+            or r.get("pr_head_sha") != meta["head_sha"]
+            or r.get("pr_base_sha") != meta["base_sha"]
+        ):
+            refuse("first hosted test/cleanup incomplete")
+        observed[name] = r
+    checkout = observed["agentic-quality"].get("tested_checkout_sha")
+    if (
+        type(checkout) is not str
+        or re.fullmatch(r"[0-9a-f]{40}", checkout) is None
+        or observed["flowdc-tests"].get("tested_checkout_sha") != checkout
+    ):
+        refuse("hosted checkout mismatch")
+    parents = repo.git("show", "-s", "--format=%P", checkout).split()
+    if parents != [meta["base_sha"], meta["head_sha"]] or repo.git(
+        "rev-parse", checkout + "^{tree}"
+    ) != repo.git("rev-parse", meta["head_sha"] + "^{tree}"):
+        refuse("hosted merge tree or parents differ")
+    run_id = observed["agentic-quality"].get("run_id")
+    if type(run_id) is not int or run_id <= 0:
+        refuse("invalid hosted run identity")
+    artifacts = repo.api(f"actions/runs/{run_id}/artifacts?per_page=100", paginate=True, page_key="artifacts")
+    name = f"diagnostic-agentic-quality-{meta['head_sha']}-{run_id}-1"
+    matches = [a for a in artifacts if a.get("name") == name and a.get("expired") is False]
+    if len(matches) != 1:
+        refuse("missing or ambiguous hosted diagnostic archive")
+    archive_path = plain_path(Path(directory) / "hosted-diagnostics.zip")
+    if not archive_path.is_file() or archive_path.stat().st_size > ci_diagnostics.AGGREGATE_LIMIT:
+        refuse("hosted archive bounds")
+    with archive_path.open("rb") as stream:
+        archive = stream.read(ci_diagnostics.AGGREGATE_LIMIT + 1)
+    if (
+        len(archive) > ci_diagnostics.AGGREGATE_LIMIT
+        or matches[0].get("digest") != "sha256:" + hashlib.sha256(archive).hexdigest()
+    ):
+        refuse("hosted archive does not match GitHub artifact")
+    records = hosted_records_g21(Path(directory) / "hosted")
+    with zipfile.ZipFile(io.BytesIO(archive)) as zipped:
+        infos = zipped.infolist()
+        if len(infos) != len(records) or {i.filename for i in infos} != set(records):
+            refuse("hosted archive closure differs")
+        for info in infos:
+            if info.file_size != len(records[info.filename]) or zipped.read(info) != records[info.filename]:
+                refuse("hosted archive bytes differ")
+    manifest = check_runner.strict(records["manifest.json"])
+    identity_keys = {
+        "repository",
+        "check",
+        "event",
+        "pr_head_sha",
+        "pr_base_sha",
+        "tested_checkout_sha",
+        "run_id",
+        "run_attempt",
+        "profile",
+        "test_status",
+        "clean_status",
+    }
+    extra_keys = {
+        "schema_version",
+        "utc_start",
+        "utc_end",
+        "elapsed_seconds",
+        "cap_seconds",
+        "aggregate_limit_bytes",
+        "files",
+        "collection_errors",
+        "runner_name",
+        "request_binding",
+    }
+    if type(manifest) is not dict or set(manifest) != identity_keys | extra_keys:
+        refuse("hosted manifest shape")
+    ci_diagnostics.hosted_metadata({k: manifest[k] for k in identity_keys})
+    if (
+        type(manifest["schema_version"]) is not int
+        or manifest["schema_version"] != 1
+        or type(manifest["run_attempt"]) is not int
+        or manifest["run_attempt"] != 1
+        or manifest["run_id"] != run_id
+        or manifest["tested_checkout_sha"] != checkout
+        or manifest["pr_head_sha"] != meta["head_sha"]
+        or manifest["pr_base_sha"] != meta["base_sha"]
+        or manifest["test_status"] != "success"
+        or manifest["clean_status"] != "success"
+        or manifest["collection_errors"] != []
+        or manifest["request_binding"] != "matched"
+        or type(manifest["cap_seconds"]) is not int
+        or manifest["cap_seconds"] != 60
+        or type(manifest["aggregate_limit_bytes"]) is not int
+        or manifest["aggregate_limit_bytes"] != ci_diagnostics.AGGREGATE_LIMIT
+        or type(manifest["elapsed_seconds"]) not in (int, float)
+        or not math.isfinite(manifest["elapsed_seconds"])
+        or not 0 <= manifest["elapsed_seconds"] <= 60
+    ):
+        refuse("hosted collection incomplete or mismatched")
+    expected_files = [
+        {
+            "name": n,
+            "state": "copied",
+            "bytes": len(records[n]),
+            "sha256": hashlib.sha256(records[n]).hexdigest(),
+            "reason": "exact",
+        }
+        for n in ci_diagnostics.LIMITS
+    ]
+    if check_runner.canonical(manifest["files"]) != check_runner.canonical(expected_files):
+        refuse("hosted raw record bindings differ")
+    expected = hosted_runner_request(repo.root, 2)
+    # Fresh local descriptors are valid for this merge only after exact tree equality.
+    expected["source"]["checkout"] = checkout
+    request = check_runner.strict(records["request.json"])
+    if check_runner.canonical(request) != check_runner.canonical(expected):
+        refuse("hosted request differs from current full discovery")
+    hosted_suite_summary(Path(directory) / "hosted", request, 2)
+    for index in (0, 1):
+        if (
+            check_runner.reconcile(request, index, Path(directory) / "hosted" / f"worker-{index}.jsonl", 0)[
+                "successful"
+            ]
+            is not True
+        ):
+            refuse("incomplete hosted worker")
+    if hosted_records_g21(Path(directory) / "hosted") != records:
+        refuse("hosted records changed during reconciliation")
+    return {
+        "receipts": digest(receipts),
+        "archive": hashlib.sha256(archive).hexdigest(),
+        "request": check_runner.digest(request),
+    }

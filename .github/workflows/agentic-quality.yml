@@ -12,9 +12,9 @@ concurrency:
 jobs:
   agentic-quality:
     runs-on: ubuntu-24.04
-    timeout-minutes: ${{ github.repository == 'Zi-Deng/FLOW-DC' && github.event_name == 'pull_request' && github.event.pull_request.number == 32 && github.event.pull_request.head.ref == 'issue-31-bounded-review-units' && 45 || 15 }}
+    timeout-minutes: ${{ github.repository == 'Zi-Deng/FLOW-DC' && github.event_name == 'pull_request' && github.event.pull_request.number == 32 && github.event.pull_request.head.ref == 'issue-31-bounded-review-units' && 75 || 15 }}
     env:
-      AGENTIC_SUITE_PROFILE: ${{ github.repository == 'Zi-Deng/FLOW-DC' && github.event_name == 'pull_request' && github.event.pull_request.number == 32 && github.event.pull_request.head.ref == 'issue-31-bounded-review-units' && 'issue31-suite1800-v1' || 'legacy' }}
+      AGENTIC_SUITE_PROFILE: ${{ github.repository == 'Zi-Deng/FLOW-DC' && github.event_name == 'pull_request' && github.event.pull_request.number == 32 && github.event.pull_request.head.ref == 'issue-31-bounded-review-units' && 'issue31-hosted-suite3600-v1' || 'legacy' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -24,13 +24,13 @@ jobs:
           python-version: '3.12'
       - run: python -m pip install -r requirements-dev.txt
       - name: Prepare exclusive diagnostic destination
-        if: env.AGENTIC_SUITE_PROFILE == 'issue31-suite1800-v1'
+        if: env.AGENTIC_SUITE_PROFILE == 'issue31-hosted-suite3600-v1'
         run: |
           staging="$(python -B scripts/agentic/ci_diagnostics.py --prepare)"
           printf 'AGENTIC_DIAGNOSTIC_STAGING=%s\n' "$staging" >> "$GITHUB_ENV"
       - id: tests
         run: |
-          if [ "$AGENTIC_SUITE_PROFILE" = 'issue31-suite1800-v1' ]; then
+          if [ "$AGENTIC_SUITE_PROFILE" = 'issue31-hosted-suite3600-v1' ]; then
             TMPDIR="$AGENTIC_DIAGNOSTIC_STAGING/suite-tmp" make check-agentic PYTHON=python RUFF=ruff
           else
             make check-agentic PYTHON=python RUFF=ruff
@@ -54,7 +54,7 @@ jobs:
           if-no-files-found: error
           retention-days: 7
       - name: Retain bounded runner diagnostics
-        if: always() && env.AGENTIC_SUITE_PROFILE == 'issue31-suite1800-v1'
+        if: always() && env.AGENTIC_SUITE_PROFILE == 'issue31-hosted-suite3600-v1'
         env:
           REVIEW_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
           REVIEW_BASE_SHA: ${{ github.event.pull_request.base.sha || '' }}
@@ -63,7 +63,7 @@ jobs:
         run: python -B scripts/agentic/ci_diagnostics.py --staging "$AGENTIC_DIAGNOSTIC_STAGING" --test-status "$TEST_OUTCOME" --clean-status "$CLEAN_OUTCOME"
       - name: Upload runner diagnostics separately
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        if: always() && env.AGENTIC_SUITE_PROFILE == 'issue31-suite1800-v1'
+        if: always() && env.AGENTIC_SUITE_PROFILE == 'issue31-hosted-suite3600-v1'
         with:
           name: diagnostic-agentic-quality-${{ github.event.pull_request.head.sha || github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/issue31-ci-${{ github.run_id }}-${{ github.run_attempt }}/diagnostics

@@ -412,7 +412,15 @@ def _collect(parent, source, identity, clock):
                     if opened is not None:
                         os.close(opened)
         clock.check()
-        binding = request_binding(request, expected) if expected is not None else "unavailable"
+        binding = (
+            (
+                hosted_request_binding(request, expected)
+                if value["profile"] == "issue31-hosted-suite3600-v1"
+                else request_binding(request, expected)
+            )
+            if expected is not None
+            else "unavailable"
+        )
         if binding == "matched" and expected["checkout"] != value["tested_checkout_sha"]:
             binding = "mismatch"
         if binding != "matched":
@@ -546,6 +554,8 @@ def main():
 
 
 def metadata(value):
+    if type(value) is dict and value.get("profile") == "issue31-hosted-suite3600-v1":
+        return hosted_metadata(value)
     keys = {
         "repository",
         "check",
@@ -568,6 +578,91 @@ def metadata(value):
         or value["check"] != "agentic-quality"
         or value["event"] != "pull_request"
         or value["profile"] != "issue31-suite1800-v1"
+    ):
+        raise DiagnosticError("metadata")
+    if any(
+        not re.fullmatch("[0-9a-f]{40}", value[k])
+        for k in ("pr_head_sha", "pr_base_sha", "tested_checkout_sha")
+    ):
+        raise DiagnosticError("metadata")
+    if any(type(value[k]) is not int or not 0 < value[k] < 10**20 for k in ("run_id", "run_attempt")):
+        raise DiagnosticError("metadata")
+    if any(
+        value[k] not in {"success", "failure", "cancelled", "skipped"}
+        for k in ("test_status", "clean_status")
+    ):
+        raise DiagnosticError("metadata")
+    return value.copy()
+
+
+def hosted_request_binding(raw, expected):
+    if raw is None:
+        return "absent"
+
+    def pairs(items):
+        value = {}
+        for k, v in items:
+            if k in value:
+                raise ValueError("duplicate")
+            value[k] = v
+        return value
+
+    def nonfinite(value):
+        raise ValueError("nonfinite")
+
+    try:
+        value = json.loads(raw, object_pairs_hook=pairs, parse_constant=nonfinite)
+        limits = value["execution_limits"]
+        wanted = dict(
+            schema_version=1,
+            profile="issue31-hosted-suite3600-v1",
+            cap_seconds=3600,
+            seconds=3600,
+            text_limit=32 * 1024 * 1024,
+            evidence_limit=16 * 1024 * 1024,
+        )
+        if (
+            type(value["version"]) is not int
+            or value["version"] != 4
+            or type(value["jobs"]) is not int
+            or value["jobs"] != 2
+            or type(limits) is not dict
+            or set(limits) != set(wanted)
+            or any(type(limits[k]) is not type(v) or limits[k] != v for k, v in wanted.items())
+            or type(value["evidence_limit"]) is not int
+            or value["evidence_limit"] != wanted["evidence_limit"]
+        ):
+            return "mismatch"
+        if type(value["source"]) is not dict or value["source"] != expected:
+            return "mismatch"
+        return "matched"
+    except (ValueError, TypeError, KeyError, UnicodeError, RecursionError):
+        return "invalid"
+
+
+def hosted_metadata(value):
+    keys = {
+        "repository",
+        "check",
+        "event",
+        "pr_head_sha",
+        "pr_base_sha",
+        "tested_checkout_sha",
+        "run_id",
+        "run_attempt",
+        "profile",
+        "test_status",
+        "clean_status",
+    }
+    if type(value) is not dict or set(value) != keys:
+        raise DiagnosticError("metadata")
+    if any(type(value[k]) is not str or len(value[k]) > 128 for k in keys - {"run_id", "run_attempt"}):
+        raise DiagnosticError("metadata")
+    if (
+        value["repository"] != "Zi-Deng/FLOW-DC"
+        or value["check"] != "agentic-quality"
+        or value["event"] != "pull_request"
+        or value["profile"] != "issue31-hosted-suite3600-v1"
     ):
         raise DiagnosticError("metadata")
     if any(
