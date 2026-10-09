@@ -139,6 +139,11 @@ def capture(args, *, cwd, env, seconds, output_limit=4_000_000, include_stderr=F
             except subprocess.TimeoutExpired:
                 os.killpg(process.pid, signal.SIGKILL)
                 process.wait(timeout=2)
+            finally:
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
         if os.fstat(out.fileno()).st_size + os.fstat(err.fileno()).st_size > output_limit:
             reason = reason or "output_limit"
         out.seek(0)

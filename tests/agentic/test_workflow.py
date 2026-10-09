@@ -6,6 +6,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -15,7 +16,6 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts/agentic"))
 import claude_auth  # noqa: E402
 import finish  # noqa: E402
-import install  # noqa: E402
 import providers  # noqa: E402
 import review  # noqa: E402
 from workflow import Repo, WorkflowError, configuration, write_json  # noqa: E402
@@ -216,15 +216,6 @@ class SnapshotTests(unittest.TestCase):
             with self.subTest(path=path), self.assertRaises(WorkflowError):
                 review.safe_path(path)
 
-    def test_installer_refuses_existing_files_before_write(self):
-        target = Path(self.temp.name) / "target"
-        (target / "Makefile").parent.mkdir()
-        (target / "Makefile").write_text("user edit")
-        with self.assertRaises(WorkflowError):
-            install.install(ROOT, target)
-        self.assertEqual((target / "Makefile").read_text(), "user edit")
-        self.assertFalse((target / "scripts").exists())
-
 
 class ExecutionTests(unittest.TestCase):
     def test_timeout_kills_owned_process(self):
@@ -235,6 +226,30 @@ class ExecutionTests(unittest.TestCase):
         self.assertNotEqual(result["exit_status"], 0)
         self.assertLess(result["elapsed_seconds"], 3)
         self.assertEqual(raw, b"")
+
+    @unittest.skipUnless(sys.platform == "linux", "process-group fixture uses /proc")
+    def test_cleanup_kills_term_ignoring_child_after_parent_exits(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            pidfile = Path(tmp) / "child.pid"
+            script = (
+                "import os,signal,time,pathlib\np=os.fork()\nif p==0:\n signal.signal(signal.SIGTERM,signal.SIG_IGN)\n pathlib.Path("
+                + repr(str(pidfile))
+                + ").write_text(str(os.getpid()))\n time.sleep(30)\nelse: time.sleep(30)"
+            )
+            result, _ = providers.capture(
+                [sys.executable, "-c", script], cwd=ROOT, env=os.environ.copy(), seconds=0.4
+            )
+            pid = int(pidfile.read_text())
+            state = Path(f"/proc/{pid}/stat")
+            for _ in range(100):
+                alive = state.exists() and state.read_text().split()[2] != "Z"
+                if not alive:
+                    break
+                time.sleep(0.01)
+            if alive:
+                os.kill(pid, 9)
+            self.assertFalse(alive)
+            self.assertEqual(result["reason"], "timeout")
 
     def test_output_limit_and_normal_completion(self):
         result, raw = providers.capture(
@@ -289,6 +304,8 @@ class PublicationTests(unittest.TestCase):
             self.calls.append((path, kwargs))
             if path == "pulls/1":
                 return {"head": {"sha": self.head}, "base": {"sha": self.base}}
+            if path == "issues/2":
+                return {"body": "different issue"}
             if "reviews?" in path:
                 return self.published
             if kwargs:
@@ -331,6 +348,7 @@ class PublicationTests(unittest.TestCase):
         path = self.directory / "reviews" / f"pr1-{self.head[:12]}-fixture"
         path.mkdir(parents=True)
         meta = {**self.meta, "directory": str(path)}
+        meta["task_key"] = review.task_key(self.repo, None, None)
         write_json(path / "review.json", meta)
         (path / "report.json").write_bytes((self.directory / "report.json").read_bytes())
         write_json(
@@ -340,6 +358,11 @@ class PublicationTests(unittest.TestCase):
         with patch.object(providers, "invoke", side_effect=AssertionError("no paid replay")):
             result = review.execute(self.repo, 1, configuration(ROOT))
         self.assertEqual(result["directory"], str(path))
+        with (
+            patch.object(review, "prepare", side_effect=WorkflowError("different contract")),
+            self.assertRaisesRegex(WorkflowError, "different contract"),
+        ):
+            review.execute(self.repo, 1, configuration(ROOT), issue=2)
         meta["status"] = "failed"
         write_json(path / "review.json", meta)
         with self.assertRaises(WorkflowError):

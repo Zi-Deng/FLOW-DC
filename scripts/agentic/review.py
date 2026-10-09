@@ -133,7 +133,16 @@ def validate_report(body):
     return body
 
 
-def prepare(repo, pr, config, *, issue=None, plan=None, **overrides):
+def task_key(repo, issue, plan):
+    material = [issue, plan]
+    if issue:
+        material.append(repo.api(f"issues/{issue}").get("body"))
+    if plan:
+        material.append(repo.api(f"issues/comments/{plan}").get("body"))
+    return hashlib.sha256(json.dumps(material, ensure_ascii=False).encode()).hexdigest()
+
+
+def prepare(repo, pr, config, *, issue=None, plan=None, context_key=None, **overrides):
     remote = repo.api(f"pulls/{pr}")
     if remote["state"] != "open" or remote["head"]["repo"]["full_name"] != repo.name:
         raise WorkflowError("Review requires an open same-repository PR")
@@ -173,6 +182,7 @@ def prepare(repo, pr, config, *, issue=None, plan=None, **overrides):
         "head": head,
         "base": base,
         "policy": policy,
+        "task_key": context_key or task_key(repo, issue, plan),
         "source": source,
         "status": "prepared",
         "directory": str(directory),
@@ -184,6 +194,7 @@ def prepare(repo, pr, config, *, issue=None, plan=None, **overrides):
 
 def execute(repo, pr, config, *, fresh=False, **kwargs):
     remote = repo.api(f"pulls/{pr}")
+    context_key = task_key(repo, kwargs.get("issue"), kwargs.get("plan"))
     policy = providers.selection(
         repo, config, **{k: kwargs.get(k) for k in ("review_provider", "review_model", "review_effort")}
     )
@@ -199,6 +210,7 @@ def execute(repo, pr, config, *, fresh=False, **kwargs):
                 saved.get("head") == remote["head"]["sha"]
                 and saved.get("base") == remote["base"]["sha"]
                 and saved.get("policy") == policy
+                and saved.get("task_key") == context_key
             ):
                 if saved.get("status") == "completed":
                     raw = (path.parent / "report.json").read_bytes()
@@ -209,7 +221,7 @@ def execute(repo, pr, config, *, fresh=False, **kwargs):
                 incomplete = True
         if incomplete:
             raise WorkflowError("A previous attempt is incomplete; diagnose before explicitly using --fresh")
-    directory, meta = prepare(repo, pr, config, **kwargs)
+    directory, meta = prepare(repo, pr, config, context_key=context_key, **kwargs)
     meta.update(status="running", attempts=1, started_at=time.time())
     write_json(directory / "review.json", meta)
     prompt = """Perform an independent static PR review. Read context.json, diff.txt and relevant source/ tests in source/.
