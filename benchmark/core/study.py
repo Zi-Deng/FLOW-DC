@@ -112,7 +112,6 @@ def make_plan(
     limits = workload(research_workload)
     if research_workload is not None and purpose == "confirmatory":
         require(blocks <= 60, "research confirmation is limited to 60 frozen blocks")
-    require(type(rows) is int and 1 <= rows <= limits.max_rows, "rows exceed finite workload")
     from .controlled_origin import SCENARIOS, RESEARCH_SCENARIOS
 
     if families is None:
@@ -123,6 +122,11 @@ def make_plan(
         and set(families) <= set(SCENARIOS if research_workload is None else RESEARCH_SCENARIOS),
         "unknown/duplicate scenario family",
     )
+    row_map = rows if isinstance(rows, dict) else {family: rows for family in families}
+    require((not isinstance(rows, dict) or research_workload is not None)
+            and set(row_map) == set(families)
+            and all(type(value) is int and 1 <= value <= limits.max_rows for value in row_map.values()),
+            "rows must fit the finite workload and name every scenario")
     methods = method_configs(configurations, legacy=research_workload is None)
     rng, cells = random.Random(seed), []
     for block in range(blocks):
@@ -139,7 +143,7 @@ def make_plan(
                         "scenario": family,
                         "method": method,
                         "fixture_seed": int(digest(encode([namespace, seed, block]))[:8], 16),
-                        "rows": rows,
+                        "rows": row_map[family],
                         "config_sha256": digest(encode(methods[method])),
                     }
                 )
@@ -175,6 +179,8 @@ def make_plan(
         result["limits"].update(rows=limits.max_rows, expected_payload_bytes=limits.max_payload_bytes,
                                 process_deadline_s=limits.acquisition_seconds,
                                 metadata_bytes=limits.max_metadata_bytes, artifact_bytes=limits.max_artifact_bytes)
+        if isinstance(rows, dict):
+            result['rows_by_scenario'] = dict(rows)
     return result
 
 
@@ -186,7 +192,7 @@ def validate_plan(plan):
         families=plan["families"],
         namespace=plan["namespace"],
         purpose=plan["purpose"],
-        rows=plan["cells"][0]["rows"],
+        rows=plan.get('rows_by_scenario', plan["cells"][0]["rows"]),
         configurations=plan["methods"],
         research_workload=plan.get("workload", {}).get("name"),
     )

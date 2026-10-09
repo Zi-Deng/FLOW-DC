@@ -8,3 +8,4 @@ tqdm==4.67.1
 # Known-truth originals and run-level statistical regression checks.
 Pillow==12.3.0
 scipy==1.18.0
+matplotlib==3.11.2

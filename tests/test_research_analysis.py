@@ -5,7 +5,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from benchmark.analyze import analyze, render
-from benchmark.core.study import make_plan, write_new
+from benchmark.core.study import make_plan, validate_plan, write_new
 from benchmark.core.truth import digest, encode
 from benchmark.study import execute_cell, identities
 
@@ -50,3 +50,11 @@ class AnalysisTests(unittest.TestCase):
     def test_confirmation_limit_is_60_before_execution(self):
         with self.assertRaises(ValueError):
             make_plan(seed=1,blocks=61,purpose='confirmatory',research_workload='bounded-research-v2')
+
+    def test_calibrated_sizes_are_bound_to_the_plan_for_each_scenario(self):
+        sizes={'drop-recovery':4096,'mixed-sizes':2048,'sustained-overload':1024}
+        plan=make_plan(seed=21,rows=sizes,research_workload='bounded-research-v2')
+        validate_plan(plan)
+        self.assertTrue(all(c['rows']==sizes[c['scenario']] for c in plan['cells']))
+        plan['cells'][0]['rows']+=1
+        with self.assertRaises(ValueError):validate_plan(plan)

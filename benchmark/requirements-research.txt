@@ -1,6 +1,10 @@
 # Install only in a task-local isolated Python 3.12 environment. Retain pip's
 # --report output (locally) and the smoke's exact installed file/version hashes.
--r ../requirements-test.txt
+# Keep this older comparator isolated from the SciPy/NumPy-2 analysis environment.
+aiohttp==3.13.3
+polars==1.37.1
+psutil==7.2.1
+tqdm==4.67.1
 img2dataset==1.47.0
 Pillow==11.3.0
 numpy==1.26.4

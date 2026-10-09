@@ -9,14 +9,14 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from benchmark.core.inference import PRIMARY, GRADIENT, REFERENCES, primary_analysis
-from benchmark.core.qualification import observations
+from benchmark.core.qualification import observations, control_observations
 from benchmark.core.study import authorize_plan, read_plan, validate_plan, write_new
 from benchmark.core.truth import digest, encode, parse, require
 from benchmark.core.verifier import verify_native
 from benchmark.study import attempts_for, identities
 
 
-def first_attempt(directory, cell, binding):
+def first_attempt(directory, cell, binding, config):
     result = dict(scenario=cell['scenario'], block=cell['block'], method=cell['method'],
                   cell_id=cell['cell_id'], attempt=1, status='missing', later_attempts=[])
     attempts = attempts_for(directory / cell['cell_id'], cell)
@@ -60,15 +60,16 @@ def first_attempt(directory, cell, binding):
         require(type(elapsed) is int and elapsed > 0 and useful == native['useful_payload_bytes']
                 and verified == native['verified_rows']
                 and verified/len(rows) == native['verified_coverage'], 'credited metrics changed')
-        _, timing = observations(first/'run/native', truth)
+        request_records, timing = observations(first/'run/native', truth)
+        mechanisms=control_observations(first/'run/native',truth,config,request_records)
         terminal = (native['process_exit_code'] == 0 and native['status'] in ('complete','incomplete')
-            and not native['cleanup_errors'] and not native['interruption_requested'] and timing['complete']
+            and not native['cleanup_errors'] and not native['interruption_requested'] and timing['complete'] and mechanisms['complete']
             and all(row['disposition'] in ('verified','failed','skipped')
                     and not row.get('native_attempt_information_uncertain',False) for row in rows))
         result.update(status='known_terminal' if terminal else 'censored', goodput=useful/(elapsed/1e9),
             coverage=verified/len(rows), useful_bytes=useful, original_rows=len(rows), elapsed_s=elapsed/1e9,
             verification_s=native['verification_ns']/1e9, process_s=native['process_ns']/1e9,
-            resources=native['resources'], **timing)
+            resources=native['resources'], mechanisms=mechanisms, **timing)
         if not terminal:
             result['reason']='incomplete request/accounting or process/cleanup failure; excluded from complete-run inference'
     except (ValueError, OSError, KeyError, TypeError, ZeroDivisionError) as exc:
@@ -86,7 +87,7 @@ def analyze(plan, study_root, *, protocol=None):
     require(binding == dict(plan_sha256=digest(encode(plan)), **identities(environment)), 'analysis binding mismatch')
     require(parse((directory/'plan.json').read_bytes()) == plan, 'retained plan differs')
     authorize_plan(plan,protocol,**identities(environment))
-    inventory = [first_attempt(directory,cell,binding) for cell in plan['cells']]
+    inventory = [first_attempt(directory,cell,binding,plan['methods'][cell['method']]) for cell in plan['cells']]
     result = primary_analysis(inventory,blocks=plan['blocks'], minimum=10 if plan['purpose']=='confirmatory' else 6)
     result.update(plan_sha256=binding['plan_sha256'], binding=binding, purpose=plan['purpose'],
                   protocol_sha256=digest(encode(protocol)) if protocol else None,

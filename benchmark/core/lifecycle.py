@@ -18,7 +18,7 @@ class ResourceSampler:
     def __init__(self, pid, *, descendants=True):
         try:
             self.parent = psutil.Process(pid)
-        except psutil.NoSuchProcess:
+        except psutil.Error:
             self.parent = None
         self.descendants = descendants
         self.stop = threading.Event()
@@ -305,7 +305,7 @@ def _run_verified(command, directory, truth, verify, *, cwd, deadline, cleanup, 
         "boundary": "process launch through closed and checked common outcome index",
         "outcome_index_sha256": digest(raw_index),
         "resources": {"acquisition_process_tree": process_resources, "verification_harness": verifier_resources},
-        "resource_status": "sampled" if process_resources is not None else "unavailable",
+        "resource_status": "sampled" if process_resources is not None and process_resources['samples'] else "unavailable",
         "attempt_attribution": "origin aggregate; duplicate-row attribution unavailable",
         "provenance": provenance,
     }

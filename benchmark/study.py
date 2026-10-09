@@ -398,6 +398,7 @@ def main():
         "--purpose", choices=("engineering", "provisional-pilot", "confirmatory"), default="provisional-pilot"
     )
     plan.add_argument("--rows", type=int, default=128)
+    plan.add_argument("--rows-by-scenario", type=Path, help="Calibrated JSON mapping of every selected scenario to its row count")
     plan.add_argument("--research-workload", choices=("bounded-fixture-v1", "bounded-research-v2"))
     plan.add_argument(
         "--method-configs",
@@ -464,7 +465,7 @@ def main():
                     families=args.families,
                     namespace=args.namespace,
                     purpose=args.purpose,
-                    rows=args.rows,
+                    rows=parse(args.rows_by_scenario.read_bytes()) if args.rows_by_scenario else args.rows,
                     configurations=parse(args.method_configs.read_bytes()) if args.method_configs else None,
                     research_workload=args.research_workload,
                 ),
