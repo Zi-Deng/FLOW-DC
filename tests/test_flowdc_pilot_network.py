@@ -543,13 +543,13 @@ class NetworkTests(unittest.TestCase):
             if self.journal.read()["network"]["rolled_back"]:
                 break
         self.assertTrue(self.journal.read()["network"]["rolled_back"], trace)
-        self.assertEqual(trace, [(13.15, None), (15.15, None)] * 3 + [(9.55, None)])
+        self.assertEqual(trace, [(13.15, None)] * 3 + [(15.15, None)] * 3 + [(9.55, None)])
         self.assertEqual(backend.fips, original_fips)
         self.assertEqual(backend.groups, {backend.original: original_group})
         self.assertTrue(
             all(port["security_group_ids"] == [backend.original] for port in backend.ports.values())
         )
-        self.assertEqual([action for action, _ in backend.dispatches], ["attach", "group_delete"] * 3)
+        self.assertEqual([action for action, _ in backend.dispatches], ["attach"] * 3 + ["group_delete"] * 3)
 
     def test_slow_rollback_fails_when_new_read_batches_are_serialized(self):
         backend = self.slow_rollback_fixture()
@@ -580,6 +580,11 @@ class NetworkTests(unittest.TestCase):
         backend = self.slow_rollback_fixture()
         original_fips = copy.deepcopy(backend.fips)
         for action in ("attach", "group_delete"):
+            if action == "group_delete":
+                backend.durations = dict(backend.DURATIONS)
+                backend.apply_on_timeout = False
+                while any(p["security_group_ids"] != [backend.original] for p in backend.ports.values()):
+                    self.assertIsNone(self.timed_rollback_step(backend)[1])
             # The no-effect case must remain pending. A later request may apply
             # but lose its response; neither return path is rollback proof.
             for applied in (False, True):
@@ -604,7 +609,7 @@ class NetworkTests(unittest.TestCase):
                 break
         self.assertTrue(self.journal.read()["network"]["rolled_back"])
         self.assertEqual(restarted.fips, original_fips)
-        self.assertEqual([action for action, _ in restarted.dispatches], ["attach", "group_delete"] * 2)
+        self.assertEqual([action for action, _ in restarted.dispatches], ["group_delete"] * 2)
 
     def test_rollback_validates_all_batched_port_identities_before_mutation(self):
         self.setup_network()
@@ -911,6 +916,76 @@ class NetworkTests(unittest.TestCase):
             if action in ("groups", "floating"):
                 self.assertEqual(args, (PROJECT.replace("-", ""),))
         self.rollback()
+
+    def test_selected_workers_share_one_group_with_quota_and_restore_before_delete(self):
+        from flowdc_topology import selection
+        from test_pilot_topology import expanded
+
+        for indexes in ((3,), (2, 3), (0, 1, 2, 3)):
+            with self.subTest(selected_workers=indexes):
+                selected, network = expanded(spec(), access(), 4)
+                config = self.root / ("config-" + str(len(indexes)))
+                config.mkdir(mode=0o700)
+                profile = config / "profile.json"
+                profile.write_text("{}")
+                journal = register(
+                    profile, self.root / ("state-" + str(len(indexes))),
+                    selected, network,
+                )
+                workers = selected["topology"]["workers"]
+                journal.change(lambda r: r.update(
+                    desired="run", window={"seconds": 1800, "inspection": True},
+                    selection=selection(selected, [workers[i] for i in indexes]),
+                ))
+                provider = NetworkBackend()
+                for vm in selected["vms"]:
+                    interface = network["interfaces"][vm["role"]]
+                    provider.ports[interface["port_id"]] = dict(
+                        copy.deepcopy(provider.ports[PORT_IDS[2]]), id=interface["port_id"],
+                        device_id=vm["id"], fixed_ips=[{
+                            "ip_address": interface["fixed_ip"], "subnet_id": SUBNET,
+                        }],
+                    )
+                # The live allocation has five existing groups and a quota of
+                # ten. None of those unrelated groups may be edited or deleted.
+                for i in range(4):
+                    key = provider.new_id()
+                    provider.groups[key] = dict(
+                        copy.deepcopy(provider.groups[provider.original]), id=key, name=f"unrelated-{i}",
+                    )
+                originals = copy.deepcopy(provider.groups)
+                call = provider.call
+
+                def bounded(action, *args, **kwargs):
+                    if action == "group_create" and len(provider.groups) >= 10:
+                        raise ops.OpsError("network_quota_pending", "quota", "quota", 3)
+                    if action == "group_delete":
+                        self.assertTrue(all(
+                            p["security_group_ids"] == [provider.original] for p in provider.ports.values()
+                        ))
+                    return call(action, *args, **kwargs)
+
+                with patch.object(provider, "call", side_effect=bounded):
+                    for _ in range(60):
+                        provider.network_step(journal, rollback=False)
+                        if journal.read()["network"]["ready"]:
+                            break
+                    record = journal.read()
+                    self.assertTrue(record["network"]["ready"])
+                    chosen = [f"worker-{i + 1}" if i else "worker" for i in indexes]
+                    resources = {record["network"]["seen_groups"][role] for role in chosen}
+                    self.assertEqual(len(resources), 1)
+                    self.assertEqual(sum(a == "group_create" for a, _, _ in provider.calls), 3)
+                    self.assertEqual(sum(a == "rule" for a, _, _ in provider.calls), 4 + 2 * len(indexes))
+                    for role in chosen:
+                        provider.verify_ingress(record, role, provider.groups[next(iter(resources))])
+                    journal.change(lambda r: r.update(desired="stop"))
+                    for _ in range(20):
+                        provider.network_step(journal, rollback=True)
+                        if journal.read()["network"]["rolled_back"]:
+                            break
+                self.assertTrue(journal.read()["network"]["rolled_back"])
+                self.assertEqual(provider.groups, originals)
 
     def test_cleanup_does_not_depend_on_missing_or_drifted_port(self):
         record = self.journal.read()

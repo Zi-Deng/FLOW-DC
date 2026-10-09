@@ -473,7 +473,9 @@ procedure from another reachable control path when needed.
 Routing is inspected before mutation. A verified existing manager floating entry
 is reused. Otherwise at most one pilot-owned floating IP is created for the manager
 on the verified external network; existing worker/origin public entries are refused.
-The tool creates a dedicated security group per selected interface. Manager ingress
+The tool creates three owned security groups: manager, origin and selected workers.
+All selected workers share the same manager-only ingress group. Its identity is
+anchored to the first selected worker role, including nonprefix selections. Manager ingress
 allows only operator `/32` SSH plus TCP from selected origin/worker private `/32`
 addresses. The origin accepts TCP from the selected manager and workers; workers
 accept TCP only from the manager (SSH and manager traffic). Workers initiate HTTP
@@ -482,7 +484,9 @@ transfers. UDP, ICMP and worker-to-worker ingress are not admitted. No public
 TaskVine/origin access is added. Provider-default egress is retained. Original security groups are
 recorded and replaced on those exact ports; their rules are never edited.
 
-The full six-VM topology needs 15 ingress rules rather than 91. Each rule remains
+The full six-VM topology needs 12 ingress rules rather than 91, and three groups
+instead of six. Sharing identical worker rules preserves each VM's permitted
+incoming paths and avoids consuming one group per worker. Each rule remains
 an individually journaled mutation. During setup, a recorded active group ID is a
 lookup hint, followed by fresh identity/project/ownership validation; other group
 details are checked at activation and complete discovery is retained for rollback.

@@ -509,7 +509,9 @@ class Provider:
                 ):
                     raise failure("selected_attachment_not_authorized")
             marker = "flowdc-" + network["generation"] + "-"
-            if action == "group_create" and args[0] not in [marker + role for role in selected_roles(record)]:
+            if action == "group_create" and args[0] not in [
+                marker + self.group_role(record, role) for role in selected_roles(record)
+            ]:
                 raise failure("network_resource_not_owned")
             if action == "floating_create":
                 interface = record["access"]["interfaces"]["manager"]
@@ -770,8 +772,15 @@ class Provider:
                 rules.append(("tcp", record["access"]["interfaces"][peer]["fixed_ip"] + "/32", "any"))
         return rules
 
+    def group_role(self, record, role):
+        """Workers share identical manager-only ingress within this selection."""
+        chosen = selected_roles(record)
+        if role not in chosen:
+            raise failure("vm_not_selected")
+        return next(peer for peer in chosen if is_worker(peer)) if is_worker(role) else role
+
     def verify_ingress(self, record, role, group):
-        marker = "flowdc-" + record["network"]["generation"] + "-" + role
+        marker = "flowdc-" + record["network"]["generation"] + "-" + self.group_role(record, role)
         if (
             group.get("id") != record["network"]["seen_groups"].get(role)
             or group.get("description") != marker
@@ -880,7 +889,7 @@ class Provider:
                 ),
                 None,
             )
-            if known_role is not None and row.get("Name") != prefix + known_role:
+            if known_role is not None and row.get("Name") != prefix + self.group_role(record, known_role):
                 raise failure("owned_group_identity_changed")
             if row.get("Name") not in [prefix + role for role in record_roles(record)]:
                 continue
@@ -902,6 +911,19 @@ class Provider:
             if previous is not None and previous != value["id"]:
                 raise failure("owned_group_identity_changed")
             result[role] = value
+        # Store per-role lookup hints, but create only three owned groups. Every
+        # selected worker has the same manager /32 rule; sharing does not widen
+        # ingress or grant worker-to-worker access.
+        owners = {self.group_role(record, role) for role in selected_roles(record)}
+        if set(result) - owners:
+            raise failure("unexpected_owned_network_role")
+        result = {
+            role: result[self.group_role(record, role)]
+            for role in selected_roles(record) if self.group_role(record, role) in result
+        }
+        if any(record["network"]["seen_groups"].get(role, group["id"]) != group["id"]
+               for role, group in result.items()):
+            raise failure("owned_group_identity_changed")
         return result
 
     def floating(self, record):
@@ -962,10 +984,11 @@ class Provider:
                 # Activation checks every selected group; rollback still
                 # discovers the complete owned set, including lost responses.
                 group = self.call("group", pinned)
-                marker = "flowdc-" + record["network"]["generation"] + "-" + role
+                owner_role = self.group_role(record, role)
+                marker = "flowdc-" + record["network"]["generation"] + "-" + owner_role
                 if (group.get("id") != pinned or group.get("description") != marker
                         or ops.uuid_value(field(group, "project_id")) != record["spec"]["context"]["project_id"]
-                        or "group-" + role not in record["network"]["intents"]):
+                        or "group-" + owner_role not in record["network"]["intents"]):
                     raise failure("owned_group_identity_changed")
                 groups = {role: group}
             else:
@@ -995,9 +1018,10 @@ class Provider:
 
                     journal.change(save)
                     return
-                marker = "flowdc-" + record["network"]["generation"] + "-" + role
+                owner_role = self.group_role(record, role)
+                marker = "flowdc-" + record["network"]["generation"] + "-" + owner_role
                 if role not in groups:
-                    self.network_intent(journal, "group-" + role, "group_create", marker)
+                    self.network_intent(journal, "group-" + owner_role, "group_create", marker)
                     return
                 group = groups[role]
                 rules = field(group, "rules")
@@ -1165,16 +1189,20 @@ class Provider:
                 )
                 self.call("attach", port["id"], *original, mutation=True)
                 return
-            if group:
-                if ids(self.call("group_ports", group["id"])):
-                    raise failure("owned_group_attached_elsewhere")
-                journal.change(
-                    lambda current, group=group: journal.event(
-                        current, "group_delete_intent", {"id": group["id"]}
-                    )
+        # Restore every selected attachment before deleting any shared group.
+        # A group attached to an unrelated port remains a refusal, never a cue
+        # to detach that port or change another project's resources.
+        unique_groups = {group["id"]: group for group in groups.values()}
+        for group in unique_groups.values():
+            if ids(self.call("group_ports", group["id"])):
+                raise failure("owned_group_attached_elsewhere")
+            journal.change(
+                lambda current, group=group: journal.event(
+                    current, "group_delete_intent", {"id": group["id"]}
                 )
-                self.call("group_delete", group["id"], mutation=True)
-                return
+            )
+            self.call("group_delete", group["id"], mutation=True)
+            return
         # An unobserved create could still arrive late: never declare rollback done.
         if any(
             key.startswith("group-")
