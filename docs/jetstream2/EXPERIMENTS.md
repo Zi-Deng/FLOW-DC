@@ -154,6 +154,13 @@ It retains the existing shutdown deadline. Without this flag the idle gate is
 unchanged. It does not resume a previously attempted experiment or add another
 window; the prepared run must still be unused and the experiment owner vacant.
 
+For distributed runs, `bounds.output_bytes` is also the systemd per-file limit
+during native environment transfer. Set it at least as large as the pinned
+environment archive, within the existing finite profile. A smaller limit is
+refused before guest service launch; increasing the explicit run budget does
+not change the profile or credit incomplete outputs. For example, a269.5MB
+runtime needs more than256MiB, so a512MiB run budget accommodates it.
+
 ```bash
 STATE=/absolute/existing/flowdc-state
 RUN=exp-0123456789abcdef0123456789abcdef  # Replace with the complete returned run ID.

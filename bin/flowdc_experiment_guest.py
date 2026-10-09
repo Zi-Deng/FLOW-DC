@@ -160,6 +160,15 @@ def service_lock(root, role, case):
 def launch(root, role, case, seconds):
     with service_lock(root, role, case) as service:
         check(not (root / (service + ".cancel")).exists())
+        config = settings(root)
+        if "distributed" in config:
+            archive = Path(config["distributed"]["environment_archive"])
+            info = archive.lstat()
+            check(stat.S_ISREG(info.st_mode) and info.st_uid == os.getuid() and info.st_nlink == 1)
+            # RLIMIT_FSIZE also governs the worker's received environment archive.
+            # Refuse a mismatched explicit budget before any service intent/launch.
+            if not 0 < info.st_size <= config["bounds"]["output_bytes"]:
+                raise ValueError("guest_runtime_exceeds_file_limit")
         write(root / (service + ".intent"), b"pending")
         result = launch_service(root, role, case, seconds)
         write(root / (service + ".accepted"), b"accepted")

@@ -6,6 +6,7 @@ No cloud, SSH, systemd or TaskVine runtime is used by these local tests.
 import io
 import json
 import os
+import signal
 import subprocess
 import sys
 import tarfile
@@ -179,6 +180,42 @@ class GuestProtocolTests(unittest.TestCase):
             (self.root / (pending + ".intent")).write_text("pending")
             with self.assertRaises(ValueError):
                 guest.stop(self.root, "worker", "pending")
+
+    @unittest.skipUnless(hasattr(signal, "SIGXFSZ"), "requires POSIX file-size limits")
+    def test_environment_transfer_budget_refuses_before_launch_and_matches_kernel_limit(self):
+        from flowdc_vine_cohort import cohort
+        self.root.mkdir(mode=0o700)
+        archive = self.root / "runtime.tar.gz"
+        size = 269515574  # Actual pinned commissioning archive exceeds256MiB.
+        with archive.open("wb") as stream:
+            stream.truncate(size)
+        config = {"service_mode": "system", "python": "/venv/bin/python",
+                  "worker": "/venv/bin/vine_worker", "addresses": {"manager": "10.0.0.10",
+                  "origin": "10.0.0.20", "worker": "10.0.0.30"},
+                  "bounds": {"memory_mb": 1024, "output_bytes": 256 * 2**20, "cores": 1, "disk_mb": 512},
+                  "distributed": {"environment_archive": str(archive)},
+                  "worker_cohorts": {"case": cohort(1, owner="prepared-guest-service-v1")}}
+        (self.root / "guest.json").write_bytes(encode(config))
+        with patch.object(guest, "command") as command, self.assertRaisesRegex(
+            ValueError, "guest_runtime_exceeds_file_limit"
+        ):
+            guest.launch(self.root, "worker", "case", 30)
+        command.assert_not_called()
+        self.assertFalse((self.root / (guest.unit(self.root.name, "worker", "case") + ".intent")).exists())
+        config["bounds"]["output_bytes"] = 512 * 2**20
+        (self.root / "guest.json").write_bytes(encode(config))
+        with patch.object(guest, "command", return_value=b"") as command:
+            guest.launch(self.root, "worker", "case", 30)
+        self.assertIn("--property=LimitFSIZE=536870912", command.call_args.args[0])
+        script = "import resource,sys,signal; signal.signal(signal.SIGXFSZ,signal.SIG_DFL); " \
+                 "resource.setrlimit(resource.RLIMIT_CORE,(0,0)); " \
+                 "resource.setrlimit(resource.RLIMIT_FSIZE,(int(sys.argv[2]),int(sys.argv[2]))); " \
+                 "f=open(sys.argv[1],'wb'); f.seek(int(sys.argv[3])-1); f.write(b'x'); f.close()"
+        for limit, expected in ((256 * 2**20, -signal.SIGXFSZ), (512 * 2**20, 0)):
+            result = subprocess.run([sys.executable, "-c", script,
+                                     str(self.root / f"kernel-{limit}"), str(limit), str(size)],
+                                    capture_output=True, timeout=5)
+            self.assertEqual(result.returncode, expected, result.stderr)
 
     def test_user_service_mode_requires_linger_and_system_mode_requires_sudo(self):
         self.root.mkdir(mode=0o700)
