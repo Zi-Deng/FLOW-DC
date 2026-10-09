@@ -116,3 +116,7 @@ on October9,2026. This applies to this task and all future tasks.
 - Workflow budget: <=2,500 runtime lines, <=1,200 workflow-test lines; suite target
   <=120seconds locally, CI job<=5minutes. New workflow complexity must justify its
   benefit to FLOW-DC. Do not increase limits or add a framework merely to pass.
+
+## Bounded review and repair policy
+
+Use at most two automated review invocations and two review-driven repair rounds per task across providers; failed or interrupted invocations count. Plan the first review after implementation qualification and the final review after the remaining material changes. Ordinary development/test fixes and coauthor revisions are not extra review-driven repairs. After the last repair, report the last reviewed SHA, final SHA, changed delta and current-head CI for human assessment; never label an earlier review as final-head review. No automatic third review. Shelve remaining nonblocking findings in a concise existing or consolidated GitHub issue. Material acceptance failures remain blockers. Extra cycles require a documented credential compromise, data loss, uncontrolled spending, or defect invalidating required central evidence, and a bounded corrective scope. Existing finite provider limits and human-only merge/submission still apply.

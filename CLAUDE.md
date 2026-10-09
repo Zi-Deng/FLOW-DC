@@ -227,3 +227,7 @@ Other entry points carry their own defaults (e.g. `TaskvineFLOWDC.py` uses `C_in
 **Low throughput:** keep `concurrent_downloads` at 0 (auto) or ≈ `C_max`; check whether latency thresholds are too tight.
 
 **Interrupted run:** rerun with `--resume`; use `--reconcile` to rebuild dispositions offline without HTTP.
+
+## Bounded review and repair policy
+
+Use at most two automated review invocations and two review-driven repair rounds per task across providers; failed or interrupted invocations count. Plan the first review after implementation qualification and the final review after the remaining material changes. Ordinary development/test fixes and coauthor revisions are not extra review-driven repairs. After the last repair, report the last reviewed SHA, final SHA, changed delta and current-head CI for human assessment; never label an earlier review as final-head review. No automatic third review. Shelve remaining nonblocking findings in a concise existing or consolidated GitHub issue. Material acceptance failures remain blockers. Extra cycles require a documented credential compromise, data loss, uncontrolled spending, or defect invalidating required central evidence, and a bounded corrective scope. Existing finite provider limits and human-only merge/submission still apply.
