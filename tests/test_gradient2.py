@@ -100,6 +100,9 @@ class Gradient2Tests(unittest.TestCase):
         with self.assertRaises(ValueError):
             Gradient2(False)
         self.assertEqual(Gradient2Config(smoothing=0, queue_size=0).smoothing, 0)
+        clipped = Gradient2(Gradient2Config(min_limit=1, max_limit=20, smoothing=1))
+        clipped.sample(100, 20)
+        self.assertIs(type(clipped.estimated_limit), float)
 
     def test_seconds_conversion_and_bounds(self):
         self.assertEqual(nanoseconds(0.0123456789), 12345678)

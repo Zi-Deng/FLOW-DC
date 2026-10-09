@@ -105,7 +105,7 @@ class Gradient2:
         gradient = max(0.5, min(1.0, cfg.rtt_tolerance * long / short))
         new_limit = estimated * gradient + cfg.queue_size
         new_limit = estimated * (1 - cfg.smoothing) + new_limit * cfg.smoothing
-        self.estimated_limit = max(cfg.min_limit, min(cfg.max_limit, new_limit))
+        self.estimated_limit = float(max(cfg.min_limit, min(cfg.max_limit, new_limit)))
         self.reason = "updated"
         return self.limit
 
