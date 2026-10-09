@@ -2216,7 +2216,7 @@ def catalog(repo, *, plan_only=False, packet_target=None, batch_directory=None):
     """
     import reporting_activation_v6 as current_authority
 
-    if current_authority.authorization(repo)["contract_digest"] == current_authority.G20_CONTRACT_DIGEST:
+    if current_authority.authorization(repo).get("contract_digest") == current_authority.G20_CONTRACT_DIGEST:
         from review_public_catalog_v1 import catalog as public_catalog
 
         return public_catalog(

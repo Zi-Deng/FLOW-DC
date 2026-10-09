@@ -4405,3 +4405,31 @@ class Generation20Tests(unittest.TestCase):
             self.write_state(state)
             with self.assertRaises(WorkflowError):
                 activation.authorization(self.repo)
+
+    def test_catalog_dispatch_validates_actual_g20_before_routing(self):
+        import review_batch_windows_v1 as windows
+        import review_public_catalog_v1 as public
+
+        # Real authorization reads the exact approval/history fixture. Only the
+        # downstream catalog adapter is isolated; this is routing, not readiness.
+        with patch.object(public, "catalog", return_value=None) as selected:
+            self.assertIsNone(windows.catalog(self.repo, plan_only=True))
+            selected.assert_called_once_with(
+                self.repo, plan_only=True, packet_target=None, batch_directory=None
+            )
+        for mutate in (
+            lambda v: v.update(contract_generation=True),
+            lambda v: v.update(contract_generation=21),
+            lambda v: v.update(approval={}),
+            lambda v: v["approval"].update(plan_comment=True),
+            lambda v: v["approval_history"].pop(),
+            lambda v: v["approval_history"].reverse(),
+        ):
+            with self.subTest(mutation=mutate):
+                state = copy.deepcopy(self.state)
+                mutate(state)
+                self.write_state(state)
+                with patch.object(public, "catalog") as selected:
+                    with self.assertRaises(WorkflowError):
+                        windows.catalog(self.repo, plan_only=True)
+                    selected.assert_not_called()
