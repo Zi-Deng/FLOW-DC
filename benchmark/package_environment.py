@@ -7,6 +7,7 @@ import importlib.metadata
 import json
 import os
 import sys
+import tarfile
 import time
 from pathlib import Path
 
@@ -37,7 +38,9 @@ env = conda_pack.CondaEnv.from_prefix(str(prefix), ignore_missing_files=False, i
 def inventory():
     result = {}
     for f in env.files:
-        p = Path(f.source)
+        # Managed records can point into conda's original package cache. The
+        # evidence must describe the installed environment, including patches.
+        p = prefix / f.target
         result[f.target] = (
             {"symlink": os.readlink(p)}
             if p.is_symlink()
@@ -55,7 +58,17 @@ wrappers = []
 for name in ("run_in_env", "poncho_package_run"):
     p = out / "overlay/env/bin" / name
     wrappers.append(File(str(p), "bin/" + name, is_conda=False))
-# Replace only the packaged launcher record; source files remain unchanged.
+# conda-pack may source managed binaries from its unpatched package cache.
+# Explicitly package the installed native files as overlays; their ELF paths
+# must already be relocatable, and native relocation tests remain mandatory.
+native_targets = ("bin/vine_worker", "lib/python3.12/site-packages/ndcctools/taskvine/_cvine.so")
+native_hashes = {}
+for name in native_targets:
+    p = prefix / name
+    if p.is_symlink() or not p.is_file():
+        raise ValueError("installed native binary must be a regular file")
+    native_hashes[name] = hashlib.sha256(p.read_bytes()).hexdigest()
+    wrappers.append(File(str(p), name, is_conda=False))
 targets = {f.target for f in wrappers}
 portable = conda_pack.CondaEnv(str(prefix), [f for f in env.files if f.target not in targets] + wrappers)
 archive = out / "research-env.tar.gz"
@@ -63,6 +76,11 @@ portable.pack(output=str(archive), force=False, n_threads=2, compress_level=1)
 after = inventory()
 if before != after:
     raise RuntimeError("source environment changed during packing")
+with tarfile.open(archive, "r:gz") as packed:
+    for name, expected in native_hashes.items():
+        member = packed.getmember(name)
+        if not member.isfile() or hashlib.sha256(packed.extractfile(member).read()).hexdigest() != expected:
+            raise RuntimeError("archive differs from installed native binary")
 result = {
     "schema": "flowdc-portable-environment-preflight-v1",
     "files": len(portable.files),
@@ -70,6 +88,8 @@ result = {
     "archive_sha256": hashlib.sha256(archive.read_bytes()).hexdigest(),
     "archive_bytes": archive.stat().st_size,
     "source_unchanged": True,
+    "installed_native_binaries_sha256": native_hashes,
+    "archive_native_binaries_match": True,
     "elapsed_ns": time.monotonic_ns() - started,
     "versions": {
         "conda_pack": importlib.metadata.version("conda-pack"),

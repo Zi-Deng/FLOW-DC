@@ -153,3 +153,13 @@ the crash fixture and ordinary 1/2/4-worker executions against that patched runt
 it does not establish cloud execution or every recovery path. Manager and worker
 runtimes must both use the qualified build. No automatic retry cohort or invented
 successful healthy-partition return is assumed after a process crash.
+
+`benchmark/package_environment.py` explicitly overlays the installed worker and
+Python native binding and verifies their archive hashes. Managed conda records
+can otherwise select the original package-cache binaries and silently discard a
+local patch. The inventory describes installed files, rather than that cache.
+Make the native ELF paths relocatable before packaging, then extract the archive
+into a fresh prefix and repeat ordinary execution and the forsaken-task API
+check there. A passing manager check outside the archive does not qualify the
+packaged manager. The retained initial archive failed this relocated crash check;
+it remains historical and is not a qualified patched deployment artifact.
