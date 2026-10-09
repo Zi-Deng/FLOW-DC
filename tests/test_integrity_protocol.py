@@ -80,6 +80,92 @@ class Interrupted(BaseException):
     pass
 
 
+class ArchiveLookupTests(unittest.TestCase):
+    class CountedRow(dict):
+        metadata_reads = 0
+
+        def __getitem__(self, key):
+            if key == "metadata":
+                self.metadata_reads += 1
+            return super().__getitem__(key)
+
+    def fixture(self, count, *, compressed=False, binding=None, shadow=False, json_members=True):
+        rows, members = [], []
+        for i in range(count):
+            payload = protocol.encode({"sample": i})
+            name = f"{i}.json" if json_members else f"{i}.bin"
+            metadata_name = f"{i}.metadata.json" if json_members else f"{i}.metadata"
+            metadata = protocol.encode(
+                {"row_id": i, "payload_sha256": protocol.digest(payload), **(binding or {})}
+            )
+            rows.append(
+                self.CountedRow(
+                    disposition="verified",
+                    row_id=i,
+                    payload=name,
+                    payload_bytes=len(payload),
+                    payload_sha256=protocol.digest(payload),
+                    metadata=metadata_name,
+                    metadata_bytes=len(metadata),
+                    metadata_sha256=protocol.digest(metadata),
+                )
+            )
+            members.extend(((name, payload), (metadata_name, metadata)))
+        for disposition in ("failed", "skipped", "unattempted"):
+            rows.append(self.CountedRow(disposition=disposition, metadata=f"{disposition}.json"))
+        if shadow:
+            rows.insert(0, self.CountedRow(disposition="failed", metadata="0.metadata.json", row_id=-1))
+        snapshot = {"rows": rows}
+        members.extend((("outcome-index.json", protocol.encode(snapshot)), ("overview.json", b"{}")))
+        stream = io.BytesIO()
+        with tarfile.open(fileobj=stream, mode="w:gz" if compressed else "w") as archive:
+            for name, content in members:
+                item = tarfile.TarInfo("output/" + name)
+                item.size = len(content)
+                archive.addfile(item, io.BytesIO(content))
+        return stream.getvalue(), snapshot
+
+    def test_many_rows_use_bounded_lookup_work_with_json_payloads_and_mixed_dispositions(self):
+        for compressed in (False, True):
+            with self.subTest(compressed=compressed):
+                raw, snapshot = self.fixture(96, compressed=compressed)
+                self.assertTrue(protocol.verify_archive(raw, snapshot, "output"))
+                # One expected-member access per verified row and one index
+                # access per original row; JSON serialization is separate.
+                self.assertLessEqual(
+                    sum(row.metadata_reads for row in snapshot["rows"]),
+                    2 * len(snapshot["rows"]),
+                )
+
+    def test_first_metadata_match_in_nonverified_row_remains_authoritative(self):
+        raw, snapshot = self.fixture(2, shadow=True)
+        with self.assertRaisesRegex(protocol.IntegrityError, "archive row metadata mismatch"):
+            protocol.verify_archive(raw, snapshot, "output")
+
+    def test_wrong_metadata_identity_or_payload_binding_is_rejected_after_digest_check(self):
+        for binding in ({"row_id": -1}, {"payload_sha256": "0" * 64}):
+            with self.subTest(binding=binding):
+                raw, snapshot = self.fixture(2, binding=binding)
+                with self.assertRaisesRegex(protocol.IntegrityError, "archive row metadata mismatch"):
+                    protocol.verify_archive(raw, snapshot, "output")
+
+    def test_non_json_members_do_not_require_nonverified_metadata_paths(self):
+        raw, snapshot = self.fixture(2, json_members=False)
+        snapshot["rows"][-1].pop("metadata")
+        # Rebuild the archived index to match the intentionally minimal row.
+        with tarfile.open(fileobj=io.BytesIO(raw)) as archive:
+            members = [(item.name, archive.extractfile(item).read()) for item in archive]
+        stream = io.BytesIO()
+        with tarfile.open(fileobj=stream, mode="w") as archive:
+            for name, content in members:
+                if name == "output/outcome-index.json":
+                    content = protocol.encode(snapshot)
+                item = tarfile.TarInfo(name)
+                item.size = len(content)
+                archive.addfile(item, io.BytesIO(content))
+        self.assertTrue(protocol.verify_archive(stream.getvalue(), snapshot, "output"))
+
+
 class ProtocolTests(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
