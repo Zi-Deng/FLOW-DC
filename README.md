@@ -615,6 +615,10 @@ or [the candidate example](files/config/gradient-candidate-v1.json). These are
 engineering defaults awaiting specific advisor decisions; the legacy gradient
 entrypoint retains its old behavior.
 
+A separate [pinned Gradient2 decision engine](third_party/netflix-gradient2/README.md)
+matches the actual Java reference on declared traces. Downloader selection and
+shared measurement integration remain pending; it is not an active fifth method.
+
 The [study harness](docs/research/STUDY-HARNESS.md) provides controlled-origin
 scenarios, retained engineering cells, calibration and provisional run-level
 precision tools. Machine-readable plans keep tuning and evaluation separate;
