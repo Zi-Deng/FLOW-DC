@@ -15,7 +15,7 @@ from uuid import UUID
 
 import flowdc_ops as ops
 from flowdc_pilot_journal import failure
-from flowdc_topology import record_roles, selected_ids, selected_roles, validate_roles
+from flowdc_topology import is_worker, record_roles, selected_ids, selected_roles, validate_roles
 
 # No arbitrary command is accepted. Arguments come from validated identities and
 # fixed rules below. OpenRC remains trusted code; no credential output is retained.
@@ -754,6 +754,22 @@ class Provider:
             self.context(record)
             return self.server(record, vm_id)
 
+    def ingress_rules(self, record, role):
+        """TCP paths used by SSH, HTTP/TLS and the native manager/worker link.
+
+        Workers initiate acquisition and manager connections; native peer
+        transfers are disabled. Only the manager needs incoming worker traffic.
+        Keep operator SSH confined to the manager and every peer to its /32.
+        """
+        chosen = selected_roles(record)
+        if role not in chosen:
+            raise failure("vm_not_selected")
+        rules = [("tcp", record["access"]["operator_cidr"], "22")] if role == "manager" else []
+        for peer in chosen:
+            if peer != role and (not is_worker(role) or peer == "manager"):
+                rules.append(("tcp", record["access"]["interfaces"][peer]["fixed_ip"] + "/32", "any"))
+        return rules
+
     def verify_ingress(self, record, role, group):
         marker = "flowdc-" + record["network"]["generation"] + "-" + role
         if (
@@ -762,13 +778,10 @@ class Provider:
             or ops.uuid_value(field(group, "project_id")) != record["spec"]["context"]["project_id"]
         ):
             raise failure("owned_group_identity_changed")
-        expected = {("tcp", record["access"]["operator_cidr"], 22, 22)} if role == "manager" else set()
-        for peer, interface in record["access"]["interfaces"].items():
-            if peer != role and peer in selected_roles(record):
-                expected.update(
-                    (protocol, interface["fixed_ip"] + "/32", None, None)
-                    for protocol in ("tcp", "udp", "icmp")
-                )
+        expected = {
+            (protocol, remote, 22 if ports == "22" else None, 22 if ports == "22" else None)
+            for protocol, remote, ports in self.ingress_rules(record, role)
+        }
         ingress = [rule for rule in field(group, "rules") if rule.get("direction") == "ingress"]
         actual = {
             (
@@ -940,7 +953,23 @@ class Provider:
         self.activating = not rollback
         with self.step("network_rollback" if rollback else "network_setup"):
             self.context(record)
-            groups = self.owned_groups(record)
+            role = next((role for role in selected_roles(record)
+                if role not in record["network"].get("configured", [])), None)
+            pinned = record["network"]["seen_groups"].get(role)
+            if not rollback and pinned is not None:
+                # A recorded identity is only a lookup hint. Revalidate the
+                # active group's identity/ownership freshly before each action.
+                # Activation checks every selected group; rollback still
+                # discovers the complete owned set, including lost responses.
+                group = self.call("group", pinned)
+                marker = "flowdc-" + record["network"]["generation"] + "-" + role
+                if (group.get("id") != pinned or group.get("description") != marker
+                        or ops.uuid_value(field(group, "project_id")) != record["spec"]["context"]["project_id"]
+                        or "group-" + role not in record["network"]["intents"]):
+                    raise failure("owned_group_identity_changed")
+                groups = {role: group}
+            else:
+                groups = self.owned_groups(record)
 
             def seen(current):
                 current["network"]["seen_groups"].update(
@@ -974,13 +1003,7 @@ class Provider:
                 rules = field(group, "rules")
                 if not isinstance(rules, list) or len(rules) > 64:
                     raise failure("provider_schema")
-                desired = [("tcp", record["access"]["operator_cidr"], "22")] if role == "manager" else []
-                for peer, interface in record["access"]["interfaces"].items():
-                    if peer != role and peer in selected_roles(record):
-                        desired += [
-                            (protocol, interface["fixed_ip"] + "/32", "any")
-                            for protocol in ("tcp", "udp", "icmp")
-                        ]
+                desired = self.ingress_rules(record, role)
                 for protocol, remote, ports in desired:
                     matches = [
                         rule

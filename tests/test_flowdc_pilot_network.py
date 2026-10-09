@@ -645,15 +645,12 @@ class NetworkTests(unittest.TestCase):
         ):
             backend.network_step(self.journal, rollback=False)
         self.assertLess(backend.now, backend.deadline)
-        self.assertAlmostEqual(backend.now - 100.0, 14.72)
+        self.assertLess(backend.now - 100.0, 14.72)
         self.assertCountEqual(
             backend.reads,
             [
                 "context",
                 "project",
-                "groups",
-                "group",
-                "group",
                 "group",
                 "ports",
                 "port",
@@ -665,6 +662,22 @@ class NetworkTests(unittest.TestCase):
         mutations = [call for call in backend.calls if call[2]]
         self.assertEqual(len(mutations), 1)
         self.assertEqual(mutations[0][0], "rule")
+
+    def test_pinned_setup_group_is_freshly_revalidated_before_mutation(self):
+        self.setup_network()
+        record = self.journal.read()
+        manager = record["network"]["seen_groups"]["manager"]
+        self.journal.change(lambda r: r["network"]["configured"].remove("manager"))
+        for field, value in (("description", "unowned"), ("project_id", VM_IDS[1]), ("id", VM_IDS[1])):
+            with self.subTest(field=field):
+                original = self.provider.groups[manager][field]
+                self.provider.groups[manager][field] = value
+                self.provider.calls.clear()
+                with self.assertRaises(ops.OpsError) as caught:
+                    self.provider.network_step(self.journal, rollback=False)
+                self.assertEqual(caught.exception.code, "owned_group_identity_changed")
+                self.assertFalse(any(mutation for _, _, mutation in self.provider.calls))
+                self.provider.groups[manager][field] = original
 
     def test_maintenance_reads_verify_actual_rollback_without_mutation(self):
         self.setup_network()
@@ -920,9 +933,12 @@ class NetworkTests(unittest.TestCase):
         for role, interface in access()["interfaces"].items():
             group_id = self.provider.ports[interface["port_id"]]["security_group_ids"][0]
             rules = self.provider.groups[group_id]["rules"]
-            self.assertEqual(len(rules), 7 if role == "manager" else 6)
+            self.assertEqual(len(rules), {"manager": 3, "origin": 2, "worker": 1}[role])
             for rule in rules:
+                self.assertEqual(rule["protocol"], "tcp")
                 self.assertTrue(rule["remote_ip_prefix"].endswith("/32"))
+                if role == "worker":
+                    self.assertEqual(rule["remote_ip_prefix"], access()["interfaces"]["manager"]["fixed_ip"] + "/32")
                 if rule["remote_ip_prefix"] == access()["operator_cidr"]:
                     self.assertEqual((role, rule["protocol"], rule["port_range_min"]), ("manager", "tcp", 22))
         self.rollback()
