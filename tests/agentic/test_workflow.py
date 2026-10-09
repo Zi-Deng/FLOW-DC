@@ -178,6 +178,7 @@ class SnapshotTests(unittest.TestCase):
         git("config", "user.email", "fixture@example.invalid")
         git("remote", "add", "origin", "https://github.com/fixture/project.git")
         (self.root / "a.py").write_text("answer = 42\n")
+        (self.root / 'café "quoted".md').write_text("known unicode bytes\n")
         (self.root / "binary.bin").write_bytes(b"\xff\x00")
         (self.root / "link").symlink_to("/etc/passwd")
         git("add", ".")
@@ -191,6 +192,7 @@ class SnapshotTests(unittest.TestCase):
         (self.root / "a.py").write_text("changed privately\n")
         data = review.snapshot(self.repo, self.head, self.output, self.config)
         self.assertEqual((self.output / "a.py").read_text(), "answer = 42\n")
+        self.assertEqual((self.output / 'café "quoted".md').read_text(), "known unicode bytes\n")
         self.assertEqual(set(data["omitted"]), {"binary.bin", "link"})
         self.assertFalse((self.output / "link").exists())
 
@@ -293,7 +295,11 @@ class PublicationTests(unittest.TestCase):
 
     def test_comment_publication_is_idempotent_and_not_approval(self):
         first = review.publish(self.repo, self.directory)
+        meta = json.loads((self.directory / "review.json").read_text())
+        del meta["publication"]
+        write_json(self.directory / "review.json", meta)
         second = review.publish(self.repo, self.directory)
+        self.assertEqual(json.loads((self.directory / "review.json").read_text())["publication"], first)
         posts = [kwargs for _, kwargs in self.calls if kwargs]
         self.assertEqual(len(posts), 1)
         self.assertEqual(posts[0]["data"]["event"], "COMMENT")
@@ -327,6 +333,46 @@ class PublicationTests(unittest.TestCase):
     def test_finish_never_merges_and_refuses_missing_publication(self):
         with self.assertRaises(WorkflowError):
             finish.preflight(self.repo, 1, self.directory)
+
+    def test_finish_prepares_command_for_realistic_comment_state(self):
+        self.meta["publication"] = {"id": 2, "url": "fixture"}
+        write_json(self.directory / "review.json", self.meta)
+        marker = f"<!-- flowdc-review:{self.head}:{self.meta['report_sha256']} -->"
+        self.repo.api = lambda path: (
+            {
+                "head": {"sha": self.head},
+                "base": {"sha": self.base},
+                "mergeable": True,
+                "draft": False,
+                "state": "open",
+            }
+            if path == "pulls/1"
+            else {"commit_id": self.head, "state": "COMMENTED", "body": marker}
+        )
+        checks = [
+            {"name": name, "bucket": "pass", "state": "SUCCESS"}
+            for name in configuration(ROOT)["required_checks"]
+        ]
+        with patch.object(finish, "run", return_value=SimpleNamespace(stdout=json.dumps(checks))):
+            value = finish.preflight(self.repo, 1, self.directory)
+        self.assertIn("--match-head-commit " + self.head, value["command"])
+
+    def test_invocation_error_and_interrupt_record_status_without_retry(self):
+        self.repo.state = self.directory
+        for exception, status in [(TypeError("bad receipt"), "failed"), (KeyboardInterrupt(), "stopped")]:
+            with (
+                patch.object(review, "prepare", return_value=(self.directory, dict(self.meta))),
+                patch.object(providers, "invoke", side_effect=exception) as invoke,
+            ):
+                if status == "stopped":
+                    with self.assertRaises(KeyboardInterrupt):
+                        review.execute(self.repo, 1, configuration(ROOT), fresh=True)
+                else:
+                    self.assertEqual(
+                        review.execute(self.repo, 1, configuration(ROOT), fresh=True)["status"], status
+                    )
+                self.assertEqual(invoke.call_count, 1)
+            self.assertEqual(json.loads((self.directory / "review.json").read_text())["status"], status)
 
 
 if __name__ == "__main__":

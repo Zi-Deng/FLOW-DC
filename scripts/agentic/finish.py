@@ -32,7 +32,7 @@ def preflight(repo, pr, directory):
     marker = f"<!-- flowdc-review:{meta['head']}:{meta['report_sha256']} -->"
     if (
         published.get("commit_id") != meta["head"]
-        or published.get("state") != "COMMENT"
+        or published.get("state") != "COMMENTED"
         or marker not in published.get("body", "")
     ):
         raise WorkflowError("Bound model COMMENT review unavailable")

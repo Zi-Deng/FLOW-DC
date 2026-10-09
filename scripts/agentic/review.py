@@ -49,8 +49,10 @@ def snapshot(repo, head, output, config):
     total = 0
     included = []
     omitted = []
-    rows = repo.git("ls-tree", "-r", head).splitlines()
+    rows = repo.git("ls-tree", "-r", "-z", head).split("\0")
     for row in rows:
+        if not row:
+            continue
         descriptor, name = row.split("\t", 1)
         mode, kind, oid = descriptor.split()
         safe_path(name)
@@ -74,7 +76,7 @@ def snapshot(repo, head, output, config):
         if size > config["max_source_file_bytes"]:
             omitted.append(name)
             continue
-        raw = subprocess.check_output(["git", "show", f"{head}:{name}"], cwd=repo.root, timeout=120)
+        raw = subprocess.check_output(["git", "cat-file", "blob", oid], cwd=repo.root, timeout=120)
         try:
             text = raw.decode("utf-8")
         except UnicodeError:
@@ -223,12 +225,15 @@ Do not invent defects, comprehensive inspection, or a percentage. The inspected 
         meta.update(
             status="completed", execution=result, report_sha256=hashlib.sha256(raw.encode()).hexdigest()
         )
-    except (WorkflowError, OSError, ValueError, UnicodeError) as exc:
+    except BaseException as exc:
         meta.update(
-            status="failed",
-            error=str(exc),
+            status="failed" if isinstance(exc, Exception) else "stopped",
+            error=str(exc) if isinstance(exc, WorkflowError) else type(exc).__name__,
             retry="No automatic rerun. Diagnose before a separately bounded attempt.",
         )
+        write_json(directory / "review.json", meta)
+        if not isinstance(exc, Exception):
+            raise
     write_json(directory / "review.json", meta)
     return meta
 
@@ -250,7 +255,9 @@ def publish(repo, directory):
         reviews = repo.api(f"pulls/{meta['pr']}/reviews?per_page=100&page={page}")
         matching = [x for x in reviews if marker in (x.get("body") or "")]
         if matching:
-            return {"url": matching[0]["html_url"], "reused": True}
+            meta["publication"] = {"id": matching[0]["id"], "url": matching[0]["html_url"]}
+            write_json(directory / "review.json", meta)
+            return {**meta["publication"], "reused": True}
         if len(reviews) < 100:
             break
     else:

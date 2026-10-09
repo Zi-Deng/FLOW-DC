@@ -208,7 +208,7 @@ def main():
                     value["publication"] = reviewer.publish(repo, Path(value["directory"]))
         print(json.dumps(value, indent=2))
         return 1 if value.get("status") == "failed" else 0
-    except (WorkflowError, OSError, ValueError, subprocess.TimeoutExpired) as exc:
+    except (WorkflowError, OSError, ValueError, subprocess.SubprocessError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
