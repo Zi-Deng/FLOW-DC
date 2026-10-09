@@ -187,8 +187,12 @@ def execute(repo, pr, config, *, fresh=False, **kwargs):
     policy = providers.selection(
         repo, config, **{k: kwargs.get(k) for k in ("review_provider", "review_model", "review_effort")}
     )
-    existing = sorted((repo.state / "reviews").glob(f"pr{pr}-{remote['head']['sha'][:12]}-*/review.json"))
+    existing = sorted(
+        (repo.state / "reviews").glob(f"pr{pr}-{remote['head']['sha'][:12]}-*/review.json"),
+        key=lambda x: x.stat().st_mtime,
+    )
     if not fresh:
+        incomplete = False
         for path in reversed(existing):
             saved = json.loads(path.read_text())
             if (
@@ -202,9 +206,9 @@ def execute(repo, pr, config, *, fresh=False, **kwargs):
                         raise WorkflowError("Saved review report changed")
                     validate_report(json.loads(raw))
                     return saved
-                raise WorkflowError(
-                    "A previous attempt is incomplete; diagnose before explicitly using --fresh"
-                )
+                incomplete = True
+        if incomplete:
+            raise WorkflowError("A previous attempt is incomplete; diagnose before explicitly using --fresh")
     directory, meta = prepare(repo, pr, config, **kwargs)
     meta.update(status="running", attempts=1, started_at=time.time())
     write_json(directory / "review.json", meta)

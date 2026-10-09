@@ -176,10 +176,15 @@ def provider_environment(policy, seconds):
             yield {
                 "HOME": home,
                 "COPILOT_HOME": home,
-                "PATH": "/usr/bin:/bin",
+                "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
                 "LANG": "C.UTF-8",
                 "COPILOT_GITHUB_TOKEN": token,
                 "COPILOT_AUTO_UPDATE": "false",
+                **{
+                    k: os.environ[k]
+                    for k in ("HTTPS_PROXY", "HTTP_PROXY", "NO_PROXY", "SSL_CERT_FILE")
+                    if k in os.environ
+                },
             }
 
 

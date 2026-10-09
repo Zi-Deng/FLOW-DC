@@ -89,8 +89,20 @@ class SelectionTests(unittest.TestCase):
             review.SCHEMA,
         )
         self.assertIn("--available-tools=view,grep,glob", args)
+        self.assertIn("--allow-tool=read", args)
         self.assertIn("--deny-tool=shell,write,url", args)
         self.assertEqual(args[args.index("--max-ai-credits") + 1], "400")
+        with patch.dict(
+            os.environ,
+            {
+                "COPILOT_GITHUB_TOKEN": "synthetic",
+                "PATH": "/custom/node:/usr/bin",
+                "SSL_CERT_FILE": "/trusted/ca.pem",
+            },
+        ):
+            with providers.provider_environment({"provider": "copilot"}, 900) as env:
+                self.assertIn("/custom/node", env["PATH"])
+                self.assertEqual(env["SSL_CERT_FILE"], "/trusted/ca.pem")
 
 
 class AuthTests(unittest.TestCase):
@@ -321,6 +333,9 @@ class PublicationTests(unittest.TestCase):
         meta = {**self.meta, "directory": str(path)}
         write_json(path / "review.json", meta)
         (path / "report.json").write_bytes((self.directory / "report.json").read_bytes())
+        write_json(
+            path.with_name(f"pr1-{self.head[:12]}-zz-failed") / "review.json", {**meta, "status": "failed"}
+        )
         self.repo.state = self.directory
         with patch.object(providers, "invoke", side_effect=AssertionError("no paid replay")):
             result = review.execute(self.repo, 1, configuration(ROOT))
