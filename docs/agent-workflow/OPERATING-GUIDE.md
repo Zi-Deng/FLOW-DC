@@ -361,3 +361,25 @@ test outcomes or the separate hosted receipt. PR head and tested checkout differ
 This is trusted-owner, quiescent integrity bookkeeping, not protection against
 an active owner rewriting files. The earlier uncommitted W output-option design
 is superseded; source/installed/hosted gates and independent review remain required.
+
+
+### Issue31 scoped scheduling generation19
+
+Plan6072111969 adds a separately pinned measured seed only for
+`issue31-suite1800-v1`. Its complete primary source is comment6072002965;
+whole X6068705967 and inherited predecessors remain required material.
+The 80-entry seed derives from complete Phase107 journals at dbf4e1e,
+not the partial hosted timeout. Legacy scheduling and the default840/V2
+protocol remain unchanged. Scoped1800/V3 preserves whole-module intervals,
+fixture order, independent worker rediscovery, source checks and reconciliation.
+Changed defining-source or ordered-row fingerprints use the existing fallback;
+there is no automatic remeasurement or retuning. Current descriptors select the
+same explicit profile in source and installed interpreters.
+
+The old-source offline685759/685758ms placement excludes overhead and promises
+no hosted completion. Fresh whole source/installed and first-new-head CI gates
+remain necessary; previous successes do not qualify a changed head. Hosted
+run37862968014 remains failed despite successful diagnostic transport. PR head,
+base, tested merge checkout and installed fixture commit are distinct identities.
+Generation19 authority/history binds actual reconciled approval; it conveys no
+native grant, scientific finding, independent review or merge authority.

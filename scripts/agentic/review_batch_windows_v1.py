@@ -689,7 +689,7 @@ import check_runner as runner
 root, jobs = Path(sys.argv[2]), int(sys.argv[3])
 source = runner.source(root)
 suite, rows, objects, errors = runner.discover(root)
-policy, assignments = runner.assignment_policy(root, suite, rows, objects, source, jobs)
+policy, assignments = runner.assignment_policy(root, suite, rows, objects, source, jobs, suite_profile=sys.argv[5] if len(sys.argv) == 6 else None)
 value = dict(version=runner.VERSION, jobs=jobs, source=source, rows=rows,
              assignments=assignments, assignment_policy=policy, errors=errors,
              evidence_limit=runner.EVIDENCE_BYTES)
@@ -898,6 +898,132 @@ def _full_checks(repo, directory, meta, *, suite_profile):
         is not True
     ):
         refuse("installed execution incomplete")
+    checks = repo.api(
+        f"commits/{meta['head_sha']}/check-runs?per_page=100", paginate=True, page_key="check_runs"
+    )
+    receipts = ci_evidence.collect(repo, meta["head_sha"], checks, meta["base_sha"])
+    for name in ("flowdc-tests", "agentic-quality"):
+        found = [r for r in receipts if r.get("check") == name]
+        if len(found) != 1:
+            refuse("missing or ambiguous hosted execution")
+        receipt = found[0]
+        if (
+            receipt.get("state") != "observed"
+            or receipt.get("run_attempt") != 1
+            or type(receipt.get("run_attempt")) is not int
+            or receipt.get("test_status") != "success"
+            or receipt.get("clean_status") != "success"
+            or receipt.get("pr_head_sha") != meta["head_sha"]
+            or receipt.get("pr_base_sha") != meta["base_sha"]
+        ):
+            refuse("hosted first-attempt test/clean evidence incomplete")
+        # Preserve actual merge checkout separately from the head association.
+        if type(receipt.get("tested_checkout_sha")) is not str or not re.fullmatch(
+            "[0-9a-f]{40}", receipt["tested_checkout_sha"]
+        ):
+            refuse("unknown hosted checkout")
+    return {"local": digest(evidence), "hosted": digest(receipts), "source": digest(current)}
+
+
+def full_checks_g19(repo, directory, meta):
+    import check_runner
+    import reporting_activation_v6 as activation
+
+    current = activation.authorization(repo)
+    before = check_runner.source(repo.root)
+    if (
+        current["contract_digest"] != activation.G19_CONTRACT_DIGEST
+        or type(meta["plan_comment"]) is not int
+        or meta["plan_comment"] != 6072111969
+    ):
+        refuse("generation19 full gates require current literal authority")
+    result = _full_checks_g19(repo, directory, meta, suite_profile="issue31-suite1800-v1")
+    if activation.authorization(repo) != current or check_runner.source(repo.root) != before:
+        refuse("full gate authority or source changed")
+    return result
+
+
+def _full_checks_g19(repo, directory, meta, *, suite_profile):
+    """Validate retained local execution records and fresh hosted associations.
+
+    Local artifacts are owner-writable bookkeeping, not execution attestations.
+    Hosted receipts are independently fetched through the existing collector.
+    No test runner, installer or provider is invoked by this read-only adapter.
+    """
+    import hashlib
+
+    import check_runner
+    import ci_evidence
+
+    evidence = read(plain_path(directory) / "full-checks.json")
+    commands = {
+        "serial": "python3 -B scripts/agentic/check.py --jobs 1",
+        "parallel": "make check-agentic",
+        "full": "make check",
+        "clean": "make check-clean",
+        "installed": "installed-full-suite",
+        "lint": "ruff check",
+        "format": "ruff format --check",
+        "repository": "python3 -B scripts/check_repository.py",
+    }
+    if suite_profile is not None:
+        commands["serial"] += " --suite-profile issue31-suite1800-v1"
+        for name in ("parallel", "full"):
+            commands[name] += " AGENTIC_SUITE_PROFILE=issue31-suite1800-v1"
+    current = check_runner.source(repo.root)
+    if (
+        type(evidence) is not dict
+        or set(evidence) != {"head", "source", "commands", "installed_files"}
+        or evidence["head"] != meta["head_sha"]
+        or evidence["source"] != current
+        or type(evidence["commands"]) is not dict
+        or set(evidence["commands"]) != set(commands)
+    ):
+        refuse("full check evidence is missing, stale or partial")
+    for name, command in commands.items():
+        record = evidence["commands"][name]
+        if (
+            type(record) is not dict
+            or set(record) != {"command", "exit_status", "artifacts"}
+            or record["command"] != command
+            or type(record["exit_status"]) is not int
+            or record["exit_status"] != 0
+            or type(record["artifacts"]) is not dict
+            or not record["artifacts"]
+        ):
+            refuse("required command provenance differs")
+        for relative, expected in record["artifacts"].items():
+            if type(relative) is not str or Path(relative).is_absolute() or ".." in Path(relative).parts:
+                refuse("unsafe check evidence path")
+            checksum(expected)
+            if hashlib.sha256(plain_path(directory / relative).read_bytes()).hexdigest() != expected:
+                refuse("check artifact changed")
+    # Both standard runner records must reconcile every occurrence and worker.
+    rows = None
+    for name, jobs in [("serial", 1), ("parallel", 2)]:
+        request = read(directory / name / "request.json")
+        expected = runner_request(repo.root, jobs, suite_profile=suite_profile)
+        if expected["source"] != current:
+            refuse("source changed during descriptor reconstruction")
+        rows = expected["rows"]
+        if digest(request) != digest(expected):
+            refuse("complete runner request differs from current discovery")
+        if suite_profile is not None:
+            suite_summary(directory / name, request, jobs)
+        for index in range(jobs):
+            result = check_runner.reconcile(
+                request, index, plain_path(directory / name / f"worker-{index}.jsonl"), 0
+            )
+            if result["successful"] is not True:
+                refuse("incomplete runner occurrence or fixture execution")
+    import install
+
+    expected_payload = {
+        str(p): hashlib.sha256((repo.root / p).read_bytes()).hexdigest() for p in install.payload(repo.root)
+    }
+    if digest(evidence["installed_files"]) != digest(expected_payload):
+        refuse("current installed payload closure differs")
+    validate_installed_adoption(repo.root, directory, rows)
     checks = repo.api(
         f"commits/{meta['head_sha']}/check-runs?per_page=100", paginate=True, page_key="check_runs"
     )
@@ -1750,7 +1876,7 @@ sys.path.insert(0,str(root/'scripts/agentic'))
 import check_runner as r
 source=r.source(root)
 suite,rows,objects,errors=r.discover(root)
-policy,assignments=r.assignment_policy(root,suite,rows,objects,source,1)
+policy,assignments=r.assignment_policy(root,suite,rows,objects,source,1,suite_profile="issue31-suite1800-v1")
 request=dict(version=r.SUITE_VERSION,jobs=1,source=source,rows=rows,assignments=assignments,assignment_policy=policy,errors=errors,evidence_limit=r.EVIDENCE_BYTES,execution_limits=r.execution_limits('issue31-suite1800-v1',1800,r.TEXT_BYTES,r.EVIDENCE_BYTES))
 owned={p.stem for d in ('scripts/agentic','tests/agentic') for p in (root/d).glob('*.py')}
 modules={};system={}
@@ -2103,7 +2229,12 @@ def catalog(repo, *, plan_only=False, packet_target=None, batch_directory=None):
         refuse("catalog authority changed during selection")
     # Authorization rejects unknown generations before this literal selection.
     # Keep the historical catalog API independent of its authorization receipt shape.
-    if type(state.get("contract_generation")) is int and state["contract_generation"] == 18:
+    if type(state.get("contract_generation")) is int and state["contract_generation"] == 19:
+        current_contract = activation.G19_CONTRACT
+        current_digest = activation.G19_CONTRACT_DIGEST
+        if digest(current_contract) != current_digest or authority["contract_digest"] != current_digest:
+            refuse("catalog generation19 contract differs")
+    elif type(state.get("contract_generation")) is int and state["contract_generation"] == 18:
         current_contract = activation.G18_CONTRACT
         current_digest = activation.G18_CONTRACT_DIGEST
         if digest(current_contract) != current_digest or authority["contract_digest"] != current_digest:
@@ -2164,7 +2295,9 @@ def catalog(repo, *, plan_only=False, packet_target=None, batch_directory=None):
         refuse("current issue/plan changed")
     review.current_pr(repo, 32, meta["head_sha"], meta["base_sha"])
     gates = (
-        full_checks_g18(repo, directory, meta)
+        full_checks_g19(repo, directory, meta)
+        if current_digest == activation.G19_CONTRACT_DIGEST
+        else full_checks_g18(repo, directory, meta)
         if current_digest == activation.G18_CONTRACT_DIGEST
         else full_checks_g17(repo, directory, meta)
         if current_digest == activation.G17_CONTRACT_DIGEST

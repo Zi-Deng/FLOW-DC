@@ -321,6 +321,343 @@ _SCHEDULING_SEED = {
 _SEED_DIGEST = "1bc1a7df04b831d4104c82432124785875936b76762dcdf27d350380f2da4338"
 
 
+_SCOPED_SCHEDULING_SEED = {
+    "algorithm": "fixture-group-lpt-ms-v1",
+    "entries": [
+        {
+            "identity_sha256": "b5f10901c0b8f10688ebac217dbc8dd50f987f675dade342215262966e379276",
+            "weight_ms": 153,
+        },
+        {
+            "identity_sha256": "4f410c74397135f45a104d3d70639de52347c183f3d700f19c78c2033dc397a0",
+            "weight_ms": 561,
+        },
+        {
+            "identity_sha256": "f080eee4b8e3372b17a9e698374c2c3cc065e1d3e813e5e39df7b11dc5292cfa",
+            "weight_ms": 6630,
+        },
+        {
+            "identity_sha256": "36c7d065bc39849809ab7821d83a9f2780dde105cf69f8313b1be305c866d1e4",
+            "weight_ms": 4294,
+        },
+        {
+            "identity_sha256": "510eda884fc2ecfbd8771f71a21ed0016c58cc882dee9688d16699ab21ffe867",
+            "weight_ms": 27,
+        },
+        {
+            "identity_sha256": "d32d00ced78adc78c33585092dd199bbd31adf21ec64c7b852f8ef7b26baa6e1",
+            "weight_ms": 541,
+        },
+        {
+            "identity_sha256": "7f373ab516bd0b9df4a15df22a1dffa14710d1d5ad816dd8eff6c482659297d0",
+            "weight_ms": 2069,
+        },
+        {
+            "identity_sha256": "6e7b62e314969ed4f7a4beb17538590aff85c11c90ef45e4c11b7b686efc92b2",
+            "weight_ms": 157,
+        },
+        {
+            "identity_sha256": "dfb38acf62d4bee41d441826732dc94bd2e7b377993e069917435c835428cab3",
+            "weight_ms": 21,
+        },
+        {
+            "identity_sha256": "27cfd4ebb271d8f09c098435f6a07f54730484d8eb2fcb0ba9eaa93318ba56f4",
+            "weight_ms": 53,
+        },
+        {
+            "identity_sha256": "8d9df67f27048beaa271c216326d8af45353896fe03dc019107f55065ef5ba75",
+            "weight_ms": 5042,
+        },
+        {
+            "identity_sha256": "07aca7f1731e9145f6d567355fdd1968c0e7ef76baf220d63ea03d3e0e704280",
+            "weight_ms": 1623,
+        },
+        {
+            "identity_sha256": "d92a1f7695f6795b3bc8b6b006d93087ef37d67d87414e710dcf0e4d54f0a231",
+            "weight_ms": 2904,
+        },
+        {
+            "identity_sha256": "ff592e51b6dc0370501be222022c87af9f0dd335b53a6dea4fc1b394d506541c",
+            "weight_ms": 4824,
+        },
+        {
+            "identity_sha256": "1ad79eb64d467fdb0dbe9a86747d9faaa29e2eeb6ebc6ca5965ed7dead08ca8d",
+            "weight_ms": 49,
+        },
+        {
+            "identity_sha256": "586303e8fd872b150a1d56a71754eb1c82ccc27f7d8d6b136585ab17016251ae",
+            "weight_ms": 3418,
+        },
+        {
+            "identity_sha256": "ce54e953528ea11947ae86ce4dfa49f84de3c64c412c598a86c07368abe571a4",
+            "weight_ms": 1657,
+        },
+        {
+            "identity_sha256": "94d98e01ec29293e0520af9d0484cbc2162240f6c31daea0c6efb90aa7f63682",
+            "weight_ms": 16,
+        },
+        {
+            "identity_sha256": "3e9b1d61d6c20c1ee29ede81716d6644921982276126782aecc7dd87ce90bd9e",
+            "weight_ms": 122,
+        },
+        {
+            "identity_sha256": "9fd00dee81bb0808de46dc5730a8273a2ff6849337af0bbdb01d66789983c82b",
+            "weight_ms": 648,
+        },
+        {
+            "identity_sha256": "969351a0fa3a736d822ffc6ad1981cf953a05676c2d38398f73b58a403f65a82",
+            "weight_ms": 2450,
+        },
+        {
+            "identity_sha256": "d09dd43f198c2a2559495bc8e5a97a975653f63f75435677e9cc4f84900cb181",
+            "weight_ms": 4290,
+        },
+        {
+            "identity_sha256": "65b4cee735a5cd453bd1f18e562234b435eeeeef85e2a000eef9f3d021bd87d4",
+            "weight_ms": 8818,
+        },
+        {
+            "identity_sha256": "faff5a98f41b5827bcde1ba77bd6933c619267d8689ba5dd26bb82695d072ee8",
+            "weight_ms": 16279,
+        },
+        {
+            "identity_sha256": "cb6cf50c508d0693efe81bf48b2e1efd0794de9a73d3497b427f69d7ce23de0c",
+            "weight_ms": 31468,
+        },
+        {
+            "identity_sha256": "14712a9775b3866f707fb07976d8993988cf2bc7f99fc48b71c2754151281d80",
+            "weight_ms": 20801,
+        },
+        {
+            "identity_sha256": "087a3f028e9f4c8660808e97853ae1c60bf248c046f8bcf95a4422556c9ea3b2",
+            "weight_ms": 7,
+        },
+        {
+            "identity_sha256": "61b88aa35eb17689b24eb9242f7975c03f1f671c2d115172204f09a27651d542",
+            "weight_ms": 9200,
+        },
+        {
+            "identity_sha256": "44a4e6d55c1414648e43e200d4b073b6084c7f2423f65f6fca77d5900f22a6fd",
+            "weight_ms": 409,
+        },
+        {
+            "identity_sha256": "a2a46b436a265e25902ed37f5addfaadbc2f7adfe4b66b173ecaafd2981063b9",
+            "weight_ms": 12,
+        },
+        {
+            "identity_sha256": "c75b954f006a9a939809e69f263bbc8309072a91f063062c8cf4792310ab8191",
+            "weight_ms": 2523,
+        },
+        {
+            "identity_sha256": "9114dfbc5f2d83a36025c2e7f7088f1597f8dc8d9ec8b8ecf8ab184f01350723",
+            "weight_ms": 4092,
+        },
+        {
+            "identity_sha256": "80c001cb91377edb6d1df75c024b810b9dcb3b394fd354668cd9abe2dd368554",
+            "weight_ms": 6184,
+        },
+        {
+            "identity_sha256": "65e2e5400444b3dca4ff77efb9d8a45d9085a1e3f0ee31432647b04c9821b8ba",
+            "weight_ms": 5,
+        },
+        {
+            "identity_sha256": "77186bcc6f0ee85dc08a4ea7980b62f9d5515b69c82b9b68c1a3cc1233784480",
+            "weight_ms": 3195,
+        },
+        {
+            "identity_sha256": "d8ef4226d09635638f8bb0eb6fcf4a0980222070df174561d86feb979e9e83ca",
+            "weight_ms": 5451,
+        },
+        {
+            "identity_sha256": "0f38598ba7ade82cd7191b43c636dddf3fbaaccc9864955b68cc5f12c2ceb55e",
+            "weight_ms": 25,
+        },
+        {
+            "identity_sha256": "b4b20641b1a4f58ac7d4350c9d5c6c14a93fdd00ccc49065705938da15cccb8d",
+            "weight_ms": 949,
+        },
+        {
+            "identity_sha256": "bb8e5737ac398192b085592a5dad23c4a2b2e63b96902191058f497757c4a338",
+            "weight_ms": 3672,
+        },
+        {
+            "identity_sha256": "907adbac1bb8a671e8474694d469edbddb15bd16446798fc686afb9c95b2fd6f",
+            "weight_ms": 4,
+        },
+        {
+            "identity_sha256": "2e0e0c4791a9b0171d1513119d178469031ce85bbcc371f279dbdca413daeecc",
+            "weight_ms": 8842,
+        },
+        {
+            "identity_sha256": "db9a6036465fc93745ca71a8f594633f53c723fbdac7e33e86f6d747f8d6f8ce",
+            "weight_ms": 28500,
+        },
+        {
+            "identity_sha256": "375a73a5451849a932662ce5d9d3c841874bd6727bdaac23ab6c1799e32f98ec",
+            "weight_ms": 3558,
+        },
+        {
+            "identity_sha256": "b98f04612dcb36635d392957709f4e4bafa5223dfbdf77a1213576cca4e1df77",
+            "weight_ms": 17545,
+        },
+        {
+            "identity_sha256": "19a3e064d3a93c33bcde965702c30eb3ba986bdfa14d7386dabb0f9dc324e58c",
+            "weight_ms": 22019,
+        },
+        {
+            "identity_sha256": "4deafa2945d494286a2d945217778d65d87f0ca625c2aaa212b9a3f2e5c25a96",
+            "weight_ms": 16297,
+        },
+        {
+            "identity_sha256": "cef01b0e28af9f342db156a3770216d3ead342981518cced868f3c31e344d1c5",
+            "weight_ms": 6841,
+        },
+        {
+            "identity_sha256": "004d379ff616658488416f4995e1474f5b22e2ad22ff212cdc7faf85ad1add42",
+            "weight_ms": 10130,
+        },
+        {
+            "identity_sha256": "fc7aeab49ffd160397ea409815c5193cf578e98fb176d52e5ac6e6a8d0a7c8ff",
+            "weight_ms": 14791,
+        },
+        {
+            "identity_sha256": "43a2d2f56f3f07c36bb16dce933fd037ad4a3e87a0700c33e88f17441efb06d4",
+            "weight_ms": 23934,
+        },
+        {
+            "identity_sha256": "628646d90eb12d079096d318515a81bc5338f69c2de240a3acec5aa4c213c46c",
+            "weight_ms": 17024,
+        },
+        {
+            "identity_sha256": "0d638ad96e3ce7399597a85eba53df39c50dae10944bd647569641dcef7a877a",
+            "weight_ms": 27971,
+        },
+        {
+            "identity_sha256": "4ab47436a466b0caba5ccc7a4aa9f56c1b7bb1007a664f46bbb3701b18f6da30",
+            "weight_ms": 52097,
+        },
+        {
+            "identity_sha256": "dbec2c631a5bf7c8606afaf56fd9ae6f7b073778c8bc637fd41faaab02fbfe25",
+            "weight_ms": 3417,
+        },
+        {
+            "identity_sha256": "b10ecd70ae17c575b6f06e1f24c4bbfc9400114237356d21e74e354172129c3e",
+            "weight_ms": 12803,
+        },
+        {
+            "identity_sha256": "ba0eb7df125fdf50aafc95f918218ff04515a8d755ebb6c79a51ea0df17a641c",
+            "weight_ms": 101132,
+        },
+        {
+            "identity_sha256": "11276419f95d53ccaf89d57309a33522fa83ecaf451e64b1a1aa3fe9f69688b8",
+            "weight_ms": 19436,
+        },
+        {
+            "identity_sha256": "5116bd36bf946c149a8814e36089f8a888456d41994f3a67fafc62bf01517ec3",
+            "weight_ms": 93183,
+        },
+        {
+            "identity_sha256": "1c86a1dfb44d214d0e7aae11315af4fa9f0763fbfae209ef95b330197dbe33e8",
+            "weight_ms": 159,
+        },
+        {
+            "identity_sha256": "2d81e0ba3ffe5ee2637e5bb76023b421fe6e09c01d8149494ff95e6b543db0bc",
+            "weight_ms": 82795,
+        },
+        {
+            "identity_sha256": "489999bc94b26f88f9468bfbe8966993f4820a91e8d63fec06804147bf02d6c4",
+            "weight_ms": 5488,
+        },
+        {
+            "identity_sha256": "7f572fd8c4e6acc741128dc47ac7b1be8a0b1d4a1db546050567ee8a8ebec688",
+            "weight_ms": 961,
+        },
+        {
+            "identity_sha256": "40c8b3acb33d83afa9a78e29d0bf120fc30a8612756fcf684d8eaa89b437cd09",
+            "weight_ms": 2130,
+        },
+        {
+            "identity_sha256": "39e770ca29b38b4e9fada37a0b4c7310c8627429f25ce227e19f01415fa33fc4",
+            "weight_ms": 560,
+        },
+        {
+            "identity_sha256": "f14c42eb9bfc040e9fa739c222204e8c2df67dade83cb2573daffec3742ea69f",
+            "weight_ms": 2112,
+        },
+        {
+            "identity_sha256": "e0c6298ef83f4bd62eb0b44769ca9be5dd00a01dba75c471ee48427eaa1e3d11",
+            "weight_ms": 1611,
+        },
+        {
+            "identity_sha256": "8dd45d4e2b105b0cd61b5af043e62a7716c95f337be2bdc209ecd4965065503a",
+            "weight_ms": 2713,
+        },
+        {
+            "identity_sha256": "b782c2fa7ef16821e1a9ab4713c4e80f8c38a69303236357fcc332b50088aa50",
+            "weight_ms": 2433,
+        },
+        {
+            "identity_sha256": "e679bbe5cbebd0a7bb155e6137254a9e8fc4c23ab09ad7a3581e23b8983278dc",
+            "weight_ms": 38,
+        },
+        {
+            "identity_sha256": "c5a0782f09b64a1a822036e99838056ad78439fccafe5ac11aad26c4ace7e8c6",
+            "weight_ms": 26,
+        },
+        {
+            "identity_sha256": "a2d557fafb2c1efc1df7f63b0bee0689c4679fde42343eaf6da4ae1a8b1e3a9b",
+            "weight_ms": 3030,
+        },
+        {
+            "identity_sha256": "4e747b9ecd225343fecba59b1d818656d0334e2bc392b704260542a28a3c4a05",
+            "weight_ms": 7,
+        },
+        {
+            "identity_sha256": "23c23e3d7142feb6da5d14c532444bd47e5e533e3da2ff872f3d79e4269d155c",
+            "weight_ms": 355,
+        },
+        {
+            "identity_sha256": "c12586e0817ae202b57dad8135d1d2f3a8f583aa2e23344d4fb708aaa0369d1a",
+            "weight_ms": 622106,
+        },
+        {
+            "identity_sha256": "58645eb34e36065f73b5f56110e8ae79eb3fc4333246f56de3d02a94a97342be",
+            "weight_ms": 301,
+        },
+        {
+            "identity_sha256": "191bdd45cde7a7f8d4b5a690359f9bfa1e1a04e54e92206f3d3b354144ac4397",
+            "weight_ms": 2274,
+        },
+        {
+            "identity_sha256": "8ff2917e7dc8892aac1db0c98854d7714f4dff85255317cd088659406b39f4fc",
+            "weight_ms": 3038,
+        },
+        {
+            "identity_sha256": "d75eb86e25d8d8e460e4153c778708e2fa196808a754b81a1c816ac53471ea5d",
+            "weight_ms": 1005,
+        },
+        {
+            "identity_sha256": "d16eb382dd269d6ab958bea8c52b3435659a3936c0cadde0d86d87796d53b9b7",
+            "weight_ms": 3769,
+        },
+        {
+            "identity_sha256": "0d7776bd43456b8479cc8f20effe20d5d56a7b18bb60411f85bb66a3cc6ea85f",
+            "weight_ms": 443,
+        },
+    ],
+    "provenance": {
+        "request.json": "6c91f617b7ca9dd60e81ba5beafdba04afd2bad441b7b17c1d9db569b8bab68c",
+        "summary.json": "3c3c5945fdfe9496adccc03eaf514fc3ce0ac8428213b82038de297fe2359a69",
+        "worker-0.jsonl": "ac4b29ce3440bda9badffc4d26fc2f2ab959c124374dd433db497bbdca80e261",
+        "worker-1.jsonl": "c02d7d4e12104ad4b37b1ee12aa95f0a8b998bb159c713cb2b05db9a676075ef",
+    },
+    "schema_version": 1,
+    "source_head": "dbf4e1ec6a4e84180adb66a66411575b996e65af",
+    "source_map_sha256": "c6551c8884a8ada3d177eddbdaf9bba25d6d3c118f8d7c766bbc6921315bfe5a",
+}
+_SCOPED_SEED_DIGEST = "dd2f9ec560213889e3c1a27b6096c4a648b1032d44a60177ce7036e2ad4ea5ce"
+
+
 class RunnerError(Exception):
     """An incomplete or inconsistent gate, never a successful fallback."""
 
@@ -497,9 +834,56 @@ def scheduling_seed():
     return entries
 
 
-def assignment_policy(root, suite, rows, objects, identity, jobs):
+def scoped_scheduling_seed():
+    """Validate the complete literal; malformed configuration is never a miss."""
+    seed = _SCOPED_SCHEDULING_SEED
+
+    def hex_string(value, length):
+        return type(value) is str and len(value) == length and all(c in "0123456789abcdef" for c in value)
+
+    if (
+        type(seed) is not dict
+        or set(seed)
+        != {"schema_version", "algorithm", "source_head", "source_map_sha256", "provenance", "entries"}
+        or type(seed["schema_version"]) is not int
+        or seed["schema_version"] != 1
+        or seed["algorithm"] != "fixture-group-lpt-ms-v1"
+        or not hex_string(seed["source_head"], 40)
+        or not hex_string(seed["source_map_sha256"], 64)
+        or type(seed["provenance"]) is not dict
+        or set(seed["provenance"]) != {"request.json", "summary.json", "worker-0.jsonl", "worker-1.jsonl"}
+        or any(not hex_string(v, 64) for v in seed["provenance"].values())
+        or type(seed["entries"]) is not list
+        or len(seed["entries"]) != 80
+    ):
+        raise RunnerError("Invalid scheduling seed descriptor")
+    entries = {}
+    for entry in seed["entries"]:
+        if (
+            type(entry) is not dict
+            or set(entry) != {"identity_sha256", "weight_ms"}
+            or not hex_string(entry["identity_sha256"], 64)
+            or entry["identity_sha256"] in entries
+            or type(entry["weight_ms"]) is not int
+            or not 1 <= entry["weight_ms"] <= 840000
+        ):
+            raise RunnerError("Invalid scheduling seed entry")
+        entries[entry["identity_sha256"]] = entry["weight_ms"]
+    if digest(seed) != _SCOPED_SEED_DIGEST:
+        raise RunnerError("Scheduling seed provenance differs")
+    return entries
+
+
+def assignment_policy(root, suite, rows, objects, identity, jobs, *, suite_profile=None):
     """Fresh discovery/source determines estimates independently in every process."""
-    entries = scheduling_seed()
+    if suite_profile is None:
+        entries = scheduling_seed()
+        seed, seed_digest = _SCHEDULING_SEED, _SEED_DIGEST
+    elif type(suite_profile) is str and suite_profile == SUITE_PROFILE:
+        entries = scoped_scheduling_seed()
+        seed, seed_digest = _SCOPED_SCHEDULING_SEED, _SCOPED_SEED_DIGEST
+    else:
+        raise RunnerError("Unknown scheduling profile")
     grouped = [[] for _ in suite]
     origins = [dict() for _ in suite]
     unsupported = set()
@@ -546,9 +930,9 @@ def assignment_policy(root, suite, rows, objects, identity, jobs):
     selected = assign(suite, rows, jobs, weights)
     policy = {
         "schema_version": 1,
-        "algorithm": _SCHEDULING_SEED["algorithm"],
-        "seed_digest": _SEED_DIGEST,
-        "provenance": {k: v for k, v in _SCHEDULING_SEED.items() if k != "entries"},
+        "algorithm": seed["algorithm"],
+        "seed_digest": seed_digest,
+        "provenance": {k: v for k, v in seed.items() if k != "entries"},
         "groups": groups,
         "intervals": intervals(suite, rows),
         "estimated_load_ms": [sum(weights[i] for i in indices) for indices in selected],
@@ -784,7 +1168,15 @@ def worker(root, request_path, index, evidence):
     limits = request_limits(request)
     suite, rows, objects, errors = discover(root)
     identity = source(root)
-    policy, assignments = assignment_policy(root, suite, rows, objects, identity, request["jobs"])
+    policy, assignments = assignment_policy(
+        root,
+        suite,
+        rows,
+        objects,
+        identity,
+        request["jobs"],
+        suite_profile=limits.get("execution_limits", {}).get("profile"),
+    )
     if canonical(request) != canonical(
         {
             "version": request["version"],
@@ -1033,7 +1425,9 @@ def run(
         suite, rows, objects, errors = discover(root)
         if source(root) != identity:
             raise RunnerError("Source changed during discovery")
-        policy, assignments = assignment_policy(root, suite, rows, objects, identity, jobs)
+        policy, assignments = assignment_policy(
+            root, suite, rows, objects, identity, jobs, suite_profile=suite_profile
+        )
         summary["assignment_policy"] = policy
         request = {
             "version": version,

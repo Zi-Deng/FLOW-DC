@@ -148,6 +148,36 @@ LIMITS = {
 MAX_RECORD_BYTES = 2_000_000
 
 
+G19_CONTRACT = {
+    "issue": 31,
+    "plan_comment": 6072111969,
+    "issue_digest": "1875464d1340e35cd90fae86ad70e87be1b13108587ef138ce8130cc9263c03f",
+    "plan_digest": "7b5e7dbdca5891700820040539638618b4e48f38b0fcf82f297e1bd4525176f8",
+}
+G19_CONTRACT_DIGEST = "06082c859b04bf6cdb4d94220e08900e5282e1f4835e7c052cb164768f09f656"
+G19_APPROVAL_DIGEST = "b02e97b9fff0c093ce47385b9b05cd8465f456e3f130476a40864a247ded21f8"
+G19_HISTORY_DIGEST = "ee371d4862bd2ef00507adbf97dfcad039591d3b76de9aa47763a91799da734a"
+G19_HISTORY_ROWS = (
+    (5900844013, "5eba73542750e24757e47f0cd7bd6143ca0f430c0439a8b0c9becb6b50ba7f98"),
+    (5966428269, "c1006c694d96ef8487ee6742d54e427d8394ae10365b8a52275e6b0acc66ac35"),
+    (6001819615, "6c9709afe5e931fd88340bc30b75558a1c51cc1467831691bdb82e4169b7f67e"),
+    (6008093895, "8cb40e9af7f48c2f9522c4e146c7efd4e6dad24d2d71bcac667def8a8764f566"),
+    (6009076812, "3143727dc6cf38b8f54cb4c3f017fbde7557006a9a0ac569d61f531149f872d7"),
+    (6009865197, "65ea7d798151f777a1e6682d7cda05f14b6722bd0c36f455febaabe8d7f2023d"),
+    (6010775261, "004ea3142aed88ca9fa955d5ef808ce1285486dff8f73de5c84e48d9ed25c1e6"),
+    (6011162252, "177ba4f77027e22b0f2510fd918ad66ebf1c6fdf2fb5e0abaf67a81e9fb1aabc"),
+    (6012492318, "061e2149206692cdff0e8c013872a30c3dd205c678c8bbb6db81b7d05b795970"),
+    (6013795098, "a3d1f17e7f3b3884d40859b9622a1bd172e0d05978e5515552171ed7be214e97"),
+    (6014789492, "111069f7b7474052c5055b2b9f69cf73b2df8b5aba2f5c719550fb20bad37a71"),
+    (6035844223, "ae8e4b2ff106d44908e471d1f36be74b5d9f632f1d0b92b32e5261193a245cd8"),
+    (6045434332, "0cf9de4afdbd048248941023eaf66b4d4f7be70108d11026c69b30a085bd7605"),
+    (6061320190, "4e6725fa686b93c38afcc3eec46c5ff5583cc28f319105b9eefb77051dea40bc"),
+    (6062530466, "248965ba97be950afe274bb9f76780f2811837030420b1cd9968370d9b1d36f5"),
+    (6064513854, "8aad3237f9f908ce48cef1f9d84ac82fdd669d0a33e26d7bf723a28deebefe79"),
+    (6068144159, "0e2155b4bb9fc33653859cf350d6d9b9e250b7b705a92c9d00d232340fb8a35c"),
+    (6068705967, "75344fc856315303b3cdb632f6e91a4ada36f3960bf37b6d0824c8a8ed9e85ba"),
+)
+
 G18_CONTRACT = {
     "issue": 31,
     "plan_comment": 6068705967,
@@ -332,9 +362,28 @@ def _g18_history(state):
         raise WorkflowError("V6 generation18 ordered approval history differs")
 
 
+def _g19_history(state):
+    rows = state.get("approval_history")
+    if (
+        type(rows) is not list
+        or len(rows) != 18
+        or digest(rows) != G19_HISTORY_DIGEST
+        or any(
+            type(row) is not dict
+            or type(row.get("plan_comment")) is not int
+            or row["plan_comment"] != comment
+            or digest(row) != expected
+            for row, (comment, expected) in zip(rows, G19_HISTORY_ROWS, strict=True)
+        )
+    ):
+        raise WorkflowError("V6 generation19 ordered approval history differs")
+
+
 def selected_contract(repo):
     """Select only an internally verified, literal current contract."""
     authority = authorization(repo)
+    if authority["contract_digest"] == G19_CONTRACT_DIGEST:
+        return copy.deepcopy(G19_CONTRACT)
     if authority["contract_digest"] == G18_CONTRACT_DIGEST:
         return copy.deepcopy(G18_CONTRACT)
     if authority["contract_digest"] == G17_CONTRACT_DIGEST:
@@ -352,6 +401,23 @@ def selected_contract(repo):
 def authorization(repo):
     state = read(repo.main / ".agentic-local/tasks/issue-31.json")
     approval = state.get("approval")
+    if type(state.get("contract_generation")) is int and state["contract_generation"] == 19:
+        if (
+            repo.name != "Zi-Deng/FLOW-DC"
+            or state.get("repository") != repo.name
+            or state.get("key") != "issue-31"
+            or digest(G19_CONTRACT) != G19_CONTRACT_DIGEST
+            or type(approval) is not dict
+            or type(approval.get("issue")) is not int
+            or approval["issue"] != 31
+            or type(approval.get("plan_comment")) is not int
+            or approval["plan_comment"] != 6072111969
+            or digest(approval.get("contract")) != G19_CONTRACT_DIGEST
+            or digest(approval) != G19_APPROVAL_DIGEST
+        ):
+            raise WorkflowError("V6 requires the exact generation19 approval")
+        _g19_history(state)
+        return {"contract_digest": G19_CONTRACT_DIGEST, "approval_digest": G19_APPROVAL_DIGEST}
     if type(state.get("contract_generation")) is int and state["contract_generation"] == 18:
         if (
             repo.name != "Zi-Deng/FLOW-DC"
@@ -508,7 +574,9 @@ def context(repo, policy, *, remaining_seconds=7380, owned_auth=None):
         if current["contract_digest"] == NEXT_CONTRACT_DIGEST
         else "ae8e4b2ff106d44908e471d1f36be74b5d9f632f1d0b92b32e5261193a245cd8"
     )
-    if current["contract_digest"] == G18_CONTRACT_DIGEST:
+    if current["contract_digest"] == G19_CONTRACT_DIGEST:
+        expected_approval = G19_APPROVAL_DIGEST
+    elif current["contract_digest"] == G18_CONTRACT_DIGEST:
         expected_approval = G18_APPROVAL_DIGEST
     elif current["contract_digest"] == G17_CONTRACT_DIGEST:
         expected_approval = G17_APPROVAL_DIGEST
@@ -555,6 +623,7 @@ def _binding(value):
             G14_CONTRACT_DIGEST,
             G15_CONTRACT_DIGEST,
             G16_CONTRACT_DIGEST,
+            G19_CONTRACT_DIGEST,
             G18_CONTRACT_DIGEST,
             G17_CONTRACT_DIGEST,
         )
@@ -563,6 +632,7 @@ def _binding(value):
             and auth["approval_digest"] != NEXT_APPROVAL_DIGEST
         )
         or (auth["contract_digest"] == G14_CONTRACT_DIGEST and auth["approval_digest"] != G14_APPROVAL_DIGEST)
+        or (auth["contract_digest"] == G19_CONTRACT_DIGEST and auth["approval_digest"] != G19_APPROVAL_DIGEST)
         or (auth["contract_digest"] == G18_CONTRACT_DIGEST and auth["approval_digest"] != G18_APPROVAL_DIGEST)
         or (auth["contract_digest"] == G17_CONTRACT_DIGEST and auth["approval_digest"] != G17_APPROVAL_DIGEST)
         or (auth["contract_digest"] == G16_CONTRACT_DIGEST and auth["approval_digest"] != G16_APPROVAL_DIGEST)

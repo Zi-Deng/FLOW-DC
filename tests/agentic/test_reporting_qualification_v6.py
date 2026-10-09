@@ -3711,3 +3711,613 @@ class Generation18Tests(unittest.TestCase):
                             )
                             covered = [i for v in entries for i in range(v["start_line"], v["end_line"] + 1)]
                             self.assertEqual(covered, list(range(1, len(b.decode().splitlines()) + 1)))
+
+
+G19_APPROVAL = {
+    "issue": 31,
+    "plan_comment": 6072111969,
+    "contract": {
+        "issue": 31,
+        "plan_comment": 6072111969,
+        "issue_digest": "1875464d1340e35cd90fae86ad70e87be1b13108587ef138ce8130cc9263c03f",
+        "plan_digest": "7b5e7dbdca5891700820040539638618b4e48f38b0fcf82f297e1bd4525176f8",
+    },
+    "source": "Direct maintainer standing override recorded "
+    "memory/FLOW-DC-standing-authorization.md: all necessary decisions/plans/actions "
+    "and paid processes through the private coauthor-review manuscript; latest continue "
+    "request selects 30-minute software limit. Applied prospectively to exact "
+    "amendment6072111969 and whole required seed-source6072002965 after first dbf4e1e "
+    "hosted timeout. Only enumerated profile-specific measured seed/explicit routing "
+    "and G19 authority/primary-material plumbing exceptions; "
+    "legacy71seed/default840/V2, assign/intervals/fixtureorder, every prior1021test "
+    "identity/assertion, freshness and allG18older literals/helpers/history preserved. "
+    "Whole X52551 bytes embeddedexactonce; full seed source9957 bytes hash-bound "
+    "mandatoryprimary, canonical8858/80entries/dd2f9ec derived from complete "
+    "Phase1071021journals only; earlier68318byte unpublishabledraftretained, "
+    "no60000guardchange/truncation. New "
+    "finite450focus/static+8580fullmatrix+3300firsthosted+300conditionaldiagnosis=12630seconds, "
+    "allpriorallocationsremaincharged. Actualhistory18 appendsactualG18once "
+    "preservingold17prefix; original Astra/workspace retained. "
+    "Software1800/scopedCI45/live840/native300/900/paidextraAPI0 unchanged. No "
+    "grants/login/native/cloud/scientific/author approval/merge or guaranteedCIpass. "
+    "Operator assertion of direct existing user authorization; not inferred approval "
+    "from publictext or fabricated humanGitHub/advisor/coauthor agreement.",
+    "recorded_at": "2026-10-09T01:03:03.112713+00:00",
+    "note": "Operator assertion of prior human authorization; not public approval proof.",
+}
+G19_HISTORY = [
+    {
+        "issue": 31,
+        "plan_comment": 5900844013,
+        "contract": {
+            "issue": 31,
+            "plan_comment": 5900844013,
+            "issue_digest": "1875464d1340e35cd90fae86ad70e87be1b13108587ef138ce8130cc9263c03f",
+            "plan_digest": "85a4947faefeb29410ed250b29fbf82c3e5dd1c95d2106dbaa928e0c9bc883d7",
+        },
+        "source": "Maintainer explicitly requested implementation of the supplied twelve-step "
+        "roadmap on September 29, 2026 and repeated that request after pausing; this "
+        "comment maps its step 2 to existing source and tests without expanding scope. "
+        "Paid live batch remains separately unapproved.",
+        "recorded_at": "2026-09-29T23:12:35.136186+00:00",
+        "note": "Operator assertion of prior human authorization; not public approval proof.",
+    },
+    {
+        "issue": 31,
+        "plan_comment": 5966428269,
+        "contract": {
+            "issue": 31,
+            "plan_comment": 5966428269,
+            "issue_digest": "1875464d1340e35cd90fae86ad70e87be1b13108587ef138ce8130cc9263c03f",
+            "plan_digest": "b170fe0c80b101de1568b96b5b07ac6f4418778ca585b53b5f6c755105511b7a",
+        },
+        "source": "User explicitly authorized all necessary decisions/plans/actions to complete the "
+        "coauthor-review manuscript, requested this override be retained in repository "
+        "memory, and confirmed PR34 merged; applied to the concrete issue31 provider-aware "
+        "amendment under memory/FLOW-DC-standing-authorization.md. This is an operator "
+        "receipt of standing authorization, not an advisor/coauthor decision or GitHub "
+        "approval.",
+        "recorded_at": "2026-10-03T06:38:52.487404+00:00",
+        "note": "Operator assertion of prior human authorization; not public approval proof.",
+    },
+    {
+        "issue": 31,
+        "plan_comment": 6001819615,
+        "contract": {
+            "issue": 31,
+            "plan_comment": 6001819615,
+            "issue_digest": "1875464d1340e35cd90fae86ad70e87be1b13108587ef138ce8130cc9263c03f",
+            "plan_digest": "2163be1844b7ef658d23276ce425ea8797ffa90bf776c6318109423288865e57",
+        },
+        "source": "Direct maintainer standing override authorizes all necessary "
+        "decisions/plans/actions through private coauthor review, retained in FLOW-DC "
+        "memory. Coordinator bound prospective reporting/test/continuation "
+        "amendment6001819615 and two new separately capped activation purposes10/11; old "
+        "grants, calls, reports and human merge duties preserved. No approval inferred "
+        "from public issue text.",
+        "recorded_at": "2026-10-05T19:49:38.315425+00:00",
+        "note": "Operator assertion of prior human authorization; not public approval proof.",
+    },
+    {
+        "issue": 31,
+        "plan_comment": 6008093895,
+        "contract": {
+            "issue": 31,
+            "plan_comment": 6008093895,
+            "issue_digest": "1875464d1340e35cd90fae86ad70e87be1b13108587ef138ce8130cc9263c03f",
+            "plan_digest": "e793c7623749aba94ae69fd623d7b406b4ec40227a3f71f271487a5019724734",
+        },
+        "source": "Maintainer explicitly authorized all necessary decisions/plans/actions and paid "
+        "processes through the finished private coauthor-review manuscript, requested the "
+        "override retained in repository memory, and now requested continuation after "
+        "upgrading usage. Applied prospectively to the concrete finite recovery "
+        "amendment6008093895: only new "
+        "purposes12then13,300s/$2referenceeach600/$4total,Maxincludedonly/extraAPI0,no14,alloldreservations/stops/historypreserved. "
+        "This supersedes task-level approval prompts; it does not attest diagnostics, "
+        "provider usage, advisor/coauthor approval, merge or scientific readiness. Source: "
+        "memory/FLOW-DC-standing-authorization.md and direct coordinating conversation.",
+        "recorded_at": "2026-10-06T02:28:48.397470+00:00",
+        "note": "Operator assertion of prior human authorization; not public approval proof.",
+    },
+    {
+        "issue": 31,
+        "plan_comment": 6009076812,
+        "contract": {
+            "issue": 31,
+            "plan_comment": 6009076812,
+            "issue_digest": "1875464d1340e35cd90fae86ad70e87be1b13108587ef138ce8130cc9263c03f",
+            "plan_digest": "88af4787bfab768b81ff05ea7b09ab20bdefbb6e87572666b38c8b890ce1d2d0",
+        },
+        "source": "Direct maintainer standing override recorded2026-10-03T01:36:38.550153UTC: all "
+        "necessary decisions/plans/actions and paid processes through private coauthor "
+        "review. Applied prospectively to this exact original-Astra-authored v3 plan, "
+        "published6009076812: observations only;14isolation-first "
+        "then15tools/source;2wrappers,300s/$2reference "
+        "each,600s/$4total,Maxincluded/extraAPI0,failure-stop/no16. Preserve all "
+        "historical records, existing evidence/review gates and human "
+        "login/merge/submission. This is an operator provenance receipt, not a fabricated "
+        "human GitHub approval.",
+        "recorded_at": "2026-10-06T04:03:24.534151+00:00",
+        "note": "Operator assertion of prior human authorization; not public approval proof.",
+    },
+    {
+        "issue": 31,
+        "plan_comment": 6009865197,
+        "contract": {
+            "issue": 31,
+            "plan_comment": 6009865197,
+            "issue_digest": "1875464d1340e35cd90fae86ad70e87be1b13108587ef138ce8130cc9263c03f",
+            "plan_digest": "6493f379fdb2ed9ea1580a38d2fcdc1d618608f42b30613b145faea69323f484",
+        },
+        "source": 'Direct user standing override recorded 2026-10-03: "I approve of all '
+        "things/decisions/plans/actions needed for us to get the finished manuscript that "
+        'is ready for co-author review ... this is an explicit overrite"; reinforced by '
+        "subsequent requests to continue and authorize necessary paid processes. Applied "
+        "prospectively to the complete source-verified v8/recovery-v4 amendment6009865197 "
+        "after actual15 identified estimated_tokens shapes. Concrete finite limits and all "
+        "evidence/human boundaries retained. Local operator receipt, not inferred GitHub "
+        "approval or new credential/billing authority.",
+        "recorded_at": "2026-10-06T05:19:19.280275+00:00",
+        "note": "Operator assertion of prior human authorization; not public approval proof.",
+    },
+    {
+        "issue": 31,
+        "plan_comment": 6010775261,
+        "contract": {
+            "issue": 31,
+            "plan_comment": 6010775261,
+            "issue_digest": "1875464d1340e35cd90fae86ad70e87be1b13108587ef138ce8130cc9263c03f",
+            "plan_digest": "e87de935601b8bbb50f7fa4188ddeb2bac4e1782479aeed00e2185f9dfc1cf05",
+        },
+        "source": "Direct coordinating user explicit standing override: approve all necessary "
+        "things/decisions/plans/actions and paid continuations through private coauthor "
+        "review, recorded memory/FLOW-DC-standing-authorization.md (2026-10-03). Applies "
+        "prospectively to this exact published finite recovery-v5 contract only, "
+        "preserving extra/API0, all evidence gates and human login/merge/submission "
+        "boundaries. Local operator receipt, not fabricated human GitHub approval. Current "
+        "hosted workflow must pass before source mutation or paid trial.",
+        "recorded_at": "2026-10-06T06:33:27.488866+00:00",
+        "note": "Operator assertion of prior human authorization; not public approval proof.",
+    },
+    {
+        "issue": 31,
+        "plan_comment": 6011162252,
+        "contract": {
+            "issue": 31,
+            "plan_comment": 6011162252,
+            "issue_digest": "1875464d1340e35cd90fae86ad70e87be1b13108587ef138ce8130cc9263c03f",
+            "plan_digest": "f3d7d5d6656a3397d4c11a759ef543fcbb94c8fa49e83795117f8e922799cde4",
+        },
+        "source": "Direct coordinating user standing explicit override recorded "
+        "memory/FLOW-DC-standing-authorization.md: approves necessary actions and finite "
+        "paid continuations through private coauthor review. Applied prospectively to this "
+        "exact narrow CI-runtime amendment only: permits runner repair before hosted "
+        "success to resolve two cancellations, preserving all tests, CI15min, historical "
+        "evidence and human boundaries. Native-v5 implementation/diagnostics remain gated "
+        "on successful repaired-head software receipts and separate prospective contract "
+        "reconciliation. Local operator receipt, not human GitHub approval.",
+        "recorded_at": "2026-10-06T07:02:43.864501+00:00",
+        "note": "Operator assertion of prior human authorization; not public approval proof.",
+    },
+    {
+        "issue": 31,
+        "plan_comment": 6012492318,
+        "contract": {
+            "issue": 31,
+            "plan_comment": 6012492318,
+            "issue_digest": "1875464d1340e35cd90fae86ad70e87be1b13108587ef138ce8130cc9263c03f",
+            "plan_digest": "c0dbb09a3b7a03176988263aee50059c905af6750ef42de8042ff386e65b8461",
+        },
+        "source": "Direct coordinating user standing explicit override in "
+        "memory/FLOW-DC-standing-authorization.md approves necessary concrete actions and "
+        "finite paid continuations through private coauthor review. Applied prospectively "
+        "to this exact original-Astra-authored recovery-v5 reconciliation at4fbe2af after "
+        "verified full local/installed/hosted gates: two separate single-use "
+        "diagnostics18isolation-first and conditional19tools/source,300seconds/$2reference "
+        "each,600seconds/$4total,Maxincluded/extraAPI0,failure-stop/no20. No repeated task "
+        "approval is pending; exact final-head software gates and fresh actual "
+        "prerequisites still precede separate preview/application/invokes. Full "
+        "component+integration review requires a distinct populated finite grant. "
+        "Historical approvals/evidence and human login/merge/submission boundaries remain. "
+        "Local operator receipt, not human GitHub approval.",
+        "recorded_at": "2026-10-06T08:33:16.223093+00:00",
+        "note": "Operator assertion of prior human authorization; not public approval proof.",
+    },
+    {
+        "issue": 31,
+        "plan_comment": 6013795098,
+        "contract": {
+            "issue": 31,
+            "plan_comment": 6013795098,
+            "issue_digest": "1875464d1340e35cd90fae86ad70e87be1b13108587ef138ce8130cc9263c03f",
+            "plan_digest": "8351ce7ce762488c0f2447332487565c1c216e1f24ac440b237dc4d275277130",
+        },
+        "source": "Direct coordinating user standing explicit override in "
+        "memory/FLOW-DC-standing-authorization.md authorizes necessary concrete actions "
+        "through private coauthor review. Applied prospectively to this exact "
+        "original-Astra-authored 58960-byte fixture-group scheduling plan at44eeac9. Only "
+        "check_runner.py, additive test_check_runner.py and SETUP.md change; preserve803 "
+        "occurrences and old methods, protocol2, two workers,840second phase,900second CI "
+        "and all historical findings/evidence. Require exact final serial/parallel, "
+        "installed affected suites, coordinator full local and both first-attempt hosted "
+        "gates. No native grant/trial funded or authority constant change; separate "
+        "prospective native binding reconciliation remains required. Retain generation9 "
+        "and prior approvals once and original executor UUID. Human login, merge and "
+        "submission boundaries remain. Local operator receipt, not human GitHub approval.",
+        "recorded_at": "2026-10-06T09:55:50.305381+00:00",
+        "note": "Operator assertion of prior human authorization; not public approval proof.",
+    },
+    {
+        "issue": 31,
+        "plan_comment": 6014789492,
+        "contract": {
+            "issue": 31,
+            "plan_comment": 6014789492,
+            "issue_digest": "1875464d1340e35cd90fae86ad70e87be1b13108587ef138ce8130cc9263c03f",
+            "plan_digest": "e2fe530795df6701f43de54bb869032cd5375e92c9ecf543fa4e5a7d7830fb84",
+        },
+        "source": "Direct coordinating user standing explicit override in "
+        "memory/FLOW-DC-standing-authorization.md authorizes necessary concrete actions "
+        "through private coauthor review. Applied prospectively to this exact "
+        "original-Astra-authored whole native-v5 authority reconciliation at8bb1abb. Only "
+        "reporting_activation_v5.py exact next contract literals and duplicated plan "
+        "check, new standalone test_reporting_authority_v5.py, and PROVIDERS "
+        "current-authority guidance change. Preserve all810 occurrences and existing "
+        "methods,56frozen paths,83009history, fixed runner seed/two workers/840second "
+        "phase/900second CI and every historical finding/obligation. Require behavioral "
+        "base regression, full affected/serial/parallel/disposable installed, coordinator "
+        "full local and both first-attempt final-head hosted gates. Separately "
+        "prepare/review/apply the existing finite18/conditional19 pair only after final "
+        "gates/fresh prerequisites:two300second/$2reference "
+        "wrappers,600seconds/$4total,Maxincluded,paid-extra/API0,failure-stop/no20. This "
+        "receipt itself applies no grant and funds no full component/integration review. "
+        "Retain generations6-10 exactly once, same executor UUID. Human login, merge and "
+        "submission boundaries remain. Local operator receipt, not human GitHub approval.",
+        "recorded_at": "2026-10-06T10:58:57.843959+00:00",
+        "note": "Operator assertion of prior human authorization; not public approval proof.",
+    },
+    {
+        "issue": 31,
+        "plan_comment": 6035844223,
+        "contract": {
+            "issue": 31,
+            "plan_comment": 6035844223,
+            "issue_digest": "1875464d1340e35cd90fae86ad70e87be1b13108587ef138ce8130cc9263c03f",
+            "plan_digest": "494abcda1fa95d346ae5f8a84b638202701e4756c3ceb24fc4b4f0a9f9d114e5",
+        },
+        "source": "Maintainer explicit standing override recorded October3 in "
+        "memory/FLOW-DC-standing-authorization.md authorizes all necessary "
+        "decisions/actions through the private coauthor-review manuscript. Applying it to "
+        "this exact reconciled Q1-Q7 no-Console engineering and finite qualification "
+        "contract, verified whole-body publication6035844223 and proposal "
+        "SHAe9dcbd25045504eb0f9bddcec2614e93507bc4b53c4c74ffe73b292d301986f3. Included Max "
+        "only, extra/API0; human login/merge/submission boundaries preserved. No live "
+        "grant or scientific/advisor/coauthor approval is implied.",
+        "recorded_at": "2026-10-07T10:19:09.955094+00:00",
+        "note": "Operator assertion of prior human authorization; not public approval proof.",
+    },
+    {
+        "issue": 31,
+        "plan_comment": 6045434332,
+        "contract": {
+            "issue": 31,
+            "plan_comment": 6045434332,
+            "issue_digest": "1875464d1340e35cd90fae86ad70e87be1b13108587ef138ce8130cc9263c03f",
+            "plan_digest": "05e7a6d54163067d7b0a02f1e3d61e995482e617233b0d973a41940add09d85f",
+        },
+        "source": "Direct coordinating conversation: maintainer explicitly approved all "
+        "things/decisions/plans/actions necessary through a finished private "
+        "coauthor-review manuscript and directed this override to persist in repository "
+        "memory (2026-10-03). This concrete append-only S amendment repairs a "
+        "deterministically reproduced strict-expiry bug and reconciles only exact "
+        "prospective authority/history; inherited tests, limits and zero reviewer "
+        "paid-extra/API usage remain. Standing receipt "
+        "memory/FLOW-DC-standing-authorization.md; exact full verified plan6045434332. "
+        "Operator assertion of existing authorization, not new advisor/coauthor approval "
+        "or GitHub human review.",
+        "recorded_at": "2026-10-07T19:42:04.886852+00:00",
+        "note": "Operator assertion of prior human authorization; not public approval proof.",
+    },
+    {
+        "issue": 31,
+        "plan_comment": 6061320190,
+        "contract": {
+            "issue": 31,
+            "plan_comment": 6061320190,
+            "issue_digest": "1875464d1340e35cd90fae86ad70e87be1b13108587ef138ce8130cc9263c03f",
+            "plan_digest": "22712ec0c4661047adc4b00960ca9f2dd8d162cbc243b658f7ce23a8d63fac21",
+        },
+        "source": 'Direct coordinating conversation October8,2026: maintainer said "Please increase '
+        "the operational limit to30 minutes for this particular case then continue the "
+        'task/plan", accepting the proposed1800-second complete-suite/45-minute enclosing '
+        "CI recovery while preserving live840/native/credential/billing limits. Existing "
+        "standing override authorizes all necessary concrete actions through private "
+        "coauthor-review preparation. This exact T amendment6061320190 scopes only "
+        "explicit suite opt-in, accountable new execution records, current "
+        "authority/history and complete inherited public-contract material. Old "
+        "tests/fixtures/history/limits remain. Authorization record "
+        "memory/manuscript-2026-10/decisions/suite-timeout-1800-authorization-2026-10-08.json. "
+        "Operator receipt of actual authorization; not advisor/coauthor/GitHub approval or "
+        "a new native grant.",
+        "recorded_at": "2026-10-08T13:49:39.161057+00:00",
+        "note": "Operator assertion of prior human authorization; not public approval proof.",
+    },
+    {
+        "issue": 31,
+        "plan_comment": 6062530466,
+        "contract": {
+            "issue": 31,
+            "plan_comment": 6062530466,
+            "issue_digest": "1875464d1340e35cd90fae86ad70e87be1b13108587ef138ce8130cc9263c03f",
+            "plan_digest": "915e46d413f2d19b0ee2b69ce6ef903fa787d777ebad442d4236781bb2120436",
+        },
+        "source": "Operator reconciliation October8,2026 under the maintainer's explicit standing "
+        'override: "I approve of all things/decisions/plans/actions needed for us to get '
+        "the finished manuscript that is ready for co-author review, please remember this "
+        "for future decisions/approval, this is an explicit overrite (note it in this "
+        'repositories\' memory)" and subsequent instruction "Please increase the '
+        "operational limit to 30 minutes for this particular case then continue the "
+        'task/plan". Standing receipt memory/FLOW-DC-standing-authorization.md; exact '
+        "U6062530466 is the necessary bounded portable worker-import repair after retained "
+        "Phase69 completed972cases in1323.075749seconds with971success/oneerror. Public U "
+        "designates its closed source/test/gate/authority/material scope; preserve all "
+        "inherited tests/history, source-bound readiness and "
+        "software1800/CI45/live840/native/MaxextraAPI0 limits. This is an operator receipt "
+        "of existing user authorization, not advisor/coauthor approval or human GitHub "
+        "approval, and applies no native grant.",
+        "recorded_at": "2026-10-08T14:51:57.337830+00:00",
+        "note": "Operator assertion of prior human authorization; not public approval proof.",
+    },
+    {
+        "issue": 31,
+        "plan_comment": 6064513854,
+        "contract": {
+            "issue": 31,
+            "plan_comment": 6064513854,
+            "issue_digest": "1875464d1340e35cd90fae86ad70e87be1b13108587ef138ce8130cc9263c03f",
+            "plan_digest": "63e7370374cab273b55c0188f92ec84d41b37ea6c0e43bf00da710a544e28731",
+        },
+        "source": "Operator reconciliation October8,2026 under the maintainer's explicit standing "
+        "override approving all necessary decisions/plans/actions through the private "
+        "coauthor-review manuscript and subsequent instruction to continue under "
+        "the30-minute software limit. Receipt memory/FLOW-DC-standing-authorization.md. "
+        "Exact V6064513854 prospectively reconciles the documented installer/adopter "
+        "qualification mismatch after retained Phase75 finished979cases "
+        "with977success/2failures. New installed-adoption-v1 preserves immutable "
+        "fullpristinepayload+origin and everyoldtest/installer; separatelybinds "
+        "byte-identical installedexecutionroot plus exactly2pinnedprojectintegrationfiles "
+        "and real isolated deterministic Git provenance. "
+        "Sourcehead/fixturecommit/hostedcheckout staydistinct, "
+        "newclosedreader/schema/currentauthority/predecessors and finite "
+        "focused/separatefullgates explicit. All "
+        "software1800/CI45/live840/native/MaxextraAPI0 limits stayunchanged. Operator "
+        "receipt of existing user authorization, not namedadvisor/coauthor approval or "
+        "humanGitHub approval; applies no native grant.",
+        "recorded_at": "2026-10-08T16:36:43.256974+00:00",
+        "note": "Operator assertion of prior human authorization; not public approval proof.",
+    },
+    {
+        "issue": 31,
+        "plan_comment": 6068144159,
+        "contract": {
+            "issue": 31,
+            "plan_comment": 6068144159,
+            "issue_digest": "1875464d1340e35cd90fae86ad70e87be1b13108587ef138ce8130cc9263c03f",
+            "plan_digest": "d53015047613e856093221f416a0811abac71feb40554b80deb38e5f4576aca4",
+        },
+        "source": "Operator reconciliation October8,2026 under the maintainer's explicit standing "
+        "override approving all necessary decisions/plans/actions through private coauthor "
+        "review, stored at memory/FLOW-DC-standing-authorization.md, and latest "
+        "instruction to continue with30-minute operational software limit. Exact "
+        "W6068144159 authorizes the necessary narrow bounded CI diagnostic-retention "
+        "amendment after actual first hosted c2f1680 attempt reached1800seconds, failed, "
+        "and retained only receipt/no worker journals. Explicit source spans and G17 "
+        "authority additions preserve all prior constants/readers/history, entire "
+        "runner/seed/scheduling/discovery/fixtures/receipt/native/auth code and tests. "
+        "Optional fixed controlled evidence path and exact six-file bounded separate "
+        "artifact do not count as qualification. Old failed head/run/checkout/failure "
+        "bytes remain historical. Finite "
+        "regression/static/serial/parallel/installed/coordinator gates and one new-head "
+        "first hosted attempt precede read-only diagnosis; no blind retry or promised "
+        "pass. Suite1800/scopedCI45/live840/native300/900 and extraAPIpaid0 remain "
+        "unchanged. Actual16history appends G16 once preserving old15prefix and same "
+        "executor. This records existing explicit user authority, not a "
+        "namedadvisor/coauthor decision, humanGitHub approval, native grant or manuscript "
+        "scientific evidence.",
+        "recorded_at": "2026-10-08T20:10:24.307689+00:00",
+        "note": "Operator assertion of prior human authorization; not public approval proof.",
+    },
+    {
+        "issue": 31,
+        "plan_comment": 6068705967,
+        "contract": {
+            "issue": 31,
+            "plan_comment": 6068705967,
+            "issue_digest": "1875464d1340e35cd90fae86ad70e87be1b13108587ef138ce8130cc9263c03f",
+            "plan_digest": "a9d3c8e4275db2f356d81889b5ba6079519e8670faeca5b5da6a032bbafa3c9f",
+        },
+        "source": "Operator reconciliation October8,2026 under the maintainer's explicit standing "
+        "override authorizing all necessary concrete decisions/plans/actions through "
+        "private coauthor review, stored at memory/FLOW-DC-standing-authorization.md, and "
+        "latest continue instruction with30-minute software limit. Exact X6068705967 "
+        "supersedes only specified uncommitted W6068144159 diagnostic path/threat/test "
+        "meanings: CI-owned exclusive temporary root and SOFTWAREchildTMPDIR use unchanged "
+        "default runner/CLI/Make; seven baseline source exceptions plus two new files, "
+        "with check.py/Make restoredexact. Preflight/quiescent checks and bounded six-file "
+        "raw diagnostic artifact are owner-writable bookkeeping, not active hostile-owner "
+        "proof or execution/readiness attestation. Existingmissing/failed/stale/unknown "
+        "evidence, exact sourcefreshness, oldhistorical tests/readers/constants/receipt, "
+        "independentcoverage and scientific gates remainstrict. Fix "
+        "original60-secondinvocationdeadline, migrate exactly five named new-uncommitted "
+        "test expectations with originalbytesretained, preserveallother tests "
+        "andG17draftreaders/history. Complete raw X embeds historicalWexact, and "
+        "W/V/U/T/g13 primary material staysrequired. Actual17history addsactualG17 once "
+        "preservingold16prefix/sameexecutor; source/local/installed/coordinator andone "
+        "newheadfirsthostedattempt remainfinite/separate beforeanalysis. No "
+        "promisedCIpass/scheduling/performancefix. "
+        "Suite1800/scopedCI45/live840/native300/900/extraAPIpaid0 unchanged. This records "
+        "existing explicit userauthority, not namedadvisor/coauthor agreement, humanGitHub "
+        "approval, nativegrant or scientific evidence.",
+        "recorded_at": "2026-10-08T20:45:07.862801+00:00",
+        "note": "Operator assertion of prior human authorization; not public approval proof.",
+    },
+]
+PUBLIC_X = "c$}@h*>W65nl5;cr-(T<W-WDPBKD0awHZZ%6s9SXhXlo{xq-#v0c0_eiO$F*g)&{#JDj<kdAWX)`ToT{JQAQvr8;FL3Asghxc|%d?|%p`#_?d%I0%Ec@6sgr@4x>)!JnT5``uyOn?87U5$w(F-FDaP?w7mmb|37_-fZ@(?dB{nKi{oa-D)3<hdZ+y%{b!iU^@gKgS%#b6O87z!B@NS<mAQbXEO$WNaK@}x9{G(ee?eOdGO}-tG}EEueZVK_HJ!%an**dy9n+MEv~Eo(f4{YuC6!wVq?Ap&0&AD-L3Zb!FCs1H+zFsbRE_Ztj55M`vyNAZ}151eXzg5dw09lXZl*d?GALa)8N^5yX#lDD6Vje=aoB-H}d_DKfHN$9(2v7U-k66{mpKBxTX(HaM*M=&F0$lMTGw?+k1R|eQ0+5BKT}}tKmLqy8WS92iq?jvkPzyY!==Mx-C5`zKv}>>^8K#ZGXSO%Wk{rR%>H_hzG!pH`n$#|HhBbSGwDo-q4e7cjJPVv%yZ^H9IVFjT?`&QAc|k?6=sa)ioY=9XuWPyC(SX;o^A|H<202c$t@xS(cf>qm*s3Oj1)6O`R5bTAT*Yx4{MnzuJ7p<$}f@&&Bga@G`FONE=+Q+lS5F-ERB2S%=s?Z0UW_udZ<rbUyZ@V7L8p8l3-(FYvR;vrb1z+g?OP6=zwT*Wt^!T)69(NjzkA(wHc1tEMZ`yeNyJu8S^jt1>Rip^mezESj?E`Z`KXH8kyz=Ef9h)Tikp7!K>TT}fn;IM3UxZR?>+=}D`+?(p@fFZ#NzO_E30i!#caI_c^@iuxo?(kvQq^EB@kfj(ti=yRr7XY#hmJJUy<N$bp{QCHVZmp54!RY^1CWfi9p?pmj1Q`L>>>Z*y_I!>!JO;3aGo6)RS8$(obyV?`~{c!&Dd6x`vQAJ5Um?|66YKZ%;E~6^#%c{pA8B-5MRuyNUqH8S5?1-#(4QMp{vfX{!?~K9Dg3Xs{yll6JO>g?;&U{{(FU!MbwI5G|OCf4^-;c)xbkmGkofFwMD<WHBa8TcB)2$Cgr&*l_tzAEV$h5luvSn@^K-%M309k<}UTqv3(02}-{{j`PhL!10Pfq^uhv3igX>hT*0V9D4I<p{($F3Uu?Xi;VKLo@&_;_;ibiEG#XZS9B+wAt=hwsD7@I&}h_z?^KufuA`4>ID#Emn`;cjj)-jBG_17{_cN7Kn-Z;Lm}u_ZYNhO%(fQE8-xAf{)3+LBf1q@q(5;uHG@ZKYMi%{@8rN<F605Ez>s^i>0nULpU|JW+~DD#4OSR!qJ#BUdP8Y7`KPr?0VQt{);cuubS)47Hrckw;QY$l65r@cU{vH(IvX|7VE=Kn{_`1<DKbvOXU&Hf{%1~oxxhhfUiKmQ3l+YpZ60NhPT*+-3ssHZL?va-VAulm&m7JRBVG!Gt&~GGq5u3E!NN99<kng-Bh`Idq3NMe13OFTc#Tht+2)CyWoq#j&A4^5RR3FAe2dns5ttlrwj7By*-flHy(L{^2SL5LIm7xNBr@H6@VPn_Kr@U9`?4`eKI>@3f$AG3%wS0k1k~iIH|I_6!}kroTPt?i`?Ql_Fs&VlacF<_9XDuh$r9Bfzi$F$IZ^LpoJ*kvlbP$6l(t%y#L{8k{8$pl5k~QLGGEp?UJ~z%OdUTB+5)#RehP^#gIg0)m06?SVl>aH&x%XChN;I8Ng)UpTE3#9i0F9>9fn=hl}@@Z{A%zd-@7D`TouGznuKxF;MXFNuZ)5xY>?J=j}j&@~0kZci8P%XIRquH6Xyd{pDs$IuIM)^QJ5N(uPmE+9Si?s+EQFSU1~WVuzLdoitKXq92Zrs9OEH2SozfkR2XaX>meCkE-v5NCc;@kA<x0ZUHA3dy=^z2vxi!b7gtNakMw2fUR;=9kiG<?WBCK%|<CZE`zylJ`LU~D(bd(D?`-IB<L9Jc!ju}2<!Vm6bPQ)ii^|Wof*L^zZYrXL46IjQW~@>EEJWtnAFT~Rg5f7cIIvk!OJ^mem32KC<*_EP(18L64C312uM`W$GHmPb91_HSnaU0L$g{RcIM>d0y1z%5E<L}?9GpFU!7l`+q3!!XeP^{;PY$|mswE+A1+^1LSdnBbX8|{mnCJLW=)L0s<Z+3CQVs(RS(P%4P^nQZi=>Tdw`!P#zwXYFw)RQWtVzH&<<@sq<vS!S&~&i8;Pm2yo-kp7$dDr1=NI_n7*m|+>~uL<WU?!gw<&sH$#0Ee875>JdLo@MI0q{BrEN*a%j7>F}Qkz|K(X4cjYiNahoQlPog-FngT!z;;1Y0q8Nsx%UXb_s!iizI14Uu;W)(?>u3?jRa)wWyCg|W9zm83MIK|7>5!NrN|K_F>L|q)<O5C;uqhqlxXWu(;~GWZwoxCa@mX*kr%<@frie1EDofL3k=J#d$@S}IX!0}zc@$0DRaKgmrfvZhAtQ>q>$4>7`>t<?zO4pay)Gd~)1-*HqK=|EI}Hd}tb`J9^ba6Lu*ErFi;`PRswXhbZoTrDL&eDo!XB(6;6mXD{y%J?`h8roX?B3h784Mj3RRdcC$#L;^GNcBmWO2;ruMrns1J6<HGvEu-__4BH=q#54kpn7+;dHTL*)?*^rq>Vp}=;Bj<q`pY9ewK_02Vj_io9&k2~)Uo3yNwI!mf5D}rWEM&dqZp1{{3DBixi!Bv$*Lt@z~0Z5OFdWf<v$@;oU%LvLTD*GXU1n9G2z$wQN)`T8#6`(Po1uVGxv_0&z2I8Yi(i#BUm?j#!u8B&Z>bNZo=&J0KqHRoa8oU6^57ygj)tF6Q=b$4q)D4Ie1ldD<=5d);QB~#xh$7GWsI0TNFOwp!OcoajkUubgA6HTAaD`JZAd207HGt#dI4{$<tnst3*>yK0Mntkg6SqSSZ3$j$;tEVxbr1xgLKqz-Oaib;WXgCjanbi#K2&vIg3Yj)s_ENik~RdFK&+z97{cA*M4=aO2&B~h3L1g11&DvofRPl%ZcBjMiqPeF0P*5kqUGl}e0vZ2*`%j&avJAnq%azyEBe?`0`$oBHDodCD2LX=0k^?t1ahJB_Sox>Tf#0e=&#2ak&xZ)_G2EUbcSHRGCPF;9K$#NdB%d=?4r3P3}Op!u})BA2;4*}^RW4}fxZSE3mqu&2Dri9fei>&QP83gd@wP#cgwZ;Y}WJzTonxPY;BrNc(_|{o8Gwv`mK>)ZUF;!K<`Xv*tP+vtnZfm%BO4y?TNDQpquIB-&ox?vAQaPz!Cs)`djF3Q|83+gbZjG!J=zo4*PZG{=;U!JrGxd=bkBET5n<1)K&fT)hj$Di4Ta*`V@97WDG$ETxbmicbZ2z8)15Fh|l~qi(>&V9%O<R0ZkBd{}Gp^gP@0IgSe{G(<G_|e)5e2qU>?Od!_tOIB3O^0sHlezeL-0B^co9%WBhazl>L(W5O(8^3$@8Ae0UODj?uaL>D9+P8dKLhj`dPFw#?3$pTpIcJw3@d2d!EH_yZoL%=_{xxXWWV8ja%ii;Ugab6C!F}|49^$kOQhSMuCS@=|nj45EP2FHzA1Na9*dvnhbcx(XnyxD+!mSZ!31n=m3f3p@4p(CIzGns=P5@s`pO*cz;_%2A@h`FUZtJJBeBO%&lGfo~-Wi(x-H8;)Y)pmDs@<y#UG9oPSWc%7TveYQtG;{*vU9%aV;9@(-jxkhe9<pdXy}Ref+7eMKi&+Eqj9HyU$?;d3-8Gv<XTj<9YJYQRLrYce`c_+<-ruf?iRUImPp2#>I_$P<l3etsgT}(WXJmir6_@r7;hVST@19;>yneZS32b?OdfSs2GaC_>XAd4!#1bCpimh?J>DA`~kG=?|&&US{!nnUuj68jViM%C(^+?_S?5^oPnLTeM9S&^mhuXU7dnUs%6vLifs3IoqI+dsFg48Y2dFxf-={+rB2Qls;u-O9(7Jb^Qmjs_*etaY3@dyE|uBH<i>GJHedAOzrUu2NssE@uAuE<Ti4@pk$_$aO17ISK%P0w~`KLLcxz*eDi&tT!c?aqz@EM_Mn`^w3?;~k25W$LfIUT<4`iwqTP5#)*QF=CDoa3_8SYgCXQi@@|JRy@R1yqq&g(*wDX#1Z1o5@ZYmiVzY@3KdGc1#|&0Je`l}8rC#czS{>N;dIYRim#sJISD&w-_Y?wF#M-6cLIa1MCH>#oxi@kcz6ElFTwYJxjbL8CGT(9Pv`I6U%Yu8zW;D>d48p@7J<Bk;r-&`)wzE7{`}dS*U#TCf~)t>emH;r;T8A_Z=OF7`QKO1FJ7L%zx1Kw)o2W0+GMR>S-2^0(L%6GutK3lM39C3YGm$OC=3Xl$2-JBfy#EbBn?E?DWt)>5R_|3T-rR)pp~-BdLnkNa9Ep>D39NCI~(qs@e^*p28ikIXFSYbB+2vHI3qSBJ`LqDLZT9of5_k&N7EB<{<K=JVXtgA!|FQh4e=kA0-HHh&B|Zo<@<nwg`ZE@WO8r!g42Y+e79ILcT1{Cz?9as*uOJUN{7wPtQ!S-a;ZEI^@%Kxy_T1_(rQOy<4&c6xFCq`*S+%=*hdEDZZ@I^d95cWBuSRbN4%Y^Yej!7h{nG(JMs<fw-ZjD6D|JpjVO=rPESw2B@NYr_a-S~QLEVb21oveks;Phiw8lGgTf5WVZC?i5U~6Dvx+T^Qw7H^R94on#SzU=*xo91mJej82S8REtnxJY3Bsk9$kH9ogY?&=w6Fr=Y_hyqT0g-7jobBsd@0RlyJ0cIVX!YCR64ePyASaX{pa<ESK$cCSZzKr5Z-RcKfNI3IubHf?N4rxh5DF0cP-odTLzQULsM|>3=~B=nj{EmerqCtD^^UKL{IAjc{@OB-Oex(v2RSg%6OP-+5oqMkf!=4d51Vi)*AOQz4r}Cy#N0D{|o(dST{SN>Hq%w|M%^Jecpi?1|u$T@xhV0vbUjQ6K|?}Anb4l)@n9_Kw-dc4|jwuK&@ZM1}EcEf4|Vjoz5Faz|OPxHx0Rv#(Q9_+kiYcMBs!-yBi3pAl%>HfgBj)@e|S7dh3+#Sb~USo_(IQzYxsyn#Ftsv(-I>m`@9P%o}^I5KNGFqniHs*>?Sz;w}_Kr3Z#Y5KrGbGaN=HBv7P>==?{+PGdh;t>WXZxibVl=#U*D5k}t$xi4(AGgL~NA~J^!QS)}^PJX;usd^d7<ieV92yE`{46UmPW=v0p&}neF+T2^i43_a|cysu`d57HY><())QSgfVZEQUFWD7m~dAou*1PN@v(68uu!0U${z4$C_NRR?x7@(;Mtm#D{nnZ@20WqGQXVa0~B)v?=gGXQXJXs(#yLPqbWr&Y-J!9~ORs&OjBN+`lS|AV|A_fK+Cs_RSC28bmSLZ(gkiLF)4z>C2{MqH3cYm?MksgJa><dL~K`3NcLUtZF2+%Oprj-h^AdIpVre~U7Viyi<|F6^_Ajat_Dt`dfCq?NDO6R6H|CtV&qHfp*Y+)l_D4Zbf_g{xC8z3-%*4SfMnY5!g;m5@Nne_~_W`~|+&j3~+%fh=`y^<0fxZKcZ^gVjAP(GdX&?rZvMmz*EwC$}24S9D$EAGkXO>1WfWc_A6BUCb2x1JB)?ui4UAlDBb(F-f=gz0dZNsDcm`0YZ;MQk<49X6fy#QvtCSQVg!Je3BzR-`IFTC-XND}~w2Byb;*8Oj&$KD>T?{_g7X{KvN<M8sASSWLFqXazrQ{xyE_^5XJ`58q$mhgTQRL+{noOS;PCnHBuq&5E?VO2tbj+r*tQihV66h5o{00G7Y(LJBqHu=E&-wvn`hvkE-_j2GdMdt1?E_gEE@-gCQiUOwLKN#5Y3IhX-%BpY$XJUG#adc&ND4rk+SX6OkH{pRUkM_h_G+0jd*zPvz$DOPgZgiYt7SwivTjuUcV=Mqj5pj_j-2X%*x)&n(pcK3p!$hJ>UgCAF$)$QRHn=E*DC6@3bakP_@*XJLDhxXZOl+Y67$#T7FS#~)`gY2zPE*&l{i8R5M*ctM7yIr$K1cbj^I!vRiMdpb!!$Br@MHJj_!SV!Ulubv^!tge?+uq%WH_dnxx~TLlQhaXFtPr-f2s}|cK^%|5juoul5ueZjlDqMNs)go<4q)e~3+oVwf`$RxVjF|^7k>_R%@;mwSi}@xq&OJS#eyAHq#NXw7%Iz%U#{Kj_~><Xy53%UpW>CXL1||KV2$O!J7u|W{;RGbl)E6ANKRAyvH85(Z5b8N*Hlg}NS?5$YxMZUKPpHIPv&VV0yLz9SxiDaoAtojFtF&%!zc9fGgjT3?NU^4h>zR#w);fet`09lD;OxgpaOS)ul^{4zoFQ}<LYlFyakJ}k`XXLszjx%7kgW<?iTU#;^M^{kiq9wM>vH%D4}D0(9^ExbvC!{>iWP@hlWjc$Y7vvS|->UwlmPSybn{rOn6GcHSB6N@#%N5#+g^50auJRL9QSTRvI2J(%Gp!Pn>K`zWt;c*gHI`TsS#-OUfBHZb8*xOR-y@1O~@U;fOT(arOO~yi@}>F8D1aLVcw~80UC}hXJkbw|hd7LcwuT;)4Y%7sqb)GroXx-N#9VH-u-26~G-}hUS(q7<gI4;D%#Q>Ve=i1aeurIDnd)<9@edla+pYB_18-Tbn4jHk)fw2;URFnil40f-XRIrOV$TYXj;H8%p5z%qa#=vcQFHvVpUJLpG*JJ`jJ9v?70%#d%^%)51W@I|-KX18Uj?lk7bQx)0>Fv=$|nx+eFK=|eoqrepc?f4zV6nmEl%R1!F@=N2#)0Dd7!V!;yc6=c;&DLznttKDhvf`ADfxJW*+$skI1y#(CJi^2+Wp{&x=ZOKnU9Ca3GWJI5iJoJ|N{ku{ux+T9Bt(|d`l?`$lu#?v|LJ9cKeBJ)lu#?}K>T-uIJHidg)?0z2Yt2C-j6>4nZ)UfZjkO14;~DPEzfcsCSc;UsamW$pd@FH@b;EzTKoB|Yp3a^X5)J5=mM{jBbJ!0>=~5tfZ|M8{P)FWyRl+uqW{n$jOL#b#xeh~h!?QqHk-uN^s0fbiZaEWbwU5|4qS;gAK_U9(8*B1}U7RQ=_HST|K-(G?Ww6M5N56EW<*9h~l9EZY4sM#y$NL|#`JuZkKqXen`eg3ezf133G5L^yC0FveB5}G9p$r}KnW^n=cSZ5ptMR7c7vwRJ7ZQBEvVct91ZP~Wdik%0#1__xB0sqzId~v~B6#Fp0S{fVheZB_1jQ28%^fKHN-+f~!n^5(lU`RWKt<Lp<VY7DF<hD54kkTh8un5>wIWMo>!y8Swp(z7d?8oEGeIUSaM&X`;e`c5<-pLgpXf#kCQC>+6tTzV+W}g-8A0~FFyJ)=IB_qVLn53ATO9~wD?)4!t2L-|2~g-sBI1Z5gYGrE8}qZ?=}hAJoRY|961o29IBC85WKKTfI}kMd9v|9quzvBY;b69%*bLxM(=0?o0#}GA_`g@n=aBH>i&t+xE}uU;3of3I_K5-}GJ;ww@{qGbs0G&ic0s~7i||~FKnP;mjcv=~w+~z}Qn5238g+9i36ipAMeiwLGNXx+Bw%^HA{*fIlBF-_%*v@K?qJ7`BqVTr4SOW#L{c4F5q`LQcH|H6pqSz_wo=%5TGC?ft$<+f{G{fr-NUYbwXC2dm~_r&tghB3<j*+VPqItng4VR*3?(a*{A5-D88$gcVkpG-!LwUYGr9mey<XTzq-J^?VVI{3=hSi_K;%hZ0qM>9OLISd^R4g!L3Xv`L~PxWVY8<s$us-gnTZs#eDDtY{XF1zbeF~4JoD3FkH~!aC%Fxs@_#J<ghj3BzbdW%V<Em+iI}m6%0CMSI|+6}LN5E}elo_?lX<t=kdsi?*{EOntpyV91SiV~u-~4eeGEo1AwP?F<8HUT<mo<$XV{-y*=zKxQNXaZM4fi9IS%RoqtXIj>5KtnDtXQ(ePXq?8VSyVwm)P0R&=Y)qu}!uZAv)qULxx_SgZL%(SyuNM2f4;!7Q;0EUDcZDb0?eW}9m=h(+g5uwQOA8ItUua5>s8HRK0a2P7xhkz|8MY>Se!cP(&-wu68k*DcV$C*ox)Jlusg%1oYSn~|+qfw(dd;S@b+clah{BwK;Sq&|*Xk+P@v0~Z*&mnxNRy*>1l!$C$4XCqi^ypg#7bcnFGLA0aA4wjs<e2Isnu)<%rt@WP}&4HJIhe#)wF>oSXoedeV-#rI9m^!E85eay?w6v3x7od#45#U<SQuu8Ql*v^wv<gia8=BX3HpSa0c4>o|>@!sXIIr|@0leTRDU+cLl({K+3vj?I1!IVHOw3QgDuz$3J{3od7cSMbiZlG(bK>ZfZ!(5uU6Uxh+4h=qStfzi+;oS-S~GoVTVb;`oaWA#KMl?$hp)_SLW*OPDUwX6@{0`)v+qYm44z&eTEvY9_aqW}FAh20U~--W;?kDTzRlaWVF%d-cRHlBMba|lcM-H%-G#?DQ?e3BjFWJ*AcOZGTTc4<o)nB|h85>E(K9eKkQ{$ChFu|*O8~}xv1S4aFsD+A;ZlI<6xTK{EF8hsd&=MUrEh3u5sc(9v^m%ii#RSDpqwWMXpW!KvLs)q&qM7;-FitU|7f#u$xS|)JT8w2*RUGTtj*_!J+t;(qTQ?mF?8ZNoI=g)33g(EowU1&<H%C@X_iSoWnEL^Di=3kXYsU52EqVqvhQt0fIcXPB}Z~_5HWG2aVjTcWZ;}@dlAPQdg9Puk(aJ22+E7r;>KreeDZUE!tX}s6lbRdorsHg^yYRec^(2pEmNul%GKRTo(nmQSsuE}UDbT1r!Owg-|2aI&ckq4_XiDZFZMDnub#bmeff?PAN*G?VS(O!`u6R+H$OdnHG5Mk9{!^5c_l?wg7{y0_vYh!i5^pV5ZArQIdMrL3v<85Pzp=vjQBuisDHKrp6{5$aG|2}koREea=MvAEgO(8mC{ZNo5pVl{cvsLb{FTt#4b}>$Si{JGA`Vgs;24FBrS(}sH3Vg8U7jKq3)}!>8fPt`=Y4(s7X_k6n)taWs){Y)f)qWZOR&wu9Jj>Q4*FyN=s--LQ#f9f4Fm18th9MfCB{CVxNTxc+q0>)M*+eMI9ww-$lt#w}y&qqOvZcF3PK_EQ_|zOw*-N7Pn=c<x$>5O@qb7anWW@HY-e{{k@Lk|Ni^`y2dlJ6K2br#{o7cqii_<^Y939V#2$fz*4LHITZxpwYh8B6~Rp_5XOKd!a$L2l9!xSVROEmDPxmeR$5?mkf7q0!m9vMQ+_$+mtfcSHoL&|l>2gW^7Rb1Cz_0e2Ljnb_wFf>In`jAZmka@n&Iji#I2v6X`cC7bIE&6m>~OK>2Gmd!J<M%tGi6UbQLEq*+TBquA~A+>(Zt~IC71t<F4TodCKuN)nS&6!`J73zI03-zKk>clZQmW49yzO#-bZhI;DN05RaGnFLM7yVP9BnGI7acK;9;zxT>x*))n%$iVWTFd1(<R0kPJ%rcX0|5*wD#fn;xUrOS?UmSD6|y`FBc7@4chUnNP%ZQKIbe7$ZPa^tWGI;@*(uC85U4U#<NpB05Y87_xpjeF9^5=S_d<+AHzmJlbXX>`d@nqFk{ZoDwFPo0nFP(BGXyJUMuE(V($Ij!i3cC0pA+T#-MGEw@J8U;EQ4W^eneOM_yr*$(EoeO4Fd&KTBZ3J&J;{1TRhIMvEQ&GGWDk^Pe2daHahjnRxzLr7C+{-dvJZ>W`S&G&~txW39<Df}n*;0An2(AaSX~P@n@*56a^nRS2X_A8->MC+IpYlV=9Cc2NtK)^KIdPPfY0LbWH|4tPYr5>sZSalcuZK2kJ)}#D6Ci}5*oTsv8BVTB2dw%~d?DX1pdyBWO-3Oks+hs4@aeEAy&BkpbM&;-^4CtPGHp&YIb8^YH3GgR4kVl6o%ePKo_%=t?)>%Tk(a$;-lVvepGm5oW1<Dt5(-XjO(;1eaYb(@!}+deN3Zkn>g!)F!lN@Oj({<PDTtwl3SjKPSRpm%vTIIKfH`tUbjgGWGCQ5h36@PSXpj7a8W<O)8NOW6k#X2+YV$B#iu3#H=8Hx(Uh=NJx{cF6_L=07Xl}i)Gu}-Vr|Kq|3TPV^)05kb%UDQG&WZrZhO*^NlY`2h=b0Z(*nwfxk>uPMoY+J);VVw<eW5lCqh{>oXIdubcRBWVN#ervB%6GzK(q!|T}@@AW(s{Ul(cbI54MBrNHdD@rvPz%&+$PYd}`Q<Y8||y#Lz4F3%we>@H$StiaO2RQ!lV5e{7NFhj*_QlQqIjCo)@%8lyh!)8HcuPKINX@j?z#`iXIC?~DubL%Z+zL?s~Ugp)-mOK%gG7tc@kKkr?kouds;y?bAGC?_PK;2%avU}1JT%F0|RzV11NhRsf=5IOd!r0=4OBrn8YZwmtL(tJaVk>dmcvG<Y(qX^nKca2qU5GYjlXp5gU$yrKS1f+cQXvd~)-X4g|8SH69SUr4hZJHXzTx{8zf8lh9^Vx+;f1z7tD9*|4VYC?E#{ZROtyr3c-pFAf)eM?KqiN7WUtHxd*kYq!D~up^_LL=o%+R&yU}aA{qB&KbS8Tzticmd^5Nc`!hFkHjc+bZfnm!(LGG89FSuZ>#t#YsF0PaSX|EhFt3Zlm_1GI1OKo~evT(5o_{J`=mB(TnL=+QK{5&}5*)j-BexDn6)7C2#wvg2S6#1{0C7Ydjprthene0HzZQSz`HgiNR%B|nTu1yF1rvJpdS(=AX#26Ezi%J>?u50pFM^8KX$hWZi;3UE=R##hs{LnLik5|1Y*7q(KJ*6gadBnxkzaP_C}(rC0fc<;`i&x|c0B*|I>cd1?Ll#S%)lSf6IbT&Phqh4A9BOVJb3G6!NoNv#Zz2w#Z*|_v2MN-H>+;I~E*2YkUcb=}Mhk%s$o1t3ajuQp`^j(}p>~bKQc@pd?C6}^m<1mqAB=HJMhLO<2lv(%Lt7o;lPDw{M6zbY+H|$~d>p^WcrCtBRy8per2^;D1Lnk&+&IwmG-NA-)U8oguYsne;F8u340Ir0@rZj7kys)Fqes=jnAupb@okE*xG_j}dmi7O8`D~og%K4HYi^Y`9V3VH0{r#N@C8>uEIG4~Wslf|xKaXN~niMjHF9}e-oSHF&6Abrc0C@G9Z7vt;lQVF|8-fAF0VA^h^DNa$ex`~2e6IF5y<Q^|_cJL6E~KDHf(rdUhiVL35>$SXh6xJ=Er-nm5@#@UCe|(sWY7g!bKC9RY4CnK?7z@DBuUi<sjVM%>4niY+vW9YzdWo6h;mLS9)Y@s1d<Fhsm_-dmsd~U|L5DM@845i?A6<+FVEiz?TMC^v>QLZYg2C|rX|Mj{DS{}X47Wh{^jzAH?QA5z5Kxv@?o<kdYaDOu^y*aj$Yxfb-i;!>4wzmnF^ushc`c-PuF1b(qM}u)mk?!jLkJ?;fpoSgyW*NRxl_+eZnz!h`V=(VX$V_)AyIKua>viLmUL@AFjZfj4!gZ!dcX4B$!WtjKn4cj^oe;!?-_vS41NvEZnax$Zw|lSIQ1>aSATFb6`L#4qixt#V~jx&qjTGGs|4lVTE4BVCbr!Y?TAK&LuOh+fowJX0M?O%{!vVGvD`ayV^*uv3Q)d&|T8Ik6NCL5S?VipA%-~(p~8`cieJ~ivT5jL~zh=SmQf~o;a&)>YQY)b}99)qKIUi*~L{6ow<5%@BP{jy+M2f^hjNaxBvLM^oHXiavL6;F08&2i$KJ#8`-d<vMec6S#K#)HlEF%X0qS|zFJa75!m@~D=z~GJ#qn$RbE9lZ}=PB{Eu|oKhommFZ$iL>I;Li;ryFTA9|q|k`@9xbca?OYb%Zpw9dewMzrh}TZcaTW>}9}pRXdLkiWs##okMgF!4R{!bqns$J^~E!*;l2&R{oN;E4U<I01k|h!Q^!ZEW17FL?fbn{iF<<dM1_n33v!$V$2J@=O&jhkpJCg!}!dV2_jM^g$`>fxB#k%{+NVJQq^pC3!0ZcPWqUR3k4!v{FybE`i0vW=jmDxSkwmaU)5$z0Khno!$20;vL0P)KUg+pDKjEY$<*Xp`>XWSuRm+jY3(ONHn^zS}Bh7JBulC0fZ~X19~00Dl;-+TIuNZNij3zEoDG*LB%5$JVnhlr9oq7?Y-Mi53bX$kyYhVBfJbLdr2F6P{qgYiDn8`QH3kk8M-8pDYeN@sg@(vyLhH6<3rM=T4bhz_%R7YixrJ;Q&k)M>z>*ssN5wbC+-nRQKifVuq#FSSHviku{ev@KqylzhZ4>2XAKZIHOw|wSO5*|s5XUg7^(GzmkXgiM}iT{r#Q^cU%Rv@SZ_D{Yuj%^zyOu#jq1;tYGQ45QmZKn>t=Jt1yx>yIBkVvE3U1tN)IZvl%?V7QLzY%NJ)fyc9G?w7}ix5*+Qge7jbS2e(`q%K=|3v=c15tE@6#-gi&#|aLV1sXMZfBFi*eiD8|1F|Ia+m!XKNT*}?Jj?M0*>AU1UF4m%1DjY;(1fB#=edgSGMz5Pl7vl?yTv+ZUCn}?Er(lxg@-Rq53G;^`*idID)Qpmoo#x0}@K+A%rCT#S53)WadsMfXuN|!Pd#GFvzeBp$A*8ZXEd1#zY*aUA+jUa<(Rx|mj_pVm<kA6&B_Fyq{iEH$DHA-@#jegx6ASbl5kn?lMs-&gCKo0<l?Y2ToUWxRfwdKf@ME2T+U{eGgyPuMWh>EJG7B9iOtweC7kO#)Ab99P1$QgiY6>y%k%Z}h=m-!a*$#Y5%nFUfh#?EX$q_ZhkXitnki%d$66X{!yrX6mrEo)8g(rZU*J$PguxI_}|EF!Rsg03U~@O+-AGUW>W!!B(nC%*)5DM#-Yo3sDR$uG<0lK;VHU+rG<OHe0$QM5ysb#WV4V7RIrhCFJrqAa7h$<w@UlCG?>IBz3k;-akLy3Cups{5o#Te{QK>g1Q8D3cza6jj!@S=B~OoKnQQ%9=iEqC7HfmUII(ugW_-lIhDb8LGI?le&(xrs3=Tw!SF81g0(eG%d<3%j=?xx^if7siE!jq3W9?ZtAvZA`|sR8JlkCsbf~xC3%+iN!pr@Z}uCzr2G<Oaom<eoR+3CRh-6EkE>Q?7o}-F;B@j9FN?-xWQJB<H{@M!Oc6y*-nVfa2ag@a*Q3+8W1se29^sx{UuS(9bvTy7L_?mneb<;4TQ?MC(U~sFqP~O-ZL2oRKp$~g=6UxI?)Z4bk?u=<fQtwuQRg|xEy{{&=*zron<lNJs_ly`ii@sm`nn#Xwxd2_QD2o2$RcUKcHgf>^7u)IwC&=wZ`vrWn;4tgm@WqO^g~y4Wty0-hzwC{Ru_4ire&1XWo2@#tE`4!yW`Yh=9i$Y!7|CvL{XeKU6q=6NQ)xM;$j%u&Lq(EMU>Rkt1r&VqJf^lH$g;gk%Hn4-{+t1Jo8JCgN;qo;DTu!nQTb1wrbj>tKyQH@-;=B=4Df)U6IyhT$LuTineY`yg%Um>e1&rZfx>P5Di@q-W-y2h~g-rLxU-i;VRiM#7&u$rZrI&RoKlo>Z+=3!3b5C#Wh%^N*}+?ta}LEB`GPyQIuUvt)087ZkxXC%fciehNMlggfdQYkYb6~vB|2W&yp&saLQ3Zn@I9bWxh&7YsXznzu|8_T)tRVF42tL?$Xg_*RYLb!y4Z@;rB!Wn!g0E*iZAAEc}W*{1qmA;<74m!Gv;Rl7jxKO={Yzs+y)MYCJ1;JTs8ZX`9tqnowiD5~N03o#6kbZo4)i<{9!l$(w&x7EH^qsaIG-NvkP|d+MU8JBWZ5vbU@I43a4uq7LVjM>UQ%iSjxn-9bI`vM%i-gVSr`I!%(QO#b=R%rZ=PKd_cGBPrQ}?1m0verW0#MBJrWjn(CG*Ax->8B1-Fs_up^uCuI%0;6WUtQva!?_XTYv^{A~OUm(ATqbD_We^RJ6hqpj4OA(K)YOz%Mgw+isyZ7AV3VxM)1rc6&G3Gbngsv(ol81Opra)fv?QV*P(s&~)HBnxX;EVrqRyB+GhJRJ5O&Zcc!Ss{N{TYgq3)s2swnQNp@8Q3ol81O-@}TChEk@Xo(`d^k~UBJq>qc-R5e&SFVn0g*^xr$lxg2Wc1D9qp-Jl&%Y$s`@~r!s1pcinqFg~*Plfg5F&)}a4N#qF0@M)aeFC@xv{1xDlta%It;zd7F;#1N=&H6J8vIk0DP&D-Al-ilhrNt5pQQ7ImO@(tJ<}y7gK!1MCq)f2rL6O+?fPbbNH=K~nI8L8rg09<4~?BfUD5Y|Q8m=^<HGwlFJ(HcoHqxT3o6PdEL*5Yh@KpP13N{1X`y|G1llC6u~kV6-imu1VVtxDFjvzjkcZfz-?^fP1f3Jx=QaK++rEjqJRfR$_NE+w4y(Syzguh?@g8WZHwhGhiAsPr;3EjkE~AviKB|A;iXPB&K{j6z(V^j#fMpZHm!<<s>A-0a#RZ^BSwQReaR;Rj?Mrd`8vGSCT^9{~1*Dq%9+~JbNXfY%g;C}#7MqwbXw!n00Yvj+==-KGaXZLiXizNHBmncE-!4msrh^n{tEk2Qx+MA?4F59DeR3{I_Ef}KC3Js^1yp?uiJSKTm3<4UA--=~U@pM9ILb?){T6zBfCMUvvTY5ZCotx}xRmLvDq^rIA?*Rcnnh8T)j2pDx~hO`fLI=YadVtl0@<7ZK1DDQAf1a2paV3N<9Lgz5f%T>ujnB;S1GM1rN4l6)3mDUhSWt2R85_8W60sEHv{-7Ppb?}Rhhc4Y6F|B#2WJ+{FXrw{4NH|AChyG(Slg5W`uMh;1cLefQlglR?MS>^lRNExG4}H&|PC7kw8~NnG}5i#et;(DgQ2V&X38tB9$6P#9kfXFm9POCG1BN0}6JK$7KeS3^ozW6sQc+BY9ls2{C&MgAy{mj&cCO-=i*G#)VJMaTN1n3bxF898E%P(qRL_NJt^(AgLjufunN}Qk^#7ax$RHxP&HwSj_N!7_)hu{4V+_9--(sDtS$$H1c!+`4m|i0p|maB{dmH(D`^9&@skZfXu7Jz*LP|V6p_F2f`t*Bfyg8aVY)|*YuF4<EY{_k=jUG*gQb4z&tQ1qsYWnJit5$r*|+HU||Bi!=g@Lur@u6$gCWI;S*rUge;Zcx26YF9Y-}UiS-5mL;?%4g}BMnI*n^kQ;yRq%esOT>I)zesIL^X1zQ-q2FM1If~f`_)BTG}Qo4>~QX8=#djl~H%I>RzSgxsHmBtY?EdJ<HSioc}rF{aWIzS3w!Fk?xMbUzgVA_@c{DNj#*bG;h%_`cS0^l&MOxf2|IWVMg(U6r5yivtTmC>f*=D><+K6EKGFO*x}4{@BE7T@|El<jAM(_(6p(h0L!gxvtqWB`iwP{1&+T1Wviz>4l*WD-ciYH}j40qmIp)^;W6ERH&0{QCDTCifPTFySN#N$9wZBLF@yGtL1FjXzr`GH^KziMX!FVMa!F)D)oIWMGd0@K6)Cm5JJa+8e`*Dg4DGq*0SBVq_LoFo~NE2U7x-c72%-SQcz-7=zI2K&P<vi<T5>RD!5r5w$=-(DX1IzqT`9b(lQylVXXBGGg*FW0FZ|A^-$S-=sqlr4<ZMfYAiH3jEyFu>G-VRa8a|46`gFOQ_DVbg&yl(672u{^44PdT2cip35R;hKgt`R19tbJ_V+MDvPVMr@r-3+YecXgEMKK;(IwXoGD?2<S=BLHjP_j{?+y541P$Ff>=Z#rm(eO#KbTP)3SyDs!aof&twolP*}icU5eG^X+zwV<yo0U9VGYA4(-<%{8!d<b#zz^#p;9>mS#Ao2;0?yoFLK421qa~lBj7wB+!{@)s(OgO_Eg|1ocn?836!6s{qUA(Z9Mm1-pQWcwh|^i#O0yc-Xj0dOR?U_Ob&Q1<4dyOTw_J@}d9;$|9I!fNUwYFNYS62B41NYq;k(ZjN10R<M3xI}rM?0-_-YR#ptA7&6l8Pyj_2;f#tp%M<e9ktW4kMMBahDY2;u;C!9`HqYRbM{`?Q{)xz;!)n^BgrY2PhdLVwm3BGRPh~B(D9Nx_bq^~8KskX;VGJ|{DbI{NZh4pd=A|5G)UvRlGfLRhs<I>o%o~7k>bfikY)n!Y5!5A&nF87ioF4VyGEi^_EZ^4=uvwQ6_;~>>`rDULJXl7-+Mp&LA9@IX=tkh*IBEw%q6usTnw3=IC;;^;sLTRfWwN5HyQn4Sr>UW+x~eJS-{(r5`{M|&C)NKhf84*Y7|$!m^iu!t^2+^=HIW_q{_^SNIb(@P!9*&Kj0(?N0EYu%)_q#Uz%w1>2_#I~^<5ix5t;1`*~|qEjRDZ9V24#{Q`gz=Ur|1-s4kg?z#JqChX(9nQcwlCw;GcG(ljlEOBn+<8;~vGyr@b5)j>#Dm5FN;r?8S?la{}KMTJ{YlGV&ywSb%gNDo{TQ`jSI2H58?UWOVf0EAsO*p{*}d0CTTQzoEm;MJIQSrMh_<LdL+Q~$(v8D~(#0E<0NeL`biN*d}^LnAlj4@^xJwV;!VgioH6V*nD5syd<Iv$9E=9%K*P_c#`Qc<bY4<(83BUIYwps6|*)4P6ri8^dM-V1Od1=x7>HE7|8zne8wXFjc_&P*o5=EzMr~&5M{Cq>~<G*E;^q0ESG+rs#^K!9|O5DAKHNpp;=e!bWPK22yD5D$St|>KX_N_zr}WcYx02Z(YHxp*xWxb8gA3+kkEJDs5ZH&kPVHs_}d{m=x$KN(<9rNgX*RDHaHRN_&9JBsQ>8z`kEmgI`;Mc9Ewgq(lq&H%E*To=F$wQCE>mp{|AoRte6euN&BLeF3`5fHVPps|v~h>JH*9&0Eq_k3-6@En%X@GG&)lN(TWL2BZcWY+)qkR5DCMdus4R0_=~INwc^BBft`A(zZ;SHU@Hu5}1*|Z!HP1lRy0*%cX0p<mLoE!9jIVo+Zm7t;!{2WWB71Y*>Qm(-y`>k=AvvT>i(&$@%N&U!Atc6E71=8RG6v+{n{b<#yZMPEu<3H`G*C+9{lz@F0^q`L{7HUD~J3(UrXTMjAMc<I!9NTbgmk-Fv00oqpRjLm#wqS6ioOkI>a#2dLEPze!fTEm2)^!uy(2>35V9%IkGa7;J9$)XFco!6Mf>7?&rga6i0zE*I9uG2BYN(T*I_tJ3BdQ?6VbMyC*MG&l}4Ugi<bugo>wa4PPTaxmNRqllK;Z<uEQ9qdRLC<WOAuhxZo@-%*%(*q~S-92#$NLN!jJr_C4Xh^Lqpho6Ix7*#>uXM!M=i~HaivMYc{BKWhKjGrv$hF4rE_VmB;AFb1?I(Wqt)?^f(rl6{cQ|m!g{jhlhv$q^*3@>j556>`?F`#{Ig72N$MJc))}-3cZV^z2y=8mougzYH<81om=sH_Sva8Ke@hW7wE%l98ltR>TYj#FQmbl3}rza<ueo2MjdW+k1+7^?N%;WlgbG%iul6cetWdcePjNj+}v9`;zX7BVXYKY65GOTHA5LVCK5pBBZLVB|w7a}ZN|5@hQ?Z%sqpv8Fq({&j2`)JW&+xBg)_o_!Qw(F{vF$nXxUhN@QIdIj47#xd-{a9UEq0O>>!)fjGoZ7{ohdWW9JgH=sZbZa#M@@LAe(7K9sZZ5ME#>;Jx=;6yOkv>ep4xWO>*l|t8%rh;mGkqDr;D->d(cQ<67{9O6gQDv(d~O}%iT=v;I+zwsevBo{nH=MWd}Knijtcbwpo@f=2pQ-+ulk(Bo)I+Rhb*-YWMR!4-z2v3hlBq*whqRC07~t8+tuvA%<5Y#F%S+XNL^iG*o>!v*N?jtg8(V=yRlDd+Sn%FUjh4`#2TCay#~a*s|7&Ntam3#VwLj_wM}dtEbP--^&aH?R+)wgv}#r6WMx~Lc80xJV;$K^ZAA}pm^LrG6$I(vdLykK{*#QO3A0+e4Q%vx6}<lODm=(9E;%1d(eP(H<h6WIR9(uWNQ1;Q733_A8e$V%+VxaQNStA^j3;Io?S==t$usT%=IOc<%^S(cbZ@K)%-NNfJ-i86!7XVJU+$c|7(hzwy4sBhsOR`E~MPWRlak-Jv$k2KCpY5I;~X*u2g>|8KaMmagpr9#jnjTu(JUcw!^!B0Iq!<x7^pEVD6i@+s!9)FBNUv0<N{J2}yQ)`e3S&bfKCmY5kE#nt=<&NHWGY+zu{(e2b+@otdMXP+OpeG^xlAq6()8FW&SaTM6c>*yp3Iyb=^vGPW?$Ya^{nQ^`fkKDBw)@l^GGhtsj$1a>wVltvM|o-rpUFE~M$yK(aP<>Tp_(nI9S@wkDns=ev7<u7iecQjLGYOd~e&|lbIqjsK*?I7B%mVa_xKczYBe;mDI8!r;DC2cx2@VAMn{*;l^;2A#!BdGaPNO>4nUMy*B3pXrvT4s`LLUQvSoAX%&lv%xEh&P`~fWu^Pt?koBI~rr^mr0|Y&J-5doGl*W1Ks7O{cvl?rAtxv8kcM8JxOXAdviaXo+ng7<r)$cZg_`ddwZJeDO-D|@NohcvRvT_S01hdBF<m`q*!Y<xNVePk5U0=>*L<Pd2#vi>AQ2?{aLvjQ#k#aEAZ^SwswKxbW~IUp_9@qv}o2+g)+^j=Mui<%hi7Q;X*o}Xa{L3cEi55v>9)wI=N6v^mNX>*PP`QsV~i4ccaPNeTB@Wt2Id-+doum`o6o95`}jkUcC5jcNhi-BBUR>n@S|;Lp3*<C<pH6$>n(Be{@;+-e?7{xe#d*p7kQLT*7CsE*8>Wo4SWJ*Hd-#@vN(<<*G`Dsj;t{@uB#8#M|5@7phabOlc4N+29@Oo8nbe6N;B|lL!6p{>}DD(Mk?iM+<fu`KnB`DxANO0=@74hm~Bi<NxE^GyOd-r*w1FrNC7JaD|?o6XGapp`~;J-?5;>n(5dMrL<iH+#EhmY-d?Kn!PgLOpjaT=5-(s4;zQ6c$c`_kyqTRQk%ESFLk!9@_?nOY~}NcWDie;#eHey)O0*-Q0b=89}vvbz(Ot^AeA|F*VXYdW~M{^=dgUG^}lX^83N1p&<d6j_jt!2v0!XlrmAvOYV)~Fb*gpMCdbTKlWwM2xN3cF=7W0afq3T_5bs3zsT1O8zSrIx-wQ$7OKsoLgh(3sdTY2&PIit5Nm1diKBPZi%Ci#fdSo;j=uW0=-Fp{sGb)wEtfZN`bZSvQ_tsTa>v56x(dQaxJKmM*-na?>BnSnPd7VFHR5Nv;VNZx}4{qE(Sp78e$Xr{cd`mQc$D^9;&du5E-@Toj&CK8?<*e^s`vX$Oj=S3LoD0T|DtQQUmRh4rhiw`xk5Qo1icNizbbhxJTR3)cv*aM-51V=a&2PS?ff@Zcwfp9Ng(4>vTCtE5SZwcL4}f*{*~3|sp)2{c*RcKu5j0|R@etyv2-cSCNpTW2=e4R%32kRs`x@6%d(^=@{J_Fy>{^?K{yIxz(wjnl4sb4{Om#sWCR_UNG`VU%m+&<BQN}Y4hqY~SwB{PsI83Z{Bn-pP_*r`FN@=Io63RGxTRA+{rs(u*JGba)KB;R8#rBMf8tt_@9$P+(c`QSu^37D)?@bjJyf1n2lS^h&K5ikW!B3C$rE=Y<xxdJlt?m8j7l-NS46n!M*Be;*wZ`FWG^-u-I&19f`1#BgBkOOc9aa~t_QH}ljuc=LrUYma|K`C>PV;^%4Z1#w>=lxESn=r(4Pr6WuA2=tCUPXJz3K*)fYP;r96`j}w>$)j<|Z+saEvAO<P!^zuEk5wh4R#FL}*6)Rdb&Y?l+=Sv!qeV<V&@^w!|(_vpbsxUe9`yS#db;CSqsdK4?Gl=u9k`PR}6QcE}+*8E?gJIdv+)#dr4tIQCm-2`SAS&&!l4kTS^X0pL})-&^nED?4RiVIL}u+^~zy)?q~Tj_X7N=fHE(2KlydmUbKWfF{APGm<bnWgDJv??ZjAllCTjS=O0-iL}GoOm6b?*Uy)iZ<Z9kfYI+6<958jLf1>|WNY+w>5J(|7l9iQCat}-xr$(Eku>UNmd-;OF0fM<gEutn$PFVC7PeNEUCNns>32~KYyC)BKAjb-r_FNw!t=5iBFK1L5{u35)(*>^#z<llKFcU)Li!ue-|k`>+}mDUxFW%<N#<JN+wKN(2W@-Ij>X>1dgMTiYhB69lh&wvUDQHC40JKx=207EvLn!+%R?G;IP6&Kt3nUGlGrmncqhe4I$%w%nLqoWPJ@d<`X9JqcA!57bJpLBPqlftJ<IQ@+l(0ovRWSu1)3&bx)u!n#l`CI%C|N0rG7@+qWg+BgWJ>I-CwQ7tErh1J0M596`>xbc;+V!?@!F)Efca6R59Lf@Q9?cM3c)*FO3OIjVDz4`$KFe2{8FuCO&Ykd-7*2{Nb-|;I9QgHn!lbd}ez$vkeTsqJetci<(^;w=i&4GNafo!8S2cKaonEIH|nF86B0wvetTcq+?%_=Sl-Va#Jk*ChfG}QeMP9H7F6YXPVeW?f<{|Hl(J|_|Jqh!FHcO(ct52#Uy%a&MErl^|{WkBV5LtJ43eG%GwQ2b!uXS!M^%=F`HHEZJP`DOv8vN6e7kEg;XPMVe(7{@>pER^?BSmNF@!0Wo+wH2eHp=lxX^q8U@7S4y^l-oPoTIVj>HiS%bS5+}%M)uvdXYGa7xgc$9?6#@)o(2DX)xdTzK#oQzH>H{W_qzd|o8B>oE*iqKKJov$BUtYzHyjLWe$etg?+ie>>c+<@o>ch@{@R#>Qv#PTMpJPdV7C*&dUr!SJC<Y=TnQ%#`++4dCCIF4$`?43sjxXGj@HB;a7>^d3hW+Qu3Yekw6#XL5+4s!>~7~Ac7*^JATOlcNcWz21nqq>>X1vfWIEb3ABjBRGYW0bTFw)0oYcq@%j{n~`4&>N2>{VArub%u<E%iQhX?Va90fNO8tU%8lrZKCZznjDAr0(J%&H<_QslfE`~DfmWhzj^x^nZ5Mw!ZmmH?xLf+{%e|)F(31^v%?OYB}d~bWN5OaRD316?oGZ97^YKuXT@`P_9qX_mYLPEIGz77hT|t#jN?Mf`WKH>+%JyCLBBt}?L%wpg!Xp2NY`?U@GHwTr=)0K*W*%lMh#r`JzE!*N;VL^-|o&EuS#Tpgo%&(T1m5!pSkynLO5>rrhOajyk}`?Xic3^a|ou^jSenb?xf*7Gyq(-e-@TjQ^Af3FCvh(4iK<;2lo=Zw6RP#<%;ZC+8~m4?1=Koktkxn^_$r_--2}O5G(nih2^aHaq70ZlEFbUFDmr{^*gr8bRFpxDZ?OGMvXFFQy<eJ(KBf*r>zdX(Ol}s<MXr|K#$o7bvq<`FRpHH8l~@a+*)YPef!wMPupV+FG2VcMR@3Hlg4NgQ|7T<4z%#|Yp-K%`sH=e@y8heEbd*e5%oUKx{7M3Z6O!&g4y#aOK$$|tQq%?cW>Uznc=Bjj85-UEv!viw>u{-RwL_7>gc7=mlYKCq$E`%T&Cf=W<OJ6-Zss~P<?p){hJT4iKh18b0F@xM>MhXzE9WVoEe?jNeN0;t2<SX2lSdhkB;$OkKIsGD%?XgzjYv|!^CbeIxN&S_SFVdc0}7`4sm0A*P@5sXt=wtj76k-2nGQS@^Ds;56vbl&ju_X%~w7euRNQs><?EKjrsB4tdG!{VxsTjB8>Bp{#}G=66(}loU{zi4gTo%g{I{O-yM(3J>^S3J`&kZQP%FI6Pnc265E4x$v&faF*Oh60m*Fe*qj}a6#}|s@~&-QBv}B`_hG?w>f8<1yMpD>I92}nar<?OX8MC{L)!_AWzOp1(AvHB0^`ImwE`7P3Uep{G@ZZ%8zc<XN4sYf?5NG-6YH`D@rzWHIcqX1Q^vmdzGxBwGAvuC{LV&VhcbsT)VbJRXRRr5jiiN};Yf>T{4UM3DcY>&q_uVB@%;Y7u7R7KOeey}4p(xcMpwQ#w!>&a_s^%^aBf3vb2wjPVG;8tv1g8*>|ocG?S;L0Jcr<@N!M)KKd)>yqQXvl(QhbDp&kAD5bIfQ?+F1&1953}Cxg3Pvd^~<S{!~%JypVSSV;%$duPcB2D@@|4pj=+p)jYjFHoK)X$E!=u-JrPqo%bwjAkKSS-;Q$aXyl@`q*3L>{r($)lmRc!*+d;p2|0;$BU31X3wbA5IT(6=KWdSu{dm+&!7y+g3;s+tC8&N;DE-lhzD8t^}(##PzSiu$kx$~Dsy7~N@e_FddEq7?>!cC-fPtZ_TlW>?Q8c8!Xj4|EBj-<ZOFw9JouRjlY1ryvS?u<0Cb+OeLLmyYD~ehhP2w$I0EM&+1ZP;DKD;xv>kgb(t)U88m+66&<cw0S5pg3>ZqumWC7Hnnoxc(Th3k%#rTlsm_7?0St`<5cIp%B)E`v;$5h4CLBe|inDyKjYTit3K}m3u?ay82CQFDC`MlPVwlSz<G&&UT6g&{5GJ@MmLY7B5V~|Jxcw?yDJZ(<iRho7<X@Yi>!8BzjYCfCw2`PkizB)im&POE$$B1y44Yk(I;>ec_$@ZSqjm%T8{H6DcS?5gV$w5sEx%{cR{N1j|;ZVlP!u8kI(IjrN>S8{lRRs`>Ha~prCeQxbP}ymmtT#+{Iy||NN@_pzNZm6J#@X_CS*YUs(I!{fd1c*%=O4^Y^=GC|Q(q_N=d_1LMz`vOR7!64rlZaVqE1ci4Uh35qfhgqrc6?0WH)#9V%Dcs{T#T<)XtST$aYcv>g1GhJ{^YH%f`<chI6CkdB{j(X&O25<_oIwXC34k9P-*uPHYoH8g4o%(b<4_ZECLZm-pvCoxeUBsrlr$HS;^u;hma3`kPwvk!An2a_z-G>T<XEdQs})K`kU1K68%;OAwd+Yo~H~W2Q7d0Tt&2w>Ss<=lo|2*VJuidj`+qPnRFxu&>_-Jd&07Fy?2IeI8DuAUP>HxsT`I0^dvxDrbhB7l7crTN=(d1Rv!={YAO05jbFDt{m!lknP1OK%Z?{g>Z#S1(GaC^+!`sj|Hk8vnK9mRWYqt_JbWFv%;Rnb`(F$>KxCwC!ZZpbjD6}jmBUWR)Yd3;KVpR-vL~m|E5Ae&LXedI#fy(XJ47IYlp>^$)m${{js|29FXnlUEKVU5xeAZV(g03WURRGTKFxFhh;COX{<DBZw$Q#`JrZnhyyQlZHZ}`sro6xXBYYxYg8G*sX<8A6(37adQh`dXKcB%rhyJVi5yL03}rfxxZUPs)sAO+m2TM3ICXjT5|P;ekZ$@5o)mk{F(f+|LI*<e$V3J9ay^!^4@Z~bhpXnO9r$d1?w`Llk@d-ZBHzona-+uFWF>ku*F)Dfo;aG|cpX<)j^bs)X}JWDv}|C<oXV==f<N;HXn1N}psbhi$&>T!jJ_|N0U>TEMwQ@@$Ru%|w^`fPL&pVWRbF>Pnnyjge5g&5M{U`bQQp)^SN9RMi%ili8rrH!^G?T#a^{Fx4{ma6_~5DKmh#LxxbNb*b8XIZOPtrNm*J6YWoz;ik7Tyqo8LCj)YWV0oI^%w6h1oR4U)dlY%KG)-8gvhtsOQx<JVX2Hc#-d@wzs<QK^!>%Rw0#k7`@$d-UhG{XczV^yqx@s16=oIP=X80J?MBaqn3eRCc0;lqw*JJng*4`D{#Y>XQtWnZiSpHgq#G*%Hw4n`G0;9M5nz#xt~8qSRpAAE`L!^y--PtEpyb8rwLHiQ@POQ?whf$n;J+({i4+7kAZa(-Vj<eu;fs3YXhBn#;Dl*1^O!oyksFJj(mz8H09;g*E|yI8AV*9Y15L`^rc`=ehERBiPbD3l>E+Nk3ID+50I^(5vP{+hh>UBV*2FblyZ9a#b0X_4v5F*}ywHn^|kb7&o0iefGn2G9QbmfO^d0yk2<Y^%mZEy@fYkZ!sIMXGiUPOscFd$@5n<WpjFZDns+8DdORW@RBC;i3B?uu%|=hG?nfn$A!hV08)1I<Bn(V@!Y-Hygi&81#6|qfmD#4SobRf_ngC928}Imz5CI6DHU3#=7|;r4Xu0qdko#2-FcIHNmaCic<d^69JvlJo{yn7>wF9!j9vFN81aWn+&|m9Of_rs>FUoKh(J!gnvGwZ(g0?dmSx(5ndp+n#F-pR8tpzG86pNu!6hD|Iepx~nCo_>&m!S5jzc*YCPa!ulzNO>5FXZPSZDOOQW7h!c_}Hsbv5F)w9rlB(Y#dhbqcoFv%`fBV7@NpR7U@X$Auns{hy_g`ZB`~#8|KK8(pnkjwD&IZqYa`sfIg<9Z4`|=<-JEV4%NWT>NzYz)bKQ4z?1WGL<wUMVSs;-YLoBmoVOwlNdOBvK=_qc=~IJMo%=cVOAQ=Q(+}(chqz(>k_uX7C$2^oaarQBwt&D%b~bZU)*>lM|S112%fkHeD>;MDQQbf4taaeDLUnmY(=l&S$usY*rs|WJ7~=gUYieG^8(LOh)Rhxk`E_|s8XT}`^l^M<eGFEBCz37x72_1XX};s@D#PZ>ejIBqzdK=J9%ZH=9P>}y0Wv8p4ccDk&?q(lr=AGU~MOCQXD3ft08-0D{MH;gzHE_Nw%VpCKo;|n6x#HXLcN$uR$J(uzFJ-{b@v@rfW}$>$6mH7nruW(YzcBDs0W%g}RVAZ-$==;QWrVSX7I;u{oNbLbD(!8HNRm>>-DPCKsK0MdvvfIx5N)h1;qLbt$sDQGD;~rZxPP#xB7n?XW-c^d$3-{9+Q?-qBN$))j@v_T!Zmtyi3vbJdJj6vlGrtrCPz+CPrz#JSR{r+nta<|tc+3$J|X?J{R<Deak`ajn_(mW^zEjZHDOc|)uqT=}4jdL2y*gm6_6?gY~`VNufWPV%qICOqPm2C=UA+sqv*qpoPovMmyJJ0*pcv^OqcYRTEvl2x%9?T8esw`|J}$(Qkp63(2=kpe6oB_=Oo0i;KvmhWti9Q(!X{b#XZfpnC>M^LoWgv+J%UR#pmlxIpnR`2#~fYL<9R8JR4+(C-wXfb3%9melmjBi%`K6P8sj0t-#YHceXJr=9mgAJc@fY=MIo}N5|a>Cb+50Pq^4tF8@AVcL)i-lNcX$dih&p8%n<0wvahsPB^l0?BHN3jpG*EURcw1wVeYvmrV-b6ftE(*Qy4-3yGDc@6_9EBZ1o7v*VZMxB&p-XiUM6j6H!KK>j#!_M^4g0lLj27>+DkI#$p?0j|_4!AU>6Rc|1_`x|pci;HmRdG5f{~4TLg#m*VXrpsDGnw%91BXPh%!X>p)>w2QG!xO&|}N_6JD~5qb(w4-T0+c8QJRS+2Ae)?Xx{zauSrA{YjZg4;V%!*?(p{!Kwc2a1)M@IbB|Axxn^*rRvK`8Oa&_%)jLX5gA=R^9dg%`iL#-<x}xEJc%Uw19m$~m<Y8ikU&DdlV3Ry3Ka75-fgBk(TC*dlOo~Fe1%am3*1(FN>QB~QETaamdQR*t2d@rb}`g!6q_J1PM4T0MNNMWIjMaAWoz?{yo6r9#hSyx*EUxckG>U;hv-u|oN;>Jo}>#u-ZpnMBW`qoOqw@4WiPR#d8t)+J-`&yW^eph-mgxZb&0-H#Lt@)>+s*Kr;rEmj)&|zW68Dqk<<{%7PMJLUS<p)Y0CxGcSL(;^x6-wWhR|bglVjgqoTLNJ4%Q<o~f;gWESSB@b!Qe8wma=T}kTN*m7>$m`WzNcWUr0-7sgn9g>IV4KStbJ_pUL_@CHcCM-^6Ig=`2i?4KJtQ~$|SnJa{vv5aE;nSK)PT6r|{b<-7i8LC!8rhyIk`OGQ8z7u5Vp>IOripOs5a)q#enE%^9<lkp<9GH2+A*(-!ciKj1F#DXkV`~|bcnVKlg40PA*ytTT5-(?o1mN#D%l*|&deK1x8S6MzlnR>HyA^nOsryBELtfPvJKHRy;A06>l{)=Dl-9QO-~DNmn^>AIZJC1G006Hm)5$JS_GD}WQohn<QKm>3fWglHfY14&2jOyA<5j9Y&MWL<WajzDPS|bI=77-uS-<I10r2s8+&}T%#6r}><0EzT1WUW@H1w0>R>ZX(hbR=8)eG<Y}%W(RMg4fd=*|&$U<h%J~E0oJRZZVgMtU%X6i$Aw{IAPOSCt5%N@qR%4>RDa-i9^Uo<||`Wm$KEu2D2ByKqO2@B1V$kT{qUyN~?MY`)e29L_()m1G;4|d|A%*A$*!O_lMe){%;(Z3xHOfDWCm8=7TT}hJT9Iq>d`d_~~BlvfY0w$vH2mc;l;PElOGQjteB8D`xSH}2Sj%mip2}dIiNjf`0`yip3OxuOWI$mgg`VtijY8mb{y4Yeyf1o*$91Y*~QfsuPg&%MlP3w=reS9>nxQ4yav}`l`)sbVC+aPuvsZ19z<rT47c4nC@7M7AaG5Fb|6}n%a$;y1{=CVqTFbR0gG26_vJGU#O94s5oW$Y-aNHmmnbL|Gj+sT%egy-3w)9la1EGLnbGFQ@a5z{VsFauNPemc+TqoX;)uaD-Gynx?6p;Kmv+WDOS!l>5xct9&}+tLni{q5sg-K^H|9}Z}pw%O`lr;9l%J>5#ivZ`w4CwE<`xKSddr!4Q9JC4|B`>C%F67?E?O%ti9{gs1J)<O2qP85YK79aXY>nNbga5oW@3`99$FK=iH*a)!jJn<BI@D^ob1`-f$jUNJ~$;_VUQkIz`kuwR5+5*ZRC_qM&%C3*vqC+BdpUte})>j(5W@XpKNn9?gK2Mif+-1u;s`_PGnzT#Wc<B3#8@&GiybC&2"
+PUBLIC_SCOPED_SEED = "c${^b+m2kvb%yWx6g%Ua1mIA0J_tboBY<<ba16*n0tA6nhgF<TW~Q0$9@2`Sch9#*wiIo0+mbzO_Eha!>tFw&x_`6%?sEQLdEUnP>BFPkWP6f!eYwcouEPJU^JTj|$oAoK{&2qX!s&W_k?l9$ZrAZ3^X2jM{C;as@;v$X_U6qWA5K@^v|V5N`7%$>jU}(=m&;&fe!iUA<J;}|eB0VK<$8LrZ(vp3To-7!)A@P(@YtR=c5WZo_hWl}xBXTZyvqN)@SaWn)W+?XO}D3)>uu|&=gFh8^{0pPqv(NN|FZG&MQ-i%yq);dm7|=V+U5I=_sa*C;7#`z`FN5~KR@BS?VoPjJj?a<NykHbe$Rq0my0g=@5!W+O{^(@^$)ge?dA4xzMO8~zvZCo_NiUutH;wv*&a_%r`z@I_WshI_5W{jy<K0AHOBen`9|g5X~9^!J)fUXqdji_{LR1oe(Umh{-i~0kB?h18@pakJj~?bK5A1g=civ9_J@ad6>BnOk@50cKmM701+nt=>l*g0adtb8pN=p@i*TMVL*LBV$N71j9$8pxbvr%r(`$(zzh|W(@3z1H`T73!kH5PwTmPQ3XdAa@`2+&w?e@(-{?^5`eK)6DRYpwg=u4^MhixwRWNI3rrBJ#x-p#<z#^yXE8=u6r8KlJ_-)(<g-j?|1J^tq1_HS}}|3KYdu0qRh@?I|6kkjLKUSQ%$AC~IB2WgMn_0}%8udcWAhwYh1zUs*)hviqMtkW|UzyAr0Uja@5<@XmV{r+-(`S5mo;tfwPPn+GIuJ5*QegdtQWbxxKn`pf*bEE1H6q0W9SmW_!%6zxcOdj*`tfd;X<+YkWy$MW@SBUfW4==atPg8ImCtf<O(_r1}%cH*j^8`}d`^(F-K0kB#)ab=4e75&5O)({+MR+)0b%g$m2Riz0`vYYF#(()M9)goI7@YWZS86$d-gn=9_g~lZ^P3;;+T(kL@Wa#H*LUmmryJYfzgFe`@x$%@>3aXs-o3s1GY;>*{*NE-PC7S${@d$Aqw)M+kIR~B>@dCXQz}Jz8_wq0N0~F4RZCte$JwU%;GB&vxtfyrTwP9V@aeVJ-#)R0jsC~CU)m<DV9m(E*KB=UAvSBm^fQ~}>y+qx$io)D^d+-w9k~o=yq|+#Y3A44#ALs`%`(M^Na#hp&#v3ts-#+c4#N#UhDlNE^ir&sC~UoQw|0)`svE2QdYhEI`SLzKjXYVa^K>QDVruKTI6I4Pb-7&3oJ@BdE7euJ_1$*y{JEqwt%P6i6I=~n-X~fkvy~Foa57e(C1<-bvuR}-W7CLbj8fbbsq}8zlq%2S>{?P%{`EdCe|eY5WE(SN=F+AX-uqahscueNYwy$BHWyot6h`hPx>bb2xzt-rVt3662hGXLXWx3XsZY}>eP}kau4{I#)ojStOgm$n#ilvgVnIH|rC431+`Ge=RKL7W5{S!*x1pvgGpyV~7qAe0iPf~VN*vaXY6Kuk;OEY7lq73Z*WDh{M^#(hmqv%7#SZ2y>}Yw~Of^RheL9}Q=Ul57p0!%g4*+}&u8h|G?l=cUb9pRCws)67*D`e&5XT6mX7Y+5dlO2aSlzABO$YC-Rqt)-EvB_Y+R=EHNjp*oxvbV%f!!d1<XxJjQ6*39YFc6#NMozjy`v7(ioNBy+r<R;<$X+Uqvd6@w^D836f;t=7?(mVm0=`<EN}%Z%uHSyJ5oRNhO+G-V3RvI&#Zuobt*gL8oP(gdg{icS-mOj;qy$HaSAqw;%+P>VaBjbbAE?tSIxnEt_3zF+MXzj$6grb-0|qnjgs4{3nE~edh{(#Y0R<hzOoUu3wG>yptys5n7>@5r!WIun%&GUwK3o!&$=4@s^Ww<NFQl5Tux+~*>D=LR_1P>gTaXf!h;(Zb%8shVK8HAnaKfxb`&?paCuR;nY#4}mT1fsJmjKn^6OnZ)9~eehOk}*Q?5v}wuamwt3mx&3-Dz?X_RV$btBfoIfuzUmDVM~ePNG+qY0(XwTOYYV0WFu=$QUGbz(+Wd^;BmB;)ODAZ@?^9fAO%iS718kPfs!YPU1-4}vwU2)&pHOoqf#3ZXh%i$f|c+)!MTfp$>gA=UI*cU80QV07w&qoMg?dq?HUlmO@=^WTbtR~>AL6d`+U892Keo`?-A>PP4LPTImjZ=g(1FU@McQS-@@uQgI*Jc}KRt~JBRa@Oe!;<vKzv9w_PO0n&0=0ZGB&}r(N!K3u(Jg>zXnA1@tHuS#cm?A6s1@t`oWvOEXpivR3Zj1d)K@avpqr(t^WALdHBJ0yG%Qp1hhtA@n|3MOPv&P^a7+OE^!78?MhqY3UFujl!9=+gms0Y@0U;v=T+$R+U&bB%woKz~rjNeYZBNjDIlbPJ|8MEbsAss!970rl109o;}6cP*Cb|eQtl7T(skm1cxa}Nw`suQ?5KgH}Q2a!w%CsI9jbRt8a*p`*y{LbnbP@rkGl(AeNdDXg*>8^@Fw`{boAXT5qbukAL2Ol@T3}jGOP=}=OmYNG#6FZXW%LSw%q*b~?umyZ*jA@{Cey`UDT##%pr8U|OVQCW_lvZ7EixWl2ds(D{BTUN)G8B#!RCF*!NHFX+sm>hWjf4~gRl{K*EsU82FT5L%0EZE%pdNHKIGvZ37IK&;uEeMhN^8&5<^ToFwU9t>YS<%jEZ}5%M7d2!v|-*k7^V#?oS^FLWwf@YV~BCwz3xfp0BiKVswSG$YSW$@wbRS71heW14jG8p#hNA|d1D1qfw!jhf=k#zARftewHEI0BQB>7+7m+~h8LwVg;Wx2US$$Th^Pf?KNeD8F~x=~!4vq;igs|GVg{yp^lI^CGEr@ur*_|w7_55IfmJ}C*TkkJ{K&*i3qBY*h;c^-iAOjh9n?4mV?qcW$As=LHbh)-Qz6c35Kb$AUeu=IvO?}A40HmR_FW8#2X;E!lKL1)S1Az#!rIa@O~U>nb1~Z3Q&sY>*jo}k0mwQOqJ*%YPjBnNK5E37w*+G+sMr^#up7L_qT3BOYSi##GqH7nWCq7AMhm}E1?kxzCd4BeSZdEXJ-8LD#>^lHh!3=Qf@;4=8yJvU5>gTML;wbh;D+=VWe>J5@6tmjIY83*h=p*W#b|&Tlndu%11QIfA~MKL#iZ$#kuQ^^!Yh66r0S8Cg52>cXt4%Fs2|Bj;#|`h?feLhoFO`hiOE$z9Z?SD+RWd1zmo%>@{udRQBMLprl2(VOG?NgRrQIukUl3i4#mTU;DZZ7UQz>w1FdyyrnQ@#gA9WIHiOBwtzs((B2c8qxJ?U`IDxkV1VRbJ6Hk#Yb_Vp;W2>+`dksBG2ea3fj86e(9F@!-VMp5vCOahWSM-BnCk4|r@;#oB{D1|99FT^wM*tD_D8A>2J~qW7j)IoE1bYdCIq^#P)=Ye(=7=|tbA(o)L68&AT){uP?!<T?p`DT=Th=MBB&KJ2jA+c+pmb1kTP<Qkpgw3QH|yXttQDmbC8k|`R~vqSYFnFz%rHHNA-=2os0v;;JfrG~g>c2xkUcYMJ{uzpMGTJ&#<DvQ<7^LbjkVyRU4_I#C6S>&lRr3{bEXRs&$P^FN%>o2iG_O*ci3<^?9u+ZC=u+BG6L)l&A6f|$_J-NP7U5>UJ{Y8VQ*B<XyF*5#%ghLNHv6M$1aiLjE`7Huc30qJljN`382#wn`@1N0fHjBb9&FIHki|liF!BOB8C{L-TMNIA{}6E4N^|)<eSAj8ecPU(C7h1v@~tSjOi&$?a7Q3tPw{N+0C>(%Gyn;)oDCv5m{imMfgWw^6(f<3P##sf+iugO&CV-TyVA-Iz~mAJ769=`FJOC&R2h=a<rceQUMqU#~C6J)7ygVG%V?e@EFz;OC`iC^2Cr4TMGm)7%+`Jy3JAg)r)}AW=+IGoIJfDB4F4t(#(#pcwvafni_O$1KFX%@EjQnRG6#%Em+M*rK3MtO%>YTfiWAv`niSHDg_;SPt>h}a|w0}1J*mCA1&dWv-$lkr87t9CcYzE$=eqDqP+=&1+3^9hC}e$Y8II&><;fD@dv9ZzZ<vu!tQ;Rv=8>-VFe*IR40=a5lyU`K+%Nj-XU2$3f{|k@===3N)Cea!T(xUhyN^_7IWa>dIJR+3*h3K#1qUW8ndd!(Ewf(UO_Q4I^7}DTwAmxZuJZ;eRdJT7+HTH64v6$gRSI%i69Jy5$z@h!!sT>U9G6uUF;|+AoCX2zlat|FG%}7XjR&MboZ(km5k3qeQ*Y~k^U$T7QSLY3rs=HcoOWQM|<htNUlR$<Odl$Q(75}gW6g8uUDWQ=5i3Uk=$q)3L81b0(vHsg!^g)iAp{tka-w7gCZT@{e9&Dbz`lqm`*X45PI?OS<vi^+4iJFyCjKTFJj<0EdO2XB&id?XE%MX;*8OO7zN^CtzGXx9lBh!ex<K2rRwdpC#yO`Y7hj2&J2@^AuDA{=VluFD@!Q(=sr1SOiURBE{tIgK!cbNFkM;i+e<UuLUwj?hGe4NTi}#i5vC6;>>70RnL;p3A>>8THJs3o22;B_$)(nrHS`7sjfZw{#Od`iwlxxF@OfaG_xHSqpD9#9+y>%G-tGa!HaG>E?j%Mc6)15T$y;cvIG2SPFoevw0RH-{Z0SgcEVJ)0=#0M!Mz?`dhf@<Dq`=nXVEwQM@7^7QH5-7z*zrq^?6*J8QFg>JqV8meLc^hDw&WxsBM7)iycQ<A0XDrpre{_pU<?sO4Mv3Uy;HCU?J1}*W<(rZ7a{FQ(r0cAu{$}!wM|MygdTDnu2d&z;9Zj5z((Ug69;?5aG6X3yAb1Sg4F~wta71RCdJ@C(Wq3t@y_G)^1=*z*YTiw?-2LbA;BN)BN+8geMXnA+K=Esnu)~fBI!gh@!{2yLU=PbADL<fxYXhu7HscLkFH=N@?YFCBts^o6}s<}=w)GHPFT4FUzgIWIuQ$rPNyFQBfx-U=i}S~g<?cvRATIIU@wN6+C}OyU2v<V4oxL%3IasCnu=(E`C92<0F>;`Vva^9pj)|XW1WjE1zwSEy_PLxWLVmGuLvQGxvrlizy`rJyro7lvy;;UEhV-&4>U7+Nx<b<<7Ad17FvBrfK3I<!#ngYwm?l@FYVckoD}2dq2Zu2NN9nH3(5%JgCL#8LNb^ZTjw<nK|>8!>ecIp#fd;zqkn9){|M7LYmNjC`-U9*S4|^w=}j&c#NruB6aBnFX~l!$ka&HHUW>L02s75Z@2~rhuJ<&>>x>dfa?`99m`@Fj5e-Mwbdq2m{YU^1;##Ng>Olfv)6a|d*(4vhL~MquC~uyl6rwh$MYl#RB@%k*+6q%Y`g1XQtIS-01_mf~fF9PqKjvt3Ffr2UkR$9s^(c!#!bH<tXoNr!`bicoA+Gg;{}{!hPv8=g12cQ8V~*}!Y@!3j>0NQ1sr4H5qq#Doqi6WFh~ud~4K!m;F+?E!co+{JJ?y@#o6kodml}$baXP`{XL=!64DyCE0_{69<LgI2SX_J?GHsUz{gm`BDe*LMe}xeIkN^4hPQL*p&-&emyRUz^yXaSduD5sky#);pqgwJ-?ineVlL8VKaKbPEa$tg9RQ9GHr{cG1l_i&VOub%>>9r3#>UT)m<@>*^Nb(!>QoW~OUEnW#yHQGs^qs#H(+Kts-i9inx<V$YnFE4Cz^G?9U;bMz_vUrUM<p*TGA399rRftkYQSe;(U5t!oc5zKtf+j@Pckq`dfl!UABEVO>@REDpVu5XoQznJ^f@MzfGnYW7PKN#_=pYzE92Lp!qQzg@%2^&mj>+C-H#l7Jjhe~_M=>`Cq2C7rPpu0eEUEsehn9|Um_aB7}3iN)223z$YQN#fJ%@`NaWqmzxdQX{67Lh7r`v{wiR_C)9PL6qy&s>=S`E8hawb4Igd<IBBNBNcD1Wm-2JFuQF-&`Z~yB4erxX)ZsY#^K`yV~68joUjR1^%UwZWSShsRtTTS<PbxHd9Y!7|AzyG^8{|B`5qqz"
+
+
+class Generation19Tests(unittest.TestCase):
+    write_state = QualificationTests.write_state
+
+    def setUp(self):
+        QualificationTests.setUp(self)
+        self.repo.root = self.repo.main
+        self.state = copy.deepcopy(G17_STATE)
+        self.state.update(
+            contract_generation=19,
+            approval=copy.deepcopy(G19_APPROVAL),
+            approval_history=copy.deepcopy(G19_HISTORY),
+        )
+        self.write_state(self.state)
+
+    def test_actual_history_and_fresh_gate_authority_change(self):
+        import review_batch_windows_v1 as windows
+
+        authority = activation.authorization(self.repo)
+        self.assertEqual(authority["contract_digest"], activation.G19_CONTRACT_DIGEST)
+        self.assertEqual(self.state["approval_history"][:-1], G18_HISTORY)
+        self.assertEqual(self.state["approval_history"][-1], G18_APPROVAL)
+
+        def changed(*args, **kwargs):
+            self.write_state(copy.deepcopy(G17_STATE))
+            return None
+
+        with patch.object(windows, "_full_checks_g19", side_effect=changed):
+            with self.assertRaisesRegex(WorkflowError, "authority or source changed"):
+                windows.full_checks_g19(self.repo, self.repo.main, {"plan_comment": 6072111969})
+        for mutate in (
+            lambda v: v.update(contract_generation=True),
+            lambda v: v.update(contract_generation=20),
+            lambda v: v["approval_history"].append(copy.deepcopy(v["approval_history"][-1])),
+            lambda v: v["approval"].update(plan_comment=True),
+            lambda v: v["approval_history"].reverse(),
+            lambda v: v["approval_history"].pop(),
+            lambda v: v.update(approval=copy.deepcopy(G18_APPROVAL)),
+        ):
+            state = copy.deepcopy(self.state)
+            mutate(state)
+            self.write_state(state)
+            with self.assertRaises(WorkflowError):
+                activation.authorization(self.repo)
+
+    def test_seven_primary_predecessors_and_closed_capacity(self):
+        import base64
+        import zlib
+        from types import SimpleNamespace
+
+        import review_packet
+        from test_installed_qualification_v1 import PUBLIC_U
+        from test_suite_deadline_issue31 import PUBLIC_G13, PUBLIC_T
+
+        numbers = [6068705967, 6072002965, 6068144159, 6064513854, 6062530466, 6061320190, 6045434332]
+        bodies = [
+            zlib.decompress(base64.b85decode(v))
+            for v in (PUBLIC_X, PUBLIC_SCOPED_SEED, PUBLIC_W, PUBLIC_V, PUBLIC_U, PUBLIC_T, PUBLIC_G13)
+        ]
+        rows = [
+            dict(
+                id=n,
+                body=b.decode(),
+                user={"login": "Zi-Deng"},
+                issue_url="https://api.github.com/repos/Zi-Deng/FLOW-DC/issues/31",
+            )
+            for n, b in zip(numbers, bodies, strict=True)
+        ]
+        context = dict(
+            designated_plan_comment={"id": 6072111969, "body": "X"},
+            issue={"title": "31", "body": "acceptance"},
+            issue_comments=rows,
+            reviews=[],
+            inline_comments=[],
+            pr_comments=[],
+            pull_request={"head": {"sha": "a" * 40}},
+            commit_statuses=[],
+            check_runs=[],
+        )
+        repo = SimpleNamespace(name="Zi-Deng/FLOW-DC", root=Path.cwd())
+        self.assertEqual(
+            review_packet.g19_predecessors(repo, context), list(zip(numbers, bodies, strict=True))
+        )
+        for index in range(len(rows)):
+            bad = copy.deepcopy(context)
+            bad["issue_comments"].pop(index)
+            with self.assertRaises(WorkflowError):
+                review_packet.g19_predecessors(repo, bad)
+            bad = copy.deepcopy(context)
+            bad["issue_comments"].append(copy.deepcopy(rows[index]))
+            with self.assertRaises(WorkflowError):
+                review_packet.g19_predecessors(repo, bad)
+            bad = copy.deepcopy(context)
+            bad["issue_comments"][index]["body"] += "\n"
+            with self.assertRaises(WorkflowError):
+                review_packet.g19_predecessors(repo, bad)
+        for index in range(len(rows)):
+            for key, value in (
+                ("id", True),
+                ("user", {"login": "other"}),
+                ("issue_url", "wrong"),
+                ("body", None),
+            ):
+                bad = copy.deepcopy(context)
+                bad["issue_comments"][index][key] = value
+                with self.assertRaises(WorkflowError):
+                    review_packet.g19_predecessors(repo, bad)
+        # Intact canonical JSON cannot rescue a mutated whole source wrapper.
+        bad = copy.deepcopy(context)
+        bad["issue_comments"][1]["body"] = bad["issue_comments"][1]["body"].replace("SOURCE", "source", 1)
+        if bad == context:
+            bad["issue_comments"][1]["body"] += " "
+        with self.assertRaises(WorkflowError):
+            review_packet.g19_predecessors(repo, bad)
+        for cap in (1000000, 0):
+            with tempfile.TemporaryDirectory() as tmp:
+                packet = Path(tmp)
+                for name in ("repository-policy.txt", "review-policy.txt", "domain-policy.txt"):
+                    (packet / name).write_text("policy\n")
+                (packet / "source").mkdir()
+                (packet / "source/pinned.txt").write_bytes(b"x")
+                with patch.object(review_packet, "run", return_value=SimpleNamespace(stdout="")):
+                    if cap == 0:
+                        with self.assertRaisesRegex(WorkflowError, "snapshot budget"):
+                            review_packet.build(
+                                repo,
+                                packet,
+                                "a" * 40,
+                                "b" * 40,
+                                [],
+                                [],
+                                context,
+                                {"required_checks": [], "max_snapshot_bytes": cap},
+                            )
+                    else:
+                        review_packet.build(
+                            repo,
+                            packet,
+                            "a" * 40,
+                            "b" * 40,
+                            [],
+                            [],
+                            context,
+                            {"required_checks": [], "max_snapshot_bytes": cap},
+                        )
+                        inventory = json.loads((packet / "required-material.json").read_text())["required"]
+                        for n, b in zip(numbers, bodies, strict=True):
+                            name = f"contract-predecessor-{n}.txt"
+                            self.assertEqual((packet / name).read_bytes(), b)
+                            entries = [v for v in inventory if v["path"] == name]
+                            self.assertTrue(entries)
+                            self.assertTrue(
+                                all(v["kind"] == "contract" and not v.get("omitted") for v in entries)
+                            )
+                            covered = [i for v in entries for i in range(v["start_line"], v["end_line"] + 1)]
+                            self.assertEqual(covered, list(range(1, len(b.decode().splitlines()) + 1)))
