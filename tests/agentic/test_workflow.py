@@ -224,8 +224,11 @@ class SnapshotTests(unittest.TestCase):
         head = self.git("rev-parse", "HEAD")
         data = review.snapshot(self.repo, head, self.output, self.config)
         self.assertIn("memory/private.txt", data["omitted"])
-        with self.assertRaisesRegex(WorkflowError, "private/data"):
-            review.safe_diff(self.repo, self.head, head, self.config)
+        self.git("mv", "memory/private.txt", "public.txt")
+        self.git("commit", "-m", "move private content")
+        for base, target in ((self.head, head), (head, self.git("rev-parse", "HEAD"))):
+            with self.assertRaisesRegex(WorkflowError, "private/data"):
+                review.safe_diff(self.repo, base, target, self.config)
 
     def test_empty_and_oversized_diff_refused(self):
         with self.assertRaises(WorkflowError):

@@ -61,7 +61,7 @@ def snapshot(repo, head, output, config):
 
 def safe_diff(repo, base, head, config, source_bytes=0):
     revision = f"{base}...{head}"
-    names = repo.git("diff", "--name-only", "-z", revision).split("\0")
+    names = repo.git("diff", "--name-only", "--no-renames", "-z", revision).split("\0")
     if any(name.startswith(EXCLUDED) for name in names):
         raise WorkflowError("Diff touches excluded private/data paths; refuse transmission")
     diff = repo.git("diff", "--no-ext-diff", "--no-textconv", "--no-renames", revision)
