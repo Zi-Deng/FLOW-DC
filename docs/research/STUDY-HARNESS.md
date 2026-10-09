@@ -7,6 +7,9 @@ Use the explicit [finite research profile](WORKLOAD.md) for mechanism qualificat
 4500` tests ascending fixed-concurrency workloads for the three primary scenarios.
 Its protocol is written before execution. Every infeasible, failed and tested
 candidate remains visible; selection stops at the first qualifying candidate.
+The default fixed limit is 16, matching the allowed controller maximum. A slower
+fixed default can select a workload that ends too early under another method;
+retain that diagnostic and recalibrate before freezing scientific inputs.
 The wall limit reserves a full acquisition/cleanup window before starting another
 run. Origin realization and fixed-client observations do not establish exercised
 adaptive decisions or cloud resource fit. Use the existing `study.py calibrate`
@@ -36,8 +39,8 @@ authority rather than invent named-advisor approval.
 This is engineering software for milestones A–C of issue #26. Local V1 fixtures
 test state/accounting; V2 requires the real localhost executions described below.
 There is no efficacy result, frozen scientific protocol or live cloud authorization
-in these files. Advisor approval has been reported, but the specific decisions are
-pending. Distributed admission, native TaskVine and the offline topology ladder are described
+in these files. The maintainer accepts provisional defaults; named-advisor
+decisions remain pending. Distributed admission, native TaskVine and the offline topology ladder are described
 in [the milestone D contract](DISTRIBUTED-WORKFLOW.md).
 
 ## Origin contract
@@ -108,13 +111,16 @@ The tracked machine-readable examples are:
 - `benchmark/plans/engineering-smoke-v1.json`: one engineering block with a
   pre-generated order, for bounded semantic checks only.
 
-`plan` shuffles family and method order within each block using an explicit seed.
-Every block/family contains all four methods. The original plan is validated and
+The examples above retain their historical four-method V1 interpretation.
+New research plans select `--research-workload bounded-research-v2` and may supply
+`--rows-by-scenario FILE`; every family/block contains all five methods. `plan`
+shuffles family and method order within each block using an explicit seed.
+The original plan is validated and
 hashed before execution; changing cells/order/configuration is refused. Source and
 environment hashes bind the study namespace. Tuning, evaluation and engineering
 use different directories, logical IDs and derived fixture seeds. An explicit
 `--method-configs` JSON may select parameters *before* generating a new plan; it
-must retain all four comparators and common absolute bounds. Evaluation outcomes
+must retain the plan's complete method set and common absolute bounds. Evaluation outcomes
 never automatically select a configuration.
 
 `run-cell` executes one cell per invocation and enforces the frozen preceding-cell
@@ -125,8 +131,10 @@ summary uses the first planned attempt, never whichever rerun looks best. After 
 crash, uncertain ownership or a live previous process group prevents continuation;
 the harness does not issue blind process kills to recover it.
 
-Every run has one downloader process, at most 256 rows and 64 MiB expected row
-payload. The lifecycle has a 180-second deadline and 60-second cleanup reserve,
+Legacy V1 runs have one downloader process, at most 256 rows and 64 MiB expected
+row payload, with a 180-second deadline. Research V2 runs use the complete finite
+profile (32,768 rows, 512 MiB expected row payload, 300-second acquisition limit).
+Both retain a 60-second cleanup reserve. The lifecycle
 retains the group leader's PID until all group signalling is finished, and handles
 INT/TERM by cleaning the owned group. Repeated signals cannot abort that cleanup.
 SIGKILL/power loss cannot promise cleanup; recovery records that uncertainty.
@@ -194,12 +202,15 @@ Engineering checks do not freeze a protocol. Every provisional pilot or confirma
 source and environment. `approved=true` is insufficient. `freeze` requires an
 explicit decisions file with the approved plan hash, decision provenance, constraints,
 estimand and repetition rule. That is user-supplied attestation, not software proof
-of advisor agreement. No such real record or decision file is shipped or generated
-by this PR. Later source/environment changes invalidate the binding.
+of advisor agreement. For accepted provisional defaults, use
+`approval_authority: maintainer-provisional` and retain the maintainer's actual
+decision provenance; it must not imply advisor approval. No executed scientific
+protocol is shipped in the repository. Later source/environment changes invalidate
+the binding.
 
 The later manual command is `benchmark/study.py freeze --plan PLAN --decisions
-USER_SUPPLIED_DECISIONS --output NEW_PROTOCOL`; do not invoke it until those
-decisions are actually supplied. No broad pilot, cloud activation, operational
+USER_SUPPLIED_DECISIONS --output NEW_PROTOCOL`; invoke it only for supplied
+decisions or the maintainer's explicitly accepted provisional defaults. No broad pilot, cloud activation, operational
 migration or live allowance change was executed by these tools during implementation.
 
 | Acceptance | V1 evidence | Remaining gate |

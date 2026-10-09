@@ -18,17 +18,19 @@ from benchmark.study import execute_cell, originals
 CANDIDATES=(512,1024,2048,4096,8192,16384,32768)
 
 
-def calibrate(output, *, seed, scenarios, wall_seconds):
+def calibrate(output, *, seed, scenarios, wall_seconds, concurrency=16):
     require(type(seed) is int and 0 <= seed < 2**32,'invalid seed')
     require(600 <= wall_seconds <= 14400,'calibration requires a finite 600..14400 second budget')
     require(scenarios and len(set(scenarios))==len(scenarios) and set(scenarios)<=set(RESEARCH_SCENARIOS),'invalid scenarios')
+    require(type(concurrency) is int and 2 <= concurrency <= 16,'fixed calibration concurrency must be 2..16')
     output=Path(output)
     output.mkdir(parents=True,exist_ok=False)
     limits=workload('bounded-research-v2')
     config=method_configs()['fixed-v1']
+    config['C_init']=concurrency
     protocol=dict(schema='flowdc-fixed-calibration-v1',seed=seed,candidates=list(CANDIDATES),scenarios=scenarios,
         wall_seconds=wall_seconds,workload=limits.record(),config=config,
-        rule='First ascending feasible workload with complete fixed acquisition and qualified realized stimulus; retain every candidate. No adaptive outcomes inspected.',
+        rule='First ascending feasible workload with accountable fixed acquisition and qualified realized stimulus; retain every candidate. Default concurrency equals the allowed maximum (16), so the slow default does not select an artificially short adaptive workload. No adaptive efficacy outcomes enter selection.',
         limitation='Fixed-client origin/observation qualification is necessary; controller mechanisms and cloud resources require separate checks.')
     write_new(output/'protocol.json',protocol)
     environment=environment_record(ROOT)
@@ -89,8 +91,9 @@ def main():
     parser.add_argument('--seed',type=int,required=True)
     parser.add_argument('--scenarios',nargs='+',choices=RESEARCH_SCENARIOS,default=['drop-recovery','mixed-sizes','sustained-overload'])
     parser.add_argument('--wall-seconds',type=int,default=4500)
+    parser.add_argument('--concurrency',type=int,default=16,help='Fixed calibration limit; default matches the allowed campaign maximum')
     args=parser.parse_args()
-    result=calibrate(args.output,seed=args.seed,scenarios=args.scenarios,wall_seconds=args.wall_seconds)
+    result=calibrate(args.output,seed=args.seed,scenarios=args.scenarios,wall_seconds=args.wall_seconds,concurrency=args.concurrency)
     print('Qualified workloads:',result['selected_rows'],'; complete:',result['complete'])
     return 0 if result['complete'] else 1
 
