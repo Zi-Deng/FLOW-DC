@@ -138,7 +138,7 @@ def scenario(name, payloads, *, rows=128, research_workload=None):
         "clock_anchor": "first request arrival, separately at each origin",
     }
     if research_workload is not None:
-        result.update(schema="flowdc-origin-scenario-v2", workload=limits.record())
+        result.update(schema="flowdc-origin-scenario-v3", workload=limits.record())
         # Fixed stimulus definitions, frozen before controller outcomes. Small
         # engineering runs may end early; qualification must check realization.
         result["schedule"] = ([[0, 4], [15, 1], [35, 4]] if name == "drop-recovery"
@@ -148,6 +148,13 @@ def scenario(name, payloads, *, rows=128, research_workload=None):
                                       else [[10, 300]] if name == "sustained-overload"
                                       else [[10, 15]] if name == "recovery" else [])
         result["queue_bound"] = 16
+        if name in ("transient-overload", "sustained-overload", "recovery"):
+            # Load-dependent overload: admitted work remains successful. Only
+            # requests beyond one service slot plus the two-place queue reject.
+            result["schedule"] = [[0, 4], [10, 1]]
+            if name != "sustained-overload":
+                result["schedule"].append([11 if name == "transient-overload" else 15, 4])
+            result["queue_bound"] = 2
         for spec in objects.values():
             if name != "mixed-sizes":
                 spec["service_s"] = .4 if name == "sparse" else .04
@@ -215,6 +222,9 @@ class ControlledOrigin:
                     while owner.model.states[request] == "queued":
                         owner.condition.wait(timeout=0.05)
                     service = owner.model.states[request] == "service"
+                    rejected = owner.model.states[request] == "rejected"
+                    overload_stimulus = rejected and not owner.model.stopped and any(start <= owner.elapsed() < end
+                        for start, end in plan.get("overload_windows", []))
                 spec = plan["objects"].get(self.path)
                 policy = (
                     {"status": 404}
@@ -228,10 +238,6 @@ class ControlledOrigin:
                     }
                 service_s = (min(1, spec["service_s"] + spec.get("service_drift_per_s", 0) * owner.elapsed())
                              if spec else 0)
-                overload_stimulus = service and any(start <= owner.elapsed() < end
-                    for start, end in plan.get("overload_windows", []))
-                if service and overload_stimulus:
-                    policy = {"status": 429 if request % 2 else 503, "retry_after": "0.1"}
                 if service and spec and owner.stop_event.wait(service_s):
                     policy = {"status": 503}
                 status, sent, disconnected = policy["status"], 0, False

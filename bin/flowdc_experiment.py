@@ -307,7 +307,9 @@ def collect_outputs(store, selected, manifest, state, transport, deadline):
             [sys.executable, str(Path(__file__).with_name("flowdc_experiment_artifacts.py"))],
             seconds=deadline - time.monotonic(),
             maximum=LIMIT,
-            data=encode({"kind": kind, "maximum": maximum, **expected}) + raw,
+            data=encode({"kind": kind, "maximum": maximum,
+                "research_workload": manifest["spec"].get("distributed", {}).get("research_workload"),
+                **expected}) + raw,
         )
         value = parse(response)
         if code:

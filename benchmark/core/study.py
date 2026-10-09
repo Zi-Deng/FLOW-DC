@@ -133,7 +133,7 @@ def make_plan(
         ordered_families = list(families)
         rng.shuffle(ordered_families)
         for family in ordered_families:
-            ordered_methods = list(methods)
+            ordered_methods = [method for method in METHODS if method in methods]
             rng.shuffle(ordered_methods)
             for method in ordered_methods:
                 cells.append(

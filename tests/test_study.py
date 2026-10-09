@@ -30,6 +30,8 @@ from benchmark.core.study import (  # noqa: E402
     t_critical,
     tuning_catalog,
     validate_plan,
+    read_plan,
+    write_new,
 )
 from benchmark.core.truth import digest, encode  # noqa: E402
 
@@ -113,6 +115,24 @@ class OriginModelTests(unittest.TestCase):
 
 
 class PlansAndInferenceTests(unittest.TestCase):
+    def test_saved_plans_reload_with_canonical_method_order_and_freeze(self):
+        with tempfile.TemporaryDirectory() as folder:
+            for profile in (None, "bounded-research-v2"):
+                configs = method_configs(legacy=profile is None)
+                configs = dict(reversed(list(configs.items())))
+                plan = make_plan(seed=31, configurations=configs, research_workload=profile)
+                path = Path(folder) / ("legacy.json" if profile is None else "research.json")
+                write_new(path, plan)
+                loaded = read_plan(path)
+                self.assertEqual(loaded, plan)
+                validate_plan(loaded)
+                decisions = {"approved_plan_sha256": digest(encode(loaded)),
+                    "provenance": "Test fixture, no scientific approval.",
+                    "constraints": "Test fixture only, no real constraints.",
+                    "estimand": "Test fixture only, run-level endpoint.",
+                    "repetition_rule": "Test fixture only, fixed repetitions."}
+                freeze_protocol(loaded, decisions, source_sha256="a"*64, environment_sha256="b"*64)
+
     def test_blocked_order_reproducible_complete_and_namespace_isolation(self):
         plan = make_plan(seed=42)
         self.assertEqual(plan, make_plan(seed=42))
@@ -232,6 +252,21 @@ class HarnessRecoveryTests(unittest.TestCase):
             },
             "origin_work": [],
         }
+
+    def test_reloaded_plan_runs_and_summary_names_paarc_reference(self):
+        path = self.root / "plan.json"
+        write_new(path, self.plan)
+        loaded = read_plan(path)
+        def execute(directory, cell, config, environment, **kwargs):
+            return self.native(100 if cell["method"] == "paarc-base-v2" else 200, "complete")
+        with patch.object(harness, "execute_cell", side_effect=execute):
+            for index in range(len(loaded["cells"])):
+                harness.run_cell(loaded, self.root, index, resume=index > 0)
+        summary = harness.summarize(loaded, self.root)
+        self.assertEqual(len(summary["comparisons"]), 3)
+        for comparison in summary["comparisons"]:
+            self.assertEqual(comparison["reference"], "paarc-base-v2")
+            self.assertEqual(comparison["summary"]["pairs"][0]["reference"], 100)
 
     def test_failed_cells_retained_resume_never_repeats_and_rerun_has_distinct_identity(self):
         with patch.object(harness, "execute_cell", return_value=self.native()) as execute:

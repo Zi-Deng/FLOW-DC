@@ -112,7 +112,7 @@ def observations(native, truth):
 
 def realized_stimulus(plan, events, *, minimum_phase_requests=100, averaging_observations=1800):
     """Origin-local phases; never subtract worker and origin clock epochs."""
-    require(plan.get('schema') == 'flowdc-origin-scenario-v2', 'explicit research stimulus required')
+    require(plan.get('schema') == 'flowdc-origin-scenario-v3', 'current explicit research stimulus required')
     responses = [e for e in events if e['phase'] == 'response']
     starts = [e for e in events if e['phase'] == 'service_start']
     end = max((e['origin_elapsed_s'] for e in events), default=0)
@@ -120,14 +120,22 @@ def realized_stimulus(plan, events, *, minimum_phase_requests=100, averaging_obs
     for index,(at,slots) in enumerate(plan['schedule']):
         stop = plan['schedule'][index+1][0] if index+1 < len(plan['schedule']) else end
         count = sum(at <= e['origin_elapsed_s'] < stop for e in starts)
-        checks[f'capacity_phase_{index}'] = {'passed': count >= minimum_phase_requests,
-            'start_s':at,'end_s':stop,'slots':slots,'service_starts':count,'minimum':minimum_phase_requests}
+        service_ceiling = max(min(1, spec['service_s'] + spec.get('service_drift_per_s',0)*stop)
+            + spec.get('tail_s',0) for spec in plan['objects'].values())
+        minimum = min(minimum_phase_requests, max(5, math.floor(.5*max(0,stop-at)*slots/service_ceiling)))
+        checks[f'capacity_phase_{index}'] = {'passed': count >= minimum,
+            'start_s':at,'end_s':stop,'slots':slots,'service_starts':count,'minimum':minimum,
+            'rule':'At least half the nominal service opportunities, bounded between 5 and 100 starts.'}
+    rejected = {e['request_id'] for e in events if e['phase']=='admission' and not e['accepted']
+                and e['active'] >= e['slots'] and e['queued'] >= plan['queue_bound']}
     for index,(at,stop) in enumerate(plan.get('overload_windows', [])):
         hits = [e for e in responses if e.get('overload_stimulus') and e['status'] in (429,503)
                 and at <= e['origin_elapsed_s'] <= stop+1]
         duration = max((e['origin_elapsed_s'] for e in hits),default=at)-min((e['origin_elapsed_s'] for e in hits),default=at)
         expected_duration = min(stop-at, 10)
-        checks[f'overload_{index}'] = {'passed':len(hits) >= 10 and duration >= .8*expected_duration,
+        load_dependent = all(e['request_id'] in rejected for e in hits)
+        checks[f'overload_{index}'] = {'passed':len(hits) >= 10 and duration >= .8*expected_duration and load_dependent,
+            'queue_overflow_verified':load_dependent,
             'responses':len(hits),'observed_span_s':duration,'required_span_s':.8*expected_duration}
     good = [e for e in responses if e['status'] == 200 and not e['disconnected'] and e['body_bytes_written']]
     if plan['name'] in ('drop-recovery','mixed-sizes','steady','baseline-drift','oscillation'):
@@ -141,6 +149,6 @@ def realized_stimulus(plan, events, *, minimum_phase_requests=100, averaging_obs
         checks['baseline_drift'] = {'passed':bool(durations) and max(durations)-min(durations) >= .04,
                                    'observed_service_range_s':max(durations)-min(durations) if durations else 0}
     checks['duration'] = {'passed':end >= max(30, plan['schedule'][-1][0]+10), 'observed_s':end}
-    return {'schema':'flowdc-realized-stimulus-v1','scenario':plan['name'],'checks':checks,
+    return {'schema':'flowdc-realized-stimulus-v2','scenario':plan['name'],'origin_schema':plan['schema'],'checks':checks,
             'qualified':all(item['passed'] for item in checks.values()),
             'limit':'Origin realization only; controller decisions, accounting and resource fit are separate gates.'}

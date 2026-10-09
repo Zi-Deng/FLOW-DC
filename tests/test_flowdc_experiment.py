@@ -970,6 +970,18 @@ sys.exit(cli.main())
 
 
 class ArchiveAndProcessTests(unittest.TestCase):
+    def test_legacy_validation_refuses_research_maximum_before_reading_body(self):
+        from types import SimpleNamespace
+        import flowdc_experiment_artifacts as artifacts
+        class HeaderOnly:
+            def readline(self, maximum):
+                return data.encode({'kind':'worker','maximum':2*2**30})
+            def read(self, maximum):
+                raise AssertionError('oversized legacy body must not be read')
+        with patch.object(sys,'stdin',SimpleNamespace(buffer=HeaderOnly())):
+            with self.assertRaisesRegex(data.ExperimentError,'artifact_workload_mismatch'):
+                artifacts.main()
+
     def test_cancellation_after_stdout_eof(self):
         started = time.monotonic()
 

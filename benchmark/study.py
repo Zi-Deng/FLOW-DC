@@ -305,11 +305,13 @@ def summarize(plan, study_root):
         selected[cell["cell_id"]] = attempts[0] if attempts else None
     comparisons = []
     for family in plan["families"]:
-        for method in list(plan["methods"])[1:]:
+        for method in METHODS:
+            if method == "paarc-base-v2" or method not in plan["methods"]:
+                continue
             pairs = []
             for block in range(plan["blocks"]):
                 pair = {"block": block, "scenario": family, "candidate_method": method, "censored": False}
-                for label, item_method in (("reference", next(iter(plan["methods"]))), ("candidate", method)):
+                for label, item_method in (("reference", "paarc-base-v2"), ("candidate", method)):
                     cell_id = f"{plan['namespace']}-b{block:03d}-{family}-{item_method}"
                     item = selected[cell_id]
                     native = item.get("native") if item else None
@@ -325,6 +327,7 @@ def summarize(plan, study_root):
             comparisons.append(
                 {
                     "scenario": family,
+                    "reference": "paarc-base-v2",
                     "candidate": method,
                     "summary": summary,
                     "precision": precision_plan(summary),

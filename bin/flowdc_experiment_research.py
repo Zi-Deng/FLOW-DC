@@ -64,7 +64,7 @@ def origin_plan(raw):
         and re.fullmatch(r"[0-9]+(?:\.[0-9]+)?", plan["queue_retry_after"])
         and float(plan["queue_retry_after"]) <= 5
     )
-    require(plan["schema"] in ("flowdc-guest-origin-v1", "flowdc-guest-origin-v2"))
+    require(plan["schema"] in ("flowdc-guest-origin-v1", "flowdc-guest-origin-v3"))
     limits = workload(plan.get("research_workload"))
     require((plan["schema"] == "flowdc-guest-origin-v1") == ("research_workload" not in plan))
     require(1 <= len(plan["objects"]) <= limits.max_rows and 1 <= len(plan["assignments"]) <= limits.max_rows)
@@ -72,7 +72,7 @@ def origin_plan(raw):
 
     ServiceModel(plan["schedule"], plan["queue_bound"], lambda event: None, limits=limits)
     require(all(path in plan["objects"] for path in plan["assignments"]))
-    plan["schema"] = "flowdc-origin-scenario-v1" if "research_workload" not in plan else "flowdc-origin-scenario-v2"
+    plan["schema"] = "flowdc-origin-scenario-v1" if "research_workload" not in plan else "flowdc-origin-scenario-v3"
     if "research_workload" in plan:
         plan["workload"] = limits.record()
     windows = plan.get("overload_windows", [])

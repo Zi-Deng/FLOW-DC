@@ -52,7 +52,7 @@ def primary_analysis(inventory, *, blocks, minimum=10):
         key = (record['scenario'], record['block'], record['method'])
         require(key in required and key not in observed and record.get('attempt') == 1,
                 'unexpected/duplicate cell or replacement attempt')
-        require(record['status'] in ('known_terminal', 'missing', 'failed', 'censored'), 'unknown evidence status')
+        require(record['status'] in ('known_terminal', 'missing', 'failed', 'censored', 'integrity_failed'), 'unknown evidence status')
         if record['status'] == 'known_terminal':
             require(all(type(record.get(k)) in (int, float) and math.isfinite(record[k]) and record[k] >= 0
                         for k in ('goodput', 'coverage')), 'invalid terminal run metric')
@@ -88,4 +88,6 @@ def primary_analysis(inventory, *, blocks, minimum=10):
             'efficacy_family': '12 two-sided paired t-tests with Holm; ordinary 95% intervals are not simultaneous.',
             'safeguard_family': '24 separate one-sided Bonferroni lower bounds at family alpha .05.',
             'unit': 'Independent paired run; requests are not replicates.',
+            'evidence_status_counts': {status: sum(r['status'] == status for r in inventory)
+                for status in ('known_terminal', 'missing', 'failed', 'censored', 'integrity_failed')},
             'inventory': inventory}

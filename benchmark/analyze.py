@@ -73,7 +73,7 @@ def first_attempt(directory, cell, binding, config):
         if not terminal:
             result['reason']='incomplete request/accounting or process/cleanup failure; excluded from complete-run inference'
     except (ValueError, OSError, KeyError, TypeError, ZeroDivisionError) as exc:
-        result.update(status='failed', reason=f'{type(exc).__name__}: {exc}')
+        result.update(status='integrity_failed', reason=f'{type(exc).__name__}: {exc}')
     return result
 
 
@@ -89,9 +89,14 @@ def analyze(plan, study_root, *, protocol=None):
     authorize_plan(plan,protocol,**identities(environment))
     inventory = [first_attempt(directory,cell,binding,plan['methods'][cell['method']]) for cell in plan['cells']]
     result = primary_analysis(inventory,blocks=plan['blocks'], minimum=10 if plan['purpose']=='confirmatory' else 6)
+    authority = protocol['decisions'].get('approval_authority', 'advisor') if protocol else 'engineering'
     result.update(plan_sha256=binding['plan_sha256'], binding=binding, purpose=plan['purpose'],
                   protocol_sha256=digest(encode(protocol)) if protocol else None,
-                  scientific_status='confirmation' if plan['purpose']=='confirmatory' else 'pilot/engineering; no confirmatory efficacy claim')
+                  approval_authority=authority,
+                  protocol_authority=protocol['authority'] if protocol else 'engineering; no scientific approval',
+                  scientific_status=('maintainer-provisional confirmation; advisor decisions pending'
+                      if authority == 'maintainer-provisional' else 'advisor-approved confirmation')
+                      if plan['purpose']=='confirmatory' else 'pilot/engineering; no confirmatory efficacy claim')
     for contrast in result['contrasts']:
         contrast['statistical_criteria_met'] = contrast['claim_supported']
         contrast['claim_supported'] = contrast['claim_supported'] and plan['purpose']=='confirmatory'
@@ -105,11 +110,11 @@ def render(result, output):
     write_new(output/'analysis.json',result)
     with (output/'contrasts.csv').open('x',newline='') as stream:
         writer = csv.writer(stream)
-        writer.writerow(['scenario','reference','status','paired_goodput_difference_Bps','ordinary_95_low','ordinary_95_high','holm_p','claim_supported'])
+        writer.writerow(['scenario','reference','status','paired_goodput_difference_Bps','ordinary_95_low','ordinary_95_high','holm_p','claim_supported','approval_authority','scientific_status'])
         for item in result['contrasts']:
             efficacy=item['efficacy']
             writer.writerow([item['scenario'],item['reference'],efficacy['status'],efficacy['mean'],
-                             *(efficacy['interval'] or [None,None]),efficacy['holm_p'],item['claim_supported']])
+                             *(efficacy['interval'] or [None,None]),efficacy['holm_p'],item['claim_supported'],result['approval_authority'],result['scientific_status']])
     import matplotlib
     matplotlib.use('Agg')
     import matplotlib.pyplot as plt
@@ -128,7 +133,7 @@ def render(result, output):
         axis.set_title(scenario)
         axis.set_yticks(range(4),[r.replace('-v1','').replace('-v2','') for r in REFERENCES])
         axis.set_xlabel('Gradient − reference goodput (MB/s)')
-    figure.suptitle('Ordinary paired 95% intervals; Holm and safeguards in analysis.json',fontsize=10)
+    figure.suptitle(result['scientific_status']+'\nOrdinary paired 95% intervals; Holm and safeguards in analysis.json',fontsize=10)
     figure.tight_layout()
     figure.savefig(output/'primary-contrasts.pdf',metadata={'CreationDate':None,'ModDate':None})
     figure.savefig(output/'primary-contrasts.png',dpi=200)

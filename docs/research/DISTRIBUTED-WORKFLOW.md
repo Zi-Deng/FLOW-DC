@@ -139,12 +139,17 @@ full product/service gates, both CI jobs and independent review remain required.
 replace its paths and hash with verified local inputs before use. It intentionally
 fails validation with the placeholder hash and authorizes no acquisition by itself.
 
-The pinned 7.17.2 native manager has a retained upstream limitation: a worker's
+The unpatched pinned 7.17.2 native manager has a retained upstream limitation: a worker's
 first `FORSAKEN` task reaches `exit_debug_message` with zero completed tasks,
 causing integer division by zero and SIGFPE. The stage-in-conflict fixture records
 one dispatch and the `RETRIEVED FORSAKEN` transaction, then requires failed/incomplete
 outcomes, EOFError, native exit -8, no fabricated task receipt, and owned-worker
 cleanup. Its engineering assertion can pass while acquisition remains failed.
-No runtime patch, automatic retry cohort, or successful healthy-partition return
-is assumed after this process crash. The raw failed run and transactions remain
-available. A future runtime change requires new provenance and native validation.
+The raw failed run and transactions remain available. Issue40's research runtime
+builder applies the disclosed one-line zero-completion guard from upstream commit
+`73ead49d394416eb9ff80a2371e7263474135eef` to pinned source
+`ce1360061996e547ea14e22a00bc6042a42a13ce`. The private local qualification repeats
+the crash fixture and ordinary 1/2/4-worker executions against that patched runtime;
+it does not establish cloud execution or every recovery path. Manager and worker
+runtimes must both use the qualified build. No automatic retry cohort or invented
+successful healthy-partition return is assumed after a process crash.

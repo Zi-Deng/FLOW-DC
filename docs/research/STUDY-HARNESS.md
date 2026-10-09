@@ -115,6 +115,12 @@ The examples above retain their historical four-method V1 interpretation.
 New research plans select `--research-workload bounded-research-v2` and may supply
 `--rows-by-scenario FILE`; every family/block contains all five methods. `plan`
 shuffles family and method order within each block using an explicit seed.
+Method order uses the canonical named tuple before shuffling, so serializing sorted
+JSON keys does not change the frozen cell order. The engineering summary explicitly
+names PAARC as its reference. Primary analysis retains `integrity_failed` separately
+from a genuine failed acquisition; either blocks a complete paired interval.
+Protocol authority accompanies JSON, CSV and figures, including confirmation under
+maintainer-provisional defaults, which does not imply advisor agreement.
 The original plan is validated and
 hashed before execution; changing cells/order/configuration is refused. Source and
 environment hashes bind the study namespace. Tuning, evaluation and engineering

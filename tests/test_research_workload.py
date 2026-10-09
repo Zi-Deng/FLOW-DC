@@ -108,7 +108,41 @@ class WorkloadTests(unittest.TestCase):
         self.assertTrue(all(x["responses"] == [{"status": 200}] for x in sparse["objects"].values()))
         self.assertEqual(sparse["overload_windows"], [])
         for name, interval in [("transient-overload", [10, 11]), ("sustained-overload", [10, 300])]:
-            self.assertEqual(scenario(name, payloads, research_workload=RESEARCH.name)["overload_windows"], [interval])
+            plan=scenario(name, payloads, research_workload=RESEARCH.name)
+            self.assertEqual(plan["overload_windows"], [interval])
+            self.assertEqual(plan["schema"], "flowdc-origin-scenario-v3")
+            self.assertEqual(plan["schedule"][:2], [[0,4],[10,1]])
+            self.assertEqual(plan["queue_bound"], 2)
+
+    def test_overload_window_serves_low_load_and_rejects_only_queue_overflow(self):
+        import concurrent.futures
+        import threading
+        import urllib.error
+        import urllib.request
+        from benchmark.core.controlled_origin import ControlledOrigin
+        with tempfile.TemporaryDirectory() as folder:
+            plan=scenario('sustained-overload',{'JPEG':b'known bytes','PNG':b'known bytes'},research_workload=RESEARCH.name)
+            # Shorten only the fixture clock; exercise real HTTP admission in
+            # the active overload window, not a synthetic response function.
+            plan['schedule']=[[0,1]];plan['overload_windows']=[[0,10]]
+            for spec in plan['objects'].values():spec.update(service_s=.5,tail_s=0)
+            with ControlledOrigin(Path(folder),plan) as origin:
+                url=origin.base_url+next(iter(plan['objects']))
+                def fetch():
+                    try:
+                        with urllib.request.urlopen(url,timeout=5) as response:
+                            response.read();return response.status
+                    except urllib.error.HTTPError as error:return error.code
+                self.assertEqual(fetch(),200)
+                barrier=threading.Barrier(5)
+                def concurrent_fetch():barrier.wait(timeout=5);return fetch()
+                with concurrent.futures.ThreadPoolExecutor(max_workers=5) as pool:
+                    statuses=list(pool.map(lambda _:concurrent_fetch(),range(5)))
+                self.assertEqual(statuses.count(200),3)
+                self.assertEqual(statuses.count(503),2)
+            responses=[e for e in origin.events if e['phase']=='response']
+            self.assertTrue(all(e['status']==503 for e in responses if e['overload_stimulus']))
+            self.assertTrue(all(not e['overload_stimulus'] for e in responses if e['status']==200))
 
     def test_observed_byte_budget_counts_failed_attempts_and_limits_each_object(self):
         limits = dataclasses.replace(RESEARCH, max_object_bytes=8, max_payload_bytes=5, max_attempts=2)
