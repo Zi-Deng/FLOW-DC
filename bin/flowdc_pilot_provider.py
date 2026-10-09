@@ -645,7 +645,7 @@ class Provider:
         executor context joins all running probes, whose runners own and reap
         their children under the shared deadline; later batches are not submitted.
         """
-        allowed = {"group", "ports", "port", "network", "subnet", "floating_show"}
+        allowed = {"group", "ports", "port", "network", "subnet", "floating_show", "router", "router_ports"}
         for action, *args in requests:
             if action not in allowed:
                 raise failure("invalid_adapter_action", invalid=True)
@@ -1076,8 +1076,13 @@ class Provider:
         if any(v.get("port_id") != manager["port_id"] for v in attached) or len(attached) > 1:
             raise failure("unexpected_public_entrypoints")
         if route["mode"] == "floating":
-            external = self.call("network", route["external_network_id"])
-            router = self.call("router", route["router_id"])
+            # These facts are independent. Join them under the same finite
+            # step deadline before validating the route or creating anything.
+            external, router, router_ports = self.read_batch([
+                ("network", route["external_network_id"]),
+                ("router", route["router_id"]),
+                ("router_ports", route["router_id"]),
+            ])
             if (
                 external.get("id") != route["external_network_id"]
                 or external.get("router:external") is not True
@@ -1087,8 +1092,7 @@ class Provider:
             ):
                 raise failure("external_route_unverified")
             connected = False
-            for port_id in ids(self.call("router_ports", route["router_id"])):
-                port = self.call("port", port_id)
+            for port in self.read_batch([("port", port_id) for port_id in ids(router_ports)]):
                 if (
                     port.get("network_id") == manager["network_id"]
                     and port.get("device_id") == route["router_id"]

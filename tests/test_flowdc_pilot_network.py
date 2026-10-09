@@ -668,6 +668,49 @@ class NetworkTests(unittest.TestCase):
         self.assertEqual(len(mutations), 1)
         self.assertEqual(mutations[0][0], "rule")
 
+    def test_floating_route_batches_slow_independent_reads_within_deadline(self):
+        backend = LatencyBackend()
+        record = self.journal.read()
+        record["access"]["route"] = {
+            "mode": "floating", "external_network_id": backend.external,
+            "router_id": backend.router, "operator_route_verified": False,
+        }
+        with (
+            patch.object(backend, "duration", return_value=2.5),
+            patch("flowdc_pilot_provider.time.monotonic", side_effect=lambda: backend.now),
+            patch("flowdc_pilot_provider.ThreadPoolExecutor",
+                  side_effect=lambda **kw: LogicalExecutor(backend, **kw)),
+            backend.step("network_setup"),
+        ):
+            backend.context(record)
+            backend.route_step(self.journal, record, inspect_only=True)
+        self.assertEqual(backend.now - 100, 12.5)
+        self.assertTrue(self.journal.read()["network"]["route_checked"])
+        self.assertFalse(any(mutation for _, _, mutation in backend.calls))
+        self.assertCountEqual(backend.reads, [
+            "context", "project", "floating", "network", "router", "router_ports", "port",
+        ])
+
+    def test_route_batch_timeout_refuses_route_completion_and_creation(self):
+        backend = LatencyBackend()
+        record = self.journal.read()
+        record["access"]["route"] = {
+            "mode": "floating", "external_network_id": backend.external,
+            "router_id": backend.router, "operator_route_verified": False,
+        }
+        with (
+            patch.object(backend, "duration", return_value=6),
+            patch("flowdc_pilot_provider.time.monotonic", side_effect=lambda: backend.now),
+            patch("flowdc_pilot_provider.ThreadPoolExecutor",
+                  side_effect=lambda **kw: LogicalExecutor(backend, **kw)),
+            backend.step("network_setup"),
+        ):
+            backend.context(record)
+            with self.assertRaises(ops.OpsError):
+                backend.route_step(self.journal, record)
+        self.assertFalse(self.journal.read()["network"].get("route_checked", False))
+        self.assertFalse(any(mutation for _, _, mutation in backend.calls))
+
     def test_pinned_setup_group_is_freshly_revalidated_before_mutation(self):
         self.setup_network()
         record = self.journal.read()
