@@ -7,13 +7,14 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
-from .truth import digest, encode, parse, require
+from .truth import digest, encode, parse, require, workload
 
-METHODS = ("paarc-base-v2", "gradient-candidate-v1", "fixed-v1", "ratio-v1")
+METHODS = ("paarc-base-v2", "gradient-candidate-v1", "fixed-v1", "ratio-v1", "gradient2-application-delay-v1")
+LEGACY_METHODS = METHODS[:-1]
 FAMILIES = ("steady", "drop-recovery", "overload")
 
 
-def method_configs(configurations=None):
+def method_configs(configurations=None, *, legacy=False):
     sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "bin"))
     from flowdc_methods import MethodConfig
 
@@ -30,10 +31,11 @@ def method_configs(configurations=None):
                 if method in ("gradient-candidate-v1", "ratio-v1")
                 else {},
             }
-            for method in METHODS
+            for method in (LEGACY_METHODS if legacy else METHODS)
         }
     )
-    require(isinstance(methods, dict) and set(methods) == set(METHODS), "all four named comparators required")
+    required = LEGACY_METHODS if legacy else METHODS
+    require(isinstance(methods, dict) and set(methods) == set(required), "all named comparators required")
     for name, config in methods.items():
         require(
             isinstance(config, dict)
@@ -50,9 +52,10 @@ def method_configs(configurations=None):
     return methods
 
 
-def tuning_catalog():
+def tuning_catalog(*, research_workload=None):
     proposals = {}
-    for method, base in method_configs().items():
+    limits = workload(research_workload)
+    for method, base in method_configs(legacy=research_workload is None).items():
         variants = []
         for i in range(8):
             config = {**base, "method_options": dict(base["method_options"])}
@@ -65,17 +68,19 @@ def tuning_catalog():
                     "gradient_tau_s": (0.25, 0.5, 1, 2)[i // 2],
                     "sample_min": (3, 5)[i % 2],
                 }
-            else:
+            elif method == "ratio-v1":
                 config["method_options"] = {
                     **base["method_options"],
                     "ratio_buffer_fraction": (0.05, 0.1, 0.2, 0.3)[i // 2],
                     "ratio_headroom": (1, 2)[i % 2],
                 }
+            else:
+                config["method_options"] = {"queue_size": (0, 1, 2, 4)[i // 2], "smoothing": (.1, .2)[i % 2]}
             variants.append(
                 {"id": f"tuning-{method}-{i}", "config": config, "sha256": digest(encode(config))}
             )
         proposals[method] = variants
-    return {
+    result = {
         "schema": "flowdc-tuning-catalog-v1",
         "namespace": "tuning",
         "advisor_decisions": "pending_specific_decisions",
@@ -83,37 +88,46 @@ def tuning_catalog():
         "candidates": proposals,
         "evaluation_rule": "freeze selected configs before opening evaluation outcomes",
     }
+    if research_workload is not None:
+        result.update(schema="flowdc-tuning-catalog-v2", workload=limits.record())
+    return result
 
 
 def make_plan(
     *,
     seed,
     blocks=6,
-    families=FAMILIES,
+    families=None,
     namespace="evaluation",
     purpose="provisional-pilot",
     rows=128,
     configurations=None,
+    research_workload=None,
 ):
     require(type(seed) is int and 0 <= seed < 2**32, "seed must be a uint32")
     require(type(blocks) is int and 1 <= blocks <= 100, "block count must be 1..100")
     require(namespace in ("tuning", "evaluation", "engineering"), "unknown study namespace")
     require(purpose in ("engineering", "provisional-pilot", "confirmatory"), "unknown study purpose")
     require((purpose == "engineering") == (namespace == "engineering"), "engineering needs its own namespace")
-    require(type(rows) is int and 1 <= rows <= 256, "rows must be 1..256")
-    from .controlled_origin import SCENARIOS
+    limits = workload(research_workload)
+    require(type(rows) is int and 1 <= rows <= limits.max_rows, "rows exceed finite workload")
+    from .controlled_origin import SCENARIOS, RESEARCH_SCENARIOS
+
+    if families is None:
+        families = FAMILIES if research_workload is None else ("drop-recovery", "mixed-sizes", "sustained-overload")
 
     require(
-        families and len(set(families)) == len(families) and set(families) <= set(SCENARIOS),
+        families and len(set(families)) == len(families)
+        and set(families) <= set(SCENARIOS if research_workload is None else RESEARCH_SCENARIOS),
         "unknown/duplicate scenario family",
     )
-    methods = method_configs(configurations)
+    methods = method_configs(configurations, legacy=research_workload is None)
     rng, cells = random.Random(seed), []
     for block in range(blocks):
         ordered_families = list(families)
         rng.shuffle(ordered_families)
         for family in ordered_families:
-            ordered_methods = list(METHODS)
+            ordered_methods = list(methods)
             rng.shuffle(ordered_methods)
             for method in ordered_methods:
                 cells.append(
@@ -127,7 +141,7 @@ def make_plan(
                         "config_sha256": digest(encode(methods[method])),
                     }
                 )
-    return {
+    result = {
         "schema": "flowdc-study-plan-v1",
         "seed": seed,
         "blocks": blocks,
@@ -154,10 +168,16 @@ def make_plan(
             "cleanup_reserve_s": 60,
         },
     }
+    if research_workload is not None:
+        result.update(schema="flowdc-study-plan-v2", workload=limits.record())
+        result["limits"].update(rows=limits.max_rows, expected_payload_bytes=limits.max_payload_bytes,
+                                process_deadline_s=limits.acquisition_seconds,
+                                metadata_bytes=limits.max_metadata_bytes, artifact_bytes=limits.max_artifact_bytes)
+    return result
 
 
 def validate_plan(plan):
-    require(plan.get("schema") == "flowdc-study-plan-v1", "unsupported study plan")
+    require(plan.get("schema") in ("flowdc-study-plan-v1", "flowdc-study-plan-v2"), "unsupported study plan")
     rebuilt = make_plan(
         seed=plan["seed"],
         blocks=plan["blocks"],
@@ -166,6 +186,7 @@ def validate_plan(plan):
         purpose=plan["purpose"],
         rows=plan["cells"][0]["rows"],
         configurations=plan["methods"],
+        research_workload=plan.get("workload", {}).get("name"),
     )
     require(plan == rebuilt, "study plan/order/configuration changed; generate a distinct plan")
 
@@ -175,7 +196,10 @@ def freeze_protocol(plan, decisions, *, source_sha256, environment_sha256):
     validate_plan(plan)
     require(plan["purpose"] != "engineering", "engineering checks do not freeze a scientific protocol")
     expected = {"approved_plan_sha256", "provenance", "constraints", "estimand", "repetition_rule"}
-    require(isinstance(decisions, dict) and set(decisions) == expected, "explicit advisor decisions required")
+    require(isinstance(decisions, dict) and expected <= set(decisions) <= expected | {"approval_authority"},
+            "explicit scientific decisions required")
+    authority = decisions.get("approval_authority", "advisor")
+    require(authority in ("advisor", "maintainer-provisional"), "unknown protocol authority")
     require(decisions["approved_plan_sha256"] == digest(encode(plan)), "decisions bind a different plan")
     for name in expected - {"approved_plan_sha256"}:
         require(
@@ -188,14 +212,15 @@ def freeze_protocol(plan, decisions, *, source_sha256, environment_sha256):
             "invalid protocol hash",
         )
     return {
-        "schema": "flowdc-frozen-protocol-v1",
+        "schema": "flowdc-frozen-protocol-v2" if plan["schema"] == "flowdc-study-plan-v2" else "flowdc-frozen-protocol-v1",
         "plan_sha256": digest(encode(plan)),
         "decisions": decisions,
         "decisions_sha256": digest(encode(decisions)),
         "source_sha256": source_sha256,
         "environment_sha256": environment_sha256,
         "status": "frozen",
-        "authority": "user-supplied advisor decision provenance, not automatic approval",
+        "authority": ("user-supplied advisor decision provenance, not automatic approval"
+                      if authority == "advisor" else "maintainer-approved provisional defaults; advisor decisions pending"),
     }
 
 

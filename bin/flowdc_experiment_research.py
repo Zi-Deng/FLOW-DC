@@ -3,6 +3,7 @@
 import asyncio
 import base64
 import json
+import math
 import re
 import signal
 import sys
@@ -11,6 +12,7 @@ from urllib.parse import urlsplit
 
 from flowdc_experiment_data import fields, guest_path, read_file, require
 from flowdc_vine_protocol import digest, encode
+from flowdc_research_profile import workload
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from benchmark.core.truth import Truth  # noqa: E402
@@ -20,7 +22,9 @@ def validate(value):
     fields(
         value,
         ("manifest", "catalog", "origin_plan", "environment_archive", "environment_sha256", "control_tls"),
+        ("research_workload",),
     )
+    workload(value.get("research_workload"))
     for key in ("manifest", "catalog", "origin_plan", "environment_archive"):
         guest_path(value[key])
     require(isinstance(value["environment_sha256"], str) and len(value["environment_sha256"]) == 64)
@@ -50,7 +54,7 @@ def origin_plan(raw):
     fields(
         plan,
         ("schema", "name", "schedule", "queue_bound", "assignments", "objects"),
-        ("queue_rejection_status", "queue_retry_after"),
+        ("queue_rejection_status", "queue_retry_after", "research_workload", "overload_windows"),
     )
     plan.setdefault("queue_rejection_status", 503)
     plan.setdefault("queue_retry_after", "0.1")
@@ -60,20 +64,34 @@ def origin_plan(raw):
         and re.fullmatch(r"[0-9]+(?:\.[0-9]+)?", plan["queue_retry_after"])
         and float(plan["queue_retry_after"]) <= 5
     )
-    require(plan["schema"] == "flowdc-guest-origin-v1")
-    require(1 <= len(plan["objects"]) <= 256 and 1 <= len(plan["assignments"]) <= 256)
+    require(plan["schema"] in ("flowdc-guest-origin-v1", "flowdc-guest-origin-v2"))
+    limits = workload(plan.get("research_workload"))
+    require((plan["schema"] == "flowdc-guest-origin-v1") == ("research_workload" not in plan))
+    require(1 <= len(plan["objects"]) <= limits.max_rows and 1 <= len(plan["assignments"]) <= limits.max_rows)
     from benchmark.core.controlled_origin import ServiceModel
 
-    ServiceModel(plan["schedule"], plan["queue_bound"], lambda event: None)
+    ServiceModel(plan["schedule"], plan["queue_bound"], lambda event: None, limits=limits)
     require(all(path in plan["objects"] for path in plan["assignments"]))
-    plan["schema"] = "flowdc-origin-scenario-v1"
+    plan["schema"] = "flowdc-origin-scenario-v1" if "research_workload" not in plan else "flowdc-origin-scenario-v2"
+    if "research_workload" in plan:
+        plan["workload"] = limits.record()
+    windows = plan.get("overload_windows", [])
+    require(isinstance(windows, list) and len(windows) <= 16)
+    for window in windows:
+        require(isinstance(window, list) and len(window) == 2
+                and all(type(x) in (int, float) and math.isfinite(x) for x in window)
+                and 0 <= window[0] < window[1] <= limits.acquisition_seconds, "invalid overload window")
     total = 0
     for path, value in plan["objects"].items():
         require(path.startswith("/") and ".." not in path.split("/") and len(path) <= 2048)
+        fields(value, ("payload_base64", "service_s", "responses"), ("tail_s", "service_drift_per_s"))
         value["payload"] = base64.b64decode(value.pop("payload_base64"), validate=True)
         total += len(value["payload"])
-        require(0 < len(value["payload"]) and total <= 64 * 1024 * 1024)
-        require(type(value["service_s"]) in (int, float) and 0 < value["service_s"] <= 1)
+        require(0 < len(value["payload"]) <= limits.max_object_bytes and total <= limits.max_payload_bytes)
+        require(type(value["service_s"]) in (int, float) and math.isfinite(value["service_s"]) and 0 < value["service_s"] <= 1)
+        for key, upper in (("tail_s", 1), ("service_drift_per_s", .01)):
+            require(type(value.get(key, 0)) in (int, float) and math.isfinite(value.get(key, 0))
+                    and 0 <= value.get(key, 0) <= upper, "invalid origin delay")
         require(isinstance(value["responses"], list) and 1 <= len(value["responses"]) <= 4)
         for response in value["responses"]:
             fields(response, ("status",), ("retry_after", "truncate"))
@@ -84,7 +102,7 @@ def origin_plan(raw):
                 and re.fullmatch(r"[0-9]+(?:\.[0-9]+)?", response.get("retry_after", "0"))
                 and float(response.get("retry_after", "0")) <= 5
             )
-    require(sum(len(plan["objects"][p]["payload"]) for p in plan["assignments"]) <= 64 * 1024 * 1024)
+    require(sum(len(plan["objects"][p]["payload"]) for p in plan["assignments"]) <= limits.max_payload_bytes)
     return plan
 
 
@@ -96,10 +114,11 @@ def prepare(value, record):
     )
     raw = read_file(value["manifest"])
     catalog = json.loads(read_file(value["catalog"]))
-    truth = Truth.load(value["manifest"], catalog)
+    truth = Truth.load(value["manifest"], catalog, research_workload=value.get("research_workload"))
     require(raw == truth.raw_manifest, "research_manifest_changed")
     plan_raw = read_file(value["origin_plan"])
     plan = origin_plan(plan_raw)
+    require(plan.get("research_workload") == value.get("research_workload"), "origin_workload_mismatch")
     origin = record["access"]["interfaces"]["origin"]["fixed_ip"]
     expected = {
         f"http://{origin}:18080{path}": {"bytes": len(item["payload"]), "sha256": digest(item["payload"])}
@@ -125,6 +144,7 @@ def run_case(root, case):
     )
     options.pop("url_col", None)
     selected = settings["distributed"]
+    require(options.get("research_workload") == selected.get("research_workload"), "case_workload_mismatch")
     config = {
         "distributed_profile": "shared-origin-v1",
         "original_manifest": str(root / "research/original.parquet"),
@@ -137,8 +157,8 @@ def run_case(root, case):
         "workers": len(settings["addresses"]) - 2,
         "download": options,
         "port_number": 9123,
-        "deadline_s": min(180, settings["bounds"]["phase_seconds"]),
-        "task_deadline_s": 110,
+        "deadline_s": min(workload(selected.get("research_workload")).acquisition_seconds, settings["bounds"]["phase_seconds"]),
+        "task_deadline_s": min(workload(selected.get("research_workload")).acquisition_seconds - 30, settings["bounds"]["phase_seconds"] - 30),
         "max_attempts": 1,
     }
     require(config["deadline_s"] > config["task_deadline_s"], "research_guest_deadline_too_small")

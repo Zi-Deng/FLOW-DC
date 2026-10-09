@@ -393,7 +393,8 @@ class KnownTruthFixtures(unittest.TestCase):
         self.assertGreaterEqual(result["verification_ns"], 15_000_000)
         self.assertGreaterEqual(result["elapsed_ns"], result["process_ns"] + result["verification_ns"])
         self.assertTrue((self.root / "run/outcomes.json").is_file())
-        self.assertIsNone(result["resources"])
+        self.assertEqual(result["resource_status"], "sampled")
+        self.assertGreaterEqual(result["resources"]["acquisition_process_tree"]["observed_cpu_seconds"], 0)
 
     def test_timeout_cleans_owned_process_and_retains_missing_rows(self):
         result = run_verified(

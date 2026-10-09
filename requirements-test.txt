@@ -4,3 +4,7 @@ aiohttp==3.13.3
 polars==1.37.1
 psutil==7.2.1
 tqdm==4.67.1
+
+# Known-truth originals and run-level statistical regression checks.
+Pillow==12.3.0
+scipy==1.18.0

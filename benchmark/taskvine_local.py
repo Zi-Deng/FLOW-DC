@@ -14,6 +14,7 @@ import polars as pl
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "bin"))
+from flowdc_methods import METHODS
 from flowdc_vine import RUNTIME, dispatch_records, file_digest, run  # noqa: E402
 from flowdc_vine_cohort import cohort  # noqa: E402
 from flowdc_vine_ownership import OwnedWorkers  # noqa: E402
@@ -273,7 +274,7 @@ async def fixture(args):
                 native = json.loads((directory / "manager/partition-0/native.json").read_bytes())
                 require(native["result"] == "sandbox exhaustion", "expected native failure result missing")
                 require(any(r["accepted"] for r in result["returns"]), "healthy partition did not verify")
-            else:
+            elif not args.patched_runtime:
                 # Upstream 7.17.2 exit_debug_message divides by zero after a
                 # first FORSAKEN task. Assert this specific retained failure;
                 # a transaction is not a returned native/API task receipt.
@@ -309,8 +310,18 @@ async def fixture(args):
                     "transaction_events": events,
                     "kind": "upstream-7.17.2-forsaken-sigfpe",
                 }
+            if args.case == "forsaken" and args.patched_runtime:
+                native_failure = json.loads((directory / "manager/native-cleanup.json").read_bytes())
+                returned_native = json.loads((directory / "manager/partition-0/native.json").read_bytes())
+                require(native_failure["native_manager_exit"] == 0
+                        and native_failure["shutdown_receipt"] is True
+                        and returned_native["result"] == "forsaken"
+                        and returned_native["successful"] is False,
+                        "patched native FORSAKEN did not return and shut down normally")
+                native_failure = {**native_failure, "kind": "patched-7.17.2-forsaken-returned"}
         assessment = {
             "case": args.case,
+            "patched_runtime": args.patched_runtime,
             "workers": args.workers,
             "status": "passed",
             "origin": origin_audit,
@@ -347,10 +358,11 @@ def main():
     parser.add_argument("--workers", type=int, choices=(1, 2, 4), required=True)
     parser.add_argument(
         "--method",
-        choices=("paarc-base-v2", "gradient-candidate-v1", "fixed-v1", "ratio-v1"),
+        choices=METHODS,
         default="fixed-v1",
     )
     parser.add_argument("--case", choices=CASES, default="primary")
+    parser.add_argument("--patched-runtime", action="store_true", help="Assess the disclosed zero-completion guard; record actual manager library hashes separately")
     args = parser.parse_args()
     try:
         print(json.dumps(asyncio.run(fixture(args))))

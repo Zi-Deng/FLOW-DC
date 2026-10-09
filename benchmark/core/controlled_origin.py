@@ -6,20 +6,22 @@ import time
 from collections import Counter, deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from .truth import digest, encode, require
+from .truth import LEGACY, digest, encode, require, workload
 
 SCENARIOS = ("steady", "drop-recovery", "mixed-sizes", "balanced", "skewed", "overload", "sparse-interrupted")
+RESEARCH_SCENARIOS = SCENARIOS + ("transient-overload", "sustained-overload", "oscillation", "sparse", "baseline-drift", "recovery")
 
 
 class ServiceModel:
     """FIFO bounded queue, nonpreemptive capacity steps, on an origin-only clock."""
 
-    def __init__(self, schedule, queue_bound, emit):
+    def __init__(self, schedule, queue_bound, emit, *, limits=LEGACY):
+        self.limits = limits
         require(type(queue_bound) is int and 0 <= queue_bound <= 32, "queue bound must be 0..32")
         require(isinstance(schedule, list) and 1 <= len(schedule) <= 16, "invalid service schedule")
         previous = -1
         for at, slots in schedule:
-            require(type(at) in (int, float) and 0 <= at <= 180 and at > previous, "invalid step time")
+            require(type(at) in (int, float) and 0 <= at <= limits.acquisition_seconds and at > previous, "invalid step time")
             require(type(slots) is int and 1 <= slots <= 16, "service slots must be 1..16")
             previous = at
         require(schedule[0][0] == 0, "service schedule must start at zero")
@@ -87,10 +89,11 @@ class ServiceModel:
             self.event("queue_cancel", request_id=request)
 
 
-def scenario(name, payloads, *, rows=128):
+def scenario(name, payloads, *, rows=128, research_workload=None):
     """Generate immutable policies before any request, without consulting clients."""
-    require(name in SCENARIOS, "unknown controlled scenario")
-    require(type(rows) is int and 1 <= rows <= 256, "scenario rows must be 1..256")
+    limits = workload(research_workload)
+    require(name in (SCENARIOS if research_workload is None else RESEARCH_SCENARIOS), "unknown controlled scenario")
+    require(type(rows) is int and 1 <= rows <= limits.max_rows, "scenario rows exceed finite workload")
     require(set(payloads) >= {"JPEG", "PNG"}, "JPEG/PNG originals required")
     kinds = sorted(payloads) if name == "mixed-sizes" else ["JPEG", "PNG"]
     objects = {
@@ -118,10 +121,10 @@ def scenario(name, payloads, *, rows=128):
         origin = (i % 2 if name == "balanced" else int(i % 10 == 0)) if name in ("balanced", "skewed") else 0
         assignments.append({"origin": origin, "path": paths[i % len(paths)]})
     require(
-        sum(len(objects[row["path"]]["payload"]) for row in assignments) <= 64 * 1024 * 1024,
-        "scenario exceeds 64 MiB expected row payload",
+        sum(len(objects[row["path"]]["payload"]) for row in assignments) <= limits.max_payload_bytes,
+        "scenario exceeds finite expected row payload",
     )
-    return {
+    result = {
         "schema": "flowdc-origin-scenario-v1",
         "name": name,
         "objects": objects,
@@ -133,6 +136,23 @@ def scenario(name, payloads, *, rows=128):
         "queue_retry_after": "0.1",
         "clock_anchor": "first request arrival, separately at each origin",
     }
+    if research_workload is not None:
+        result.update(schema="flowdc-origin-scenario-v2", workload=limits.record())
+        # Fixed stimulus definitions, frozen before controller outcomes. Small
+        # engineering runs may end early; qualification must check realization.
+        result["schedule"] = ([[0, 4], [15, 1], [35, 4]] if name == "drop-recovery"
+                              else [[0, 4], [10, 1], [20, 4], [30, 1], [40, 4]] if name == "oscillation"
+                              else [[0, 1]] if name == "sparse" else [[0, 4]])
+        result["overload_windows"] = ([[10, 11]] if name == "transient-overload"
+                                      else [[10, 300]] if name == "sustained-overload"
+                                      else [[10, 15]] if name == "recovery" else [])
+        result["queue_bound"] = 16
+        for spec in objects.values():
+            if name != "mixed-sizes":
+                spec["service_s"] = .4 if name == "sparse" else .04
+            spec["tail_s"] = .02
+            spec["service_drift_per_s"] = .001 if name == "baseline-drift" else 0
+    return result
 
 
 def public_scenario(plan):
@@ -173,7 +193,8 @@ class ControlledOrigin:
         self.failure = None
         self.counts, self.statuses, self.events = Counter(), Counter(), []
         self.log = (directory / "origin.jsonl").open("xb")
-        self.model = ServiceModel(plan["schedule"], plan["queue_bound"], self.emit)
+        self.model = ServiceModel(plan["schedule"], plan["queue_bound"], self.emit,
+                                  limits=workload(plan.get("workload", {}).get("name") or plan.get("research_workload")))
         owner = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -204,7 +225,13 @@ class ControlledOrigin:
                         "status": plan["queue_rejection_status"],
                         "retry_after": plan["queue_retry_after"],
                     }
-                elif spec and owner.stop_event.wait(spec["service_s"]):
+                service_s = (min(1, spec["service_s"] + spec.get("service_drift_per_s", 0) * owner.elapsed())
+                             if spec else 0)
+                overload_stimulus = service and any(start <= owner.elapsed() < end
+                    for start, end in plan.get("overload_windows", []))
+                if service and overload_stimulus:
+                    policy = {"status": 429 if request % 2 else 503, "retry_after": "0.1"}
+                if service and spec and owner.stop_event.wait(service_s):
                     policy = {"status": 503}
                 status, sent, disconnected = policy["status"], 0, False
                 payload = spec["payload"] if status == 200 and spec is not None else b""
@@ -217,7 +244,14 @@ class ControlledOrigin:
                         self.send_header("Location", policy["location"])
                     self.end_headers()
                     content = payload[: len(payload) // 2] if policy.get("truncate") else payload
-                    self.wfile.write(content)
+                    if content and spec.get("tail_s", 0):
+                        self.wfile.write(content[:1])
+                        self.wfile.flush()
+                        if owner.stop_event.wait(spec["tail_s"]):
+                            raise TimeoutError("origin stopped during body")
+                        self.wfile.write(content[1:])
+                    else:
+                        self.wfile.write(content)
                     self.wfile.flush()
                     sent = len(content)
                 except (BrokenPipeError, ConnectionResetError, TimeoutError):
@@ -226,7 +260,9 @@ class ControlledOrigin:
                     with owner.condition:
                         owner.responses += 1
                         owner.statuses[status] += 1
-                        fields = {"status": status, "body_bytes_written": sent, "disconnected": disconnected}
+                        fields = {"status": status, "body_bytes_written": sent, "disconnected": disconnected,
+                                  "service_duration_s": service_s if service else None,
+                                  "overload_stimulus": overload_stimulus}
                         if service:
                             owner.model.finish(owner.elapsed(), request, **fields)
                         owner.emit(

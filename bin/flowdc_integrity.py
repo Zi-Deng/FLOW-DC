@@ -163,6 +163,10 @@ def effective_config(cfg):
     excluded = {"input_path", "output_folder", "force_overwrite", "resume", "reconcile"}
     modules = ["download_batch.py", "single_download.py", "flowdc_integrity.py"]
     modules.append("flowdc_methods.py")
+    if getattr(cfg, "control_method", None) == "gradient2-application-delay-v1":
+        modules.append("flowdc_gradient2.py")
+    if getattr(cfg, "research_workload", None) is not None:
+        modules.append("flowdc_research_profile.py")
     if getattr(cfg, "shared_control_file", None) is not None:
         modules.extend(("flowdc_shared_state.py", "flowdc_shared.py", "flowdc_staging.py"))
     variant = "gradient" if hasattr(cfg, "gradient_threshold") else "base"
@@ -489,6 +493,10 @@ class RunStore:
         expected_sources = {"download_batch.py", "single_download.py", "flowdc_integrity.py"}
         if "control_method" in owner["config"]["values"]:
             expected_sources.add("flowdc_methods.py")
+        if owner["config"]["values"].get("control_method") == "gradient2-application-delay-v1":
+            expected_sources.add("flowdc_gradient2.py")
+        if owner["config"]["values"].get("research_workload") is not None:
+            expected_sources.add("flowdc_research_profile.py")
         if owner["config"]["values"].get("shared_control_file") is not None:
             expected_sources.update(("flowdc_shared_state.py", "flowdc_shared.py", "flowdc_staging.py"))
         if owner["config"]["implementation"] == "gradient":
@@ -704,6 +712,39 @@ class RunStore:
                 "body_complete": bool(body_complete),
             },
         )
+
+    def measure(self, directory, key, trace, status, version):
+        """Retain observed request timing independently of local publication."""
+        record = {**self.intent(directory, key), "schema": "flowdc-http-observation-v1",
+                  "measurement_version": version, "status": status,
+                  "latency_eligible": trace.get("latency_eligible", False),
+                  "failure_kind": trace.get("failure_kind"),
+                  "observed_response_body_bytes": trace.get("observed_response_body_bytes", 0)}
+        for name in ("attempt_started_at", "t0", "first_body_byte_at", "body_completed_at", "ttfb", "body_delay"):
+            record[name] = trace.get(name)
+        require(type(record["latency_eligible"]) is bool, "invalid HTTP eligibility")
+        if record["latency_eligible"]:
+            require(status == 200 and all(type(record[x]) in (int, float) and math.isfinite(record[x])
+                    and record[x] > 0 for x in ("ttfb", "body_delay"))
+                    and record["body_delay"] >= record["ttfb"], "invalid eligible HTTP timing")
+        self.fs.atomic(directory + "/measurement.json", record)
+
+    def measurements(self):
+        records, missing = [], []
+        for key in self.rows:
+            for directory in self.attempts(key):
+                name = directory + "/measurement.json"
+                if not self.fs.exists(name):
+                    missing.append(directory)
+                    continue
+                raw = self.fs.read(name)
+                record = parse(raw)
+                require(all(record.get(k) == v for k, v in self.intent(directory, key).items()),
+                        "HTTP measurement identity mismatch")
+                records.append({"path": name, "bytes": len(raw), "sha256": digest(raw)})
+        return {"schema": "flowdc-http-observations-v1", "files": records,
+                "missing_attempts": missing, "complete": not missing,
+                "scope": "Completed local attempt observations; interrupted observations remain missing."}
 
     def reconcile(self, *, recover=True):
         # The final result is valid only after the CLI has also checked archives

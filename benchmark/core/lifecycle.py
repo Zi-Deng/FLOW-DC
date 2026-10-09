@@ -10,7 +10,54 @@ from pathlib import Path
 
 import psutil
 
-from .truth import SCHEMA, digest, encode, initial_outcomes, parse, require
+from .truth import digest, encode, initial_outcomes, parse, require, truth_workload
+
+
+class ResourceSampler:
+    """Observed process-tree RSS/CPU at 50ms; short peaks can be missed."""
+    def __init__(self, pid, *, descendants=True):
+        try:
+            self.parent = psutil.Process(pid)
+        except psutil.NoSuchProcess:
+            self.parent = None
+        self.descendants = descendants
+        self.stop = threading.Event()
+        self.peak_rss, self.samples, self.cpu = 0, 0, {}
+        self.thread = threading.Thread(target=self.watch, daemon=True)
+        self.thread.start()
+
+    def watch(self):
+        if self.parent is None:
+            return
+        while True:
+            try:
+                processes = [self.parent]
+                if self.descendants:
+                    processes += self.parent.children(recursive=True)
+                rss = 0
+                for process in processes:
+                    try:
+                        with process.oneshot():
+                            key = (process.pid, process.create_time())
+                            rss += process.memory_info().rss
+                            times = process.cpu_times()
+                            self.cpu[key] = times.user + times.system
+                    except psutil.Error:
+                        continue
+                self.peak_rss = max(self.peak_rss, rss)
+                self.samples += 1
+            except psutil.Error:
+                pass
+            if self.stop.wait(.05):
+                return
+
+    def close(self):
+        self.stop.set()
+        self.thread.join(timeout=1)
+        require(not self.thread.is_alive(), "resource sampler did not stop")
+        return {"peak_observed_rss_bytes": self.peak_rss, "observed_cpu_seconds": sum(self.cpu.values()),
+                "samples": self.samples, "interval_s": .05,
+                "interpretation": "Sampled RSS sum; shared pages may be counted more than once; brief peaks/CPU may be missed."}
 
 
 def _signal_group(pid, sig):
@@ -111,7 +158,8 @@ def _run_verified(command, directory, truth, verify, *, cwd, deadline, cleanup, 
     and writing the final timing record are outside that boundary. POSIX children
     are confined to a new process group; there is no machine-wide process cleanup.
     """
-    require(type(deadline) in (int, float) and 0 < deadline <= 180, "deadline must be in (0,180]")
+    require(type(deadline) in (int, float) and 0 < deadline <= truth_workload(truth).acquisition_seconds,
+            "deadline exceeds finite truth workload")
     require(type(cleanup) in (int, float) and 0 < cleanup <= 60, "cleanup must be in (0,60]")
     require(signal.getsignal(signal.SIGCHLD) == signal.SIG_DFL, "exclusive child reaping ownership required")
     directory = Path(directory)
@@ -128,6 +176,7 @@ def _run_verified(command, directory, truth, verify, *, cwd, deadline, cleanup, 
         )
     )
     proc, returncode, failure, error = None, None, None, None
+    sampler, process_resources = None, None
     cleanup_errors = []
 
     def signal_owned(sig):
@@ -142,6 +191,7 @@ def _run_verified(command, directory, truth, verify, *, cwd, deadline, cleanup, 
             if interruption["requested"]:
                 raise KeyboardInterrupt
             proc = subprocess.Popen(command, cwd=cwd, stdout=stdout, stderr=stderr, start_new_session=True)
+            sampler = ResourceSampler(proc.pid)
             try:
                 (directory / "process-owner.json").write_bytes(
                     encode(
@@ -192,6 +242,8 @@ def _run_verified(command, directory, truth, verify, *, cwd, deadline, cleanup, 
                 except subprocess.TimeoutExpired:
                     failure, error = "cleanup_failed", "owned process did not exit within reserve"
         process_ended = time.monotonic_ns()
+        if sampler is not None:
+            process_resources = sampler.close()
 
     verification_started = time.monotonic_ns()
     try:
@@ -210,7 +262,7 @@ def _run_verified(command, directory, truth, verify, *, cwd, deadline, cleanup, 
         "verifier changed the original denominator/order",
     )
     index.update(
-        schema=SCHEMA, manifest_sha256=truth["manifest_sha256"], original_rows=truth["original_rows"]
+        schema=truth["schema"], manifest_sha256=truth["manifest_sha256"], original_rows=truth["original_rows"]
     )
     scope = {key: truth[key] for key in ("scope", "partition_rows", "parent_truth_sha256") if key in truth}
     index.update(scope)
@@ -229,7 +281,7 @@ def _run_verified(command, directory, truth, verify, *, cwd, deadline, cleanup, 
     total_bytes = sum(row["useful_bytes"] for row in rows)
     verified = sum(row["disposition"] == "verified" for row in rows)
     record = {
-        "schema": SCHEMA,
+        "schema": truth["schema"],
         **scope,
         "status": "complete" if complete else failure or "incomplete",
         "process_exit_code": returncode,
@@ -247,8 +299,8 @@ def _run_verified(command, directory, truth, verify, *, cwd, deadline, cleanup, 
         "verification_ns": ended - verification_started,
         "boundary": "process launch through closed and checked common outcome index",
         "outcome_index_sha256": digest(raw_index),
-        "resources": None,
-        "resource_status": "not_measured",
+        "resources": {"acquisition_process_tree": process_resources},
+        "resource_status": "sampled" if process_resources is not None else "unavailable",
         "attempt_attribution": "origin aggregate; duplicate-row attribution unavailable",
         "provenance": provenance,
     }

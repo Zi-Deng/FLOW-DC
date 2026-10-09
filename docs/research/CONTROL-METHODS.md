@@ -28,6 +28,7 @@ does not repair the legacy arbitrary-metadata path in issue #25.
 | `gradient-candidate-v1` | Elapsed-time queue-gradient candidate specified below |
 | `fixed-v1` | Exactly `C_init`; feedback never changes the limit. Mandatory embargo/admission still applies |
 | `ratio-v1` | FLOW-DC buffered delay-ratio comparator specified below |
+| `gradient2-application-delay-v1` | Pinned Netflix Gradient2 decision algorithm with an explicit FLOW-DC measurement adapter |
 
 Omitting the ID preserves the existing downloader default, including its historical
 host key. `download_batch_gradient.py` retains the old implementation, now labelled
@@ -203,3 +204,11 @@ Envoy's documented controller uses a buffered baseline/sample-delay ratio and
 square-root headroom ([design](https://www.envoyproxy.io/docs/envoy/latest/configuration/http/http_filters/adaptive_concurrency_filter.html)).
 FLOW-DC's candidate controls application acquisition concurrency with retained row
 artifacts. These distinctions do not establish novelty or superiority.
+
+## Gradient2 acquisition adapter
+
+The [source pin and license](../../third_party/netflix-gradient2/README.md) bind the Java decision algorithm. Each complete nonempty HTTP 200 body with positive finite timing supplies exactly one sample, even when local publication fails. First-body application delay is mapped to Java delay nanoseconds by truncation; `method_options.signal=body-completion-delay` supplies the alternative final-dispatch-to-complete-body delay. These are application observations, not packet RTT. Unknown, transport, truncated and empty responses supply no invented delay. The pinned class ignores its drop input. It updates its long average before utilization gating and truncates the resulting limit. There is no PAARC-specific backoff, probe, sample gate, stale reset or recovery grace in this adapter. Common Retry-After, redirect admission, absolute bounds and output safeguards remain common acquisition behavior.
+
+`C_min/C_init/C_max` map directly to the reference bounds/initialization. Gradient2-only options are constant `queue_size` (default 4), `smoothing` (.2), `long_window` (600), `rtt_tolerance` (1.5), and `signal` (`first-body-delay`). PAARC/candidate options are rejected. Record the effective adaptation parameters rather than describe these bounds as upstream defaults. The shared authority captures the outstanding origin permit count under its completion lock **before** retiring that permit, updates the limit immediately, and rejects duplicate observations. Interval records summarize observations; empty ticks do not synthesize reference samples.
+
+`scripts/verify_gradient2.py --campaign --save-reference NEW.csv` additionally compares all eight tuning parameter configurations against actual pinned Java execution. Trace equivalence, acquisition correctness, scientific efficacy and distributed validity are separate checks.

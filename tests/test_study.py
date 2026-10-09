@@ -20,7 +20,7 @@ from benchmark.core.controlled_origin import (  # noqa: E402
     scenario,
 )
 from benchmark.core.study import (  # noqa: E402
-    METHODS,
+    LEGACY_METHODS as METHODS,
     authorize_plan,
     freeze_protocol,
     make_plan,
@@ -143,7 +143,7 @@ class PlansAndInferenceTests(unittest.TestCase):
         for method, candidates in catalog["candidates"].items():
             self.assertEqual(len(candidates), 8)
             for candidate in candidates:
-                configs = method_configs()
+                configs = method_configs(legacy=True)
                 configs[method] = candidate["config"]
                 plan = make_plan(seed=1, configurations=configs)
                 validate_plan(plan)

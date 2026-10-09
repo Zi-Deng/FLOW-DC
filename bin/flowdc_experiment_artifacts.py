@@ -211,14 +211,19 @@ def main():
     require(len(header) <= LIMIT and header.endswith(b"\n"), "validation_header_limit")
     value = parse(header)
     maximum = value["maximum"]
-    require(type(maximum) is int and 0 < maximum <= 1073741824)
+    from flowdc_research_profile import RESEARCH
+    require(type(maximum) is int and 0 < maximum <= RESEARCH.max_artifact_bytes)
     raw = sys.stdin.buffer.read(maximum + 1)
     require(len(raw) <= maximum, "artifact_size_limit")
     if value["kind"] == "distributed":
         from flowdc_experiment_research import verify_return
+        from benchmark.core.truth import truth_workload
+
+        limits = truth_workload(value["truth"])
+        require(maximum <= max(1073741824, limits.max_artifact_bytes), "artifact_workload_mismatch")
 
         result = verify_return(
-            members(raw, maximum),
+            members(raw, maximum, count=limits.max_files),
             value["case"],
             value["truth"],
             value["source"],

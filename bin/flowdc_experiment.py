@@ -97,6 +97,8 @@ def prepare(path):
             all(case["config"].get("control_method") and case["config"]["enable_paarc"] for case in cases),
             "explicit_shared_method_required",
         )
+        require(all(case["config"].get("research_workload") == spec["distributed"].get("research_workload")
+                    for case in cases), "case_workload_mismatch")
         require(
             "bin/flowdc_vine.py" in files and "bin/flowdc_experiment_research.py" in files,
             "selected_source_has_no_shared_profile",

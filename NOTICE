@@ -1,0 +1,9 @@
+FLOW-DC
+Copyright 2026 FLOW-DC contributors.
+
+Original FLOW-DC code is licensed under Apache-2.0.
+Third-party material retains its own license:
+- third_party/netflix-gradient2: Netflix Apache-2.0; see its LICENSE and provenance.
+- third_party/cctools: CCTools GPL-2.0-only patch/license; see COPYING and provenance.
+
+Third-party datasets, downloaded payloads, imported manuscript material, and private operational records are not relicensed by this file.

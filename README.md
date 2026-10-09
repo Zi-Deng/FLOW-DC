@@ -12,7 +12,7 @@ The core component is **PAARC (Policy-Aware Adaptive Request Controller)**, a co
 
 ## Agentic development
 
-Future development uses the repository's eight [agentic workflow skills](docs/agent-workflow/SKILLS.md): a concise authorized task, an issue worktree, direct implementation, proportionate checks, one bounded independent review and a human merge decision. Start with the [workflow guide](docs/agent-workflow/README.md) and [setup instructions](docs/agent-workflow/SETUP.md). The [verification record](docs/agent-workflow/VERIFICATION.md) distinguishes tested behavior from remaining rollout steps.
+Future development uses the repository's eight [agentic workflow skills](docs/agent-workflow/SKILLS.md): a concise authorized task, an issue worktree, direct implementation, proportionate checks, at most two bounded independent reviews and two review-driven repairs, followed by a human merge decision. Start with the [workflow guide](docs/agent-workflow/README.md) and [setup instructions](docs/agent-workflow/SETUP.md). The [verification record](docs/agent-workflow/VERIFICATION.md) distinguishes tested behavior from remaining rollout steps.
 
 Developer validation uses a separate Python 3.12+ environment and `make check`; it runs the focused FLOW-DC and workflow suites without a dataset or cluster campaign. Private task context belongs in Git-ignored `memory/`, and workflow state lives in Git-ignored `.agentic-local/`.
 
@@ -375,7 +375,8 @@ Hard overload signals still take precedence and enter the inherited `BACKOFF` pa
 | `create_overview` | bool | true | Write internal/external overview reports referencing the final completion record |
 | `force_overwrite` | bool | false | Allow deletion of an existing output folder; CLI equivalent: `--force` / `-f` |
 | `research_profile` | bool | false | Select row-ID naming, WebDataset metadata, uncompressed archive and overview; CLI: `--research_profile` |
-| `control_method` | string/null | null | Explicit `paarc-base-v2`, `gradient-candidate-v1`, `fixed-v1` or `ratio-v1`; null preserves the legacy entrypoint default |
+| `control_method` | string/null | null | Explicit `paarc-base-v2`, `gradient-candidate-v1`, `fixed-v1`, `ratio-v1` or `gradient2-application-delay-v1`; null preserves the legacy entrypoint default |
+| `research_workload` | string/null | null | Explicit finite `bounded-research-v2` profile; requires research output and an explicit method; see [workload contract](docs/research/WORKLOAD.md) |
 | `method_options` | object | {} | Versioned engineering parameters/ablation for the selected method; see [method contract](docs/research/CONTROL-METHODS.md) |
 | `resume` | bool | false | Reconcile, then continue eligible unresolved rows within their original attempt budgets; CLI: `--resume` |
 | `reconcile` | bool | false | Inspect/recover owned output offline, with no HTTP calls; CLI: `--reconcile` |
@@ -615,15 +616,19 @@ or [the candidate example](files/config/gradient-candidate-v1.json). These are
 engineering defaults awaiting specific advisor decisions; the legacy gradient
 entrypoint retains its old behavior.
 
-A separate [pinned Gradient2 decision engine](third_party/netflix-gradient2/README.md)
-matches the actual Java reference on declared traces. Downloader selection and
-shared measurement integration remain pending; it is not an active fifth method.
+The [pinned Gradient2 adaptation](third_party/netflix-gradient2/README.md) is selected
+with `gradient2-application-delay-v1` in local and shared acquisition. It feeds
+complete eligible requests and pre-retirement aggregate inflight to the source-verified
+decision engine. First-body delay is the default; body-completion delay is an explicit
+sensitivity option. Common acquisition safeguards still apply. See the
+[example configuration](files/config/gradient2-application-delay-v1.json).
 
 The [study harness](docs/research/STUDY-HARNESS.md) provides controlled-origin
 scenarios, retained engineering cells, calibration and provisional run-level
 precision tools. Machine-readable plans keep tuning and evaluation separate;
-scientific campaigns require an explicit frozen protocol with supplied advisor
-decisions. The issue #26 acceptance map links distributed admission, native execution
+scientific campaigns require an explicit frozen protocol with recorded decision
+provenance. Maintainer-approved provisional defaults remain distinct from advisor
+approval. The issue #26 acceptance map links distributed admission, native execution
 and offline topology evidence. The explicit
 [shared-origin admission path](docs/research/SHARED-ADMISSION.md) adds authenticated
 manager permits through `--shared_control_file`; its private descriptor is generated
