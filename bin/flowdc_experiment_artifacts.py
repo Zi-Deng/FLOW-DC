@@ -214,6 +214,9 @@ def main():
     from flowdc_research_profile import workload
     limits = workload(value.get("research_workload"))
     if value["kind"] == "distributed":
+        # The bridge establishes the repository package path for this standalone
+        # helper, including when launched by absolute path outside the repository.
+        from flowdc_experiment_research import verify_return
         from benchmark.core.truth import truth_workload
         truth_limits = truth_workload(value["truth"])
         require(limits == truth_limits, "artifact_workload_mismatch")
@@ -222,8 +225,6 @@ def main():
     raw = sys.stdin.buffer.read(maximum + 1)
     require(len(raw) <= maximum, "artifact_size_limit")
     if value["kind"] == "distributed":
-        from flowdc_experiment_research import verify_return
-
         result = verify_return(
             members(raw, maximum, count=limits.max_files),
             value["case"],
