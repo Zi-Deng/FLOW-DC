@@ -984,6 +984,7 @@ def verify_archive(raw, snapshot, prefix):
     compressed = source.read(2) == b"\x1f\x8b"
     source.seek(0)
     seen, end = set(), 0
+    metadata_rows = None
     with tarfile.open(fileobj=source, mode="r:*") as archive:
         for item in archive:
             require(
@@ -999,10 +1000,15 @@ def verify_archive(raw, snapshot, prefix):
             if isinstance(specification, tuple):
                 require((len(content), digest(content)) == specification, "archive component mismatch")
                 if item.name.endswith(".json"):
-                    matching = [r for r in snapshot["rows"] if prefix + "/" + str(r["metadata"]) == item.name]
-                    if matching:
+                    if metadata_rows is None:
+                        # Preserve the first match across all dispositions. Build
+                        # only when needed, rather than scan all rows per member.
+                        metadata_rows = {}
+                        for row in snapshot["rows"]:
+                            metadata_rows.setdefault(prefix + "/" + str(row["metadata"]), row)
+                    row = metadata_rows.get(item.name)
+                    if row is not None:
                         metadata = parse(content)
-                        row = matching[0]
                         require(
                             metadata.get("row_id") == row["row_id"]
                             and metadata.get("payload_sha256") == row["payload_sha256"],
