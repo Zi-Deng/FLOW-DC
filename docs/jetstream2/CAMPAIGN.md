@@ -50,6 +50,10 @@ or discharge an obligation. Cleanup continues until a fresh identity-validated
 remain visible. Exact replay returns historical application only and does not
 claim current readiness.
 
+Prepared experiment cases bind the stable campaign identity, ceiling, expiry and
+window for each authorized account. A changed campaign invalidates earlier
+preparation; ordinary consumption does not change that binding.
+
 Journal application holds the existing experiment and maintenance locks, refuses
 an active experiment owner, checks unchanged account/binding state, and commits
 the new receipt atomically. Stale verification, concurrent state changes and

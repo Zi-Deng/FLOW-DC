@@ -133,6 +133,19 @@ class CampaignTests(unittest.TestCase):
         corrupted['events'][-1]['data']['conservative_allowance_su'] = 0
         with self.assertRaises(ops.OpsError): validate_record(corrupted)
 
+    def test_prepared_case_binding_changes_on_grant_but_not_consumption(self):
+        from flowdc_experiment_transport import binding, registration_binding
+        old = binding(self.before)
+        _,_,after = self.apply()
+        granted = binding(after)
+        self.assertNotEqual(old,granted)
+        self.assertEqual(registration_binding(granted),granted)
+        changed=copy.deepcopy(after)
+        next(iter(changed['vms'].values()))['account']['consumed']+=1
+        self.assertEqual(binding(changed),granted)
+        next(iter(changed['vms'].values()))['account']['campaign_expires_utc']+=1
+        self.assertNotEqual(binding(changed),granted)
+
     def test_preview_is_read_only_and_needs_idle_positive_verified_rates(self):
         candidate,_,applied = preview(self.before,self.request,self.clock())
         self.assertTrue(applied)

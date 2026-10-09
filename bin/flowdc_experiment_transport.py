@@ -23,7 +23,20 @@ from flowdc_topology import action_lead_seconds, selected_ids, selected_roles, v
 
 
 def registration_binding(record):
-    return {key: record[key] for key in ("registration_id", "spec", "access", "service")}
+    result = {key: record[key] for key in ("registration_id", "spec", "access", "service")}
+    # Prepared cases bind stable campaign authority, never fluctuating balances.
+    # A serialized binding has campaigns already; a journal derives them from accounts.
+    campaigns = record.get("campaigns")
+    if campaigns is None:
+        fields = ("campaign_id", "campaign_limit", "campaign_expires_utc", "campaign_window_seconds")
+        campaigns = {
+            key: {name: vm["account"][name] for name in fields}
+            for key, vm in record.get("vms", {}).items()
+            if vm["account"].get("campaign_id") is not None
+        }
+    if campaigns:
+        result["campaigns"] = campaigns
+    return result
 
 
 def binding(record):
