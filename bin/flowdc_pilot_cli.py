@@ -1,6 +1,7 @@
 """Additive pilot CLI and explicit immutable user-service installation."""
 
 import errno
+import ast
 import hashlib
 import os
 import re
@@ -62,6 +63,11 @@ MODULES = (
     "flowdc_pilot_supervisor.py",
     "flowdc_pilot_cli.py",
     "flowdc_campaign.py",
+)
+# Immutable pre-topology installations are upgrade inputs, not a second runtime.
+LEGACY_RELEASE_MODULES = (
+    "flowdc_ops.py", "flowdc_pilot.py", "flowdc_pilot_journal.py",
+    "flowdc_pilot_provider.py", "flowdc_pilot_supervisor.py", "flowdc_pilot_cli.py",
 )
 
 
@@ -238,6 +244,21 @@ def trusted_bytes(path, *, executable=False):
             os.close(fd)
 
 
+def release_modules(source, *, error):
+    """Read the two known closure declarations without importing installed code."""
+    try:
+        tree = ast.parse(trusted_bytes(source / "flowdc_pilot_cli.py"))
+        assignments = [node for node in tree.body if isinstance(node, ast.Assign)
+            and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name)
+            and node.targets[0].id == "MODULES"]
+        names = ast.literal_eval(assignments[0].value) if len(assignments) == 1 else None
+    except (SyntaxError, ValueError, TypeError):
+        raise failure(error) from None
+    if names not in (MODULES, LEGACY_RELEASE_MODULES):
+        raise failure(error)
+    return names
+
+
 def verify_release(service, root):
     if (
         service["unit"] != UNIT
@@ -247,7 +268,7 @@ def verify_release(service, root):
         raise failure("unexpected_release_provenance")
     with ops.private_directory(Path(service["release"])) as parent:
         content = []
-        for name in MODULES:
+        for name in release_modules(Path(service["release"]), error="installed_release_changed"):
             with ops.open_private_at(parent, name) as fd:
                 content.append(ops.read_bounded_file(fd))
     if hashlib.sha256(b"".join(content)).hexdigest() != service["digest"]:
@@ -259,7 +280,14 @@ def verify_release(service, root):
 
 def stage_candidate(journal, expected, source=None):
     source = ops.absolute_path(source) if source is not None else Path(__file__).resolve().parent
-    content = {name: trusted_bytes(source / name) for name in MODULES}
+    names = release_modules(source, error="invalid_candidate_source")
+    if names == LEGACY_RELEASE_MODULES:
+        record = journal.read()
+        if record["schema_version"] != 1 or any(
+            vm["account"].get("campaign_id") is not None for vm in record["vms"].values()
+        ):
+            raise failure("legacy_release_cannot_read_current_accounting")
+    content = {name: trusted_bytes(source / name) for name in names}
     digest = hashlib.sha256(b"".join(content.values())).hexdigest()
     if digest != expected:
         raise failure("candidate_release_mismatch")

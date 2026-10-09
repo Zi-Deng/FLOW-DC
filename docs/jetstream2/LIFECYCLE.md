@@ -255,7 +255,7 @@ over current accounting.
 The explicit maintenance command requires two full SHA-256 digests. Obtain the
 installed module digest from `pilot status` using the new checkout
 (`data.supervisor_release_digest`); this is a read-only operation against the
-existing v1 journal. Compute the candidate digest from the six modules in their
+existing v1 journal. Compute the candidate digest from the current modules in their
 fixed order, using that same reviewed checkout:
 
 ```bash
@@ -280,6 +280,15 @@ old installed interpreter against its existing binding. It refuses unexpected
 source bytes, edited installed releases/units, unit drop-ins, alternate fragments,
 unsafe paths and changed interpreters. Interpreter damage must be repaired through
 trusted operator recovery before either upgrade or rollback can proceed.
+
+The current upgrader also accepts the historical six-module release as a verified
+upgrade input. It reads only the known literal `MODULES` tuple from that release's
+CLI, without importing it, and still requires the complete expected module digest.
+A missing current module cannot be hidden by changing the tuple. Returning to the
+six-module runtime is allowed only before topology or campaign accounting is added.
+After that migration, the old runtime cannot read the current journal: preserve
+the compatible controller, stop/clean up through it and repair forward. Never
+downgrade the journal or restore old consumption to make rollback possible.
 
 Maintenance preserves registration, context, access facts, VM identities, events,
 network history and **every account field exactly**, including consumption and
