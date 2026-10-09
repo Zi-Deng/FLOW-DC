@@ -167,7 +167,6 @@ files/output
 files/test
 data
 examples
-CLAUDE.md
 /benchmark/results/
 files/input/biotrove_test_100k_corrected.parquet
 files/input/Biotrove-Train-corrected.parquet
