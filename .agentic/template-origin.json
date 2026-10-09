@@ -1,5 +1,0 @@
-{
-  "origin": "Previously adopted FLOW-DC workflow",
-  "current_policy": "Streamlined in place under maintainer instruction on 2026-10-09",
-  "history": "Git retains previous implementation; no runtime compatibility stack"
-}

@@ -14,6 +14,7 @@ from pathlib import Path
 from workflow import WorkflowError, write_json
 
 STORE = Path.home() / ".config/flowdc-agentic/claude-review-login"
+REFRESH_MARGIN = 300  # Reserve the native CLI's early-refresh window without sending a refresh token.
 
 
 def private_json(path):
@@ -58,7 +59,10 @@ def validate(credentials, config, receipt, seconds, now=None):
         or not 0 <= now - receipt.get("recorded_at", 0) <= 7 * 86400
     ):
         raise WorkflowError("Current paid-extra-disabled observation is required")
-    if type(token.get("expiresAt")) not in (int, float) or token["expiresAt"] / 1000 <= now + seconds + 60:
+    if (
+        type(token.get("expiresAt")) not in (int, float)
+        or token["expiresAt"] / 1000 <= now + seconds + REFRESH_MARGIN + 60
+    ):
         raise WorkflowError("Dedicated reviewer login needs renewal")
     if not isinstance(token.get("accessToken"), str) or len(token["accessToken"]) < 16:
         raise WorkflowError("Dedicated reviewer access token unavailable")

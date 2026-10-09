@@ -280,7 +280,11 @@ def publish(repo, directory):
         raise WorkflowError("Review history too large; inspect before publication")
     lines = [
         marker,
-        f"Independent static review of `{meta['head']}` using {meta['policy']['provider']} / {meta['policy']['model']}.",
+        f"Independent static review of `{meta['head']}` using {meta['policy']['provider']} / requested {meta['policy']['model']}.",
+        "CLI / reported models: "
+        + str(meta.get("execution", {}).get("cli_version", "unreported"))
+        + " / "
+        + ", ".join(meta.get("execution", {}).get("reported_models", []) or ["unreported"]),
         "",
         report["summary"],
     ]

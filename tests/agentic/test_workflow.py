@@ -148,7 +148,7 @@ class AuthTests(unittest.TestCase):
         with self.assertRaises(WorkflowError):
             self.validate()
         self.credentials["claudeAiOauth"]["subscriptionType"] = "max"
-        self.credentials["claudeAiOauth"]["expiresAt"] = (self.now + 900) * 1000
+        self.credentials["claudeAiOauth"]["expiresAt"] = (self.now + 1100) * 1000
         with self.assertRaises(WorkflowError):
             self.validate()
         self.credentials["claudeAiOauth"]["expiresAt"] = (self.now + 3600) * 1000
