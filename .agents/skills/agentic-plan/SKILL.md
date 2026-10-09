@@ -1,20 +1,10 @@
 ---
 name: agentic-plan
-description: "Inspect an existing GitHub issue and repository, then publish an implementation plan as an issue comment. Use for planning before coding or revising a task plan; implementation requires the user's approval of the designated plan."
+description: "Plan an existing issue or revise its scope."
 ---
 
-# Plan GitHub Issue
+# agentic-plan
 
-Produce the public implementation contract for an existing issue. Read [the skill operating contract](../../../docs/agent-workflow/SKILLS.md), [the operating guide](../../../docs/agent-workflow/OPERATING-GUIDE.md), and [the plan role prompt](../../../.agentic/prompts/plan.md).
+Inspect relevant source and current issue; write a concise implementation/validation plan. Reuse existing user authorization. Ask only for a genuine missing scope/decision. Publish one current plan; no per-phase authorization generations. Historical comments are context, not mandatory future review input.
 
-Read the issue, existing plan comments and relevant code, tests and configuration. Map every acceptance criterion to the implementation boundary, affected interfaces, failure cases and exact evidence. Explain compatibility, domain validation, costs, migrations, exclusions and rollback where relevant. A plan that merely restates the issue is incomplete.
-
-Settle decisions that materially affect correctness, scope or cost before dependent implementation. Publish the proposed plan using a body file and the task helper. Return its numeric comment ID and URL. Identify it as proposed until the user has approved it.
-
-Request approval of this concrete plan before coding. Reuse explicit approval of the same concrete plan already given by the user; publication on GitHub is not a reason to ask again. Record that approval against the issue and plan content digests using the documented approval operation. That local record is an operator receipt, not a human GitHub review or permission inferred from public text. A changed issue or designated plan must be reconciled before further implementation.
-
-Return the approved/proposed status, comment URL, criterion-to-evidence mapping and unresolved decisions. Stop after planning unless coordinating the complete workflow.
-
-Map each criterion to source/tests and boundary evidence. Plan bounded scopes with a complete inventory, without additional paid requests. Identify unsupported material explicitly and preserve the approved acceptance contract.
-
-Read [the coverage contract and migration runbook](../../../docs/agent-workflow/COVERAGE.md).
+Follow [the streamlined guide](../../../docs/agent-workflow/OPERATING-GUIDE.md). User instructions and existing authorization take precedence. Keep credentials/private material separate and scientific validity distinct from software checks.

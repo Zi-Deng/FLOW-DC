@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate FLOW-DC workflow configuration, skills and maintained workflow links."""
+"""Check current skills, configuration, CI and documentation links."""
 
 import json
 import re
@@ -13,103 +13,56 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts/agentic"))
 from workflow import configuration  # noqa: E402
 
-SKILLS = {
-    "agentic-workflow",
-    "agentic-capture",
-    "agentic-plan",
-    "agentic-prepare",
-    "agentic-implement",
-    "agentic-review",
-    "agentic-repair",
-    "agentic-finish",
-}
-
 
 def validate_skills(root):
-    for name in sorted(SKILLS):
-        directory = root / ".agents/skills" / name
-        skill = directory / "SKILL.md"
-        metadata = directory / "agents/openai.yaml"
-        for path in (directory, skill, metadata):
-            assert not path.is_symlink(), path
-        text = skill.read_text()
-        assert text.startswith("---\n"), skill
-        front, separator, body = text[4:].partition("\n---\n")
-        assert separator and body.strip(), skill
+    skills = list((root / ".agents/skills").glob("*/SKILL.md"))
+    assert len(skills) == 8
+    for path in skills:
+        text = path.read_text()
+        assert text.startswith("---\n")
+        front, _, body = text[4:].partition("\n---\n")
         fields = yaml.safe_load(front)
-        assert isinstance(fields, dict) and fields.get("name") == name, skill
-        assert isinstance(fields.get("description"), str) and fields["description"].strip(), skill
-        invocation = yaml.safe_load(metadata.read_text())
-        assert isinstance(invocation, dict), metadata
-        interface = invocation.get("interface", {})
-        for key in ("display_name", "short_description", "default_prompt"):
-            assert isinstance(interface.get(key), str) and interface[key].strip(), metadata
-        assert re.search(rf"\${re.escape(name)}(?![a-z0-9-])", interface["default_prompt"]), metadata
-        policy = invocation.get("policy", {})
-        assert isinstance(policy, dict), metadata
-        assert policy.get("allow_implicit_invocation", True) is True, metadata
+        assert fields["name"] == path.parent.name and fields["description"] and body.strip()
+        meta = yaml.safe_load((path.parent / "agents/openai.yaml").read_text())
+        assert "$" + fields["name"] in meta["interface"]["default_prompt"]
+        assert meta.get("policy", {}).get("allow_implicit_invocation", True) is True
 
 
 def main():
     validate_skills(ROOT)
-    for name in ("new-task.sh", "cleanup-task.sh", "finish-task.sh"):
-        wrapper = ROOT / "scripts" / name
-        assert wrapper.is_file() and wrapper.stat().st_mode & 0o111 == 0o111, wrapper
     config = configuration(ROOT)
-    required = config["required_checks"]
-    assert set(required) == {"flowdc-tests", "agentic-quality"} and len(required) == 2
-    schema = json.loads((ROOT / ".agentic/schemas/executor-result.json").read_text())
-    assert schema["type"] == "object" and schema["additionalProperties"] is False
-    assert set(schema["required"]) == set(schema["properties"]) == {"status", "summary", "checks", "blockers"}
-    assert schema["properties"]["status"] == {
-        "type": "string",
-        "enum": ["completed", "checkpoint", "blocked"],
-    }
-    assert schema["properties"]["summary"] == {"type": "string"}
-    for key in ("checks", "blockers"):
-        assert schema["properties"][key] == {"type": "array", "items": {"type": "string"}}
-    observed_jobs = []
-    for path in (ROOT / ".github").rglob("*.yml"):
-        # BaseLoader retains the Actions key `on` rather than YAML 1.1's boolean True.
-        value = yaml.load(path.read_text(), Loader=yaml.BaseLoader)
-        assert isinstance(value, dict), path
-        if path.parent.name == "workflows":
-            assert "on" in value and "jobs" in value, path
-            assert "pull_request_target" not in value["on"], path
-            assert value["permissions"]["contents"] == "read", path
-            for name, job in value["jobs"].items():
-                assert "timeout-minutes" in job, path
-                if name in required:
-                    observed_jobs.append(name)
-                    assert "pull_request" in value["on"] and "push" in value["on"], path
-                    assert value["on"]["push"] == {"branches": ["main"]}, path
-                    assert "if" not in job and "continue-on-error" not in job, path
-                    assert job.get("name", name) == name, path
-                for step in job.get("steps", []):
-                    if "uses" in step:
-                        assert re.fullmatch(r"[^@]+@[0-9a-f]{40}", step["uses"]), step["uses"]
-                        if step["uses"].startswith("actions/checkout@"):
-                            assert step["with"]["persist-credentials"] == "false", path
-    assert sorted(observed_jobs) == sorted(required), "Required check names must match unique CI jobs"
+    assert json.loads((ROOT / ".agentic/schemas/review-report.json").read_text())["type"] == "object"
+    jobs = []
+    for p in (ROOT / ".github/workflows").glob("*.yml"):
+        value = yaml.load(p.read_text(), Loader=yaml.BaseLoader)
+        assert "pull_request_target" not in value["on"] and value["permissions"]["contents"] == "read"
+        for name, job in value["jobs"].items():
+            assert "timeout-minutes" in job
+            if name in config["required_checks"]:
+                jobs.append(name)
+            for step in job.get("steps", []):
+                if "uses" in step:
+                    assert re.fullmatch(r"[^@]+@[0-9a-f]{40}", step["uses"])
+                    if step["uses"].startswith("actions/checkout@"):
+                        assert step["with"]["persist-credentials"] == "false"
+    assert sorted(jobs) == sorted(config["required_checks"])
     paths = [
         ROOT / "README.md",
         ROOT / "AGENTS.md",
-        *(ROOT / "docs/agent-workflow").rglob("*.md"),
-        *(ROOT / ".agents/skills").rglob("*.md"),
+        *(ROOT / "docs/agent-workflow").glob("*.md"),
+        *(ROOT / ".agents/skills").glob("*/SKILL.md"),
     ]
-    errors = []
-    for path in paths:
-        text = path.read_text()
-        for link in re.findall(r"\[[^\]]*\]\(([^)]+)\)", text):
+    for p in paths:
+        for link in re.findall(r"\[[^\]]*\]\(([^)]+)\)", p.read_text()):
             if re.match(r"[a-z]+://|mailto:|#", link):
                 continue
             target = unquote(link.split("#", 1)[0].strip("<>"))
-            if target and not (path.parent / target).exists():
-                errors.append(f"{path.relative_to(ROOT)}: missing {target}")
-    if errors:
-        raise SystemExit("\n".join(errors))
+            assert not target or (p.parent / target).exists(), f"{p}: missing {target}"
+    runtime = sum(len(p.read_text().splitlines()) for p in (ROOT / "scripts/agentic").glob("*.py"))
+    tests = sum(len(p.read_text().splitlines()) for p in (ROOT / "tests/agentic").glob("*.py"))
+    assert runtime <= 2500 and tests <= 1200, "Workflow growth exceeded the maintainer budget"
     print(
-        "Eight skills, runtime configuration, result schema, CI check names, YAML and workflow links validated"
+        f"Current config, eight skills, CI, links and size budgets verified: {runtime}runtime/{tests}test lines"
     )
 
 

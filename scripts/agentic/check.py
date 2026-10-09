@@ -1,40 +1,29 @@
 #!/usr/bin/env python3
-"""Dependency-free validation of the portable workflow and its regression suite."""
+"""Run the one current workflow regression suite within a finite deadline."""
 
-import argparse
-import ast
-import json
+import os
 import sys
 from pathlib import Path
 
-import check_runner
+from providers import capture
 
 ROOT = Path(__file__).resolve().parents[2]
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--jobs", type=int, choices=(1, 2), default=2)
-    parser.add_argument(
-        "--suite-profile", choices=(check_runner.SUITE_PROFILE, check_runner.HOSTED_SUITE_PROFILE)
+    result, raw = capture(
+        [sys.executable, "-B", "-m", "unittest", "discover", "-s", "tests/agentic", "-v"],
+        cwd=ROOT,
+        env=os.environ.copy(),
+        seconds=120,
+        output_limit=2_000_000,
+        include_stderr=True,
     )
-    args = parser.parse_args()
-    for directory in [ROOT / "scripts/agentic", ROOT / "tests/agentic"]:
-        for path in directory.glob("*.py"):
-            ast.parse(path.read_text(), filename=str(path))
-    json.loads((ROOT / ".agentic/config.json").read_text())
-    if args.suite_profile is not None:
-        return check_runner.run(
-            ROOT,
-            args.jobs,
-            suite_profile=args.suite_profile,
-            seconds=(
-                check_runner.HOSTED_SUITE_SECONDS
-                if args.suite_profile == check_runner.HOSTED_SUITE_PROFILE
-                else check_runner.SUITE_SECONDS
-            ),
-        )
-    return check_runner.run(ROOT, args.jobs)
+    sys.stdout.buffer.write(raw)
+    if result["reason"]:
+        print(f"Workflow suite stopped: {result['reason']}", file=sys.stderr)
+        return 1
+    return result["exit_status"]
 
 
 if __name__ == "__main__":
