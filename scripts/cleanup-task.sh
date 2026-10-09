@@ -1,4 +1,4 @@
 #!/usr/bin/env bash
 set -euo pipefail
-script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-exec python3 "$script_dir/agentic/workflow.py" cleanup-task "$@"
+printf "%s\n" "Cleanup is manual: verify human merge and matching worktree tip, preserve ignored artifacts, then remove the clean worktree."
+exit 1

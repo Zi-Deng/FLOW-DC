@@ -1,6 +1,6 @@
 interface:
   display_name: "Prepare Issue Worktree"
-  short_description: "Create and register an isolated issue worktree"
-  default_prompt: "Use $agentic-prepare to create and register an isolated issue worktree."
+  short_description: "Use the streamlined prepare phase"
+  default_prompt: "Use $agentic-prepare with the current streamlined workflow and existing user authorization."
 policy:
   allow_implicit_invocation: true

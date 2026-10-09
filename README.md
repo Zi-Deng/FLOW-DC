@@ -12,7 +12,7 @@ The core component is **PAARC (Policy-Aware Adaptive Request Controller)**, a co
 
 ## Agentic development
 
-Future development uses the repository's eight [agentic workflow skills](docs/agent-workflow/SKILLS.md): an approved issue plan, isolated worktree, Astra implementation, independent provider-selected model review and a human merge decision. Start with the [workflow guide](docs/agent-workflow/README.md) and [setup instructions](docs/agent-workflow/SETUP.md). The [verification record](docs/agent-workflow/VERIFICATION.md) distinguishes tested behavior from remaining rollout steps.
+Future development uses the repository's eight [agentic workflow skills](docs/agent-workflow/SKILLS.md): a concise authorized task, an issue worktree, direct implementation, proportionate checks, one bounded independent review and a human merge decision. Start with the [workflow guide](docs/agent-workflow/README.md) and [setup instructions](docs/agent-workflow/SETUP.md). The [verification record](docs/agent-workflow/VERIFICATION.md) distinguishes tested behavior from remaining rollout steps.
 
 Developer validation uses a separate Python 3.12+ environment and `make check`; it runs the focused FLOW-DC and workflow suites without a dataset or cluster campaign. Private task context belongs in Git-ignored `memory/`, and workflow state lives in Git-ignored `.agentic-local/`.
 
@@ -675,8 +675,4 @@ Generate synthetic offline examples with `python -B benchmark/topology_plan.py e
 installation/migration, trust enrollment and bounded live-run requirements. These
 tools do not imply scientific protocol approval.
 
-Independent review now has a machine-validated [coverage contract](docs/agent-workflow/COVERAGE.md):
-actual read/search evidence, a same-request capability probe and bounded component
-scopes. Partial reports are useful but cannot establish readiness. Legacy reviews
-remain historical evidence. Hosted checks separately record their tested checkout;
-static inspection does not execute tests or establish scientific validity.
+Independent review uses [one current provider-selectable path](docs/agent-workflow/REVIEW.md). The maintainer retired the exhaustive coverage/generation framework on October9,2026. Reports describe inspected scope and limitations without claiming comprehensive coverage. Old source/reports remain historical. Current-head CI, credential separation, finite review limits, human merge and scientific evidence requirements remain.

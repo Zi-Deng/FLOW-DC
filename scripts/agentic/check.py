@@ -1,26 +1,29 @@
 #!/usr/bin/env python3
-"""Dependency-free validation of the portable workflow and its regression suite."""
+"""Run the one current workflow regression suite within a finite deadline."""
 
-import ast
-import json
-import subprocess
+import os
 import sys
 from pathlib import Path
+
+from providers import capture
 
 ROOT = Path(__file__).resolve().parents[2]
 
 
 def main():
-    for directory in [ROOT / "scripts/agentic", ROOT / "tests/agentic"]:
-        for path in directory.glob("*.py"):
-            ast.parse(path.read_text(), filename=str(path))
-    json.loads((ROOT / ".agentic/config.json").read_text())
-    result = subprocess.run(
+    result, raw = capture(
         [sys.executable, "-B", "-m", "unittest", "discover", "-s", "tests/agentic", "-v"],
         cwd=ROOT,
-        check=False,
+        env=os.environ.copy(),
+        seconds=120,
+        output_limit=2_000_000,
+        include_stderr=True,
     )
-    return result.returncode
+    sys.stdout.buffer.write(raw)
+    if result["reason"]:
+        print(f"Workflow suite stopped: {result['reason']}", file=sys.stderr)
+        return 1
+    return result["exit_status"]
 
 
 if __name__ == "__main__":

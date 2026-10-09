@@ -1,6 +1,6 @@
 interface:
   display_name: "Capture GitHub Issue"
-  short_description: "Draft and publish a measurable GitHub issue"
-  default_prompt: "Use $agentic-capture to draft and publish a measurable GitHub issue."
+  short_description: "Use the streamlined capture phase"
+  default_prompt: "Use $agentic-capture with the current streamlined workflow and existing user authorization."
 policy:
   allow_implicit_invocation: true
