@@ -146,6 +146,14 @@ provider verification followed by the installed pilot's supported `reconcile`
 request to refresh cached observations. An unrelated active/incomplete operation
 is refused; no history or account fields are reset.
 
+After authorized guest setup within the intended active window, an explicit
+`run --use-active-window` can use that same ready selection and inspection
+window. It checks current registration/campaign identity, source-bound worker
+selection, fresh ACTIVE observations, window size and remaining useful time.
+It retains the existing shutdown deadline. Without this flag the idle gate is
+unchanged. It does not resume a previously attempted experiment or add another
+window; the prepared run must still be unused and the experiment owner vacant.
+
 ```bash
 STATE=/absolute/existing/flowdc-state
 RUN=exp-0123456789abcdef0123456789abcdef  # Replace with the complete returned run ID.

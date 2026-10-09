@@ -101,13 +101,26 @@ class Controller:
             )
         return value["data"]
 
-    def preflight(self, window):
+    def preflight(self, window, *, use_active_window=False):
         verify_unit_origin(reloaded=True)
         expected = service_unit(self.record["service"], self.root)
         unit = Path.home() / ".config/systemd/user/flowdc-pilot.service"
         require(trusted_bytes(unit) == expected, "installed_unit_changed")
         require_persistent_session()
         value = self.call("status")
+        if use_active_window:
+            current = self.journal.read()
+            require(ready(value), "active_window_not_ready")
+            require(
+                current["window"] == {"seconds": window, "inspection": True}
+                and current["desired"] == "run" and current["checkpoint"] is None
+                and current["network"]["ready"] is True
+                and set(selected_ids(current)) == set(selected_ids(self.expected))
+                and registration_binding(current) == registration_binding(self.expected),
+                "active_window_changed",
+            )
+            require(remaining(value) > 0, "active_window_exhausted")
+            return value
         require(idle(value), "controller_not_idle")
         if not clean(value):
             code, raw = execute(
