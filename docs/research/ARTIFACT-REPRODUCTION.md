@@ -80,6 +80,15 @@ See [STUDY-HARNESS.md](STUDY-HARNESS.md) for plan/freeze/run-cell commands. A ch
 ephemeral localhost port changes manifest bytes; matched seeds preserve semantic
 row/object assignments and payloads, while each actual manifest hash is recorded.
 
+The secondary mechanism/supporting runner is `benchmark/supplementary.py`, described
+in the same guide. Its retained `protocol.json` includes the complete plan,
+acquisition source/environment binding, orchestrator hash, decisions and finite
+budget. Reproduce into a new directory with separate declared seeds/resources;
+never replace a scientific first attempt. Its analysis independently re-verifies
+outputs and origin admission and retains unqualified stimuli and sparse holds.
+Secondary intervals and their separate multiplicity families do not extend the
+primary confirmation or qualify an unexercised mechanism.
+
 ## Native runtime and private paper
 
 Use matching patched CCTools 7.17.2 manager, worker and Python binding, following

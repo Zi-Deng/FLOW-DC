@@ -43,6 +43,47 @@ in these files. The maintainer accepts provisional defaults; named-advisor
 decisions remain pending. Distributed admission, native TaskVine and the offline topology ladder are described
 in [the milestone D contract](DISTRIBUTED-WORKFLOW.md).
 
+## Secondary mechanisms and supporting conditions
+
+`benchmark/supplementary.py` reuses the primary acquisition, first-attempt output
+verification, HTTP/control observations and origin replay. Its `make_plan` API
+freezes matched fixture seeds and randomized family/arm order within independent
+blocks. `mechanisms` compares the selected full gradient configuration with each
+of the five single-mechanism ablations in all three primary scenarios. `supporting`
+compares all five selected controls in steady, sparse, baseline-drift, oscillation,
+recovery and transient-overload conditions. Six blocks give108 and180first
+attempts respectively. These are secondary studies with separate seeds, not
+additional primary repetitions or opportunities to retune.
+
+Generate a plan from the complete frozen tuning selection, using
+`make_plan(kind, configs, seed=SEED, blocks=6)`, where `configs` maps each of the
+five method IDs to its selected `config`. Write the returned JSON before execution.
+Supply a separate decisions JSON with `approved_plan_sha256` (SHA256 of canonical
+`benchmark.core.truth.encode(plan)`), explicit `authority` (`maintainer-provisional`
+or `advisor`), and specific `provenance`, `replication` and `estimand` strings.
+These records must describe actual decisions; they do not establish advisor approval.
+
+```bash
+python benchmark/supplementary.py --source-root EXPORTED_ACQUISITION_SOURCE \
+  --plan PLAN.json --environment ENVIRONMENT.json --decisions DECISIONS.json \
+  --output NEW_STUDY_DIRECTORY --wall-seconds FINITE_BUDGET
+```
+
+The source/environment record and the orchestrator hash bind a frozen protocol.
+The maximum batch window is48hours, each acquisition300seconds plus60seconds
+cleanup, and the mandatory storage reserve50GiB. Resuming must use exactly the
+same protocol and original expiry; it reuses closed first attempts and refuses
+uncertain work. It does not create a replacement attempt or extend the budget.
+Run only one scientific cell at a time under the declared CPU/resource policy.
+
+`analysis.json` independently re-verifies every first attempt and replays origin
+admission. It retains realized-stimulus checks, sparse holds and actual mechanism
+observations. Goodput has a separate Holm family per secondary study; the paired
+95% intervals remain ordinary, not simultaneous. Missing/censored evidence blocks
+intervals. Six blocks are a declared secondary scope, not a precision guarantee.
+Inspect stimulus and control observations before making any mechanism claim;
+an unexercised mechanism or absent overload response cannot establish its effect.
+
 ## Origin contract
 
 `benchmark/core/controlled_origin.py` implements a concurrent HTTP origin with
