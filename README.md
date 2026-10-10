@@ -2,13 +2,13 @@
 
 **Flexible Large-scale Orchestrated Workflow for Data Collection**
 
-A high-performance pipeline for distributed downloading of large-scale machine learning datasets, featuring adaptive per-host rate control and seamless integration with HPC workflow managers.
+A pipeline for dataset acquisition with per-host concurrency control, verified outputs and TaskVine orchestration.
 
 ## Overview
 
-FLOW-DC accelerates dataset acquisition for machine learning research by leveraging distributed parallelism across multiple worker machines. The system uses a manager-worker architecture built on TaskVine, where a central manager partitions datasets, assigns download tasks to workers, and consolidates results.
+FLOW-DC uses a manager-worker architecture built on TaskVine, where a central manager partitions datasets, assigns download tasks to workers, and consolidates results. Performance and distributed-validity claims require the controlled evidence described in the research contract below.
 
-The core component is **PAARC (Policy-Aware Adaptive Request Controller)**, a congestion control algorithm that dynamically adjusts concurrency for each target host based on observed latency. This enables FLOW-DC to maximize throughput while respecting server rate limits and avoiding overload.
+The default controller is **PAARC (Policy-Aware Adaptive Request Controller)**. It adjusts concurrency for each target host using application-observed delay and overload feedback. Explicit research methods also select the gradient candidate, fixed concurrency, ratio controller or pinned Gradient2 application-delay adaptation. Common admission, Retry-After and output safeguards remain active across methods.
 
 ## Agentic development
 

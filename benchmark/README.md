@@ -45,7 +45,11 @@ service capacity/queues, fresh seeded scenario origins, frozen cell ordering,
 retained failures/resume, fixed-client calibration and run-level paired summaries.
 Use `python -B benchmark/study.py --help` for the commands. The tracked 72-cell
 evaluation plan and tuning catalog are unexecuted proposals; non-engineering runs
-refuse to start without explicit advisor decisions bound into a frozen protocol.
+refuse to start without explicit decisions bound into a frozen protocol. The
+protocol distinguishes supplied advisor decisions from maintainer-approved
+provisional defaults; maintainer authorization does not imply advisor agreement.
+See the [artifact reproduction procedure](../docs/research/ARTIFACT-REPRODUCTION.md)
+for the separate installation, retained-analysis and native checks.
 
 `benchmark/shared_origin.py` exercises real concurrent downloader clients against
 one authenticated aggregate authority. See the

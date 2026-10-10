@@ -22,7 +22,7 @@ These instructions apply to the whole repository unless a deeper `AGENTS.md` ove
 ## Current Downloader Truth
 
 - The main maintained downloader is `bin/download_batch.py` with `bin/single_download.py` (HTTP, TTFB timing, Retry-After admission) and `bin/flowdc_integrity.py` (`.flowdc/` journal, per-row dispositions, `--resume`/`--reconcile`, verified archives).
-- The default control algorithm is PAARC v2 (`paarc-base-v2`) with per-host adaptive concurrency. `--control_method` also selects `gradient-candidate-v1`, `fixed-v1` and `ratio-v1` (`bin/flowdc_methods.py`). Current defaults are in `PAARCConfig` in `bin/download_batch.py` (e.g. startup thetas 3.0/4.0).
+- The default control algorithm is PAARC v2 (`paarc-base-v2`) with per-host adaptive concurrency. `--control_method` also selects `gradient-candidate-v1`, `fixed-v1`, `ratio-v1` and `gradient2-application-delay-v1` (`bin/flowdc_methods.py`). Gradient2 is the pinned Netflix application-delay adaptation; its per-completion update rules differ from PAARC. Current base defaults are in `PAARCConfig` in `bin/download_batch.py` (e.g. startup thetas 3.0/4.0).
 - `bin/TaskvineFLOWDC.py` is the maintained TaskVine orchestrator and stages the downloader modules through `bin/flowdc_staging.py`.
 - `bin/TaskvineFLOWDCCloud.py` is stale: it stages only `download_batch.py` and `single_download_gbif.py` (the downloader now also needs `flowdc_integrity.py` and `single_download.py`) and uses legacy PolicyBBR keys. Repair it before relying on it.
 - `bin/download_batch_multithread.py` has diverged (unchanged since January 2026): different growth rules and defaults, no integrity, resume or control-method support. Do not assume config or behavior parity with `download_batch.py`.

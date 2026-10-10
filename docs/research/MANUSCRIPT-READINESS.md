@@ -1,10 +1,21 @@
 # Manuscript research contract
 
 This contract frames a proposed evaluation for **IEEE Transactions on Big Data**.
-Gradient PAARC is the proposed primary method; it is not yet a validated scientific
+`gradient-candidate-v1` is the proposed primary method; it is not yet a validated scientific
 contribution. There is no approved submission deadline in this record. The maintainer reports
 advisor approval; the specific decisions about hypotheses, constraints, baselines,
 scope and venue fit remain pending and cannot be inferred from that report. This document does not edit or replace the user's manuscript.
+
+Issue #40 extends the research path with the source-verified
+`gradient2-application-delay-v1` comparator, a finite larger workload, retained
+first-attempt inference and native-runtime/campaign preparation. The five methods
+share acquisition and output accounting. Primary controlled comparisons use the
+local accountable-terminal harness; cloud 1/2/4-worker configurations provide
+supporting distributed validity. Passing CI and native engineering fixtures do
+not establish efficacy or general scale-out performance. The maintainer authorized
+provisional defaults; protocols retain that authority separately from named-advisor
+decisions. Private manuscript/status and actual experiment records stay in ignored
+`memory/`. Reproduction follows the [artifact procedure](ARTIFACT-REPRODUCTION.md).
 
 The historical measurement prerequisite was [issue #20](https://github.com/Zi-Deng/FLOW-DC/issues/20)
 and its [approved implementation plan](https://github.com/Zi-Deng/FLOW-DC/issues/20#issuecomment-5876154148).

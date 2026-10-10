@@ -16,7 +16,7 @@ it owns every worker process and records the binary hash and cleanup in a new
 `<output_directory>-workers` sibling. Use the prepared guest bridge for remote workers.
 Arbitrary external workers/factories are not a supported bounded research cohort.
 Methods are `paarc-base-v2`,
-`gradient-candidate-v1`, `fixed-v1`, and `ratio-v1`; their equations and provisional
+`gradient-candidate-v1`, `fixed-v1`, `ratio-v1` and `gradient2-application-delay-v1`; their equations and provisional
 parameters are in [CONTROL-METHODS.md](CONTROL-METHODS.md). Original-byte truth and
 safe metadata restrictions follow [benchmark-contract.md](benchmark-contract.md).
 Output collisions fail before HTTP. Original invalid rows remain in the denominator.
