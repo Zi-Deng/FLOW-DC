@@ -1,10 +1,11 @@
 """Explicit finite campaign grants; pilot limits and all consumption stay intact."""
 import copy
 import hashlib
+import math
 from dataclasses import asdict
 
 import flowdc_ops as ops
-from flowdc_pilot import ClockSample
+from flowdc_pilot import CLOCK_TOLERANCE_SECONDS, ClockSample
 from flowdc_pilot_journal import allowance, allowance_binding_sha256, encode, failure, require_grant_idle
 
 
@@ -14,6 +15,123 @@ def sha(value):
 
 def account_digest(record):
     return sha({key:value['account'] for key,value in record['vms'].items()})
+
+
+def validate_recovery_request(request):
+    """Explicit operator recovery of confirmed activity outside supervision."""
+    try:
+        ops.fields(request, ('schema', 'recovery_id', 'registration_id', 'vm_id',
+            'expected_binding_sha256', 'expected_accounts_sha256', 'evidence_sha256',
+            'reason', 'max_elapsed_seconds'))
+        if (request['schema'] != 'flowdc-account-recovery-v1'
+                or request['reason'] != 'confirmed_external_activity'):
+            raise ValueError
+        for name in ('recovery_id', 'registration_id', 'vm_id'):
+            if ops.uuid_value(request[name]) != request[name]: raise ValueError
+        import re
+        for name in ('expected_binding_sha256', 'expected_accounts_sha256', 'evidence_sha256'):
+            if not isinstance(request[name], str) or not re.fullmatch(r'[0-9a-f]{64}', request[name]):
+                raise ValueError
+        ops.integer(request['max_elapsed_seconds'], 1, 604800)
+    except (KeyError, TypeError, ValueError, ops.OpsError):
+        raise failure('invalid_account_recovery', invalid=True) from None
+    return request
+
+
+def find_recovery_receipt(record, request):
+    validate_recovery_request(request)
+    for event in record['events']:
+        if event['kind'] == 'account_recovered' and event['data']['request']['recovery_id'] == request['recovery_id']:
+            receipt = event['data']
+            if receipt['request'] != request or receipt['request_sha256'] != sha(request):
+                raise failure('account_recovery_replay_conflict')
+            return copy.deepcopy(receipt)
+    return None
+
+
+def require_recovery_idle(record):
+    # Uncertainty is the explicit target; all actual cleanup must already be done.
+    if (record['desired'] != 'idle' or record['checkpoint'] is not None
+            or not record['network']['rolled_back'] or record['network']['ready']
+            or any(vm['phase'] != 'offloaded' or allowance(vm['account']).obligation
+                or vm['observed'] is None or vm['observed']['state'] != 'SHELVED_OFFLOADED'
+                for vm in record['vms'].values())):
+        raise failure('account_recovery_idle_required')
+
+
+def recovery_bound(record, vm_id, campaign_id, now):
+    """Charge all time since a fresh idle campaign proof, including its lookback.
+
+    No provider history is assumed complete, and no old consumption is removed.
+    Reboot or inconsistent clocks cannot establish this bound and remain blocked.
+    """
+    baseline = next((r for r in receipts(record) if r['request']['campaign_id'] == campaign_id), None)
+    if baseline is None or vm_id not in baseline['changes']:
+        raise failure('account_recovery_baseline_required')
+    start = ClockSample(**baseline['clock'])
+    before = allowance(baseline['changes'][vm_id]['before'])
+    elapsed, wall = now.boottime - start.boottime, now.utc - start.utc
+    if (before.uncertain or before.obligation or start.boot_id != now.boot_id
+            or not 0 <= elapsed <= 604680 or not 0 <= wall <= 604680
+            or abs(wall - elapsed) > CLOCK_TOLERANCE_SECONDS):
+        raise failure('account_recovery_clock_bound_required')
+    # Campaign application requires its whole provider proof to finish in120s.
+    # Include that interval: the last server read may precede the receipt clock.
+    return baseline, math.ceil(max(elapsed, wall) + 120)
+
+
+def recovery_preview(record, request, now):
+    validate_recovery_request(request)
+    existing = find_recovery_receipt(record, request)
+    if existing is not None: return copy.deepcopy(record), existing, False
+    require_recovery_idle(record)
+    key = request['vm_id']
+    if (request['registration_id'] != record['registration_id']
+            or request['expected_binding_sha256'] != allowance_binding_sha256(record)
+            or request['expected_accounts_sha256'] != account_digest(record)
+            or key not in record['vms']):
+        raise failure('account_recovery_expectation_changed')
+    old = allowance(record['vms'][key]['account'])
+    if not old.uncertain: raise failure('account_recovery_uncertainty_required')
+    baseline, elapsed = recovery_bound(record, key, old.campaign_id, now)
+    if elapsed > request['max_elapsed_seconds']:
+        raise failure('account_recovery_elapsed_limit')
+    updated = asdict(old)
+    updated.update(uncertain=False, consumed=max(old.consumed,
+        baseline['changes'][key]['before']['consumed'] + elapsed))
+    allowance(updated)
+    candidate = copy.deepcopy(record)
+    candidate['vms'][key]['account'] = updated
+    receipt = {'request':copy.deepcopy(request), 'request_sha256':sha(request),
+        'clock':asdict(now), 'baseline_campaign_id':old.campaign_id,
+        'charged_elapsed_bound_seconds':elapsed, 'before':asdict(old), 'after':updated,
+        'limitation':'Conservative operational exposure bound, not measured provider billing; all prior uncertainty and consumption retained here. No allowance or activation granted.'}
+    candidate['events'].append({'kind':'account_recovered', 'data':receipt})
+    return candidate, receipt, True
+
+
+def validate_recovery_receipts(record):
+    seen = set()
+    for event in record['events']:
+        if event['kind'] != 'account_recovered': continue
+        receipt = ops.fields(event['data'], ('request', 'request_sha256', 'clock',
+            'baseline_campaign_id', 'charged_elapsed_bound_seconds', 'before', 'after', 'limitation'))
+        request = validate_recovery_request(receipt['request'])
+        if (request['recovery_id'] in seen or receipt['request_sha256'] != sha(request)
+                or request['registration_id'] != record['registration_id']
+                or request['vm_id'] not in record['vms']): raise ValueError('invalid recovery identity')
+        seen.add(request['recovery_id'])
+        before, after = allowance(receipt['before']), allowance(receipt['after'])
+        baseline, elapsed = recovery_bound(record, request['vm_id'], receipt['baseline_campaign_id'], ClockSample(**receipt['clock']))
+        expected = asdict(before)
+        expected.update(uncertain=False, consumed=max(before.consumed,
+            baseline['changes'][request['vm_id']]['before']['consumed'] + elapsed))
+        if (not before.uncertain or before.obligation or after.obligation
+                or before.campaign_id != receipt['baseline_campaign_id']
+                or elapsed != receipt['charged_elapsed_bound_seconds']
+                or elapsed > request['max_elapsed_seconds'] or asdict(after) != expected
+                or allowance(record['vms'][request['vm_id']]['account']).consumed < after.consumed):
+            raise ValueError('invalid recovery transition')
 
 
 def validate_request(request):

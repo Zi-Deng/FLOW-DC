@@ -45,7 +45,8 @@ class Allowance:
     """One VM's cumulative account, independent of operation/run/spec names.
 
     Consumption is deliberately not capped: overdue cleanup remains visible.
-    Clock ambiguity permanently prevents activation, even after verified offload.
+    Uncertainty prevents activation after offload. Ordinary commands cannot clear
+    it; explicit external-activity recovery requires a preserved, bounded receipt.
     Durable storage and resource/context binding belong to the journal layer.
     """
 

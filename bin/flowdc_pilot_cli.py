@@ -85,6 +85,8 @@ def arguments(commands):
         "extend-allowance",
         "campaign-preview",
         "campaign-apply",
+        "account-recovery-preview",
+        "account-recovery-apply",
         "runtime-check",
         "topology-preview",
         "topology-apply",
@@ -111,6 +113,8 @@ def arguments(commands):
             parser.add_argument("--recover", choices=("complete", "rollback"))
         if action in ("extend-allowance", "campaign-preview", "campaign-apply"):
             parser.add_argument("--grant", required=True)
+        if action in ("account-recovery-preview", "account-recovery-apply"):
+            parser.add_argument("--request", required=True)
         if action == "start":
             parser.add_argument("--window-seconds", type=int, default=1800)
             parser.add_argument(
@@ -555,9 +559,9 @@ def verify_grant_local(journal, record, *, clock=sample_clock):
         raise failure("supervisor_not_ready")
 
 
-def grant_outcome(receipt, applied, record, *, campaign=False):
+def grant_outcome(receipt, applied, record, *, campaign=False, recovery=False):
     return ops.outcome(
-        "pilot campaign-apply" if campaign else "pilot extend-allowance",
+        "pilot account-recovery-apply" if recovery else "pilot campaign-apply" if campaign else "pilot extend-allowance",
         "ok",
         data={
             "result": "applied" if applied else "already_applied",
@@ -574,8 +578,11 @@ def grant_outcome(receipt, applied, record, *, campaign=False):
     ), 0
 
 
-def extend_allowance(journal, path, *, clock=sample_clock, campaign=False):
-    if campaign:
+def extend_allowance(journal, path, *, clock=sample_clock, campaign=False, recovery=False):
+    if recovery:
+        from flowdc_campaign import recovery_preview as preview, validate_recovery_request, find_recovery_receipt as find_receipt, require_recovery_idle
+        request_value = validate_recovery_request(ops.read_document(path))
+    elif campaign:
         from flowdc_campaign import preview, validate_request, find_receipt
         request_value = validate_request(ops.read_document(path))
     else:
@@ -584,7 +591,7 @@ def extend_allowance(journal, path, *, clock=sample_clock, campaign=False):
     record = journal.read()
     receipt = find_receipt(record, request_value)
     if receipt is not None:
-        return grant_outcome(receipt, False, record, campaign=campaign)
+        return grant_outcome(receipt, False, record, campaign=campaign, recovery=recovery)
     # Match the experiment owner protocol without importing uninstalled modules.
     # Fixed lock order: experiment, maintenance, then the short journal I/O lock.
     with (
@@ -596,7 +603,7 @@ def extend_allowance(journal, path, *, clock=sample_clock, campaign=False):
         record = journal.read()
         receipt = find_receipt(record, request_value)
         if receipt is not None:
-            return grant_outcome(receipt, False, record, campaign=campaign)
+            return grant_outcome(receipt, False, record, campaign=campaign, recovery=recovery)
         try:
             with ops.open_private_at(runs, "active-experiment.json") as fd:
                 owner = ops.fields(ops.parse_json(ops.read_bounded_file(fd)), ("run_id",))
@@ -604,11 +611,14 @@ def extend_allowance(journal, path, *, clock=sample_clock, campaign=False):
                 raise failure("active_experiment_owner")
         except FileNotFoundError:
             pass
-        if campaign:
+        if campaign or recovery:
             preview(record, request_value, clock())
         else:
             require_grant_expectation(record, request_value)
-        require_grant_idle(record)
+        if recovery:
+            require_recovery_idle(record)
+        else:
+            require_grant_idle(record)
         verify_grant_controller(journal, record, clock=clock)
         start = clock()
         Provider(ops.load_profile(record["profile_path"])).verify_idle(record)
@@ -617,7 +627,7 @@ def extend_allowance(journal, path, *, clock=sample_clock, campaign=False):
         # the latest heartbeat here; commit still compares to the original proof
         # snapshot and refuses every other intervening state change.
         verify_grant_controller(journal, journal.read(), clock=clock)
-        apply = journal.authorize_campaign if campaign else journal.extend_allowance
+        apply = journal.recover_account if recovery else journal.authorize_campaign if campaign else journal.extend_allowance
         receipt, applied, current = apply(
             request_value,
             record,
@@ -625,7 +635,7 @@ def extend_allowance(journal, path, *, clock=sample_clock, campaign=False):
             clock=clock,
             recheck=lambda current: verify_grant_local(journal, current, clock=clock),
         )
-        return grant_outcome(receipt, applied, current, campaign=campaign)
+        return grant_outcome(receipt, applied, current, campaign=campaign, recovery=recovery)
 
 
 def prepare(args):
@@ -843,6 +853,13 @@ def run(args):
                 },
             ), 0
         journal = Journal(args.state_root)
+        if args.pilot_command == "account-recovery-preview":
+            from flowdc_campaign import recovery_preview, validate_recovery_request
+            _, receipt, applicable = recovery_preview(journal.read(), validate_recovery_request(ops.read_document(args.request)), sample_clock())
+            return ops.outcome("pilot account-recovery-preview", "ok", data={"receipt":receipt,
+                "applicable":applicable, "state_changed":False, "cloud_readiness":"not_assessed"}), 0
+        if args.pilot_command == "account-recovery-apply":
+            return extend_allowance(journal, args.request, recovery=True)
         if args.pilot_command == "campaign-preview":
             from flowdc_campaign import preview, validate_request
             _, receipt, applicable = preview(journal.read(), validate_request(ops.read_document(args.grant)), sample_clock())

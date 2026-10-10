@@ -390,8 +390,9 @@ def validate_record(record):
                 ):
                     raise ValueError
         validate_grant_receipts(record)
-        from flowdc_campaign import validate_receipts
+        from flowdc_campaign import validate_receipts, validate_recovery_receipts
         validate_receipts(record)
+        validate_recovery_receipts(record)
         migration_ids = set()
         for event in record["events"]:
             if event["kind"] != "topology_migrated":
@@ -529,7 +530,7 @@ class Journal:
                 [
                     event
                     for event in record["events"]
-                    if event["kind"] in ("allowance_granted", "topology_migrated")
+                    if event["kind"] in ("allowance_granted", "topology_migrated", "campaign_authorized", "account_recovered")
                 ]
             )
             previous = {key: allowance(vm["account"]) for key, vm in record["vms"].items()}
@@ -546,7 +547,7 @@ class Journal:
                 [
                     event
                     for event in record["events"]
-                    if event["kind"] in ("allowance_granted", "topology_migrated")
+                    if event["kind"] in ("allowance_granted", "topology_migrated", "campaign_authorized", "account_recovered")
                 ]
             ):
                 raise failure("immutable_allowance_receipts")
@@ -642,6 +643,27 @@ class Journal:
                 return receipt, False, current
             if encode(dict(current, heartbeat=None)) != encode(dict(snapshot, heartbeat=None)):
                 raise failure("campaign_state_changed")
+            recheck(current)
+            require_grant_interval(verification_start, clock(), OBSERVATION_SECONDS)
+            validate_record(candidate)
+            connection.execute("UPDATE pilot SET body=? WHERE id=1", (encode(candidate),))
+            connection.commit()
+            return copy.deepcopy(receipt), True, candidate
+
+    def recover_account(self, request, snapshot, verification_start, *, clock, recheck):
+        """Audited exception after fresh idle proof; never lowers consumption/grants."""
+        from flowdc_campaign import recovery_preview
+        from flowdc_pilot_supervisor import OBSERVATION_SECONDS
+
+        with self.connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute("SELECT body FROM pilot WHERE id=1").fetchone()
+            if row is None: raise failure("missing_journal_history")
+            current = validate_record(ops.parse_json(row[0]))
+            candidate, receipt, applied = recovery_preview(current, request, clock())
+            if not applied: return receipt, False, current
+            if encode(dict(current, heartbeat=None)) != encode(dict(snapshot, heartbeat=None)):
+                raise failure("account_recovery_state_changed")
             recheck(current)
             require_grant_interval(verification_start, clock(), OBSERVATION_SECONDS)
             validate_record(candidate)

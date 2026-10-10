@@ -188,7 +188,39 @@ read/start/accounting operations; they do not expose the new grant command.
 | Active owner or lock contention | Finish/recover the existing experiment or maintenance operation through its supported commands, then inspect again. Never remove locks/owner files to force a grant. |
 | Stale proof, provider mismatch or network rollback mismatch | Preserve evidence; verify cloud identity and original attachments. Use supported reconcile/recovery as appropriate, then repeat fresh verification. |
 | Provenance failure or dead supervisor | Repair the verified installation through guarded upgrade/recovery; do not bypass release checks. |
-| Obligations, active state or uncertainty | Keep supervision running and follow the cleanup/recovery procedure. Uncertainty cannot be cleared by granting time. |
+| Obligations or active state | Keep supervision running and follow the cleanup/recovery procedure. |
+| Uncertainty after confirmed activity outside supervision | Complete cleanup first, then use the explicit account recovery below. Granting time cannot clear uncertainty. |
+
+### Account recovery after confirmed external activity
+
+An operator may resume a registered VM outside the supervised window. Reconciliation
+then records uncertain exposure, exhausts its remaining allowance and cleans up.
+After confirming that external action, an explicitly authorized operator can use
+`pilot account-recovery-preview --request /private/recovery.json` and
+`pilot account-recovery-apply --request /private/recovery.json`. Ordinary reconcile,
+grant and journal updates still cannot clear uncertainty.
+
+The request uses schema `flowdc-account-recovery-v1`, unique `recovery_id`,
+`registration_id`, `vm_id`, current `expected_binding_sha256` and
+`expected_accounts_sha256`, the retained evidence's `evidence_sha256`, reason
+`confirmed_external_activity`, and a finite `max_elapsed_seconds` (at most seven
+days). The evidence hash identifies the operator's supporting record; it does not
+establish authorization or prove that provider action history is comprehensive.
+
+Application requires the installed controller, live supervisor, no experiment
+owner, exclusive maintenance, completed cleanup and fresh provider verification
+of every registered VM and restored network. It derives a conservative bound
+from the affected VM's current campaign receipt, charging **all elapsed time**
+since its verified idle baseline plus the120-second proof lookback. It retains
+the larger of existing consumption and baseline consumption plus that bound.
+Reboot, inconsistent clocks, stale proof, changed accounts or exceeded elapsed
+limits refuse recovery. A pre-campaign uncertain account has no eligible baseline.
+
+The atomic receipt preserves the old uncertain account, new account, evidence
+digest and calculated bound. It changes no registration, grant, limit or other
+account, starts no VM and is idempotent by request ID. A changed replay refuses.
+Any subsequent allowance and activation remain separately authorized operations.
+The exposure bound is operational accounting, not a provider billing measurement.
 
 The original enrollment specification file is not rewritten. Re-running prepare
 with its obsolete lower limits refuses the mismatch rather than resetting the

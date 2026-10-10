@@ -34,6 +34,11 @@ The [finite campaign extension](docs/jetstream2/CAMPAIGN.md) provides offline
 `pilot campaign-preview --grant PATH` and explicitly authorized
 `pilot campaign-apply --grant PATH`. It preserves pilot limits and all consumption,
 with a separate finite campaign ceiling, expiry, selected UUIDs, budget and receipt.
+After confirmed activity outside supervision, the explicit
+`pilot account-recovery-preview/apply --request PATH` commands conservatively
+charge the whole uncertain interval after fresh cleanup verification. They retain
+the old uncertainty in an audit receipt and grant no time or activation; see
+[account recovery](docs/jetstream2/LIFECYCLE.md#account-recovery-after-confirmed-external-activity).
 It does not activate VMs or establish scientific validity.
 
 ## Installation
