@@ -45,6 +45,26 @@ in [the milestone D contract](DISTRIBUTED-WORKFLOW.md).
 
 ## Secondary mechanisms and supporting conditions
 
+`benchmark/tool_study.py` supplies the img2dataset1.47.0 side of matched controlled
+tool comparisons. `execute_cell(directory, cell, threads, environment, executable)`
+uses the study's seeded original payloads, scenarios, truth manifest, WebDataset
+output requirement and launch-through-independent-verification timer. It requires
+the supplied acquisition source inventory to match and probes the explicit CLI's
+own Python environment for version1.47.0; there is no executable fallback. Thread
+count is bounded1–16 with one process; shard retries are zero, original reencoding
+is disabled, and retry opportunities match the primary scenario. Call it under
+the same declared CPU/resource policy as the FLOW-DC arm.
+
+Its `first_attempt` independently re-verifies native payloads/metadata, original
+rows, common outcomes and origin admission/request accounting. It never substitutes
+a later attempt. Native img2dataset per-row attempts and comparable client-latency
+journals remain unavailable; disclose aggregate observed requests and do not replace
+client latency with origin service time. The numeric30second native timeout has
+different urllib/aiohttp semantics. Equal work and byte preservation do not make
+these timeout or output-container semantics identical. Freeze a separate tuning/
+comparison protocol and finite budget before scientific use; the runner alone
+does not authorize or establish a scientific tool comparison.
+
 `benchmark/supplementary.py` reuses the primary acquisition, first-attempt output
 verification, HTTP/control observations and origin replay. Its `make_plan` API
 freezes matched fixture seeds and randomized family/arm order within independent
