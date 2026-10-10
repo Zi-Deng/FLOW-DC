@@ -15,16 +15,23 @@ for the qualified harness, with JDK 17+ for the actual Gradient2 Java comparison
 
 Create environments in new directories. Install with pip's `--no-cache-dir` and
 `--report`, then retain `pip check`, `pip freeze` and the harness environment record.
-The declared direct dependency pins are not a complete transitive, hash-locked
-environment. A release must also include its resolved installation/lock records;
-inspect download URLs before redistribution. Keep the older img2dataset NumPy1
-environment separate from the SciPy/NumPy2 analysis environment.
+The Linux x86-64 / CPython3.12 locks provide complete resolved runtime wheel
+dependencies for the two Python harness environments:
+`benchmark/requirements-tools-linux-py312.lock` (68 distributions, img2dataset and
+NumPy1) and `benchmark/requirements-analysis-linux-py312.lock` (26 distributions,
+scientific acquisition/analysis with NumPy2). The latter wheel payloads were
+checked against the installed study libraries. Use their hashes and binary-only
+installation rather than silently resolving new transitive versions. Other
+platforms need their own qualified locks. Interpreter, OS, native TaskVine and TeX
+remain separate dependencies; this is not a complete machine image. Retain the
+installation reports privately and inspect URLs before redistribution.
 
 ```bash
 python3.12 -m venv .agentic-local/reproduce-tools
 .agentic-local/reproduce-tools/bin/python -m pip install --no-cache-dir \
+  --require-hashes --only-binary=:all: \
   --report .agentic-local/reproduce-tools-install.json \
-  -r benchmark/requirements-research.txt
+  -r benchmark/requirements-tools-linux-py312.lock
 .agentic-local/reproduce-tools/bin/python -m pip check
 NO_ALBUMENTATIONS_UPDATE=1 WANDB_MODE=disabled \
   .agentic-local/reproduce-tools/bin/python -B benchmark/known_truth.py \
@@ -49,8 +56,8 @@ every planned first attempt and all later attempts. Restore compressed synthetic
 records losslessly before analysis and verify the artifact manifest. Third-party
 payload exclusions and missing records remain explicit.
 
-Run the analysis command in an isolated environment containing its recorded
-Polars, psutil, Pillow, NumPy, SciPy and Matplotlib versions:
+Install `benchmark/requirements-analysis-linux-py312.lock` with the same
+hash-checking/binary-only options into a separate fresh environment. Run:
 
 ```bash
 python -B benchmark/analyze.py --plan /absolute/artifact/evaluation/plan.json \
