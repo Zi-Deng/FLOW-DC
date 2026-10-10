@@ -279,6 +279,42 @@ class RollbackLatencyBackend(LatencyBackend):
 
 
 class ReadBatchTests(unittest.TestCase):
+    def test_six_server_preflight_fits_one_deadline_and_validates_every_identity(self):
+        provider = Provider({})
+        vm_ids = [f"22222222-2222-4222-8222-{i:012d}" for i in range(6)]
+        record = {"vms": dict.fromkeys(vm_ids, {}), "spec": {"context": {"project_id": PROJECT}}}
+        active = maximum = 0
+        lock = threading.Lock()
+        inspected = []
+
+        def query(action, resource):
+            nonlocal active, maximum
+            self.assertEqual(action, "server")
+            with lock:
+                active += 1
+                maximum = max(maximum, active)
+                inspected.append(resource)
+            time.sleep(.1)
+            with lock:
+                active -= 1
+            return {"id": resource, "project_id": PROJECT, "status": "SHELVED_OFFLOADED"}
+
+        with (patch.object(ops, "CLOUD_SECONDS", .5),
+              patch.object(provider, "context"), patch.object(provider, "query", side_effect=query),
+              patch.object(provider, "call") as mutation):
+            provider.preflight(record)
+        self.assertEqual(set(inspected), set(vm_ids))
+        self.assertEqual(maximum, 4)
+        self.assertEqual(active, 0)
+        mutation.assert_not_called()
+        for bad in ({"id": vm_ids[1], "project_id": PROJECT, "status": "SHELVED_OFFLOADED"},
+                    {"id": vm_ids[0], "project_id": VM_IDS[0], "status": "SHELVED_OFFLOADED"},
+                    {"id": vm_ids[0], "project_id": PROJECT, "status": "ACTIVE"}):
+            with (patch.object(provider, "context"),
+                  patch.object(provider, "read_batch", return_value=[bad] + [query("server", i) for i in vm_ids[1:]]),
+                  self.assertRaises(ops.OpsError)):
+                provider.preflight(record)
+
     def test_four_read_barrier_and_actor_join(self):
         provider = Provider({})
         barrier = threading.Barrier(4, timeout=2)
@@ -731,14 +767,18 @@ class NetworkTests(unittest.TestCase):
         self.setup_network()
         self.rollback()
         self.provider.calls.clear()
-        with patch.object(self.provider, "server", return_value="SHELVED_OFFLOADED"):
+        with patch.object(self.provider, "query", side_effect=lambda action, vm_id: {
+            "id": vm_id, "project_id": PROJECT, "status": "SHELVED_OFFLOADED"
+        }):
             self.provider.verify_idle(self.journal.read())
             self.assertFalse(any(call[2] for call in self.provider.calls))
             self.provider.ports[PORT_IDS[0]]["security_group_ids"] = []
             with self.assertRaises(ops.OpsError) as caught:
                 self.provider.verify_idle(self.journal.read())
         self.assertEqual(caught.exception.code, "maintenance_network_rollback_required")
-        with patch.object(self.provider, "server", return_value="ACTIVE"):
+        with patch.object(self.provider, "query", side_effect=lambda action, vm_id: {
+            "id": vm_id, "project_id": PROJECT, "status": "ACTIVE"
+        }):
             with self.assertRaises(ops.OpsError) as caught:
                 self.provider.verify_idle(self.journal.read())
         self.assertEqual(caught.exception.code, "initial_offload_required")

@@ -645,17 +645,23 @@ class Provider:
         executor context joins all running probes, whose runners own and reap
         their children under the shared deadline; later batches are not submitted.
         """
-        allowed = {"group", "ports", "port", "network", "subnet", "floating_show", "router", "router_ports"}
+        allowed = {"server", "group", "ports", "port", "network", "subnet", "floating_show", "router", "router_ports"}
         for action, *args in requests:
             if action not in allowed:
                 raise failure("invalid_adapter_action", invalid=True)
-            self.validate_call(action, args)
+            if action == "server":
+                if len(args) != 1:
+                    raise failure("invalid_adapter_argument", invalid=True)
+                ops.uuid_value(args[0])
+            else:
+                self.validate_call(action, args)
         results = []
         with ThreadPoolExecutor(max_workers=4) as executor:
             for offset in range(0, len(requests), 4):
                 if time.monotonic() >= self.deadline:
                     raise failure("probe_timeout")
-                futures = [executor.submit(self.call, *request) for request in requests[offset : offset + 4]]
+                futures = [executor.submit(self.query if request[0] == "server" else self.call, *request)
+                           for request in requests[offset : offset + 4]]
                 try:
                     results.extend(future.result() for future in futures)
                 finally:
@@ -690,6 +696,11 @@ class Provider:
         if vm_id not in record["vms"]:
             raise failure("vm_not_allowlisted")
         value = self.query("server", vm_id)
+        return self.validate_server(record, vm_id, value)
+
+    def validate_server(self, record, vm_id, value):
+        if vm_id not in record["vms"]:
+            raise failure("vm_not_allowlisted")
         if (
             ops.uuid_value(field(value, "id")) != vm_id
             or ops.uuid_value(field(value, "project_id")) != record["spec"]["context"]["project_id"]
@@ -728,8 +739,10 @@ class Provider:
     def preflight(self, record):
         with self.step("preflight"):
             self.context(record)
-            for vm_id in record["vms"]:
-                if self.server(record, vm_id) != "SHELVED_OFFLOADED":
+            vm_ids = list(record["vms"])
+            values = self.read_batch([("server", vm_id) for vm_id in vm_ids])
+            for vm_id, value in zip(vm_ids, values, strict=True):
+                if self.validate_server(record, vm_id, value) != "SHELVED_OFFLOADED":
                     raise failure("initial_offload_required")
 
     def verify_idle(self, record):
