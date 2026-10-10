@@ -34,6 +34,7 @@ class FlowDCConfig:
     control_method: str | None = None
     method_options: dict = field(default_factory=dict)
     shared_control_file: str | None = None
+    research_workload: str | None = None
 
 
 class FlowDCAdapter:
@@ -87,6 +88,7 @@ class FlowDCAdapter:
             "theta_95": config.paarc_theta_95,
             "max_retry_attempts": config.max_retry_attempts,
             "research_profile": config.research_profile,
+            "research_workload": config.research_workload,
             "create_tar": config.research_profile,
             "compress_tar": False,
             "create_overview": True,

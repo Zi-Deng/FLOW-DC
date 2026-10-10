@@ -28,7 +28,7 @@ Use a task-local Python 3.12 environment; do not install into the shared environ
 
 ```bash
 python3 -m venv .agentic-local/research
-.agentic-local/research/bin/python -m pip install --report .agentic-local/research-install.json -r benchmark/requirements-research.txt
+.agentic-local/research/bin/python -m pip install --no-cache-dir --require-hashes --only-binary=:all: --report .agentic-local/research-install.json -r benchmark/requirements-tools-linux-py312.lock
 .agentic-local/research/bin/python -B benchmark/known_truth.py --output benchmark/results/known-truth-smoke-001
 ```
 
@@ -45,7 +45,11 @@ service capacity/queues, fresh seeded scenario origins, frozen cell ordering,
 retained failures/resume, fixed-client calibration and run-level paired summaries.
 Use `python -B benchmark/study.py --help` for the commands. The tracked 72-cell
 evaluation plan and tuning catalog are unexecuted proposals; non-engineering runs
-refuse to start without explicit advisor decisions bound into a frozen protocol.
+refuse to start without explicit decisions bound into a frozen protocol. The
+protocol distinguishes supplied advisor decisions from maintainer-approved
+provisional defaults; maintainer authorization does not imply advisor agreement.
+See the [artifact reproduction procedure](../docs/research/ARTIFACT-REPRODUCTION.md)
+for the separate installation, retained-analysis and native checks.
 
 `benchmark/shared_origin.py` exercises real concurrent downloader clients against
 one authenticated aggregate authority. See the
@@ -74,6 +78,11 @@ Retain the output directory, including failures, and the private pip install rep
 Do not publish install reports without inspecting source URLs for credentials.
 Installed versions and content hashes are recorded by the smoke. This is an
 engineering smoke, not a pilot or a confirmatory campaign.
+
+The lock above is qualified for Linux x86-64 / CPython3.12. Other platforms must
+resolve and qualify their own environment from the direct requirements. Scientific
+acquisition/analysis has a separate `requirements-analysis-linux-py312.lock`; do
+not mix its NumPy2 libraries with the older comparator environment.
 
 ## Historical native-counter runner
 

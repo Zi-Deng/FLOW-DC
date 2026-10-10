@@ -471,16 +471,15 @@ class PilotCliTests(unittest.TestCase):
         ]
         for role, peer in record["access"]["interfaces"].items():
             if role != "manager":
-                rules.extend(
+                rules.append(
                     {
                         "direction": "ingress",
-                        "protocol": protocol,
+                        "protocol": "tcp",
                         "remote_ip_prefix": peer["fixed_ip"] + "/32",
                         "ethertype": "IPv4",
                         "port_range_min": None,
                         "port_range_max": None,
                     }
-                    for protocol in ("tcp", "udp", "icmp")
                 )
         self.fixture.fixture["responses"].update(
             {

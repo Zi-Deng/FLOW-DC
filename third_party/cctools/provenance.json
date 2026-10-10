@@ -1,0 +1,11 @@
+{
+  "release": "7.17.2",
+  "revision": "ce1360061996e547ea14e22a00bc6042a42a13ce",
+  "upstream_fix": "73ead49d394416eb9ff80a2371e7263474135eef",
+  "scope": "Only the zero-completion division guard in exit_debug_message; other upstream changes excluded.",
+  "source_sha256": "86ee1582a9afa03bd896d649a3943853bd2285def0e9b4c4838c8811b81e7458",
+  "patched_source_sha256": "390240552e56cd01fdb57406aaee89d3859b064cbda46588891757884831b65c",
+  "patch_sha256": "039b679f5893901ecc9c08dd063cfc82831f1adfa30548af843ae7fa5d9a824f",
+  "license": "GPL-2.0-only; see COPYING",
+  "runtime_qualification": "Required separately; retaining a patch does not qualify native execution."
+}

@@ -197,7 +197,9 @@ def specification(value):
         bounds["deployment_min_seconds"] + len(cases) * bounds["min_case_seconds"] + bounds["collect_seconds"]
         < bounds["stop_after_seconds"]
     )
-    integer(bounds["output_bytes"], 1048576, 1073741824)
+    from flowdc_research_profile import workload
+    limits = workload(value.get("distributed", {}).get("research_workload"))
+    integer(bounds["output_bytes"], 1048576, max(1073741824, limits.max_artifact_bytes))
     integer(bounds["memory_mb"], 512, 32768)
     integer(bounds["disk_mb"], 256, 16384)
     integer(bounds["cores"], 1, 16)
@@ -238,14 +240,14 @@ def case_config(value):
     fields(
         value,
         ("enable_paarc",),
-        set(INTEGER_CONFIG) | FLOAT_CONFIG | {"url_col", "control_method", "method_options"},
+        set(INTEGER_CONFIG) | FLOAT_CONFIG | {"url_col", "control_method", "method_options", "research_workload"},
     )
     require(type(value["enable_paarc"]) is bool)
     if "control_method" in value or "method_options" in value:
         from download_batch import Config, normalize_config
 
         allowed = {key: item for key, item in value.items() if key != "url_col"}
-        normalize_config(Config("unused", "unused", **allowed))
+        normalize_config(Config("unused", "unused", research_profile=value.get("research_workload") is not None, **allowed))
     for key, item in value.items():
         if key in INTEGER_CONFIG:
             integer(item, *INTEGER_CONFIG[key])

@@ -171,6 +171,56 @@ class UpgradeTests(unittest.TestCase):
         with self.journal.connection() as connection:
             self.assertEqual(connection.execute("SELECT count(*) FROM pilot_maintenance").fetchone()[0], 2)
 
+    def legacy_release(self):
+        contents = {name: b"# six-module fixture; never executed\n" for name in cli.LEGACY_RELEASE_MODULES}
+        contents["flowdc_pilot_cli.py"] = ("MODULES = " + repr(cli.LEGACY_RELEASE_MODULES) + "\n").encode()
+        digest = hashlib.sha256(b"".join(contents.values())).hexdigest()
+        path = self.journal.root / "releases" / ("pilot-" + digest)
+        path.mkdir(mode=0o700)
+        for name, raw in contents.items():
+            (path / name).write_bytes(raw)
+        return dict(self.before["service"], digest=digest, release=str(path))
+
+    def test_six_module_upgrade_and_rollback_keep_intervening_consumption(self):
+        legacy = self.legacy_release()
+        self.journal.change(lambda record: record.update(service=legacy))
+        unit = self.root / ".config/systemd/user" / cli.UNIT
+        unit.write_bytes(cli.service_unit(legacy, self.journal.root))
+        self.before = self.journal.read()
+        self.args.expected_current_digest = legacy["digest"]
+        _, code = cli.upgrade_supervisor(self.journal, self.args)
+        self.assertEqual(code, 0)
+        self.assert_preserved(self.journal.read()["service"])
+        self.journal.change(lambda record: [vm["account"].update(consumed=vm["account"]["consumed"]+7)
+            for vm in record["vms"].values()])
+        latest = self.journal.read()
+        self.args.expected_current_digest = self.digest
+        self.args.expected_candidate_digest = legacy["digest"]
+        self.args.candidate_source = legacy["release"]
+        cli.upgrade_supervisor(self.journal, self.args)
+        self.assertEqual(self.journal.read(), dict(latest, service=legacy, heartbeat=None))
+
+    def test_legacy_downgrade_refuses_new_schema_or_campaign_before_staging(self):
+        legacy = self.legacy_release()
+        for update in ("topology", "campaign"):
+            record = copy.deepcopy(self.before)
+            if update == "topology":record["schema_version"] = 3
+            else:next(iter(record["vms"].values()))["account"]["campaign_id"] = "fixture-campaign"
+            journal = SimpleNamespace(read=lambda: record, root=self.journal.root)
+            with self.assertRaises(cli.ops.OpsError) as caught:
+                cli.stage_candidate(journal, legacy["digest"], legacy["release"])
+            self.assertEqual(caught.exception.code, "legacy_release_cannot_read_current_accounting")
+            self.assertEqual(self.journal.read(), self.before)
+
+    def test_current_release_cannot_hide_missing_modules_as_legacy(self):
+        service = self.before["service"]
+        path = Path(service["release"])
+        (path / "flowdc_topology.py").unlink()
+        (path / "flowdc_pilot_cli.py").write_text("MODULES = " + repr(cli.LEGACY_RELEASE_MODULES) + "\n")
+        with self.assertRaises(cli.ops.OpsError) as caught:
+            cli.verify_release(service, self.journal.root)
+        self.assertEqual(caught.exception.code, "installed_release_changed")
+
     def test_unsafe_state_refused_before_unit_or_journal_changes(self):
         cases = [
             lambda r: r.update(desired="stop"),

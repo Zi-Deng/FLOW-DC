@@ -2,17 +2,17 @@
 
 **Flexible Large-scale Orchestrated Workflow for Data Collection**
 
-A high-performance pipeline for distributed downloading of large-scale machine learning datasets, featuring adaptive per-host rate control and seamless integration with HPC workflow managers.
+A pipeline for dataset acquisition with per-host concurrency control, verified outputs and TaskVine orchestration.
 
 ## Overview
 
-FLOW-DC accelerates dataset acquisition for machine learning research by leveraging distributed parallelism across multiple worker machines. The system uses a manager-worker architecture built on TaskVine, where a central manager partitions datasets, assigns download tasks to workers, and consolidates results.
+FLOW-DC uses a manager-worker architecture built on TaskVine, where a central manager partitions datasets, assigns download tasks to workers, and consolidates results. Performance and distributed-validity claims require the controlled evidence described in the research contract below.
 
-The core component is **PAARC (Policy-Aware Adaptive Request Controller)**, a congestion control algorithm that dynamically adjusts concurrency for each target host based on observed latency. This enables FLOW-DC to maximize throughput while respecting server rate limits and avoiding overload.
+The default controller is **PAARC (Policy-Aware Adaptive Request Controller)**. It adjusts concurrency for each target host using application-observed delay and overload feedback. Explicit research methods also select the gradient candidate, fixed concurrency, ratio controller or pinned Gradient2 application-delay adaptation. Common admission, Retry-After and output safeguards remain active across methods.
 
 ## Agentic development
 
-Future development uses the repository's eight [agentic workflow skills](docs/agent-workflow/SKILLS.md): a concise authorized task, an issue worktree, direct implementation, proportionate checks, one bounded independent review and a human merge decision. Start with the [workflow guide](docs/agent-workflow/README.md) and [setup instructions](docs/agent-workflow/SETUP.md). The [verification record](docs/agent-workflow/VERIFICATION.md) distinguishes tested behavior from remaining rollout steps.
+Future development uses the repository's eight [agentic workflow skills](docs/agent-workflow/SKILLS.md): a concise authorized task, an issue worktree, direct implementation, proportionate checks, at most two bounded independent reviews and two review-driven repairs, followed by a human merge decision. Start with the [workflow guide](docs/agent-workflow/README.md) and [setup instructions](docs/agent-workflow/SETUP.md). The [verification record](docs/agent-workflow/VERIFICATION.md) distinguishes tested behavior from remaining rollout steps.
 
 Developer validation uses a separate Python 3.12+ environment and `make check`; it runs the focused FLOW-DC and workflow suites without a dataset or cluster campaign. Private task context belongs in Git-ignored `memory/`, and workflow state lives in Git-ignored `.agentic-local/`.
 
@@ -22,13 +22,24 @@ open evidence gates. Functional smoke tests do not establish publication claims.
 
 ## Local Jetstream2 operations
 
-The [local operations guide](docs/jetstream2/README.md) documents `python3 bin/flowdc_ops.py` for private workspace initialization, local readiness inspection, scoped read-only OpenStack inventory, and offline three-VM pilot validation. It uses Python 3.12+ without new project dependencies. Enrollment remains manual. The [bounded pilot lifecycle](docs/jetstream2/LIFECYCLE.md) adds private cumulative accounting and an independent user-systemd shutdown supervisor for three existing VMs. An explicit idle `pilot upgrade-supervisor` command preserves registration and accounting through guarded, recoverable release changes. A separately authorized `pilot extend-allowance --grant PATH` can add 1–1,800 seconds equally to the three accounts, with a durable retry-safe receipt and the unchanged 7,200-second lifetime ceiling; it never activates resources. The additive [experiment runner](docs/jetstream2/EXPERIMENTS.md) prepares committed source, configurations and Parquet inputs offline, then explicitly deploys, executes, collects and verifies a bounded three-VM run through that installed pilot. Live activation requires a separate authorized operational checkpoint; local/fake checks do not establish live-cloud or scientific results.
+The [local operations guide](docs/jetstream2/README.md) documents `python3 bin/flowdc_ops.py` for private workspace initialization, local readiness inspection, scoped read-only OpenStack inventory, and offline three-VM pilot validation. It uses Python 3.12+ without new project dependencies. Enrollment remains manual. The [bounded pilot lifecycle](docs/jetstream2/LIFECYCLE.md) adds private cumulative accounting and an independent user-systemd shutdown supervisor for three existing VMs. An explicit idle `pilot upgrade-supervisor` command preserves registration and accounting through guarded, recoverable release changes. A separately authorized `pilot extend-allowance --grant PATH` can add 1–1,800 seconds equally to the three accounts, with a durable retry-safe receipt and the unchanged 7,200-second lifetime ceiling; it never activates resources. The additive [experiment runner](docs/jetstream2/EXPERIMENTS.md) prepares committed source, configurations and Parquet inputs offline, then explicitly deploys, executes, collects and verifies a bounded three-VM run through that installed pilot. After authorized guest setup, explicit `flowdc_experiment.py run --use-active-window` can use the same ready selection/window while retaining its deadline; the default run still requires idle. Live activation requires a separate authorized operational checkpoint; local/fake checks do not establish live-cloud or scientific results.
 
 The pilot adds an offline `pilot runtime-check --profile PATH` prerequisite for
 its fixed SDK offload route, plus bounded sanitized `cleanup_diagnostics` in status.
 See the [cleanup reliability evidence](docs/jetstream2/CLEANUP-RELIABILITY-EVIDENCE.md)
 and [runtime requirements](docs/jetstream2/README.md#explicit-offload-runtime-prerequisite)
 before a separately authorized deployment or activation.
+
+The [finite campaign extension](docs/jetstream2/CAMPAIGN.md) provides offline
+`pilot campaign-preview --grant PATH` and explicitly authorized
+`pilot campaign-apply --grant PATH`. It preserves pilot limits and all consumption,
+with a separate finite campaign ceiling, expiry, selected UUIDs, budget and receipt.
+After confirmed activity outside supervision, the explicit
+`pilot account-recovery-preview/apply --request PATH` commands conservatively
+charge the whole uncertain interval after fresh cleanup verification. They retain
+the old uncertainty in an audit receipt and grant no time or activation; see
+[account recovery](docs/jetstream2/LIFECYCLE.md#account-recovery-after-confirmed-external-activity).
+It does not activate VMs or establish scientific validity.
 
 ## Installation
 
@@ -375,7 +386,8 @@ Hard overload signals still take precedence and enter the inherited `BACKOFF` pa
 | `create_overview` | bool | true | Write internal/external overview reports referencing the final completion record |
 | `force_overwrite` | bool | false | Allow deletion of an existing output folder; CLI equivalent: `--force` / `-f` |
 | `research_profile` | bool | false | Select row-ID naming, WebDataset metadata, uncompressed archive and overview; CLI: `--research_profile` |
-| `control_method` | string/null | null | Explicit `paarc-base-v2`, `gradient-candidate-v1`, `fixed-v1` or `ratio-v1`; null preserves the legacy entrypoint default |
+| `control_method` | string/null | null | Explicit `paarc-base-v2`, `gradient-candidate-v1`, `fixed-v1`, `ratio-v1` or `gradient2-application-delay-v1`; null preserves the legacy entrypoint default |
+| `research_workload` | string/null | null | Explicit finite `bounded-research-v2` profile; requires research output and an explicit method; see [workload contract](docs/research/WORKLOAD.md) |
 | `method_options` | object | {} | Versioned engineering parameters/ablation for the selected method; see [method contract](docs/research/CONTROL-METHODS.md) |
 | `resume` | bool | false | Reconcile, then continue eligible unresolved rows within their original attempt budgets; CLI: `--resume` |
 | `reconcile` | bool | false | Inspect/recover owned output offline, with no HTTP calls; CLI: `--reconcile` |
@@ -615,15 +627,19 @@ or [the candidate example](files/config/gradient-candidate-v1.json). These are
 engineering defaults awaiting specific advisor decisions; the legacy gradient
 entrypoint retains its old behavior.
 
-A separate [pinned Gradient2 decision engine](third_party/netflix-gradient2/README.md)
-matches the actual Java reference on declared traces. Downloader selection and
-shared measurement integration remain pending; it is not an active fifth method.
+The [pinned Gradient2 adaptation](third_party/netflix-gradient2/README.md) is selected
+with `gradient2-application-delay-v1` in local and shared acquisition. It feeds
+complete eligible requests and pre-retirement aggregate inflight to the source-verified
+decision engine. First-body delay is the default; body-completion delay is an explicit
+sensitivity option. Common acquisition safeguards still apply. See the
+[example configuration](files/config/gradient2-application-delay-v1.json).
 
 The [study harness](docs/research/STUDY-HARNESS.md) provides controlled-origin
 scenarios, retained engineering cells, calibration and provisional run-level
 precision tools. Machine-readable plans keep tuning and evaluation separate;
-scientific campaigns require an explicit frozen protocol with supplied advisor
-decisions. The issue #26 acceptance map links distributed admission, native execution
+scientific campaigns require an explicit frozen protocol with recorded decision
+provenance. Maintainer-approved provisional defaults remain distinct from advisor
+approval. The issue #26 acceptance map links distributed admission, native execution
 and offline topology evidence. The explicit
 [shared-origin admission path](docs/research/SHARED-ADMISSION.md) adds authenticated
 manager permits through `--shared_control_file`; its private descriptor is generated

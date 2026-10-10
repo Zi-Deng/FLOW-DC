@@ -211,14 +211,22 @@ def main():
     require(len(header) <= LIMIT and header.endswith(b"\n"), "validation_header_limit")
     value = parse(header)
     maximum = value["maximum"]
-    require(type(maximum) is int and 0 < maximum <= 1073741824)
+    from flowdc_research_profile import workload
+    limits = workload(value.get("research_workload"))
+    if value["kind"] == "distributed":
+        # The bridge establishes the repository package path for this standalone
+        # helper, including when launched by absolute path outside the repository.
+        from flowdc_experiment_research import verify_return
+        from benchmark.core.truth import truth_workload
+        truth_limits = truth_workload(value["truth"])
+        require(limits == truth_limits, "artifact_workload_mismatch")
+    require(type(maximum) is int and 0 < maximum <= max(1073741824, limits.max_artifact_bytes),
+            "artifact_workload_mismatch")
     raw = sys.stdin.buffer.read(maximum + 1)
     require(len(raw) <= maximum, "artifact_size_limit")
     if value["kind"] == "distributed":
-        from flowdc_experiment_research import verify_return
-
         result = verify_return(
-            members(raw, maximum),
+            members(raw, maximum, count=limits.max_files),
             value["case"],
             value["truth"],
             value["source"],

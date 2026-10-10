@@ -390,6 +390,21 @@ class ResearchGuestTests(unittest.TestCase):
         self.assertEqual(report["useful_bytes"], 3 * len(fixture.payload))
         self.assertEqual(report["original_rows"], 6)
         self.assertEqual(report["end_to_end_ns"], 123456789)
+        # Exercise the real child entrypoint with no repository import path.
+        import os
+        import subprocess
+        from flowdc_experiment_artifacts import bundle
+
+        header = {"kind": "distributed", "maximum": 8 * 1024 * 1024,
+                  "case": case, "truth": fixture.truth.record, "source": spec["files"],
+                  "environment": spec["environment_sha256"], "cohort": None}
+        child = subprocess.run(
+            [sys.executable, "-B", str(Path(__file__).resolve().parents[1] / "bin/flowdc_experiment_artifacts.py")],
+            input=json.dumps(header).encode() + b"\n" + bundle(files), capture_output=True,
+            cwd=self.root, env={k: v for k, v in os.environ.items() if k != "PYTHONPATH"}, timeout=30,
+        )
+        self.assertEqual(child.returncode, 0, child.stdout + child.stderr)
+        self.assertEqual(json.loads(child.stdout)["result"], report)
         for kind in (
             "source",
             "environment",

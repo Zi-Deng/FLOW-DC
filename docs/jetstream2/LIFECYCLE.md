@@ -188,7 +188,39 @@ read/start/accounting operations; they do not expose the new grant command.
 | Active owner or lock contention | Finish/recover the existing experiment or maintenance operation through its supported commands, then inspect again. Never remove locks/owner files to force a grant. |
 | Stale proof, provider mismatch or network rollback mismatch | Preserve evidence; verify cloud identity and original attachments. Use supported reconcile/recovery as appropriate, then repeat fresh verification. |
 | Provenance failure or dead supervisor | Repair the verified installation through guarded upgrade/recovery; do not bypass release checks. |
-| Obligations, active state or uncertainty | Keep supervision running and follow the cleanup/recovery procedure. Uncertainty cannot be cleared by granting time. |
+| Obligations or active state | Keep supervision running and follow the cleanup/recovery procedure. |
+| Uncertainty after confirmed activity outside supervision | Complete cleanup first, then use the explicit account recovery below. Granting time cannot clear uncertainty. |
+
+### Account recovery after confirmed external activity
+
+An operator may resume a registered VM outside the supervised window. Reconciliation
+then records uncertain exposure, exhausts its remaining allowance and cleans up.
+After confirming that external action, an explicitly authorized operator can use
+`pilot account-recovery-preview --request /private/recovery.json` and
+`pilot account-recovery-apply --request /private/recovery.json`. Ordinary reconcile,
+grant and journal updates still cannot clear uncertainty.
+
+The request uses schema `flowdc-account-recovery-v1`, unique `recovery_id`,
+`registration_id`, `vm_id`, current `expected_binding_sha256` and
+`expected_accounts_sha256`, the retained evidence's `evidence_sha256`, reason
+`confirmed_external_activity`, and a finite `max_elapsed_seconds` (at most seven
+days). The evidence hash identifies the operator's supporting record; it does not
+establish authorization or prove that provider action history is comprehensive.
+
+Application requires the installed controller, live supervisor, no experiment
+owner, exclusive maintenance, completed cleanup and fresh provider verification
+of every registered VM and restored network. It derives a conservative bound
+from the affected VM's current campaign receipt, charging **all elapsed time**
+since its verified idle baseline plus the120-second proof lookback. It retains
+the larger of existing consumption and baseline consumption plus that bound.
+Reboot, inconsistent clocks, stale proof, changed accounts or exceeded elapsed
+limits refuse recovery. A pre-campaign uncertain account has no eligible baseline.
+
+The atomic receipt preserves the old uncertain account, new account, evidence
+digest and calculated bound. It changes no registration, grant, limit or other
+account, starts no VM and is idempotent by request ID. A changed replay refuses.
+Any subsequent allowance and activation remain separately authorized operations.
+The exposure bound is operational accounting, not a provider billing measurement.
 
 The original enrollment specification file is not rewritten. Re-running prepare
 with its obsolete lower limits refuses the mismatch rather than resetting the
@@ -255,7 +287,7 @@ over current accounting.
 The explicit maintenance command requires two full SHA-256 digests. Obtain the
 installed module digest from `pilot status` using the new checkout
 (`data.supervisor_release_digest`); this is a read-only operation against the
-existing v1 journal. Compute the candidate digest from the six modules in their
+existing v1 journal. Compute the candidate digest from the current modules in their
 fixed order, using that same reviewed checkout:
 
 ```bash
@@ -280,6 +312,15 @@ old installed interpreter against its existing binding. It refuses unexpected
 source bytes, edited installed releases/units, unit drop-ins, alternate fragments,
 unsafe paths and changed interpreters. Interpreter damage must be repaired through
 trusted operator recovery before either upgrade or rollback can proceed.
+
+The current upgrader also accepts the historical six-module release as a verified
+upgrade input. It reads only the known literal `MODULES` tuple from that release's
+CLI, without importing it, and still requires the complete expected module digest.
+A missing current module cannot be hidden by changing the tuple. Returning to the
+six-module runtime is allowed only before topology or campaign accounting is added.
+After that migration, the old runtime cannot read the current journal: preserve
+the compatible controller, stop/clean up through it and repair forward. Never
+downgrade the journal or restore old consumption to make rollback possible.
 
 Maintenance preserves registration, context, access facts, VM identities, events,
 network history and **every account field exactly**, including consumption and
@@ -464,11 +505,25 @@ procedure from another reachable control path when needed.
 Routing is inspected before mutation. A verified existing manager floating entry
 is reused. Otherwise at most one pilot-owned floating IP is created for the manager
 on the verified external network; existing worker/origin public entries are refused.
-The tool creates a dedicated security group per selected interface. Manager ingress
-allows only operator `/32` SSH plus private peer traffic. Each VM allows TCP, UDP
-and ICMP only from the other selected private `/32` peers; no public TaskVine/origin
-access is added. Provider-default egress is retained. Original security groups are
+The tool creates three owned security groups: manager, origin and selected workers.
+All selected workers share the same manager-only ingress group. Its identity is
+anchored to the first selected worker role, including nonprefix selections. Manager ingress
+allows only operator `/32` SSH plus TCP from selected origin/worker private `/32`
+addresses. The origin accepts TCP from the selected manager and workers; workers
+accept TCP only from the manager (SSH and manager traffic). Workers initiate HTTP
+acquisition and TaskVine connections, and the native research path disables peer
+transfers. UDP, ICMP and worker-to-worker ingress are not admitted. No public
+TaskVine/origin access is added. Provider-default egress is retained. Original security groups are
 recorded and replaced on those exact ports; their rules are never edited.
+
+The full six-VM topology needs 12 ingress rules rather than 91, and three groups
+instead of six. Sharing identical worker rules preserves each VM's permitted
+incoming paths and avoids consuming one group per worker. Each rule remains
+an individually journaled mutation. During setup, a recorded active group ID is a
+lookup hint, followed by fresh identity/project/ownership validation; other group
+details are checked at activation and complete discovery is retained for rollback.
+This avoids repeating the whole group inventory for every rule without widening
+provider deadlines, skipping activation checks or changing accounting/cleanup.
 
 Creation intentions carry unique recorded ownership markers. After a lost response,
 reconciliation searches for that identity; it does not blindly duplicate creation.

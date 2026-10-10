@@ -247,6 +247,8 @@ class AsyncReviewTests(unittest.IsolatedAsyncioTestCase):
             status=200,
             retry_after=None,
             ttfb=0.1,
+            body_delay=0.2,
+            measurement_version="4-output-independent-delay-signals",
             body_bytes=3,
             latency_eligible=True,
             body_complete=True,

@@ -9,15 +9,27 @@ import io
 import json
 import math
 import re
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlsplit
 
 import polars as pl
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "bin"))
+from flowdc_research_profile import LEGACY, from_record, workload
+
 SCHEMA = "flowdc-known-truth-v1"
-MAX_ROWS = 256
-MAX_BYTES = 64 * 1024 * 1024
+MAX_ROWS = LEGACY.max_rows
+MAX_BYTES = LEGACY.max_payload_bytes
+
+
+def truth_workload(record):
+    if record.get("schema") == SCHEMA:
+        require("workload" not in record, "legacy truth cannot change workload limits")
+        return LEGACY
+    require(record.get("schema") == "flowdc-known-truth-v2", "unsupported truth schema")
+    return from_record(record.get("workload"))
 PROVENANCE = (
     "__flowdc_manifest__",
     "__flowdc_position__",
@@ -88,12 +100,12 @@ def valid_url(value):
         return False
 
 
-def validate_metadata(frame):
+def validate_metadata(frame, limits=LEGACY):
     require(
         "url" in frame.columns and frame.schema["url"] == pl.String,
         "known-truth input requires a String column named url",
     )
-    require(0 < frame.height <= MAX_ROWS, "fixture must contain 1..256 original rows")
+    require(0 < frame.height <= limits.max_rows, "fixture row count exceeds finite workload")
     for name, dtype in frame.schema.items():
         require(
             re.fullmatch(r"[a-zA-Z][a-zA-Z0-9_]*", name) is not None and name not in NATIVE_RESERVED,
@@ -103,13 +115,17 @@ def validate_metadata(frame):
             dtype in (pl.String, pl.Boolean, pl.Int64, pl.Float64, pl.Null),
             f"unsupported research metadata dtype: {name}: {dtype}",
         )
+    metadata_bytes = 0
     for row in frame.iter_rows(named=True):
         for name, value in row.items():
             if type(value) is int:
                 require(abs(value) <= 2**53 - 1, f"unsafe JSON integer: {name}")
             if type(value) is float:
                 require(math.isfinite(value), f"nonfinite metadata: {name}")
-        require(len(encode(row)) <= 64 * 1024, "row metadata exceeds 64 KiB")
+        size = len(encode(row))
+        metadata_bytes += size
+        require(size <= limits.max_row_metadata_bytes, "row metadata exceeds 64 KiB")
+        require(metadata_bytes <= limits.max_metadata_bytes, "aggregate metadata exceeds finite workload")
 
 
 @dataclass(frozen=True)
@@ -119,22 +135,24 @@ class Truth:
     record: dict
 
     @classmethod
-    def load(cls, manifest, catalog):
+    def load(cls, manifest, catalog, *, research_workload=None):
         """Validate everything in memory, before creating output or starting HTTP.
 
         Catalog values are predeclared {bytes, sha256} or null for objects with no
         successful payload. The catalog is supplied independently of native output.
         """
+        limits = workload(research_workload)
+        require(Path(manifest).stat().st_size <= limits.max_metadata_bytes, "manifest exceeds finite workload")
         raw = Path(manifest).read_bytes()
         frame = pl.read_parquet(io.BytesIO(raw))
-        validate_metadata(frame)
+        validate_metadata(frame, limits)
         require(isinstance(catalog, dict), "catalog must be an object")
         for url, spec in catalog.items():
             require(valid_url(url), "invalid catalog URL")
             if spec is not None:
                 require(isinstance(spec, dict) and set(spec) == {"bytes", "sha256"}, "invalid object truth")
                 require(
-                    type(spec["bytes"]) is int and 0 < spec["bytes"] <= MAX_BYTES,
+                    type(spec["bytes"]) is int and 0 < spec["bytes"] <= limits.max_object_bytes,
                     "expected payload must have positive bounded integer length",
                 )
                 require(
@@ -157,8 +175,8 @@ class Truth:
                 }
             )
         require(
-            sum((row["expected_payload"] or {}).get("bytes", 0) for row in rows) <= MAX_BYTES,
-            "fixture exceeds 64 MiB expected row payload",
+            sum((row["expected_payload"] or {}).get("bytes", 0) for row in rows) <= limits.max_payload_bytes,
+            "fixture exceeds finite expected row payload",
         )
         record = {
             "schema": SCHEMA,
@@ -169,6 +187,8 @@ class Truth:
             "catalog_sha256": digest(encode(catalog)),
             "rows": rows,
         }
+        if research_workload is not None:
+            record.update(schema="flowdc-known-truth-v2", workload=limits.record())
         return cls(raw, frame, record)
 
     def write(self, directory):
@@ -208,10 +228,11 @@ def partition_truth(parent, identifiers):
     Retain the full independent parent catalog and row membership, not a native
     output-derived denominator. Parent order is authoritative for reconciliation.
     """
-    require(parent.get("schema") == SCHEMA and "scope" not in parent, "invalid partition parent")
+    limits = truth_workload(parent)
+    require("scope" not in parent, "invalid partition parent")
     require(
         type(parent["original_rows"]) is int
-        and 1 <= parent["original_rows"] <= MAX_ROWS
+        and 1 <= parent["original_rows"] <= limits.max_rows
         and len(parent["rows"]) == parent["original_rows"],
         "invalid parent denominator",
     )

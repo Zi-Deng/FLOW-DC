@@ -1,6 +1,7 @@
 """Experiment CLI/storage/transport evidence using temporary state and fake infrastructure."""
 
 import contextlib
+import copy
 import io
 import json
 import os
@@ -23,7 +24,7 @@ import flowdc_experiment_transport as transport
 import flowdc_ops as ops
 from flowdc_experiment_artifacts import bundle, members
 from flowdc_experiment_process import CANCEL_CHECK, execute
-from flowdc_pilot_journal import register
+from flowdc_pilot_journal import allowance, register
 from test_flowdc_pilot_lifecycle import access, spec
 
 REPO = Path(__file__).resolve().parents[1]
@@ -934,6 +935,43 @@ sys.exit(cli.main())
             controller = transport.Controller(self.state, bound)
             value = controller.preflight(1800)
             self.assertTrue(transport.clean(value))
+            active = copy.deepcopy(value)
+            active.update(desired="run", network_ready=True, network_rolled_back=False)
+            for vm in active["vms"]:
+                vm.update(provider_state="ACTIVE", observation_fresh=True, phase="requested")
+                vm["account"] = asdict(allowance(vm["account"]).activation_intent(
+                    sample_clock(), window_seconds=1800, inspection=True))
+            current = copy.deepcopy(record)
+            current.update(desired="run", checkpoint=None)
+            current["network"]["ready"] = True
+            current["window"] = {"seconds": 1800, "inspection": True}
+            with patch.object(controller, "call", return_value=active), patch.object(
+                controller.journal, "read", return_value=current
+            ):
+                with self.assertRaisesRegex(data.ExperimentError, "controller_not_idle"):
+                    controller.preflight(1800)
+                self.assertEqual(controller.preflight(1800, use_active_window=True), active)
+                self.assertEqual(current["window"], {"seconds": 1800, "inspection": True})
+                for field, replacement, error in (
+                    ("network_ready", False, "active_window_not_ready"),
+                    ("checkpoint", "cleanup", "active_window_not_ready"),
+                ):
+                    with self.subTest(field=field), patch.object(
+                        controller, "call", return_value={**active, field: replacement}
+                    ), self.assertRaisesRegex(data.ExperimentError, error):
+                        controller.preflight(1800, use_active_window=True)
+                current["window"]["seconds"] = 1200
+                with self.assertRaisesRegex(data.ExperimentError, "active_window_changed"):
+                    controller.preflight(1800, use_active_window=True)
+                current["window"]["seconds"] = 1800
+                current["desired"] = "stop"
+                with self.assertRaisesRegex(data.ExperimentError, "active_window_changed"):
+                    controller.preflight(1800, use_active_window=True)
+                current["desired"] = "run"
+                active["vms"][0]["account"]["shutdown_at_consumed"] = (
+                    active["vms"][0]["account"]["consumed"] + 1)
+                with self.assertRaisesRegex(data.ExperimentError, "active_window_exhausted"):
+                    controller.preflight(1800, use_active_window=True)
             stale = dict(value)
             stale["vms"] = [
                 dict(vm, observation_fresh=False, provider_state="UNKNOWN") for vm in value["vms"]
@@ -970,6 +1008,18 @@ sys.exit(cli.main())
 
 
 class ArchiveAndProcessTests(unittest.TestCase):
+    def test_legacy_validation_refuses_research_maximum_before_reading_body(self):
+        from types import SimpleNamespace
+        import flowdc_experiment_artifacts as artifacts
+        class HeaderOnly:
+            def readline(self, maximum):
+                return data.encode({'kind':'worker','maximum':2*2**30})
+            def read(self, maximum):
+                raise AssertionError('oversized legacy body must not be read')
+        with patch.object(sys,'stdin',SimpleNamespace(buffer=HeaderOnly())):
+            with self.assertRaisesRegex(data.ExperimentError,'artifact_workload_mismatch'):
+                artifacts.main()
+
     def test_cancellation_after_stdout_eof(self):
         started = time.monotonic()
 

@@ -5,6 +5,8 @@ DOWNLOAD_FILES = (
     "single_download.py",
     "flowdc_integrity.py",
     "flowdc_methods.py",
+    "flowdc_gradient2.py",
+    "flowdc_research_profile.py",
     "flowdc_shared_state.py",
     "flowdc_shared.py",
     "flowdc_staging.py",

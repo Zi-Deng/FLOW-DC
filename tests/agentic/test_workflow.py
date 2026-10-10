@@ -437,6 +437,60 @@ class PublicationTests(unittest.TestCase):
                 self.assertEqual(invoke.call_count, 1)
             self.assertEqual(json.loads((self.directory / "review.json").read_text())["status"], status)
 
+    def test_review_ceiling_counts_failed_calls_across_heads_and_contracts(self):
+        self.repo.state = self.directory
+        for index, status in enumerate(("failed", "stopped")):
+            write_json(
+                self.directory / "reviews" / f"pr1-old-head-{index}" / "review.json",
+                {"attempts": 1, "status": status, "policy": {"provider": "copilot"}},
+            )
+        with (
+            patch.object(review, "prepare", return_value=(self.directory, dict(self.meta))),
+            patch.object(providers, "invoke", side_effect=AssertionError("No third call")),
+            self.assertRaisesRegex(WorkflowError, "Two review invocations used"),
+        ):
+            review.execute(self.repo, 1, configuration(ROOT), issue=2, fresh=True)
+
+    def test_final_delta_is_explicit_and_does_not_relabel_review_head(self):
+        reviewed = self.head
+        final = "c" * 40
+        self.repo.state = self.directory
+        self.repo.root = self.directory
+        self.repo.fetch = lambda ref: None
+        self.repo.git = lambda *args: final if args[0] == "rev-parse" else "repair.py | 2 +-"
+        self.meta.update(publication={"id": 2, "url": "fixture"}, attempts=1, started_at=2)
+        write_json(self.directory / "review.json", self.meta)
+        write_json(self.directory / "reviews" / "pr1-first" / "review.json", {"attempts": 1, "started_at": 1})
+        write_json(self.directory / "reviews" / "pr1-second" / "review.json", self.meta)
+        marker = f"<!-- flowdc-review:{reviewed}:{self.meta['report_sha256']} -->"
+        self.repo.api = lambda path: (
+            {
+                "head": {"sha": final},
+                "base": {"sha": self.base},
+                "mergeable": True,
+                "draft": False,
+                "state": "open",
+            }
+            if path == "pulls/1"
+            else {"commit_id": reviewed, "state": "COMMENTED", "body": marker}
+        )
+        checks = [
+            {"name": x, "bucket": "pass", "state": "SUCCESS"} for x in configuration(ROOT)["required_checks"]
+        ]
+        with self.assertRaisesRegex(WorkflowError, "stale"):
+            finish.preflight(self.repo, 1, self.directory)
+        with patch.object(
+            finish, "run", return_value=SimpleNamespace(stdout=json.dumps(checks), returncode=0)
+        ):
+            value = finish.preflight(self.repo, 1, self.directory, final_repair_delta=True)
+        self.assertEqual(value["reviewed_head"], reviewed)
+        self.assertEqual(value["head"], final)
+        self.assertEqual(value["status"], "requires_human_delta_assessment")
+        self.assertIn(final, value["command"])
+        write_json(self.directory / "reviews" / "pr1-third" / "review.json", {"attempts": 1})
+        with self.assertRaisesRegex(WorkflowError, "ceiling"):
+            finish.preflight(self.repo, 1, self.directory, final_repair_delta=True)
+
 
 if __name__ == "__main__":
     unittest.main()

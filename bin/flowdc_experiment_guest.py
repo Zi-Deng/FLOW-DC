@@ -160,6 +160,15 @@ def service_lock(root, role, case):
 def launch(root, role, case, seconds):
     with service_lock(root, role, case) as service:
         check(not (root / (service + ".cancel")).exists())
+        config = settings(root)
+        if "distributed" in config:
+            archive = Path(config["distributed"]["environment_archive"])
+            info = archive.lstat()
+            check(stat.S_ISREG(info.st_mode) and info.st_uid == os.getuid() and info.st_nlink == 1)
+            # RLIMIT_FSIZE also governs the worker's received environment archive.
+            # Refuse a mismatched explicit budget before any service intent/launch.
+            if not 0 < info.st_size <= config["bounds"]["output_bytes"]:
+                raise ValueError("guest_runtime_exceeds_file_limit")
         write(root / (service + ".intent"), b"pending")
         result = launch_service(root, role, case, seconds)
         write(root / (service + ".accepted"), b"accepted")
@@ -436,7 +445,7 @@ def origin(root, case="all"):
         server.fixture_log.close()
 
 
-def collection_paths(base, *, distributed=False):
+def collection_paths(base, *, distributed=False, max_files=4096):
     # Bound directory enumeration too, before allocating the transfer manifest.
     seen = 0
 
@@ -456,7 +465,7 @@ def collection_paths(base, *, distributed=False):
                     # native convenience symlink. Never traverse these exclusions.
                     continue
                 seen += 1
-                check(seen <= 4096)
+                check(seen <= max_files)
                 yield Path(entry.path)
                 if entry.is_dir(follow_symlinks=False):
                     yield from walk(entry.path, depth + 1)
@@ -466,9 +475,16 @@ def collection_paths(base, *, distributed=False):
 
 def collect(root, role, case, maximum):
     distributed = (root / "guest.json").is_file() and "distributed" in settings(root)
+    max_files = 4096
+    if distributed and settings(root)["distributed"].get("research_workload") is not None:
+        sys.path.insert(0, str(root / "bin"))
+        from flowdc_research_profile import workload
+        limits = workload(settings(root)["distributed"]["research_workload"])
+        check(maximum <= limits.max_artifact_bytes)
+        max_files = limits.max_files
     base = root if role == "origin" and not distributed else root / "results" / case
     private_path(base)
-    paths = [base / "origin.jsonl"] if role == "origin" else collection_paths(base, distributed=distributed)
+    paths = [base / "origin.jsonl"] if role == "origin" else collection_paths(base, distributed=distributed, max_files=max_files)
     if worker_role(role):
         paths = [base / (role + ".log")]
         if distributed:
@@ -487,7 +503,7 @@ def collect(root, role, case, maximum):
             continue
         check(stat.S_ISREG(info.st_mode) and info.st_nlink == 1)
         total += info.st_size + 1024
-        check(total + 10240 <= maximum and len(regular) < 4096)
+        check(total + 10240 <= maximum and len(regular) < max_files)
         regular.append(path)
     with tarfile.open(fileobj=sys.stdout.buffer, mode="w|") as archive:
         for path in sorted(regular):

@@ -2,7 +2,7 @@
 
 Both `download_batch.py` and `download_batch_gradient.py` use the same helper,
 tracing and outcome classification. Overview reports label these semantics as
-`http_measurement.version = "3-output-independent-latency"`. Before version 2, TTFB
+`http_measurement.version = "4-output-independent-delay-signals"`. Before version 2, TTFB
 observations included whole-body reads and are not directly comparable. The method's equations and
 configuration defaults have not changed; corrected inputs can change its decisions.
 
@@ -23,6 +23,7 @@ with the batch controller; it does not add fields to either public helper tuple.
 | `first_body_byte_at` | Completion of the first nonempty `response.content.read(1)` on HTTP 200. This observes decoded application-body availability. |
 | `body_completed_at` | Completion of the remaining successful body read. |
 | `ttfb` | `first_body_byte_at - t0`, retained after a complete HTTP-200 body even if local output subsequently fails. |
+| `body_delay` | `body_completed_at - t0`, with the same positive finite complete-body eligibility; used only by the explicit Gradient2 sensitivity. |
 | `latency_eligible` | True only for a complete nonempty HTTP-200 body with a positive finite first-byte interval. Independent of saved-output success. |
 
 Headers and first-body-byte delays remain visible separately; delaying only the
@@ -193,3 +194,7 @@ See the [issue #20 validation record](HTTP-MEASUREMENT-VALIDATION.md),
 the [issue #22 output-accounting checkpoint](OUTPUT-INTEGRITY-VALIDATION.md) for
 observed checks and limitations, and the [research contract](MANUSCRIPT-READINESS.md) for still-open
 scientific evidence gates. These semantics establish no throughput or speedup claim.
+
+## Retained research observations
+
+Completed local attempts write `.flowdc/attempts/<row>/<attempt>/measurement.json`, independently of payload publication. The record binds the attempt identity, measurement version, eligibility, status, local timing and observed body bytes. The overview binds each observation's path, length and SHA-256 and lists missing interrupted observations. Historical records lacking these fields do not supply reconstructed latency evidence. Analysis rechecks descriptor hashes and uses only eligible complete HTTP-200 observations; failures remain in separately reported counts. Run-level p95 requires at least 100 eligible requests and uses linear interpolation at `.95*(n-1)`. Requests are not statistical replicates.

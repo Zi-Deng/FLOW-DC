@@ -11,7 +11,8 @@ from uuid import uuid4
 
 import aiohttp
 from aiohttp import web
-from flowdc_methods import ControllerManager, method_record
+from flowdc_methods import ControllerManager, GRADIENT2_METHOD, method_record
+from single_download import HTTP_MEASUREMENT_VERSION
 from flowdc_shared_state import (
     HEX,
     SCHEMA,
@@ -124,6 +125,8 @@ def observation(value):
         "status",
         "retry_after",
         "ttfb",
+        "body_delay",
+        "measurement_version",
         "body_bytes",
         "latency_eligible",
         "body_complete",
@@ -138,7 +141,8 @@ def observation(value):
         value["status"] is None or type(value["status"]) is int and 100 <= value["status"] <= 599,
         "invalid status",
     )
-    for key in ("retry_after", "ttfb"):
+    require(value["measurement_version"] == HTTP_MEASUREMENT_VERSION, "unsupported measurement version")
+    for key in ("retry_after", "ttfb", "body_delay"):
         require(value[key] is None or finite(value[key]), "invalid observation duration")
     require(
         type(value["body_bytes"]) is int and 0 <= value["body_bytes"] <= 64 * 1024 * 1024, "invalid body size"
@@ -169,6 +173,8 @@ def observation(value):
             and value["ttfb"] > 0,
             "unsupported latency confidence",
         )
+        require(value["body_delay"] is not None and value["body_delay"] >= value["ttfb"],
+                "unsupported body-completion timing")
     return value
 
 
@@ -184,7 +190,7 @@ class Authority:
             "shared authority requires an explicit method",
         )
         binding = {"run_id": run_id or uuid4().hex, **runtime_binding(self.config)}
-        self.ledger = Ledger(directory, binding, reopen=reopen)
+        self.ledger = Ledger(directory, binding, reopen=reopen, research_workload=self.config.research_workload)
         self.controllers = ControllerManager(self.config, AdaptiveSemaphore, PAARCController, self.emit)
         self.lock = asyncio.Lock()
         self.failure = None
@@ -277,6 +283,8 @@ class Authority:
                 return self.ledger.headers(scope, client, **args)
             value = observation(args["observation"])
             permit = self.ledger.permit(self.ledger.current(), scope, client, args["permit_id"])
+            # Capture under the authority lock, before durable permit retirement.
+            inflight = len(self.ledger.outstanding(self.ledger.current(), permit["origin"]))
             result = self.ledger.complete(scope, client, args["permit_id"], value)
             if not result["duplicate"]:
                 controller = await self.controller(permit["url"])
@@ -291,7 +299,11 @@ class Authority:
                     is_unknown_error=value["is_unknown_error"],
                     acquisition_success=value["body_complete"] and not value["is_local_error"],
                     dispatch_at=permit["dispatch_at"],
+                    **({"inflight": inflight, "body_delay": value["body_delay"]}
+                       if self.config.control_method == GRADIENT2_METHOD else {}),
                 )
+                if self.config.control_method == GRADIENT2_METHOD:
+                    self.ledger.configure_origin(permit["origin"], controller.semaphore.limit)
             return result
 
     async def tick(self):
@@ -539,6 +551,8 @@ class RemoteAttempt:
             "retry_after": None,
             **(self.headers_seen or {}),
             "ttfb": trace.get("ttfb") if reason == "final" else None,
+            "body_delay": trace.get("body_delay") if reason == "final" else None,
+            "measurement_version": HTTP_MEASUREMENT_VERSION,
             "body_bytes": trace.get("observed_response_body_bytes", 0) if reason == "final" else 0,
             "latency_eligible": bool(trace.get("latency_eligible")) if reason == "final" else False,
             "body_complete": trace.get("body_completed_at") is not None if reason == "final" else False,
