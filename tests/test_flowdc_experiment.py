@@ -990,6 +990,15 @@ sys.exit(cli.main())
                 self.assertTrue(transport.clean(controller.preflight(1800)))
                 self.assertEqual(calls, ["status", "reconcile", "status"])
                 self.assertIn("verify-idle", proof.call_args.args[0])
+            calls.clear()
+            with (
+                patch.object(controller, "call", return_value=stale) as requests,
+                patch.object(transport, "execute", return_value=(3, b'{"error":"initial_offload_required"}')),
+                self.assertRaisesRegex(data.ExperimentError, "initial_offload_required"),
+            ):
+                controller.preflight(1800)
+            self.assertEqual([item.args[0] for item in requests.call_args_list], ["status"])
+            self.assertEqual(self.journal.read()["desired"], "idle")
             self.journal.change(
                 lambda record: [vm["account"].update(consumed=6000) for vm in record["vms"].values()]
             )

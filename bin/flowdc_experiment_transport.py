@@ -123,8 +123,11 @@ class Controller:
             return value
         require(idle(value), "controller_not_idle")
         if not clean(value):
+            # The proof inspects all enrolled VMs and their original networking,
+            # even when this run selects one worker. Six-VM verification can
+            # exceed the historical 90-second three-VM allowance.
             code, raw = execute(
-                [sys.executable, str(Path(__file__).resolve()), str(self.root), "verify-idle"], seconds=90
+                [sys.executable, str(Path(__file__).resolve()), str(self.root), "verify-idle"], seconds=180
             )
             if code:
                 raise ExperimentError(parse(raw).get("error", "fresh_idle_verification_failed"))
