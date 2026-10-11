@@ -155,6 +155,27 @@ def prepare(value):
     return config, download, truth, package, output, sources
 
 
+async def accept_return(reconciler, *arguments):
+    """Verify one return serially while the authority keeps serving other workers."""
+    task = asyncio.create_task(asyncio.to_thread(reconciler.accept, *arguments))
+    try:
+        return await asyncio.shield(task)
+    except asyncio.CancelledError:
+        # Cancelling a thread future cannot stop its filesystem writes. Drain
+        # this finite verification before manager/authority cleanup, including
+        # repeated cancellation, so it cannot publish after cleanup has closed.
+        while not task.done():
+            try:
+                await asyncio.shield(task)
+            except asyncio.CancelledError:
+                continue
+            except BaseException:
+                break
+        if not task.cancelled():
+            task.exception()
+        raise
+
+
 class Reconciler:
     """Credit only independent verification, once per original logical row."""
 
@@ -379,7 +400,8 @@ async def run(value, *, ready=None, pulse=None, engineering_fault=None, owned_co
             (directory / "native-stdout.txt").write_text(stdout)
             before = time.monotonic_ns()
             returns.append(
-                reconciler.accept(
+                await accept_return(
+                    reconciler,
                     directory / "returned",
                     directory / "return.tar",
                     spec,

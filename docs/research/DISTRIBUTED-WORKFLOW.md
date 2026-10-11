@@ -36,6 +36,11 @@ regular bytes. Logical row identity survives partitioning; each actual worker en
 has a fresh attempt UUID. Repeated returns cannot earn repeated useful credit.
 Nonzero native exit, incomplete rows and rejected artifacts remain separate failures.
 Manager receipt and final verification are included in monotonic end-to-end timing.
+Return extraction and verification run serially outside the authority's event loop,
+so processing a completed partition cannot prevent control replies to workers still
+acquiring. Verification wall time can overlap those workers' acquisition; it is
+not an additive component of total elapsed time. Cancellation drains the verifier
+before manager/authority cleanup, preserving output closure and uncertain permits.
 
 `max_attempts` defaults to 1, accepts 1..4 and bounds admitted acquisition clients per
 partition. Native dispatch has a separate owned-cohort contract: each partition has
