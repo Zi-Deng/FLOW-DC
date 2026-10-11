@@ -132,7 +132,9 @@ class Controller:
             if code:
                 raise ExperimentError(parse(raw).get("error", "fresh_idle_verification_failed"))
             self.call("reconcile")
-            deadline = time.monotonic() + 30
+            # Reconciliation publishes enrolled offload observations one tick
+            # at a time; give that read-only cleanup pass its own finite bound.
+            deadline = time.monotonic() + 180
             while not clean(value):
                 value = self.call("status", seconds=min(10, deadline - time.monotonic()))
                 require(value.get("desired") in ("idle", "stop"), "controller_not_idle")

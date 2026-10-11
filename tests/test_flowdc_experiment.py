@@ -990,6 +990,26 @@ sys.exit(cli.main())
                 self.assertTrue(transport.clean(controller.preflight(1800)))
                 self.assertEqual(calls, ["status", "reconcile", "status"])
                 self.assertIn("verify-idle", proof.call_args.args[0])
+            # Fresh provider proof can precede the supervisor's sequential
+            # publication. Waiting beyond30s must neither activate early nor
+            # bypass fresh state, accounting or networking checks.
+            elapsed = [100.0]
+            sequence = iter([stale, {}, {**stale, "desired": "stop"}, value])
+            delayed_calls = []
+            def delayed_call(action, **kwargs):
+                delayed_calls.append(action)
+                result = next(sequence)
+                if result.get("desired") == "stop": elapsed[0] += 35
+                return result
+            with (
+                patch.object(controller, "call", delayed_call),
+                patch.object(transport, "execute", return_value=(0, b"{}")),
+                patch.object(transport.time, "monotonic", side_effect=lambda: elapsed[0]),
+                patch.object(transport.time, "sleep"),
+            ):
+                self.assertTrue(transport.clean(controller.preflight(1800)))
+            self.assertEqual(delayed_calls, ["status", "reconcile", "status", "status"])
+            self.assertEqual(self.journal.read()["desired"], "idle")
             calls.clear()
             with (
                 patch.object(controller, "call", return_value=stale) as requests,
