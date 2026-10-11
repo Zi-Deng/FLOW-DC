@@ -22,8 +22,9 @@ allowance. A fresh run identity never replenishes it.
 
 When idle provider observations are stale, execution permits up to 180 seconds
 for read-only verification of every enrolled VM and its original networking,
-including guests outside this run's worker subset. No activation occurs before
-that proof and fresh controller reconciliation pass. A failed preflight leaves
+including guests outside this run's worker subset. A separate bounded180-second
+wait allows the supervisor to publish its sequential offload reconciliation.
+No activation occurs before that proof and fresh controller reconciliation pass. A failed preflight leaves
 the run prepared; it does not consume a scientific acquisition attempt or reset
 the requested window. The VM window and cleanup reserves remain unchanged.
 
