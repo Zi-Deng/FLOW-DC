@@ -447,7 +447,7 @@ def main():
     parser.add_argument("--workers", type=int, choices=(1, 2, 4), required=True)
     parser.add_argument(
         "--method",
-        choices=("paarc-base-v2", "gradient-candidate-v1", "fixed-v1", "ratio-v1"),
+        choices=("paarc-base-v2", "gradient-candidate-v1", "fixed-v1", "ratio-v1", "gradient2-application-delay-v1"),
         default="fixed-v1",
     )
     parser.add_argument(

@@ -33,7 +33,7 @@ from flowdc_integrity import component, safe_save
 # Shared with both asynchronous batch variants.
 HTTP_TRACE_CTX: ContextVar[dict | None] = ContextVar("HTTP_TRACE_CTX", default=None)
 OUTPUT_CTX: ContextVar[tuple | None] = ContextVar("OUTPUT_CTX", default=None)
-HTTP_MEASUREMENT_VERSION = "3-output-independent-latency"
+HTTP_MEASUREMENT_VERSION = "4-output-independent-delay-signals"
 
 
 def http_authority(url) -> tuple[str, int]:
@@ -379,7 +379,7 @@ async def download_via_http_get(
         measurement = {}
     measurement.update(
         attempt_started_at=time.monotonic(), t0=None, final_headers_at=None,
-        first_body_byte_at=None, body_completed_at=None, ttfb=None, hops=[],
+        first_body_byte_at=None, body_completed_at=None, ttfb=None, body_delay=None, hops=[],
         latency_eligible=False, failure_kind=None, retry_after=None, feedback_url=url,
         observed_response_body_bytes=0,
     )
@@ -397,12 +397,25 @@ async def download_via_http_get(
                 measurement["observed_response_body_bytes"] = len(first)
                 if first:
                     measurement["first_body_byte_at"] = time.monotonic()
-                tail = await response.content.read()
+                budget = measurement.get("body_budget")
+                if budget is None:
+                    tail = await response.content.read()
+                else:
+                    budget.charge(len(first), len(first))
+                    tail = bytearray()
+                    while chunk := await response.content.read(65536):
+                        measurement["observed_response_body_bytes"] += len(chunk)
+                        budget.charge(len(chunk), len(first) + len(tail) + len(chunk))
+                        tail.extend(chunk)
+                    tail = bytes(tail)
                 measurement["observed_response_body_bytes"] += len(tail)
+                if budget is not None:
+                    measurement["observed_response_body_bytes"] = len(first) + len(tail)
                 content = first + tail
                 measurement["body_completed_at"] = time.monotonic()
                 if first and measurement["t0"] is not None:
                     measurement["ttfb"] = measurement["first_body_byte_at"] - measurement["t0"]
+                    measurement["body_delay"] = measurement["body_completed_at"] - measurement["t0"]
                     measurement["latency_eligible"] = math.isfinite(measurement["ttfb"]) and measurement["ttfb"] > 0
                 return content, response.status, None, retry_after
             measurement["failure_kind"] = "http"
@@ -421,21 +434,21 @@ async def download_via_http_get(
         # and preserves the existing product's Python 3.10 compatibility.
         return await asyncio.wait_for(fetch(), timeout if timeout > 0 else None)
     except asyncio.TimeoutError:
-        measurement.update(ttfb=None, latency_eligible=False)
+        measurement.update(ttfb=None, body_delay=None, latency_eligible=False)
         measurement["failure_kind"] = "admission" if measurement.get("phase") == "admission" else "transport"
         return None, 408, "Request Timeout", None
     except aiohttp.ClientError as e:
-        measurement.update(ttfb=None, latency_eligible=False)
+        measurement.update(ttfb=None, body_delay=None, latency_eligible=False)
         measurement["failure_kind"] = "transport"
         return None, None, f"Connection Error: {str(e)}", None
     except Exception as e:
-        measurement.update(ttfb=None, latency_eligible=False)
+        measurement.update(ttfb=None, body_delay=None, latency_eligible=False)
         # An unexpected acquisition exception does not establish either output
         # failure or remote overload. Preserve that uncertainty for accounting.
         measurement["failure_kind"] = "unknown"
         return None, None, f"Error: {str(e)}", None
     except asyncio.CancelledError:
-        measurement.update(ttfb=None, latency_eligible=False, failure_kind="cancelled")
+        measurement.update(ttfb=None, body_delay=None, latency_eligible=False, failure_kind="cancelled")
         raise
     finally:
         HTTP_TRACE_CTX.reset(token)

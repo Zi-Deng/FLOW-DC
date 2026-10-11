@@ -1,6 +1,7 @@
 """Additive pilot CLI and explicit immutable user-service installation."""
 
 import errno
+import ast
 import hashlib
 import os
 import re
@@ -61,6 +62,12 @@ MODULES = (
     "flowdc_pilot_provider.py",
     "flowdc_pilot_supervisor.py",
     "flowdc_pilot_cli.py",
+    "flowdc_campaign.py",
+)
+# Immutable pre-topology installations are upgrade inputs, not a second runtime.
+LEGACY_RELEASE_MODULES = (
+    "flowdc_ops.py", "flowdc_pilot.py", "flowdc_pilot_journal.py",
+    "flowdc_pilot_provider.py", "flowdc_pilot_supervisor.py", "flowdc_pilot_cli.py",
 )
 
 
@@ -76,6 +83,10 @@ def arguments(commands):
         "supervise",
         "upgrade-supervisor",
         "extend-allowance",
+        "campaign-preview",
+        "campaign-apply",
+        "account-recovery-preview",
+        "account-recovery-apply",
         "runtime-check",
         "topology-preview",
         "topology-apply",
@@ -100,8 +111,10 @@ def arguments(commands):
                 "--candidate-source", help="Absolute directory of the reviewed supervisor module closure."
             )
             parser.add_argument("--recover", choices=("complete", "rollback"))
-        if action == "extend-allowance":
+        if action in ("extend-allowance", "campaign-preview", "campaign-apply"):
             parser.add_argument("--grant", required=True)
+        if action in ("account-recovery-preview", "account-recovery-apply"):
+            parser.add_argument("--request", required=True)
         if action == "start":
             parser.add_argument("--window-seconds", type=int, default=1800)
             parser.add_argument(
@@ -235,6 +248,21 @@ def trusted_bytes(path, *, executable=False):
             os.close(fd)
 
 
+def release_modules(source, *, error):
+    """Read the two known closure declarations without importing installed code."""
+    try:
+        tree = ast.parse(trusted_bytes(source / "flowdc_pilot_cli.py"))
+        assignments = [node for node in tree.body if isinstance(node, ast.Assign)
+            and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name)
+            and node.targets[0].id == "MODULES"]
+        names = ast.literal_eval(assignments[0].value) if len(assignments) == 1 else None
+    except (SyntaxError, ValueError, TypeError):
+        raise failure(error) from None
+    if names not in (MODULES, LEGACY_RELEASE_MODULES):
+        raise failure(error)
+    return names
+
+
 def verify_release(service, root):
     if (
         service["unit"] != UNIT
@@ -244,7 +272,7 @@ def verify_release(service, root):
         raise failure("unexpected_release_provenance")
     with ops.private_directory(Path(service["release"])) as parent:
         content = []
-        for name in MODULES:
+        for name in release_modules(Path(service["release"]), error="installed_release_changed"):
             with ops.open_private_at(parent, name) as fd:
                 content.append(ops.read_bounded_file(fd))
     if hashlib.sha256(b"".join(content)).hexdigest() != service["digest"]:
@@ -256,7 +284,14 @@ def verify_release(service, root):
 
 def stage_candidate(journal, expected, source=None):
     source = ops.absolute_path(source) if source is not None else Path(__file__).resolve().parent
-    content = {name: trusted_bytes(source / name) for name in MODULES}
+    names = release_modules(source, error="invalid_candidate_source")
+    if names == LEGACY_RELEASE_MODULES:
+        record = journal.read()
+        if record["schema_version"] != 1 or any(
+            vm["account"].get("campaign_id") is not None for vm in record["vms"].values()
+        ):
+            raise failure("legacy_release_cannot_read_current_accounting")
+    content = {name: trusted_bytes(source / name) for name in names}
     digest = hashlib.sha256(b"".join(content.values())).hexdigest()
     if digest != expected:
         raise failure("candidate_release_mismatch")
@@ -524,9 +559,9 @@ def verify_grant_local(journal, record, *, clock=sample_clock):
         raise failure("supervisor_not_ready")
 
 
-def grant_outcome(receipt, applied, record):
+def grant_outcome(receipt, applied, record, *, campaign=False, recovery=False):
     return ops.outcome(
-        "pilot extend-allowance",
+        "pilot account-recovery-apply" if recovery else "pilot campaign-apply" if campaign else "pilot extend-allowance",
         "ok",
         data={
             "result": "applied" if applied else "already_applied",
@@ -543,12 +578,20 @@ def grant_outcome(receipt, applied, record):
     ), 0
 
 
-def extend_allowance(journal, path, *, clock=sample_clock):
-    request_value = load_grant_request(path)
+def extend_allowance(journal, path, *, clock=sample_clock, campaign=False, recovery=False):
+    if recovery:
+        from flowdc_campaign import recovery_preview as preview, validate_recovery_request, find_recovery_receipt as find_receipt, require_recovery_idle
+        request_value = validate_recovery_request(ops.read_document(path))
+    elif campaign:
+        from flowdc_campaign import preview, validate_request, find_receipt
+        request_value = validate_request(ops.read_document(path))
+    else:
+        request_value = load_grant_request(path)
+        find_receipt = find_grant_receipt
     record = journal.read()
-    receipt = find_grant_receipt(record, request_value)
+    receipt = find_receipt(record, request_value)
     if receipt is not None:
-        return grant_outcome(receipt, False, record)
+        return grant_outcome(receipt, False, record, campaign=campaign, recovery=recovery)
     # Match the experiment owner protocol without importing uninstalled modules.
     # Fixed lock order: experiment, maintenance, then the short journal I/O lock.
     with (
@@ -558,9 +601,9 @@ def extend_allowance(journal, path, *, clock=sample_clock):
         private_lock(parent, "maintenance.lock", blocking=False),
     ):
         record = journal.read()
-        receipt = find_grant_receipt(record, request_value)
+        receipt = find_receipt(record, request_value)
         if receipt is not None:
-            return grant_outcome(receipt, False, record)
+            return grant_outcome(receipt, False, record, campaign=campaign, recovery=recovery)
         try:
             with ops.open_private_at(runs, "active-experiment.json") as fd:
                 owner = ops.fields(ops.parse_json(ops.read_bounded_file(fd)), ("run_id",))
@@ -568,8 +611,14 @@ def extend_allowance(journal, path, *, clock=sample_clock):
                 raise failure("active_experiment_owner")
         except FileNotFoundError:
             pass
-        require_grant_expectation(record, request_value)
-        require_grant_idle(record)
+        if campaign or recovery:
+            preview(record, request_value, clock())
+        else:
+            require_grant_expectation(record, request_value)
+        if recovery:
+            require_recovery_idle(record)
+        else:
+            require_grant_idle(record)
         verify_grant_controller(journal, record, clock=clock)
         start = clock()
         Provider(ops.load_profile(record["profile_path"])).verify_idle(record)
@@ -578,14 +627,15 @@ def extend_allowance(journal, path, *, clock=sample_clock):
         # the latest heartbeat here; commit still compares to the original proof
         # snapshot and refuses every other intervening state change.
         verify_grant_controller(journal, journal.read(), clock=clock)
-        receipt, applied, current = journal.extend_allowance(
+        apply = journal.recover_account if recovery else journal.authorize_campaign if campaign else journal.extend_allowance
+        receipt, applied, current = apply(
             request_value,
             record,
             start,
             clock=clock,
             recheck=lambda current: verify_grant_local(journal, current, clock=clock),
         )
-        return grant_outcome(receipt, applied, current)
+        return grant_outcome(receipt, applied, current, campaign=campaign, recovery=recovery)
 
 
 def prepare(args):
@@ -665,6 +715,7 @@ def status(journal, operation="pilot status"):
             "registration_id": record["registration_id"],
             "allowance_binding_sha256": allowance_binding_sha256(record),
             "allowance_grants": [event["data"] for event in grant_receipts(record)],
+            "campaign_authorizations": [event["data"] for event in record["events"] if event["kind"] == "campaign_authorized"],
             "context": record["spec"]["context"],
             "desired": record["desired"],
             "supervisor_ready": ready,
@@ -802,6 +853,20 @@ def run(args):
                 },
             ), 0
         journal = Journal(args.state_root)
+        if args.pilot_command == "account-recovery-preview":
+            from flowdc_campaign import recovery_preview, validate_recovery_request
+            _, receipt, applicable = recovery_preview(journal.read(), validate_recovery_request(ops.read_document(args.request)), sample_clock())
+            return ops.outcome("pilot account-recovery-preview", "ok", data={"receipt":receipt,
+                "applicable":applicable, "state_changed":False, "cloud_readiness":"not_assessed"}), 0
+        if args.pilot_command == "account-recovery-apply":
+            return extend_allowance(journal, args.request, recovery=True)
+        if args.pilot_command == "campaign-preview":
+            from flowdc_campaign import preview, validate_request
+            _, receipt, applicable = preview(journal.read(), validate_request(ops.read_document(args.grant)), sample_clock())
+            return ops.outcome("pilot campaign-preview", "ok", data={"receipt": receipt,
+                "applicable": applicable, "state_changed": False, "cloud_readiness": "not_assessed"}), 0
+        if args.pilot_command == "campaign-apply":
+            return extend_allowance(journal, args.grant, campaign=True)
         if args.pilot_command == "extend-allowance":
             return extend_allowance(journal, args.grant)
         if args.pilot_command == "upgrade-supervisor":

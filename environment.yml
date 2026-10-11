@@ -5,7 +5,7 @@ channels:
 
 dependencies:
   # Core
-  - python>=3.10
+  - python=3.12
   - pip>=23.0
 
   # Data Processing
@@ -22,7 +22,7 @@ dependencies:
   - tqdm>=4.66
 
   # Distributed Workflow
-  - ndcctools=7.15.8
+  - ndcctools=7.17.2  # Apply/qualify the disclosed research patch separately; third_party/cctools.
 
   # Cloud Storage (optional - for CyVerse/iRODS)
   - gocommands

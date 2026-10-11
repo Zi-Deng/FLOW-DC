@@ -257,6 +257,7 @@ class Config:
     control_method: str | None = None  # Explicit version; None preserves legacy behavior.
     method_options: dict = field(default_factory=dict)
     shared_control_file: str | None = None  # Private descriptor path, never a credential value.
+    research_workload: str | None = None  # Explicit finite research profile; legacy fixtures remain unchanged.
     
     # PAARC parameters (passed to PAARCConfig)
     C_init: int = 4
@@ -348,7 +349,8 @@ Examples:
     # PAARC toggle
     p.add_argument("--enable_paarc", action="store_true", default=True)
     p.add_argument("--disable_paarc", action="store_true")
-    p.add_argument("--control_method", choices=("paarc-base-v2", "gradient-candidate-v1", "fixed-v1", "ratio-v1"),
+    from flowdc_methods import METHODS
+    p.add_argument("--control_method", choices=METHODS,
                    help="Explicit versioned per-origin control method; omitted preserves legacy defaults")
     p.add_argument("--method_options", type=json.loads, default={}, help="JSON object of versioned engineering parameters")
     p.add_argument("--shared_control_file", help="Owner-private authenticated manager descriptor; no local fallback")
@@ -394,6 +396,8 @@ Examples:
     recovery.add_argument("--resume", action="store_true", help="Reconcile owned output and continue eligible rows")
     recovery.add_argument("--reconcile", action="store_true", help="Reconcile owned output offline; no HTTP calls")
     p.add_argument("--research_profile", action="store_true", help="Row-ID naming and verified uncompressed WebDataset archive boundary")
+    p.add_argument("--research_workload", choices=("bounded-fixture-v1", "bounded-research-v2"),
+                   help="Explicit finite research workload and metadata budgets")
     args = p.parse_args()
     
     # Load from JSON config if provided
@@ -440,6 +444,7 @@ Examples:
             resume=args.resume or bool(data.get("resume", False)),
             reconcile=args.reconcile or bool(data.get("reconcile", False)),
             research_profile=args.research_profile or bool(data.get("research_profile", False)),
+            research_workload=args.research_workload or data.get("research_workload"),
             control_method=args.control_method or data.get("control_method"),
             method_options=args.method_options or data.get("method_options", {}),
             shared_control_file=args.shared_control_file or data.get("shared_control_file"),
@@ -484,6 +489,7 @@ Examples:
         create_overview=not args.no_overview,
         force_overwrite=args.force,
         resume=args.resume, reconcile=args.reconcile, research_profile=args.research_profile,
+        research_workload=args.research_workload,
         control_method=args.control_method, method_options=args.method_options,
         shared_control_file=args.shared_control_file,
     )
@@ -494,6 +500,13 @@ Examples:
 # =============================================================================
 
 def normalize_config(cfg):
+    if cfg.research_workload is not None:
+        from flowdc_research_profile import workload
+        workload(cfg.research_workload)
+        if not cfg.research_profile or cfg.control_method is None:
+            raise ValueError("research_workload requires research_profile and an explicit control method")
+        if type(cfg.max_retry_attempts) is not int or not 1 <= cfg.max_retry_attempts <= 4:
+            raise ValueError("finite research workload allows at most four acquisition attempts")
     if cfg.shared_control_file is not None:
         if not isinstance(cfg.shared_control_file, str) or not cfg.shared_control_file or cfg.control_method is None:
             raise ValueError("shared control requires a private descriptor path and explicit control_method")
@@ -538,6 +551,13 @@ def load_manifest(cfg):
     if cfg.control_method is not None:
         from flowdc_methods import validate_research_metadata
         validate_research_metadata(df, cfg.url_col)
+    if cfg.research_workload is not None:
+        from flowdc_research_profile import workload
+        limits = workload(cfg.research_workload)
+        if not 1 <= df.height <= limits.max_rows:
+            raise ValueError("research row count exceeds finite workload")
+        if sum(len(integrity.encode(row)) for row in df.iter_rows(named=True)) > limits.max_metadata_bytes:
+            raise ValueError("research metadata exceeds finite workload")
     # Verify input has not changed between hashing and loading.
     if path.read_bytes() != raw:
         raise ValueError("Input manifest changed during loading")
@@ -1965,6 +1985,8 @@ async def download_one(
     
     # Set up tracing context
     trace_dict: dict[str, Any] = {}
+    if hasattr(session, "_flowdc_body_budget"):
+        trace_dict["body_budget"] = session._flowdc_body_budget
     remote = shared.attempt(key) if shared is not None else None
     if remote is not None:
         trace_dict["shared_dispatch"] = remote.dispatch
@@ -2030,6 +2052,8 @@ async def download_one(
             else:
                 total_bytes.append(bytes_dl)
         
+        if store is not None:
+            store.measure(directory, key, trace_dict, status, HTTP_MEASUREMENT_VERSION)
         if store is not None and err is not None:
             store.fail(directory, key, error=err, status=status,
                        retryable=_is_retryable(status, err) and trace_dict.get("failure_kind") not in ("local", "unknown"),
@@ -2065,6 +2089,9 @@ async def download_one(
                 is_unknown_error=is_unknown_error,
                 latency_eligible=trace_dict.get("latency_eligible"),
                 dispatch_at=trace_dict.get("t0"),
+                **({"inflight": feedback_ctrl.semaphore.inflight,
+                    "body_delay": trace_dict.get("body_delay")}
+                   if cfg.control_method == "gradient2-application-delay-v1" else {}),
             )
         
         if remote is not None:
@@ -2259,6 +2286,7 @@ def generate_overview_report(
             "version": HTTP_MEASUREMENT_VERSION,
             "clock": "time.monotonic",
             "controller_latency": "final-hop dispatch to first nonempty application body read",
+            "body_completion_delay": "final-hop dispatch to complete application body read; same eligible requests",
             "latency_eligibility": "HTTP 200, nonempty complete body, positive finite timing; independent of local output success",
             "success": "HTTP 200 and saved output with successful size lookup; bytes count useful saved payload only",
             "n_errors": "overload subset, not all unsuccessful acquisitions",
@@ -2381,6 +2409,7 @@ def integrity_report(cfg, store, snapshot, elapsed, report_factory):
     from flowdc_methods import control_records, method_record
     report["control_method"] = method_record(cfg)
     report["control_trajectories"] = control_records(store)
+    report["http_observations"] = store.measurements()
     counts = snapshot["counts"]
     report["report_schema_version"] = integrity.SCHEMA
     report["summary"].update(
@@ -2402,6 +2431,7 @@ def integrity_report(cfg, store, snapshot, elapsed, report_factory):
         "artifact_file_bytes_scope": "committed payload and row-metadata files plus published archive, excluding reports and staging",
         "successful_downloads_semantics": "rows with verified committed local files",
         "control_trajectories_sha256": integrity.digest(integrity.encode(report["control_trajectories"])),
+        "http_observations_sha256": integrity.digest(integrity.encode(report["http_observations"])),
         "display_mb_divisor": 1000000,
     }
     if cfg.resume or cfg.reconcile:
@@ -2528,6 +2558,9 @@ async def run_acquisition(cfg, *, manager_factory=HostControllerManager, report_
                 connector=connector, timeout=aiohttp.ClientTimeout(total=max(1, cfg.timeout_sec * 2)),
                 headers={"User-Agent": "FLOW-DC/2.0 PAARC/2.0"}, trace_configs=[build_trace_config()],
             ) as session:
+                if cfg.research_workload is not None:
+                    from flowdc_research_profile import BodyBudget, workload
+                    session._flowdc_body_budget = BodyBudget(workload(cfg.research_workload))
                 namer, written = SequentialNamer(), {}
                 while keys and not shutdown_flag:
                     selected = set(keys)

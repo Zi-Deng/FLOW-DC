@@ -1,0 +1,21 @@
+{
+  "input_path": "input.parquet",
+  "output_folder": "output-gradient2",
+  "research_profile": true,
+  "research_workload": "bounded-research-v2",
+  "enable_paarc": true,
+  "control_method": "gradient2-application-delay-v1",
+  "C_min": 2,
+  "C_init": 4,
+  "C_max": 16,
+  "concurrent_downloads": 16,
+  "timeout_sec": 30,
+  "max_retry_attempts": 2,
+  "method_options": {
+    "queue_size": 4,
+    "smoothing": 0.2,
+    "long_window": 600,
+    "rtt_tolerance": 1.5,
+    "signal": "first-body-delay"
+  }
+}

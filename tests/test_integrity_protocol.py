@@ -642,6 +642,9 @@ with p.RunStore(root, manifest={'sha256':'a'*64,'original_rows':1}, config=p.eff
                             async def fetch(*_):
                                 single.HTTP_TRACE_CTX.get().update(
                                     ttfb=0.2,
+                                    body_delay=0.5,
+                                    t0=0.5,
+                                    first_body_byte_at=0.7,
                                     latency_eligible=True,
                                     body_completed_at=1,
                                     observed_response_body_bytes=5,

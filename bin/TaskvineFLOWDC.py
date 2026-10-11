@@ -197,6 +197,7 @@ def create_partition_config(base_config: dict, partition_file: str, output_name:
         "enable_paarc": base_config.get('enable_paarc', True),
         "control_method": base_config.get('control_method'),
         "method_options": base_config.get('method_options', {}),
+        "research_workload": base_config.get('research_workload'),
         "shared_control_file": base_config.get('shared_control_file'),
 
         # PAARC concurrency bounds

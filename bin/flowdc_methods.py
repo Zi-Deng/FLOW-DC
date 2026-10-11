@@ -14,7 +14,8 @@ from uuid import uuid4
 
 from yarl import URL
 
-METHODS = ("paarc-base-v2", "gradient-candidate-v1", "fixed-v1", "ratio-v1")
+GRADIENT2_METHOD = "gradient2-application-delay-v1"
+METHODS = ("paarc-base-v2", "gradient-candidate-v1", "fixed-v1", "ratio-v1", GRADIENT2_METHOD)
 ABLATIONS = (
     "no-gradient-term",
     "no-elapsed-smoothing",
@@ -65,6 +66,35 @@ def percentile(values, fraction):
 
 
 @dataclass(frozen=True)
+class Gradient2MethodConfig:
+    """FLOW-DC measurement adapter settings, separate from PAARC candidates."""
+
+    method: str = GRADIENT2_METHOD
+    c_min: int = 2
+    c_max: int = 10000
+    c_init: int = 4
+    queue_size: int = 4
+    smoothing: float = 0.2
+    long_window: int = 600
+    rtt_tolerance: float = 1.5
+    signal: str = "first-body-delay"
+
+    def __post_init__(self):
+        require(self.method == GRADIENT2_METHOD, "invalid Gradient2 method")
+        require(self.signal in ("first-body-delay", "body-completion-delay"), "invalid Gradient2 signal")
+        self.engine_config()
+
+    def engine_config(self):
+        from flowdc_gradient2 import Gradient2Config
+
+        return Gradient2Config(
+            initial_limit=self.c_init, min_limit=self.c_min, max_limit=self.c_max,
+            queue_size=self.queue_size, smoothing=self.smoothing,
+            long_window=self.long_window, rtt_tolerance=self.rtt_tolerance,
+        )
+
+
+@dataclass(frozen=True)
 class MethodConfig:
     method: str = "gradient-candidate-v1"
     c_min: int = 2
@@ -93,7 +123,7 @@ class MethodConfig:
     ablation: str | None = None
 
     def __post_init__(self):
-        require(self.method in METHODS, "unknown versioned control method")
+        require(self.method in METHODS and self.method != GRADIENT2_METHOD, "unknown delay-policy method")
         require(self.ablation is None or self.ablation in ABLATIONS, "unknown mechanism ablation")
         require(
             self.ablation is None or self.method == "gradient-candidate-v1",
@@ -141,6 +171,12 @@ class MethodConfig:
             not set(options).intersection({"method", "c_min", "c_max", "c_init"}),
             "method options cannot override method or concurrency bounds",
         )
+        if config.control_method == GRADIENT2_METHOD:
+            known = {field.name for field in fields(Gradient2MethodConfig)}
+            require(not set(options) - known, "unknown Gradient2 adaptation option")
+            return Gradient2MethodConfig(
+                c_min=config.C_min, c_max=config.C_max, c_init=config.C_init, **options,
+            )
         if "legacy_alpha" in options:
             require(
                 not set(options).intersection({"queue_tau_s", "gradient_tau_s"}),
@@ -437,6 +473,62 @@ class CandidateController:
         return self.config.interval_s
 
 
+class Gradient2Controller:
+    """One source-equivalent decision per complete eligible request observation.
+
+    Common HTTP admission/Retry-After safeguards remain outside this decision
+    algorithm. The tick emits evidence only; it never synthesizes an observation.
+    """
+
+    def __init__(self, host, config, semaphore_factory, emit):
+        from flowdc_gradient2 import Gradient2
+
+        self.host, self.config, self.emit = host, config, emit
+        self.engine = Gradient2(config.engine_config())
+        self.semaphore = semaphore_factory(config.c_init, config.c_min, config.c_max)
+        self.metrics = self
+        self.smoother = None
+        self.pending = 0
+
+    async def record(self, status_code, ttfb, bytes_downloaded=0, *,
+                     latency_eligible=None, is_conn_error=False, is_unknown_error=False,
+                     inflight=None, body_delay=None, **unused):
+        from flowdc_gradient2 import nanoseconds
+
+        # Latency survives a local publication failure; incomplete/empty/failed
+        # HTTP bodies and transport/unknown failures supply no reference sample.
+        if not (latency_eligible is True and status_code == 200
+                and not is_conn_error and not is_unknown_error):
+            return
+        require(type(inflight) is int and inflight > 0, "Gradient2 needs pre-retirement aggregate inflight")
+        signal = ttfb if self.config.signal == "first-body-delay" else body_delay
+        delay_ns = nanoseconds(signal)
+        before = self.engine.limit
+        limit = self.engine.sample(delay_ns, inflight)
+        self.semaphore.set_limit(limit, self.engine.reason)
+        self.pending += 1
+        self.emit({
+            "origin": self.host, "method": GRADIENT2_METHOD,
+            "signal": self.config.signal, "monotonic_s": time.monotonic(),
+            "event": "reference_observation", "limit_before": before,
+            "inflight": inflight, "delay_ns": delay_ns, **self.engine.state(),
+        })
+
+    async def step_interval(self):
+        snap = {"new_observations": self.pending, "total_observations": self.engine.observations}
+        self.pending = 0
+        self.emit({
+            "origin": self.host, "method": GRADIENT2_METHOD,
+            "signal": self.config.signal, "monotonic_s": time.monotonic(),
+            **self.engine.state(), **snap, "event": "interval",
+            "reason": "observation_summary" if snap["new_observations"] else "no_observation_hold",
+        })
+        return snap
+
+    def _calculate_control_interval(self, snap):
+        return 0.2  # Evidence emission cadence, not a reference decision gate.
+
+
 class ControllerManager:
     def __init__(self, config, semaphore_factory, base_factory, emit):
         self.config = config
@@ -472,6 +564,8 @@ class ControllerManager:
                     return snap
 
                 controller.step_interval = step
+            elif self.method.method == GRADIENT2_METHOD:
+                controller = Gradient2Controller(str(origin), self.method, self.semaphore_factory, self.emit)
             else:
                 controller = CandidateController(str(origin), self.method, self.semaphore_factory, self.emit)
             self.controllers[origin] = controller
@@ -495,7 +589,11 @@ def method_record(config):
         "explicit": True,
         "candidate": config.control_method != "paarc-base-v2",
         "parameters": parameters,
-        "measurement": "complete final-hop body-first-byte application delay; not packet RTT",
+        "measurement": (
+            MethodConfig.from_config(config).signal
+            if config.control_method == GRADIENT2_METHOD
+            else "complete final-hop body-first-byte application delay; not packet RTT"
+        ),
     }
 
 

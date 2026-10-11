@@ -30,7 +30,7 @@ def check(condition, context):
         raise AssertionError(context)
 
 
-def observations():
+def observations(*, campaign=False):
     for case in json.loads(CASES.read_text()):
         config = Gradient2Config(**case["options"])
         index = 0
@@ -38,11 +38,21 @@ def observations():
             for _ in range(count):
                 yield case["id"], index, config, delay, inflight, drop
                 index += 1
+    if campaign:
+        for queue in (0, 1, 2, 4):
+            for smoothing in (.1, .2):
+                config = Gradient2Config(initial_limit=4, min_limit=2, max_limit=16,
+                                         queue_size=queue, smoothing=smoothing)
+                name = f"campaign-q{queue}-s{smoothing}"
+                # Include averaging warmup, a long changed phase, recovery,
+                # application-limited updates and ignored drop flags.
+                for index, delay in enumerate([20_000_000] * 20 + [200_000_000] * 950 + [20_000_000] * 950):
+                    yield name, index, config, delay, 1 if index % 31 == 0 else 16, index % 17 == 0
 
 
-def compare(raw):
+def compare(raw, *, campaign=False):
     rows = list(csv.DictReader(io.StringIO(raw.decode())))
-    inputs = list(observations())
+    inputs = list(observations(campaign=campaign))
     if len(rows) != len(inputs):
         raise AssertionError("Reference omitted or added observations")
     engine = None
@@ -77,7 +87,7 @@ def compare(raw):
     return len(rows)
 
 
-def reference(java, javac, jar=None):
+def reference(java, javac, jar=None, *, campaign=False):
     provenance = json.loads((REFERENCE / "provenance.json").read_text())
     for item in provenance["files"]:
         check(
@@ -114,7 +124,7 @@ def reference(java, javac, jar=None):
             timeout=60,
         )
         lines = []
-        for name, index, config, delay, inflight, drop in observations():
+        for name, index, config, delay, inflight, drop in observations(campaign=campaign):
             lines.append(
                 ",".join(
                     map(str, [name, index, delay, inflight, str(drop).lower(), *asdict(config).values()])
@@ -134,23 +144,29 @@ def main():
     parser.add_argument("--java", default="java")
     parser.add_argument("--javac", default="javac")
     parser.add_argument("--slf4j-jar", type=Path)
+    parser.add_argument("--campaign", action="store_true", help="Also validate all eight campaign parameter configurations")
+    parser.add_argument("--save-reference", type=Path, help="Retain fresh Java output at a new path")
     parser.add_argument(
         "--write-fixture", action="store_true", help="Intentional reference fixture regeneration"
     )
     args = parser.parse_args()
-    raw = reference(args.java, args.javac, args.slf4j_jar)
-    count = compare(raw)
+    check(not (args.campaign and args.write_fixture), "Campaign traces must not replace the historical fixture")
+    raw = reference(args.java, args.javac, args.slf4j_jar, campaign=args.campaign)
+    count = compare(raw, campaign=args.campaign)
     fixture = CASES.with_name("reference.csv")
     if args.write_fixture:
         fixture.write_bytes(raw)
-    else:
+    elif not args.campaign:
         check(fixture.read_bytes() == raw, "Retained reference fixture changed")
+    if args.save_reference:
+        with args.save_reference.open("xb") as stream:
+            stream.write(raw)
     print(
         json.dumps(
             {
                 "status": "pass",
                 "observations": count,
-                "scenarios": len(json.loads(CASES.read_text())),
+                "scenarios": len(json.loads(CASES.read_text())) + (8 if args.campaign else 0),
                 "upstream_revision": json.loads((REFERENCE / "provenance.json").read_text())["revision"],
                 "reference_sha256": hashlib.sha256(raw).hexdigest(),
                 "limits": "Decision-engine equivalence on declared traces; no acquisition integration or efficacy evidence",

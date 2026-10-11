@@ -97,6 +97,8 @@ def prepare(path):
             all(case["config"].get("control_method") and case["config"]["enable_paarc"] for case in cases),
             "explicit_shared_method_required",
         )
+        require(all(case["config"].get("research_workload") == spec["distributed"].get("research_workload")
+                    for case in cases), "case_workload_mismatch")
         require(
             "bin/flowdc_vine.py" in files and "bin/flowdc_experiment_research.py" in files,
             "selected_source_has_no_shared_profile",
@@ -305,7 +307,9 @@ def collect_outputs(store, selected, manifest, state, transport, deadline):
             [sys.executable, str(Path(__file__).with_name("flowdc_experiment_artifacts.py"))],
             seconds=deadline - time.monotonic(),
             maximum=LIMIT,
-            data=encode({"kind": kind, "maximum": maximum, **expected}) + raw,
+            data=encode({"kind": kind, "maximum": maximum,
+                "research_workload": manifest["spec"].get("distributed", {}).get("research_workload"),
+                **expected}) + raw,
         )
         value = parse(response)
         if code:
@@ -439,12 +443,15 @@ def cleanup(store, selected, manifest, state, controller, transport=None):
         store.release(selected)
 
 
-def run(store, selected, manifest, state):
+def run(store, selected, manifest, state, *, use_active_window=False):
     require(state["phase"] == "prepared" and not state["activation_intent"], "run_cannot_be_replayed")
     require(store.owner() in (None, selected), "another_experiment_incomplete")
     controller = Controller(store.root, manifest["binding"])
     bounds = manifest["spec"]["bounds"]
-    controller.preflight(bounds["window_seconds"])
+    if use_active_window:
+        controller.preflight(bounds["window_seconds"], use_active_window=True)
+    else:
+        controller.preflight(bounds["window_seconds"])
     require(
         ssh_preflight(manifest["spec"]["ssh"], manifest["binding"]) == manifest["known_hosts_sha256"],
         "enrolled_host_keys_changed",
@@ -477,6 +484,7 @@ def run(store, selected, manifest, state):
     try:
         check_cancel()
         state["activation_intent"] = True
+        state["uses_existing_window"] = use_active_window
         save(store, selected, state, "activation_intent")
         start = time.monotonic()
         work_end = start + bounds["stop_after_seconds"] - bounds["collect_seconds"]
@@ -681,7 +689,8 @@ def operate(args):
 def operate_locked(args, store, selected):
     manifest, state = load(store, selected, verify=args.command != "stop")
     if args.command == "run":
-        return run(store, selected, manifest, state)
+        return run(store, selected, manifest, state,
+                   use_active_window=getattr(args, "use_active_window", False))
     if args.command == "stop" and not state["activation_intent"]:
         require(not state["services"], "invalid_run_state")
         if store.owner() == selected:
@@ -753,6 +762,11 @@ def main(argv=None):
         command = commands.add_parser(action, allow_abbrev=False)
         command.add_argument("--state-root", required=True)
         command.add_argument("--run-id", required=True)
+        if action == "run":
+            command.add_argument(
+                "--use-active-window", action="store_true",
+                help="Use the same ready selected inspection window after guest setup; retain its deadline.",
+            )
     try:
         args = parser.parse_args(argv)
     except ExperimentError:

@@ -279,6 +279,42 @@ class RollbackLatencyBackend(LatencyBackend):
 
 
 class ReadBatchTests(unittest.TestCase):
+    def test_six_server_preflight_fits_one_deadline_and_validates_every_identity(self):
+        provider = Provider({})
+        vm_ids = [f"22222222-2222-4222-8222-{i:012d}" for i in range(6)]
+        record = {"vms": dict.fromkeys(vm_ids, {}), "spec": {"context": {"project_id": PROJECT}}}
+        active = maximum = 0
+        lock = threading.Lock()
+        inspected = []
+
+        def query(action, resource):
+            nonlocal active, maximum
+            self.assertEqual(action, "server")
+            with lock:
+                active += 1
+                maximum = max(maximum, active)
+                inspected.append(resource)
+            time.sleep(.1)
+            with lock:
+                active -= 1
+            return {"id": resource, "project_id": PROJECT, "status": "SHELVED_OFFLOADED"}
+
+        with (patch.object(ops, "CLOUD_SECONDS", .5),
+              patch.object(provider, "context"), patch.object(provider, "query", side_effect=query),
+              patch.object(provider, "call") as mutation):
+            provider.preflight(record)
+        self.assertEqual(set(inspected), set(vm_ids))
+        self.assertEqual(maximum, 4)
+        self.assertEqual(active, 0)
+        mutation.assert_not_called()
+        for bad in ({"id": vm_ids[1], "project_id": PROJECT, "status": "SHELVED_OFFLOADED"},
+                    {"id": vm_ids[0], "project_id": VM_IDS[0], "status": "SHELVED_OFFLOADED"},
+                    {"id": vm_ids[0], "project_id": PROJECT, "status": "ACTIVE"}):
+            with (patch.object(provider, "context"),
+                  patch.object(provider, "read_batch", return_value=[bad] + [query("server", i) for i in vm_ids[1:]]),
+                  self.assertRaises(ops.OpsError)):
+                provider.preflight(record)
+
     def test_four_read_barrier_and_actor_join(self):
         provider = Provider({})
         barrier = threading.Barrier(4, timeout=2)
@@ -543,13 +579,13 @@ class NetworkTests(unittest.TestCase):
             if self.journal.read()["network"]["rolled_back"]:
                 break
         self.assertTrue(self.journal.read()["network"]["rolled_back"], trace)
-        self.assertEqual(trace, [(13.15, None), (15.15, None)] * 3 + [(9.55, None)])
+        self.assertEqual(trace, [(13.15, None)] * 3 + [(15.15, None)] * 3 + [(9.55, None)])
         self.assertEqual(backend.fips, original_fips)
         self.assertEqual(backend.groups, {backend.original: original_group})
         self.assertTrue(
             all(port["security_group_ids"] == [backend.original] for port in backend.ports.values())
         )
-        self.assertEqual([action for action, _ in backend.dispatches], ["attach", "group_delete"] * 3)
+        self.assertEqual([action for action, _ in backend.dispatches], ["attach"] * 3 + ["group_delete"] * 3)
 
     def test_slow_rollback_fails_when_new_read_batches_are_serialized(self):
         backend = self.slow_rollback_fixture()
@@ -580,6 +616,11 @@ class NetworkTests(unittest.TestCase):
         backend = self.slow_rollback_fixture()
         original_fips = copy.deepcopy(backend.fips)
         for action in ("attach", "group_delete"):
+            if action == "group_delete":
+                backend.durations = dict(backend.DURATIONS)
+                backend.apply_on_timeout = False
+                while any(p["security_group_ids"] != [backend.original] for p in backend.ports.values()):
+                    self.assertIsNone(self.timed_rollback_step(backend)[1])
             # The no-effect case must remain pending. A later request may apply
             # but lose its response; neither return path is rollback proof.
             for applied in (False, True):
@@ -604,7 +645,7 @@ class NetworkTests(unittest.TestCase):
                 break
         self.assertTrue(self.journal.read()["network"]["rolled_back"])
         self.assertEqual(restarted.fips, original_fips)
-        self.assertEqual([action for action, _ in restarted.dispatches], ["attach", "group_delete"] * 2)
+        self.assertEqual([action for action, _ in restarted.dispatches], ["group_delete"] * 2)
 
     def test_rollback_validates_all_batched_port_identities_before_mutation(self):
         self.setup_network()
@@ -645,15 +686,12 @@ class NetworkTests(unittest.TestCase):
         ):
             backend.network_step(self.journal, rollback=False)
         self.assertLess(backend.now, backend.deadline)
-        self.assertAlmostEqual(backend.now - 100.0, 14.72)
+        self.assertLess(backend.now - 100.0, 14.72)
         self.assertCountEqual(
             backend.reads,
             [
                 "context",
                 "project",
-                "groups",
-                "group",
-                "group",
                 "group",
                 "ports",
                 "port",
@@ -666,18 +704,81 @@ class NetworkTests(unittest.TestCase):
         self.assertEqual(len(mutations), 1)
         self.assertEqual(mutations[0][0], "rule")
 
+    def test_floating_route_batches_slow_independent_reads_within_deadline(self):
+        backend = LatencyBackend()
+        record = self.journal.read()
+        record["access"]["route"] = {
+            "mode": "floating", "external_network_id": backend.external,
+            "router_id": backend.router, "operator_route_verified": False,
+        }
+        with (
+            patch.object(backend, "duration", return_value=2.5),
+            patch("flowdc_pilot_provider.time.monotonic", side_effect=lambda: backend.now),
+            patch("flowdc_pilot_provider.ThreadPoolExecutor",
+                  side_effect=lambda **kw: LogicalExecutor(backend, **kw)),
+            backend.step("network_setup"),
+        ):
+            backend.context(record)
+            backend.route_step(self.journal, record, inspect_only=True)
+        self.assertEqual(backend.now - 100, 12.5)
+        self.assertTrue(self.journal.read()["network"]["route_checked"])
+        self.assertFalse(any(mutation for _, _, mutation in backend.calls))
+        self.assertCountEqual(backend.reads, [
+            "context", "project", "floating", "network", "router", "router_ports", "port",
+        ])
+
+    def test_route_batch_timeout_refuses_route_completion_and_creation(self):
+        backend = LatencyBackend()
+        record = self.journal.read()
+        record["access"]["route"] = {
+            "mode": "floating", "external_network_id": backend.external,
+            "router_id": backend.router, "operator_route_verified": False,
+        }
+        with (
+            patch.object(backend, "duration", return_value=6),
+            patch("flowdc_pilot_provider.time.monotonic", side_effect=lambda: backend.now),
+            patch("flowdc_pilot_provider.ThreadPoolExecutor",
+                  side_effect=lambda **kw: LogicalExecutor(backend, **kw)),
+            backend.step("network_setup"),
+        ):
+            backend.context(record)
+            with self.assertRaises(ops.OpsError):
+                backend.route_step(self.journal, record)
+        self.assertFalse(self.journal.read()["network"].get("route_checked", False))
+        self.assertFalse(any(mutation for _, _, mutation in backend.calls))
+
+    def test_pinned_setup_group_is_freshly_revalidated_before_mutation(self):
+        self.setup_network()
+        record = self.journal.read()
+        manager = record["network"]["seen_groups"]["manager"]
+        self.journal.change(lambda r: r["network"]["configured"].remove("manager"))
+        for field, value in (("description", "unowned"), ("project_id", VM_IDS[1]), ("id", VM_IDS[1])):
+            with self.subTest(field=field):
+                original = self.provider.groups[manager][field]
+                self.provider.groups[manager][field] = value
+                self.provider.calls.clear()
+                with self.assertRaises(ops.OpsError) as caught:
+                    self.provider.network_step(self.journal, rollback=False)
+                self.assertEqual(caught.exception.code, "owned_group_identity_changed")
+                self.assertFalse(any(mutation for _, _, mutation in self.provider.calls))
+                self.provider.groups[manager][field] = original
+
     def test_maintenance_reads_verify_actual_rollback_without_mutation(self):
         self.setup_network()
         self.rollback()
         self.provider.calls.clear()
-        with patch.object(self.provider, "server", return_value="SHELVED_OFFLOADED"):
+        with patch.object(self.provider, "query", side_effect=lambda action, vm_id: {
+            "id": vm_id, "project_id": PROJECT, "status": "SHELVED_OFFLOADED"
+        }):
             self.provider.verify_idle(self.journal.read())
             self.assertFalse(any(call[2] for call in self.provider.calls))
             self.provider.ports[PORT_IDS[0]]["security_group_ids"] = []
             with self.assertRaises(ops.OpsError) as caught:
                 self.provider.verify_idle(self.journal.read())
         self.assertEqual(caught.exception.code, "maintenance_network_rollback_required")
-        with patch.object(self.provider, "server", return_value="ACTIVE"):
+        with patch.object(self.provider, "query", side_effect=lambda action, vm_id: {
+            "id": vm_id, "project_id": PROJECT, "status": "ACTIVE"
+        }):
             with self.assertRaises(ops.OpsError) as caught:
                 self.provider.verify_idle(self.journal.read())
         self.assertEqual(caught.exception.code, "initial_offload_required")
@@ -899,6 +1000,76 @@ class NetworkTests(unittest.TestCase):
                 self.assertEqual(args, (PROJECT.replace("-", ""),))
         self.rollback()
 
+    def test_selected_workers_share_one_group_with_quota_and_restore_before_delete(self):
+        from flowdc_topology import selection
+        from test_pilot_topology import expanded
+
+        for indexes in ((3,), (2, 3), (0, 1, 2, 3)):
+            with self.subTest(selected_workers=indexes):
+                selected, network = expanded(spec(), access(), 4)
+                config = self.root / ("config-" + str(len(indexes)))
+                config.mkdir(mode=0o700)
+                profile = config / "profile.json"
+                profile.write_text("{}")
+                journal = register(
+                    profile, self.root / ("state-" + str(len(indexes))),
+                    selected, network,
+                )
+                workers = selected["topology"]["workers"]
+                journal.change(lambda r: r.update(
+                    desired="run", window={"seconds": 1800, "inspection": True},
+                    selection=selection(selected, [workers[i] for i in indexes]),
+                ))
+                provider = NetworkBackend()
+                for vm in selected["vms"]:
+                    interface = network["interfaces"][vm["role"]]
+                    provider.ports[interface["port_id"]] = dict(
+                        copy.deepcopy(provider.ports[PORT_IDS[2]]), id=interface["port_id"],
+                        device_id=vm["id"], fixed_ips=[{
+                            "ip_address": interface["fixed_ip"], "subnet_id": SUBNET,
+                        }],
+                    )
+                # The live allocation has five existing groups and a quota of
+                # ten. None of those unrelated groups may be edited or deleted.
+                for i in range(4):
+                    key = provider.new_id()
+                    provider.groups[key] = dict(
+                        copy.deepcopy(provider.groups[provider.original]), id=key, name=f"unrelated-{i}",
+                    )
+                originals = copy.deepcopy(provider.groups)
+                call = provider.call
+
+                def bounded(action, *args, **kwargs):
+                    if action == "group_create" and len(provider.groups) >= 10:
+                        raise ops.OpsError("network_quota_pending", "quota", "quota", 3)
+                    if action == "group_delete":
+                        self.assertTrue(all(
+                            p["security_group_ids"] == [provider.original] for p in provider.ports.values()
+                        ))
+                    return call(action, *args, **kwargs)
+
+                with patch.object(provider, "call", side_effect=bounded):
+                    for _ in range(60):
+                        provider.network_step(journal, rollback=False)
+                        if journal.read()["network"]["ready"]:
+                            break
+                    record = journal.read()
+                    self.assertTrue(record["network"]["ready"])
+                    chosen = [f"worker-{i + 1}" if i else "worker" for i in indexes]
+                    resources = {record["network"]["seen_groups"][role] for role in chosen}
+                    self.assertEqual(len(resources), 1)
+                    self.assertEqual(sum(a == "group_create" for a, _, _ in provider.calls), 3)
+                    self.assertEqual(sum(a == "rule" for a, _, _ in provider.calls), 4 + 2 * len(indexes))
+                    for role in chosen:
+                        provider.verify_ingress(record, role, provider.groups[next(iter(resources))])
+                    journal.change(lambda r: r.update(desired="stop"))
+                    for _ in range(20):
+                        provider.network_step(journal, rollback=True)
+                        if journal.read()["network"]["rolled_back"]:
+                            break
+                self.assertTrue(journal.read()["network"]["rolled_back"])
+                self.assertEqual(provider.groups, originals)
+
     def test_cleanup_does_not_depend_on_missing_or_drifted_port(self):
         record = self.journal.read()
         for action, state in (("shelve", "ACTIVE"), ("offload", "SHELVED")):
@@ -920,9 +1091,12 @@ class NetworkTests(unittest.TestCase):
         for role, interface in access()["interfaces"].items():
             group_id = self.provider.ports[interface["port_id"]]["security_group_ids"][0]
             rules = self.provider.groups[group_id]["rules"]
-            self.assertEqual(len(rules), 7 if role == "manager" else 6)
+            self.assertEqual(len(rules), {"manager": 3, "origin": 2, "worker": 1}[role])
             for rule in rules:
+                self.assertEqual(rule["protocol"], "tcp")
                 self.assertTrue(rule["remote_ip_prefix"].endswith("/32"))
+                if role == "worker":
+                    self.assertEqual(rule["remote_ip_prefix"], access()["interfaces"]["manager"]["fixed_ip"] + "/32")
                 if rule["remote_ip_prefix"] == access()["operator_cidr"]:
                     self.assertEqual((role, rule["protocol"], rule["port_range_min"]), ("manager", "tcp", 22))
         self.rollback()

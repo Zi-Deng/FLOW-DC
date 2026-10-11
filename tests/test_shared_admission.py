@@ -404,7 +404,7 @@ class AcquisitionBridgeTests(unittest.IsolatedAsyncioTestCase):
                     return await self.authority.request(
                         self.token,
                         {
-                            "schema": "flowdc-shared-admission-v1",
+                            "schema": "flowdc-shared-admission-v2",
                             "binding": self.authority.ledger.snapshot()["binding"],
                             "client_id": self.client_id,
                             "operation": operation,
@@ -448,7 +448,7 @@ class AcquisitionBridgeTests(unittest.IsolatedAsyncioTestCase):
                 response = SimpleNamespace(url=urls[1 - i], headers={}, status=200)
                 await trace._end(None, ctx, SimpleNamespace(response=response))
                 ctx.measurement.update(
-                    ttfb=0.1, observed_response_body_bytes=3, latency_eligible=True, body_completed_at=1
+                    ttfb=0.1, body_delay=0.2, observed_response_body_bytes=3, latency_eligible=True, body_completed_at=1
                 )
                 await attempts[i].finish_hop(ctx.measurement, "final")
                 await attempts[i].close(ctx.measurement)

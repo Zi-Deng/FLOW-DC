@@ -5,17 +5,18 @@ structurally invalid required artifact earns no credit; native files are untouch
 """
 
 import io
+import hashlib
 import re
 import stat
 import tarfile
 from collections import Counter
+from collections.abc import Mapping
 from pathlib import Path
 
 import polars as pl
 
 from .truth import (
-    MAX_BYTES,
-    MAX_ROWS,
+    LEGACY,
     PROVENANCE,
     digest,
     encode,
@@ -23,18 +24,60 @@ from .truth import (
     parse,
     require,
     validate_partition,
+    truth_workload,
 )
 
-MAX_ARTIFACT_BYTES = 128 * 1024 * 1024
+MAX_ARTIFACT_BYTES = LEGACY.max_artifact_bytes
 
 
-def read_file(path):
+def file_info(path, maximum):
     path = Path(path).absolute()
     for parent in (*reversed(path.parents), path):
         require(not parent.is_symlink(), f"symlink artifact: {parent}")
     info = path.stat()
-    require(stat.S_ISREG(info.st_mode) and info.st_size <= MAX_ARTIFACT_BYTES, "invalid/oversized artifact")
-    return path.read_bytes()
+    require(stat.S_ISREG(info.st_mode) and info.st_size <= maximum, "invalid/oversized artifact")
+    return info
+
+
+def read_file(path, maximum=MAX_ARTIFACT_BYTES):
+    file_info(path, maximum)
+    return Path(path).read_bytes()
+
+
+def identity(info):
+    # Reading can update atime; only mutation/identity fields bind the artifact.
+    return info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns
+
+
+def file_digest(path, maximum):
+    info = file_info(path, maximum)
+    checksum = hashlib.sha256()
+    with Path(path).open('rb') as stream:
+        while chunk := stream.read(1024 * 1024):
+            checksum.update(chunk)
+    require(identity(Path(path).stat()) == identity(info), 'artifact changed during hashing')
+    return checksum.hexdigest(), info.st_size
+
+
+class ArchiveMembers(Mapping):
+    """Validated offsets; hold at most one finite member body per caller read."""
+    def __init__(self, path, info, entries):
+        self.path, self.info, self.entries = Path(path), info, entries
+
+    def __len__(self):
+        return len(self.entries)
+
+    def __iter__(self):
+        return iter(self.entries)
+
+    def __getitem__(self, key):
+        offset, size = self.entries[key]
+        require(identity(self.path.stat()) == identity(self.info), 'archive changed during verification')
+        with self.path.open('rb') as stream:
+            stream.seek(offset)
+            raw = stream.read(size)
+        require(len(raw) == size and identity(self.path.stat()) == identity(self.info), 'archive truncated/changed')
+        return raw
 
 
 def safe_name(name):
@@ -50,11 +93,11 @@ def safe_name(name):
     return name
 
 
-def archive_members(path):
+def archive_members(path, limits=LEGACY):
     """Reject compressed, unclosed, concatenated, duplicate and nonregular tars."""
-    raw = read_file(path)
+    info = file_info(path, limits.max_artifact_bytes)
     members, end = {}, 0
-    with tarfile.open(fileobj=io.BytesIO(raw), mode="r:") as archive:
+    with tarfile.open(path, mode="r:") as archive:
         for item in archive:
             safe_name(item.name)
             require(
@@ -62,19 +105,22 @@ def archive_members(path):
                 "duplicate or nonregular archive member",
             )
             require(
-                0 <= item.size <= MAX_BYTES and len(members) < 2 * MAX_ROWS + 2,
+                0 <= item.size <= limits.max_object_bytes and len(members) < 2 * limits.max_rows + 2,
                 "oversized archive member/count",
             )
-            with archive.extractfile(item) as stream:
-                content = stream.read()
-            require(len(content) == item.size, "truncated archive member")
-            members[item.name] = content
+            require(item.offset_data + item.size <= info.st_size, "truncated archive member")
+            members[item.name] = (item.offset_data, item.size)
             end = item.offset_data + ((item.size + 511) // 512) * 512
     require(
-        len(raw) % 512 == 0 and len(raw) - end >= 1024 and not any(raw[end:]),
+        info.st_size % 512 == 0 and info.st_size - end >= 1024,
         "archive lacks closure or contains trailing data",
     )
-    return members
+    with Path(path).open('rb') as stream:
+        stream.seek(end)
+        while chunk := stream.read(1024 * 1024):
+            require(not any(chunk), "archive contains trailing data")
+    require(identity(Path(path).stat()) == identity(info), 'archive changed during verification')
+    return ArchiveMembers(path, info, members)
 
 
 def _payload(raw, specification):
@@ -91,7 +137,8 @@ def _metadata(actual, expected):
 
 
 def _flowdc(output, truth, outcomes):
-    index_raw = read_file(output / "outcome-index.json")
+    limits = truth_workload(truth)
+    index_raw = read_file(output / "outcome-index.json", limits.max_metadata_bytes)
     index = parse(index_raw)
     final = parse(read_file(output / ".flowdc/final.json"))
     require(index["schema_version"] == 2 and final["schema_version"] == 2, "unsupported native schema")
@@ -99,12 +146,12 @@ def _flowdc(output, truth, outcomes):
     require(final["outcome_index_sha256"] == digest(index_raw), "native index binding mismatch")
     # The native product appends .tar; do not replace dots in a caller's basename.
     tar_path = output.parent / (output.name + ".tar")
-    archive_raw = read_file(tar_path)
+    archive_sha, archive_bytes = file_digest(tar_path, limits.max_artifact_bytes)
     require(
-        final["archive"]["sha256"] == digest(archive_raw) and final["archive"]["bytes"] == len(archive_raw),
+        final["archive"]["sha256"] == archive_sha and final["archive"]["bytes"] == archive_bytes,
         "native archive binding mismatch",
     )
-    members = archive_members(tar_path)
+    members = archive_members(tar_path, limits)
     prefix = output.name + "/"
     require(members.get(prefix + "outcome-index.json") == index_raw, "archived index mismatch")
     require(isinstance(parse(members[prefix + "overview.json"]), dict), "invalid archived overview")
@@ -162,19 +209,20 @@ def _flowdc(output, truth, outcomes):
 
 
 def _img2dataset(output, truth, outcomes):
+    limits = truth_workload(truth)
     require(output.is_dir() and not output.is_symlink(), "missing/unsafe native output")
     shards = sorted(output.glob("*.parquet"))
     require(bool(shards), "missing native parquet outcome sidecars")
-    require(len(shards) <= MAX_ROWS, "too many native shards")
+    require(len(shards) <= limits.max_rows, "too many native shards")
     expected = {row["row_id"]: row for row in truth["rows"] if row["eligible"]}
     seen, native_keys, expected_tars, stats_records = set(), set(), set(), []
     for shard in shards:
         require(re.fullmatch(r"[0-9]+", shard.stem), "invalid shard name")
-        frame = pl.read_parquet(io.BytesIO(read_file(shard)))
-        require(frame.height <= MAX_ROWS, "oversized shard sidecar")
+        frame = pl.read_parquet(io.BytesIO(read_file(shard, limits.max_metadata_bytes)))
+        require(frame.height <= limits.max_rows, "oversized shard sidecar")
         tar_path = shard.with_suffix(".tar")
         expected_tars.add(tar_path.name)
-        members = archive_members(tar_path)
+        members = archive_members(tar_path, limits)
         expected_names = set()
         statuses = Counter()
         for native in frame.iter_rows(named=True):

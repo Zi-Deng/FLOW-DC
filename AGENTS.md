@@ -22,7 +22,7 @@ These instructions apply to the whole repository unless a deeper `AGENTS.md` ove
 ## Current Downloader Truth
 
 - The main maintained downloader is `bin/download_batch.py` with `bin/single_download.py` (HTTP, TTFB timing, Retry-After admission) and `bin/flowdc_integrity.py` (`.flowdc/` journal, per-row dispositions, `--resume`/`--reconcile`, verified archives).
-- The default control algorithm is PAARC v2 (`paarc-base-v2`) with per-host adaptive concurrency. `--control_method` also selects `gradient-candidate-v1`, `fixed-v1` and `ratio-v1` (`bin/flowdc_methods.py`). Current defaults are in `PAARCConfig` in `bin/download_batch.py` (e.g. startup thetas 3.0/4.0).
+- The default control algorithm is PAARC v2 (`paarc-base-v2`) with per-host adaptive concurrency. `--control_method` also selects `gradient-candidate-v1`, `fixed-v1`, `ratio-v1` and `gradient2-application-delay-v1` (`bin/flowdc_methods.py`). Gradient2 is the pinned Netflix application-delay adaptation; its per-completion update rules differ from PAARC. Current base defaults are in `PAARCConfig` in `bin/download_batch.py` (e.g. startup thetas 3.0/4.0).
 - `bin/TaskvineFLOWDC.py` is the maintained TaskVine orchestrator and stages the downloader modules through `bin/flowdc_staging.py`.
 - `bin/TaskvineFLOWDCCloud.py` is stale: it stages only `download_batch.py` and `single_download_gbif.py` (the downloader now also needs `flowdc_integrity.py` and `single_download.py`) and uses legacy PolicyBBR keys. Repair it before relying on it.
 - `bin/download_batch_multithread.py` has diverged (unchanged since January 2026): different growth rules and defaults, no integrity, resume or control-method support. Do not assume config or behavior parity with `download_batch.py`.
@@ -116,3 +116,7 @@ on October9,2026. This applies to this task and all future tasks.
 - Workflow budget: <=2,500 runtime lines, <=1,200 workflow-test lines; suite target
   <=120seconds locally, CI job<=5minutes. New workflow complexity must justify its
   benefit to FLOW-DC. Do not increase limits or add a framework merely to pass.
+
+## Bounded review and repair policy
+
+Use at most two automated review invocations and two review-driven repair rounds per task across providers; failed or interrupted invocations count. Plan the first review after implementation qualification and the final review after the remaining material changes. Ordinary development/test fixes and coauthor revisions are not extra review-driven repairs. After the last repair, report the last reviewed SHA, final SHA, changed delta and current-head CI for human assessment; never label an earlier review as final-head review. No automatic third review. Shelve remaining nonblocking findings in a concise existing or consolidated GitHub issue. Material acceptance failures remain blockers. Extra cycles require a documented credential compromise, data loss, uncontrolled spending, or defect invalidating required central evidence, and a bounded corrective scope. Existing finite provider limits and human-only merge/submission still apply.

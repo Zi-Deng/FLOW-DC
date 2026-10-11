@@ -131,7 +131,7 @@ async def execute(spec):
                 "engineering_fault": spec.get("engineering_fault"),
             },
         )
-        pack_return(root, "return.tar")
+        pack_return(root, "return.tar", research_workload=config.research_workload)
     return 0 if status == "returned" else 1
 
 

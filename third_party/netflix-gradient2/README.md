@@ -4,7 +4,7 @@ Nine unchanged Java files and the Apache 2.0 license are retained from Netflix c
 
 The Python engine in `bin/flowdc_gradient2.py` preserves the source update order. Defaults are initial/minimum 20, maximum 200, queue 4, smoothing 0.2, long window 600 and tolerance 1.5. The supported finite profile uses integer limits/window in [1,10000], initial within the limit bounds, constant queue in [0,10000], smoothing in [0,1], tolerance in [1,10], positive integer delay nanoseconds up to 2^53-1, and inflight in [0,10000]. Other Java builder configurations/functions, upstream aggregation and the complete limiter are outside this equivalence claim. Deprecated short-window/drift controls are not exposed. The drop flag is ignored by the pinned decision class.
 
-Each Python call consumes one supplied observation. Seconds convert by truncating `seconds * 1e9`; nonfinite, nonpositive, subnanosecond and out-of-profile inputs fail before a decision. No elapsed clock, stale reset, PAARC backoff/probe, sample gate or recovery grace is added. The engine alone does not select a downloader method or provide the required application/completion-delay and aggregate-inflight instrumentation.
+Each Python call consumes one supplied observation. Seconds convert by truncating `seconds * 1e9`; nonfinite, nonpositive, subnanosecond and out-of-profile inputs fail before a decision. No elapsed clock, stale reset, PAARC backoff/probe, sample gate or recovery grace is added. The engine remains independent. `gradient2-application-delay-v1` in `flowdc_methods.py` now supplies the downloader/shared-authority adaptation described in [the method contract](../../docs/research/CONTROL-METHODS.md).
 
 Run the live Java comparison with a JDK 17+ installation providing `java` and `javac`:
 

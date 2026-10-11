@@ -21,6 +21,7 @@ sys.path.insert(0, str(ROOT / "bin"))
 
 from benchmark.core.controlled_origin import (  # noqa: E402
     SCENARIOS,
+    RESEARCH_SCENARIOS,
     ControlledOrigin,
     audit_events,
     public_scenario,
@@ -69,10 +70,10 @@ def identities(environment):
     return {"source_sha256": source, "environment_sha256": digest(encode(packages))}
 
 
-def execute_cell(directory, cell, config, environment, *, instrument=True, deadline=180, cleanup=60):
+def execute_cell(directory, cell, config, environment, *, instrument=True, deadline=180, cleanup=60, research_workload=None):
     """Exactly one downloader subprocess; preparation is outside the common timer."""
     payloads = originals(cell["fixture_seed"])
-    plan = scenario(cell["scenario"], payloads, rows=cell["rows"])
+    plan = scenario(cell["scenario"], payloads, rows=cell["rows"], research_workload=research_workload)
     write_new(directory / "scenario.json", public_scenario(plan))
     payload_dir = directory / "originals"
     payload_dir.mkdir()
@@ -98,7 +99,7 @@ def execute_cell(directory, cell, config, environment, *, instrument=True, deadl
             for origin in origins
             for path, spec in plan["objects"].items()
         }
-        truth = Truth.load(directory / "input.parquet", catalog)
+        truth = Truth.load(directory / "input.parquet", catalog, research_workload=research_workload)
         eligible = truth.write(directory / "fixture")
         native = directory / "run/native"
         settings = FlowDCConfig(
@@ -107,7 +108,7 @@ def execute_cell(directory, cell, config, environment, *, instrument=True, deadl
             "url",
             None,
             16,
-            5,
+            30 if research_workload is not None else 5,
             True,
             paarc_c_init=config["C_init"],
             paarc_c_min=config["C_min"],
@@ -115,7 +116,8 @@ def execute_cell(directory, cell, config, environment, *, instrument=True, deadl
             control_method=config["control_method"],
             method_options=config["method_options"],
             research_profile=True,
-            max_retry_attempts=2 if cell["scenario"] == "overload" else 1,
+            research_workload=research_workload,
+            max_retry_attempts=2 if cell["scenario"] in ("overload", "sustained-overload", "transient-overload", "recovery") else 1,
         )
         adapter = FlowDCAdapter(ROOT)
         configuration = directory / "flowdc-config.json"
@@ -265,7 +267,9 @@ def run_cell(plan, study_root, cell_index, *, resume=False, rerun=False, protoco
         write_new(attempt / "record.json", record)
         try:
             evidence = execute_cell(
-                attempt, cell, plan["methods"][cell["method"]], environment, instrument=instrument
+                attempt, cell, plan["methods"][cell["method"]], environment, instrument=instrument,
+                deadline=plan["limits"]["process_deadline_s"], cleanup=plan["limits"]["cleanup_reserve_s"],
+                research_workload=plan.get("workload", {}).get("name"),
             )
             record.update(evidence, status="recorded")
         except KeyboardInterrupt:
@@ -301,11 +305,13 @@ def summarize(plan, study_root):
         selected[cell["cell_id"]] = attempts[0] if attempts else None
     comparisons = []
     for family in plan["families"]:
-        for method in METHODS[1:]:
+        for method in METHODS:
+            if method == "paarc-base-v2" or method not in plan["methods"]:
+                continue
             pairs = []
             for block in range(plan["blocks"]):
                 pair = {"block": block, "scenario": family, "candidate_method": method, "censored": False}
-                for label, item_method in (("reference", METHODS[0]), ("candidate", method)):
+                for label, item_method in (("reference", "paarc-base-v2"), ("candidate", method)):
                     cell_id = f"{plan['namespace']}-b{block:03d}-{family}-{item_method}"
                     item = selected[cell_id]
                     native = item.get("native") if item else None
@@ -321,6 +327,7 @@ def summarize(plan, study_root):
             comparisons.append(
                 {
                     "scenario": family,
+                    "reference": "paarc-base-v2",
                     "candidate": method,
                     "summary": summary,
                     "precision": precision_plan(summary),
@@ -387,13 +394,15 @@ def main():
     plan.add_argument("--seed", type=int, required=True)
     plan.add_argument("--blocks", type=int, default=6)
     plan.add_argument(
-        "--families", nargs="+", choices=SCENARIOS, default=["steady", "drop-recovery", "overload"]
+        "--families", nargs="+", choices=RESEARCH_SCENARIOS, default=None
     )
     plan.add_argument("--namespace", choices=("tuning", "evaluation", "engineering"), default="evaluation")
     plan.add_argument(
         "--purpose", choices=("engineering", "provisional-pilot", "confirmatory"), default="provisional-pilot"
     )
     plan.add_argument("--rows", type=int, default=128)
+    plan.add_argument("--rows-by-scenario", type=Path, help="Calibrated JSON mapping of every selected scenario to its row count")
+    plan.add_argument("--research-workload", choices=("bounded-fixture-v1", "bounded-research-v2"))
     plan.add_argument(
         "--method-configs",
         type=Path,
@@ -403,6 +412,7 @@ def main():
         "tuning-catalog", help="Write eight proposed configurations per method; no execution"
     )
     catalog.add_argument("--output", type=Path, required=True)
+    catalog.add_argument("--research-workload", choices=("bounded-fixture-v1", "bounded-research-v2"))
     calibration = commands.add_parser(
         "calibrate", help="Two bounded independent fixed-client runs with origin instrumentation on/off"
     )
@@ -458,12 +468,13 @@ def main():
                     families=args.families,
                     namespace=args.namespace,
                     purpose=args.purpose,
-                    rows=args.rows,
+                    rows=parse(args.rows_by_scenario.read_bytes()) if args.rows_by_scenario else args.rows,
                     configurations=parse(args.method_configs.read_bytes()) if args.method_configs else None,
+                    research_workload=args.research_workload,
                 ),
             )
         elif args.command == "tuning-catalog":
-            write_new(args.output, tuning_catalog())
+            write_new(args.output, tuning_catalog(research_workload=args.research_workload))
         elif args.command == "calibrate":
             return 0 if calibrate(args.output.absolute(), args.seed, args.scenario) else 1
         elif args.command == "origin":

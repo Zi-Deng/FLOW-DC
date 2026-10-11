@@ -305,7 +305,7 @@ class Supervisor:
                 # Retain a cleanup obligation and refuse any new allowance.
                 account = replace(
                     account,
-                    consumed=max(account.consumed, account.limit),
+                    consumed=max(account.consumed, account.effective_limit),
                     obligation=True,
                     sample=now,
                     shutdown_at_consumed=0,

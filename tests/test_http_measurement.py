@@ -248,7 +248,7 @@ class ClassificationTests(unittest.IsolatedAsyncioTestCase):
             "fail": base.DownloadOutcome("fail", "http://a.test", False, None, None, 404, "missing"),
         }
         report = base.generate_overview_report(cfg=cfg, df_total=3, outcomes=outcomes, elapsed_sec=1)
-        self.assertEqual(report["http_measurement"]["version"], "3-output-independent-latency")
+        self.assertEqual(report["http_measurement"]["version"], "4-output-independent-delay-signals")
         self.assertIn("independent of local output success", report["http_measurement"]["latency_eligibility"])
         self.assertEqual(report["summary"]["successful_downloads"], 1)
         self.assertEqual(report["summary"]["failed_downloads"], 1)

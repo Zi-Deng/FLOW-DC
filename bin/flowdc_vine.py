@@ -28,7 +28,7 @@ from flowdc_vine_native import RUNTIME, NativeManager
 from flowdc_vine_protocol import digest, parse, require, unpack_return, write_new
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from benchmark.core.truth import PROVENANCE, Truth, initial_outcomes, partition_truth  # noqa: E402
+from benchmark.core.truth import PROVENANCE, Truth, initial_outcomes, partition_truth, truth_workload  # noqa: E402
 from benchmark.core.verifier import verify_native  # noqa: E402
 
 PROFILE = "shared-origin-v1"
@@ -63,12 +63,15 @@ def validate_config(value):
     }
     require(mandatory <= set(value) <= mandatory | optional, "invalid distributed config fields")
     require(value["distributed_profile"] == PROFILE, "unsupported distributed profile")
+    from flowdc_research_profile import workload
+    require(isinstance(value["download"], dict), "invalid download options")
+    limits = workload(value["download"].get("research_workload"))
     config = {"deadline_s": 180, "task_deadline_s": 120, "max_attempts": 1, "port_number": 0, **value}
     require(type(config["workers"]) is int and config["workers"] in (1, 2, 4), "workers must be 1/2/4")
     require(type(config["max_attempts"]) is int and 1 <= config["max_attempts"] <= 4, "invalid attempt bound")
     require(
-        type(config["deadline_s"]) is int and 10 <= config["deadline_s"] <= 180,
-        "manager deadline must be 10..180 seconds",
+        type(config["deadline_s"]) is int and 10 <= config["deadline_s"] <= limits.acquisition_seconds,
+        "manager deadline exceeds finite workload",
     )
     require(
         type(config["task_deadline_s"]) is int and 1 <= config["task_deadline_s"] < config["deadline_s"],
@@ -96,7 +99,7 @@ def validate_config(value):
     require(
         isinstance(options, dict)
         and options.get("control_method")
-        in ("paarc-base-v2", "gradient-candidate-v1", "fixed-v1", "ratio-v1"),
+        in ("paarc-base-v2", "gradient-candidate-v1", "fixed-v1", "ratio-v1", "gradient2-application-delay-v1"),
         "explicit versioned method required",
     )
     forbidden = {
@@ -131,7 +134,8 @@ def validate_config(value):
 def prepare(value):
     """Pure validation, including metadata and package bytes, before any mutation."""
     config, download = validate_config(value)
-    truth = Truth.load(config["original_manifest"], parse(Path(config["catalog"]).read_bytes()))
+    truth = Truth.load(config["original_manifest"], parse(Path(config["catalog"]).read_bytes()),
+                       research_workload=download.research_workload)
     package = Path(config["environment_archive"]).resolve()
     require(
         package.is_file() and file_digest(package) == config["environment_sha256"],
@@ -162,7 +166,9 @@ class Reconciler:
         record = {"scope_id": spec["scope_id"], "native": native, "accepted": False}
         self.returns.append(record)
         try:
-            identity, receipt, bundle_hash = unpack_return(archive, directory)
+            identity, receipt, bundle_hash = unpack_return(
+                archive, directory, research_workload=(truth_workload(self.truth).name
+                    if self.truth.get("schema") == "flowdc-known-truth-v2" else None))
             attempt = identity["attempt_id"]
             require(
                 isinstance(attempt, str) and re.fullmatch(r"[0-9a-f]{32}", attempt),

@@ -8,3 +8,5 @@ description: "Coordinate the issue-to-PR lifecycle using the current streamlined
 Resolve the existing issue/worktree/PR and current scope. Implement directly or use a separate executor only when it helps. Continue already authorized work. Run appropriate checks once, publish a draft, obtain one fresh bounded independent review, address material findings and prepare a human merge handoff. No automatic paid retries, generation chains, whole-source hash census or historical compatibility gates.
 
 Follow [the streamlined guide](../../../docs/agent-workflow/OPERATING-GUIDE.md). User instructions and existing authorization take precedence. Keep credentials/private material separate and scientific validity distinct from software checks.
+
+Follow the task ceiling of two automated review invocations and two review-driven repair rounds, including failed calls. After the final repair, disclose the reviewed/final SHAs, delta and current CI for human assessment. Shelve only nonblocking findings; use a documented bounded exception only for credential compromise, data loss, uncontrolled spending or invalid central evidence. Do not require a third ordinary review.

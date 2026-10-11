@@ -387,7 +387,7 @@ class TopologyTests(unittest.TestCase):
                 fixed_ips=[{"ip_address": interface["fixed_ip"], "subnet_id": interface["subnet_id"]}],
             )
         workers = record["spec"]["topology"]["workers"]
-        for chosen in (workers[2:3], [workers[1], workers[3]]):
+        for chosen in (workers[2:3], [workers[1], workers[3]], workers):
             self.journal.change(
                 lambda r, chosen=chosen: r.update(
                     selection=selection(r["spec"], chosen),
@@ -416,15 +416,19 @@ class TopologyTests(unittest.TestCase):
                     actual = {
                         rule["remote_ip_prefix"] for rule in group["rules"] if rule["direction"] == "ingress"
                     }
-                    wanted = {
-                        record["access"]["interfaces"][peer]["fixed_ip"] + "/32" for peer in expected - {role}
-                    }
+                    peers = {"manager"} if role.startswith("worker") else expected - {role}
+                    wanted = {record["access"]["interfaces"][peer]["fixed_ip"] + "/32" for peer in peers}
                     if role == "manager":
                         wanted.add(record["access"]["operator_cidr"])
                     self.assertEqual(actual, wanted)
-            with self.assertRaises(ops.OpsError) as caught:
-                Provider({}).lifecycle(record, workers[0], "unshelve")
-            self.assertEqual(caught.exception.code, "vm_not_selected")
+                    self.assertTrue(all(rule["protocol"] == "tcp" for rule in group["rules"]))
+            self.assertEqual(sum(len(provider.groups[record["network"]["seen_groups"][role]]["rules"])
+                for role in expected), 3 * len(chosen) + 3)
+            if len(chosen) < len(workers):
+                excluded = next(worker for worker in workers if worker not in chosen)
+                with self.assertRaises(ops.OpsError) as caught:
+                    Provider({}).lifecycle(record, excluded, "unshelve")
+                self.assertEqual(caught.exception.code, "vm_not_selected")
             self.journal.change(lambda r: r.update(desired="stop"))
             for _ in range(100):
                 provider.network_step(self.journal, rollback=True)

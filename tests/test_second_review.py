@@ -42,6 +42,7 @@ class SecondReviewTests(unittest.TestCase):
         self.addCleanup(temp.cleanup)
         self.root = Path(temp.name)
         self.truth = {
+            "schema": "flowdc-known-truth-v1",
             "manifest_sha256": "a" * 64,
             "original_rows": 1,
             "rows": [{"row_id": "b" * 64, "position": 0, "eligible": True}],
@@ -208,6 +209,7 @@ class SecondReviewTests(unittest.TestCase):
         with (
             patch.object(lifecycle.subprocess, "Popen", return_value=fake),
             patch.object(lifecycle.psutil, "Process", return_value=SimpleNamespace(create_time=lambda: 1)),
+            patch.object(lifecycle, "ResourceSampler", return_value=SimpleNamespace(close=lambda: {"samples": 0})),
             patch.object(lifecycle, "_await_exit", side_effect=subprocess.TimeoutExpired("fixture", 1)),
             patch.object(lifecycle, "_group_running", return_value=True),
             patch.object(lifecycle.os, "killpg", side_effect=PermissionError("fixture")),

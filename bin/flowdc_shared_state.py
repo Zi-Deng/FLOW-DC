@@ -15,13 +15,14 @@ from collections.abc import MutableMapping
 from pathlib import Path
 
 from flowdc_methods import origin_key
+from flowdc_research_profile import LEGACY, workload
 
-SCHEMA = "flowdc-shared-admission-v1"
+SCHEMA = "flowdc-shared-admission-v2"
 HEX = re.compile(r"[0-9a-f]{64}")
 UUID = re.compile(r"[0-9a-f]{32}")
-MAX_PERMITS = 16384
-MAX_CLIENTS = 64
-MAX_EVENTS = 262144
+MAX_PERMITS = LEGACY.max_permits
+MAX_CLIENTS = LEGACY.max_clients
+MAX_EVENTS = LEGACY.max_events
 
 
 def require(condition, message):
@@ -153,8 +154,9 @@ class Ledger:
     is deliberately no lease-expiry, heartbeat-based recycling or force-reset API.
     """
 
-    def __init__(self, directory, binding, *, reopen=False, clock=time.monotonic, fault=None):
+    def __init__(self, directory, binding, *, reopen=False, clock=time.monotonic, fault=None, research_workload=None):
         self.clock, self.fault = clock, fault or (lambda _: None)
+        self.limits = workload(research_workload)
         self.directory = Path(directory).absolute()
         if not reopen:
             self.directory.mkdir(mode=0o700, parents=False, exist_ok=False)
@@ -185,6 +187,7 @@ class Ledger:
                 self.db.executescript(
                     "CREATE TABLE state (id INTEGER PRIMARY KEY CHECK(id=1), value TEXT NOT NULL);"
                     "CREATE TABLE events (seq INTEGER PRIMARY KEY, value TEXT NOT NULL);"
+                    "CREATE TABLE scope_rows (scope TEXT PRIMARY KEY, value TEXT NOT NULL);"
                     "CREATE TABLE permits (id TEXT PRIMARY KEY, state TEXT NOT NULL,"
                     "origin TEXT NOT NULL, client_id TEXT NOT NULL, value TEXT NOT NULL);"
                     "CREATE INDEX active_origin ON permits(origin) WHERE state NOT IN ('complete','quiescent');"
@@ -193,19 +196,24 @@ class Ledger:
                 )
                 initial = {
                     "schema": SCHEMA,
-                    "storage_schema": "normalized-permits-v1",
+                    "storage_schema": "normalized-session-v2",
                     "binding": binding,
                     "epoch": 1,
                     "phase": "open",
                     "scopes": {},
                     "clients": {},
                     "origins": {},
+                    "workload": self.limits.record(),
                 }
                 self.db.execute("INSERT INTO state VALUES(1,?)", (encode(initial).decode(),))
                 sync_directory(self.directory)
                 sync_directory(self.directory.parent)
+            self.scope_rows = {scope: tuple(json.loads(raw)) for scope, raw in
+                               self.db.execute("SELECT scope,value FROM scope_rows")}
+            self.scope_members = {scope: frozenset(rows) for scope, rows in self.scope_rows.items()}
             current = self.current()
             require(current["schema"] == SCHEMA and current["binding"] == binding, "ledger binding mismatch")
+            require(current["workload"] == self.limits.record(), "ledger workload mismatch")
             if reopen:
                 with self.change("restart_fence") as state:
                     state["phase"] = "fenced"
@@ -228,32 +236,48 @@ class Ledger:
     def snapshot(self):
         state = self.current()
         state["permits"] = dict(state["permits"])
+        for scope in state["scopes"].values():
+            scope["rows"] = list(scope["rows"])
         return state
 
     def current(self):
         state = json.loads(self.db.execute("SELECT value FROM state WHERE id=1").fetchone()[0])
         require(
-            state.get("storage_schema") == "normalized-permits-v1",
+            state.get("storage_schema") == "normalized-session-v2",
             "unsupported development ledger storage; retain it and start a distinct run",
         )
+        for identifier, scope in state["scopes"].items():
+            scope["rows"] = self.scope_rows[identifier]
         state["permits"] = PermitRows(self.db)
         return state
 
     @contextlib.contextmanager
     def change(self, action, **fields):
         last = self.db.execute("SELECT COALESCE(MAX(seq),0) FROM events").fetchone()[0]
-        require(last < MAX_EVENTS, "shared event journal bound exceeded; admission refused")
+        require(last < self.limits.max_events, "shared event journal bound exceeded; admission refused")
         self.db.execute("BEGIN IMMEDIATE")
         try:
             state = self.current()
             yield state
             event = {"action": action, "manager_monotonic_s": self.clock(), "epoch": state["epoch"], **fields}
             state["permits"].flush()
-            session = {key: value for key, value in state.items() if key != "permits"}
+            session = {key: value for key, value in state.items() if key not in ("permits", "scopes")}
+            session["scopes"] = {}
+            added_rows = {}
+            for identifier, scope in state["scopes"].items():
+                rows = tuple(scope["rows"])
+                if identifier not in self.scope_rows:
+                    self.db.execute("INSERT INTO scope_rows VALUES(?,?)", (identifier, encode(rows).decode()))
+                    added_rows[identifier] = rows
+                else:
+                    require(rows == self.scope_rows[identifier], "enrolled rows are immutable")
+                session["scopes"][identifier] = {key: value for key, value in scope.items() if key != "rows"}
             self.db.execute("UPDATE state SET value=? WHERE id=1", (encode(session).decode(),))
             self.db.execute("INSERT INTO events(value) VALUES(?)", (encode(event).decode(),))
             self.fault("before_commit")
             self.db.execute("COMMIT")
+            self.scope_rows.update(added_rows)
+            self.scope_members.update({scope: frozenset(rows) for scope, rows in added_rows.items()})
         except BaseException:
             if self.db.in_transaction:
                 self.db.execute("ROLLBACK")
@@ -271,7 +295,7 @@ class Ledger:
         )
         require(
             isinstance(rows, list)
-            and 1 <= len(rows) <= 256
+            and 1 <= len(rows) <= self.limits.max_rows
             and len(set(rows)) == len(rows)
             and all(isinstance(row, str) and HEX.fullmatch(row) for row in rows),
             "invalid scope rows",
@@ -282,7 +306,7 @@ class Ledger:
                 state["phase"] == "open" and scope_id not in state["scopes"],
                 "scope collision or fenced manager",
             )
-            require(len(state["scopes"]) < MAX_CLIENTS, "scope bound exceeded")
+            require(len(state["scopes"]) < self.limits.max_clients, "scope bound exceeded")
             all_rows = {
                 row
                 for scope in state["scopes"].values()
@@ -290,7 +314,7 @@ class Ledger:
                 for row in scope["rows"]
             }
             require(
-                not all_rows.intersection(rows) and len(all_rows) + len(rows) <= 256,
+                not all_rows.intersection(rows) and len(all_rows) + len(rows) <= self.limits.max_rows,
                 "overlapping or excessive session rows",
             )
             state["scopes"][scope_id] = {
@@ -338,7 +362,7 @@ class Ledger:
             else:
                 used = sum(client["scope"] == scope for client in state["clients"].values())
                 require(
-                    used < state["scopes"][scope]["attempts"] and len(state["clients"]) < MAX_CLIENTS,
+                    used < state["scopes"][scope]["attempts"] and len(state["clients"]) < self.limits.max_clients,
                     "task replay bound exceeded",
                 )
                 state["clients"][client_id] = {
@@ -401,7 +425,7 @@ class Ledger:
         permit_id = digest(encode([client_id, request_id]))
         current = self.current()
         self.client(current, scope, client_id, active=True)
-        require(row_id in current["scopes"][scope]["rows"], "row outside task scope")
+        require(row_id in self.scope_members[scope], "row outside task scope")
         existing = current["permits"].get(permit_id)
         if existing is not None:
             require(existing["row_id"] == row_id and existing["url"] == url, "conflicting request replay")
@@ -411,8 +435,8 @@ class Ledger:
         if self.clock() < entry["embargo_until"] or len(self.outstanding(current, key)) >= entry["limit"]:
             return {"state": "wait"}
         require(
-            len(current["permits"]) < MAX_PERMITS
-            and len(self.outstanding(current, client_id=client_id)) < 256,
+            len(current["permits"]) < self.limits.max_permits
+            and len(self.outstanding(current, client_id=client_id)) < self.limits.max_rows,
             "permit bound exceeded",
         )
         with self.change(

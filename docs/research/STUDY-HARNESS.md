@@ -1,11 +1,108 @@
 # Controlled-origin and retained study tools
 
+## Current research workload and primary analysis
+
+Use the explicit [finite research profile](WORKLOAD.md) for mechanism qualification.
+`benchmark/calibrate.py --output NEW_PRIVATE_DIRECTORY --seed SEED --wall-seconds
+4500` tests ascending fixed-concurrency workloads for the three primary scenarios.
+Its protocol is written before execution. Every infeasible, failed and tested
+candidate remains visible; selection stops at the first qualifying candidate.
+The default fixed limit is 16, matching the allowed controller maximum. A slower
+fixed default can select a workload that ends too early under another method;
+retain that diagnostic and recalibrate before freezing scientific inputs.
+The wall limit reserves a full acquisition/cleanup window before starting another
+run. Origin realization and fixed-client observations do not establish exercised
+adaptive decisions or cloud resource fit. Use the existing `study.py calibrate`
+instrumentation on/off pair separately to measure origin logging overhead.
+
+`benchmark/analyze.py --plan PLAN --study-root ROOT --protocol PROTOCOL --output
+NEW_DIRECTORY` independently re-verifies the original first attempt of every
+planned primary cell, including archived original-byte outputs and retained HTTP
+observations. It writes the complete inventory, CSV and PDF/PNG figure. Later
+attempts are listed and cannot replace the first. Known terminal failures remain
+accounted; missing observations, uncertain attempts, process interruptions and
+invalid artifacts cannot enter complete-run intervals. Run-level p95 requires at
+least 100 eligible observations. Pilot/engineering analyses cannot assert a
+confirmatory claim.
+
+The primary family is gradient versus base PAARC, fixed, ratio and the Gradient2
+adaptation in capacity drop/recovery, mixed sizes and sustained overload: 12 paired
+contrasts with Holm adjustment. Ordinary paired 95% intervals are labeled
+separately. Coverage and latency use 24 simultaneous one-sided Bonferroni lower
+bounds: candidate coverage minus reference plus .01, and 1.10 times reference p95
+minus candidate p95. A supported claim needs positive goodput, adjusted efficacy
+and both safeguards. Requests are not independent replicates. Confirmatory block
+count is frozen once after measured pilots and limited to 60; no outcomes drive
+additional repetitions. Maintainer-approved provisional defaults must retain that
+authority rather than invent named-advisor approval.
+
 This is engineering software for milestones A–C of issue #26. Local V1 fixtures
 test state/accounting; V2 requires the real localhost executions described below.
 There is no efficacy result, frozen scientific protocol or live cloud authorization
-in these files. Advisor approval has been reported, but the specific decisions are
-pending. Distributed admission, native TaskVine and the offline topology ladder are described
+in these files. The maintainer accepts provisional defaults; named-advisor
+decisions remain pending. Distributed admission, native TaskVine and the offline topology ladder are described
 in [the milestone D contract](DISTRIBUTED-WORKFLOW.md).
+
+## Secondary mechanisms and supporting conditions
+
+`benchmark/tool_study.py` supplies the img2dataset1.47.0 side of matched controlled
+tool comparisons. `execute_cell(directory, cell, threads, environment, executable)`
+uses the study's seeded original payloads, scenarios, truth manifest, WebDataset
+output requirement and launch-through-independent-verification timer. It requires
+the supplied acquisition source inventory to match and probes the explicit CLI's
+own Python environment for version1.47.0; there is no executable fallback. Thread
+count is bounded1–16 with one process; shard retries are zero, original reencoding
+is disabled, and retry opportunities match the primary scenario. Call it under
+the same declared CPU/resource policy as the FLOW-DC arm.
+
+Its `first_attempt` independently re-verifies native payloads/metadata, original
+rows, common outcomes and origin admission/request accounting. It never substitutes
+a later attempt. Native img2dataset per-row attempts and comparable client-latency
+journals remain unavailable; disclose aggregate observed requests and do not replace
+client latency with origin service time. The numeric30second native timeout has
+different urllib/aiohttp semantics. Equal work and byte preservation do not make
+these timeout or output-container semantics identical. Freeze a separate tuning/
+comparison protocol and finite budget before scientific use; the runner alone
+does not authorize or establish a scientific tool comparison.
+
+`benchmark/supplementary.py` reuses the primary acquisition, first-attempt output
+verification, HTTP/control observations and origin replay. Its `make_plan` API
+freezes matched fixture seeds and randomized family/arm order within independent
+blocks. `mechanisms` compares the selected full gradient configuration with each
+of the five single-mechanism ablations in all three primary scenarios. `supporting`
+compares all five selected controls in steady, sparse, baseline-drift, oscillation,
+recovery and transient-overload conditions. Six blocks give108 and180first
+attempts respectively. These are secondary studies with separate seeds, not
+additional primary repetitions or opportunities to retune.
+
+Generate a plan from the complete frozen tuning selection, using
+`make_plan(kind, configs, seed=SEED, blocks=6)`, where `configs` maps each of the
+five method IDs to its selected `config`. Write the returned JSON before execution.
+Supply a separate decisions JSON with `approved_plan_sha256` (SHA256 of canonical
+`benchmark.core.truth.encode(plan)`), explicit `authority` (`maintainer-provisional`
+or `advisor`), and specific `provenance`, `replication` and `estimand` strings.
+These records must describe actual decisions; they do not establish advisor approval.
+
+```bash
+python benchmark/supplementary.py --source-root EXPORTED_ACQUISITION_SOURCE \
+  --plan PLAN.json --environment ENVIRONMENT.json --decisions DECISIONS.json \
+  --output NEW_STUDY_DIRECTORY --wall-seconds FINITE_BUDGET
+```
+
+The source/environment record and the orchestrator hash bind a frozen protocol.
+The maximum batch window is48hours, each acquisition300seconds plus60seconds
+cleanup, and the mandatory storage reserve50GiB. Resuming must use exactly the
+same protocol and original expiry; it reuses closed first attempts and refuses
+uncertain work. It does not create a replacement attempt or extend the budget.
+Run only one scientific cell at a time under the declared CPU/resource policy.
+
+`analysis.json` independently re-verifies every first attempt and replays origin
+admission. It retains realized-stimulus checks, sparse holds and actual mechanism
+observations. Goodput has a separate Holm family per secondary study; the paired
+95% intervals remain ordinary, not simultaneous. Missing/censored evidence blocks
+intervals. Six blocks are a declared secondary scope, not a precision guarantee.
+Inspect stimulus and control observations before making any mechanism claim;
+an unexercised mechanism or absent overload response cannot establish its effect.
 
 ## Origin contract
 
@@ -75,13 +172,22 @@ The tracked machine-readable examples are:
 - `benchmark/plans/engineering-smoke-v1.json`: one engineering block with a
   pre-generated order, for bounded semantic checks only.
 
-`plan` shuffles family and method order within each block using an explicit seed.
-Every block/family contains all four methods. The original plan is validated and
+The examples above retain their historical four-method V1 interpretation.
+New research plans select `--research-workload bounded-research-v2` and may supply
+`--rows-by-scenario FILE`; every family/block contains all five methods. `plan`
+shuffles family and method order within each block using an explicit seed.
+Method order uses the canonical named tuple before shuffling, so serializing sorted
+JSON keys does not change the frozen cell order. The engineering summary explicitly
+names PAARC as its reference. Primary analysis retains `integrity_failed` separately
+from a genuine failed acquisition; either blocks a complete paired interval.
+Protocol authority accompanies JSON, CSV and figures, including confirmation under
+maintainer-provisional defaults, which does not imply advisor agreement.
+The original plan is validated and
 hashed before execution; changing cells/order/configuration is refused. Source and
 environment hashes bind the study namespace. Tuning, evaluation and engineering
 use different directories, logical IDs and derived fixture seeds. An explicit
 `--method-configs` JSON may select parameters *before* generating a new plan; it
-must retain all four comparators and common absolute bounds. Evaluation outcomes
+must retain the plan's complete method set and common absolute bounds. Evaluation outcomes
 never automatically select a configuration.
 
 `run-cell` executes one cell per invocation and enforces the frozen preceding-cell
@@ -92,8 +198,10 @@ summary uses the first planned attempt, never whichever rerun looks best. After 
 crash, uncertain ownership or a live previous process group prevents continuation;
 the harness does not issue blind process kills to recover it.
 
-Every run has one downloader process, at most 256 rows and 64 MiB expected row
-payload. The lifecycle has a 180-second deadline and 60-second cleanup reserve,
+Legacy V1 runs have one downloader process, at most 256 rows and 64 MiB expected
+row payload, with a 180-second deadline. Research V2 runs use the complete finite
+profile (32,768 rows, 512 MiB expected row payload, 300-second acquisition limit).
+Both retain a 60-second cleanup reserve. The lifecycle
 retains the group leader's PID until all group signalling is finished, and handles
 INT/TERM by cleaning the owned group. Repeated signals cannot abort that cleanup.
 SIGKILL/power loss cannot promise cleanup; recovery records that uncertainty.
@@ -161,12 +269,15 @@ Engineering checks do not freeze a protocol. Every provisional pilot or confirma
 source and environment. `approved=true` is insufficient. `freeze` requires an
 explicit decisions file with the approved plan hash, decision provenance, constraints,
 estimand and repetition rule. That is user-supplied attestation, not software proof
-of advisor agreement. No such real record or decision file is shipped or generated
-by this PR. Later source/environment changes invalidate the binding.
+of advisor agreement. For accepted provisional defaults, use
+`approval_authority: maintainer-provisional` and retain the maintainer's actual
+decision provenance; it must not imply advisor approval. No executed scientific
+protocol is shipped in the repository. Later source/environment changes invalidate
+the binding.
 
 The later manual command is `benchmark/study.py freeze --plan PLAN --decisions
-USER_SUPPLIED_DECISIONS --output NEW_PROTOCOL`; do not invoke it until those
-decisions are actually supplied. No broad pilot, cloud activation, operational
+USER_SUPPLIED_DECISIONS --output NEW_PROTOCOL`; invoke it only for supplied
+decisions or the maintainer's explicitly accepted provisional defaults. No broad pilot, cloud activation, operational
 migration or live allowance change was executed by these tools during implementation.
 
 | Acceptance | V1 evidence | Remaining gate |

@@ -15,7 +15,7 @@ from uuid import UUID
 
 import flowdc_ops as ops
 from flowdc_pilot_journal import failure
-from flowdc_topology import record_roles, selected_ids, selected_roles, validate_roles
+from flowdc_topology import is_worker, record_roles, selected_ids, selected_roles, validate_roles
 
 # No arbitrary command is accepted. Arguments come from validated identities and
 # fixed rules below. OpenRC remains trusted code; no credential output is retained.
@@ -509,7 +509,9 @@ class Provider:
                 ):
                     raise failure("selected_attachment_not_authorized")
             marker = "flowdc-" + network["generation"] + "-"
-            if action == "group_create" and args[0] not in [marker + role for role in selected_roles(record)]:
+            if action == "group_create" and args[0] not in [
+                marker + self.group_role(record, role) for role in selected_roles(record)
+            ]:
                 raise failure("network_resource_not_owned")
             if action == "floating_create":
                 interface = record["access"]["interfaces"]["manager"]
@@ -643,17 +645,23 @@ class Provider:
         executor context joins all running probes, whose runners own and reap
         their children under the shared deadline; later batches are not submitted.
         """
-        allowed = {"group", "ports", "port", "network", "subnet", "floating_show"}
+        allowed = {"server", "group", "ports", "port", "network", "subnet", "floating_show", "router", "router_ports"}
         for action, *args in requests:
             if action not in allowed:
                 raise failure("invalid_adapter_action", invalid=True)
-            self.validate_call(action, args)
+            if action == "server":
+                if len(args) != 1:
+                    raise failure("invalid_adapter_argument", invalid=True)
+                ops.uuid_value(args[0])
+            else:
+                self.validate_call(action, args)
         results = []
         with ThreadPoolExecutor(max_workers=4) as executor:
             for offset in range(0, len(requests), 4):
                 if time.monotonic() >= self.deadline:
                     raise failure("probe_timeout")
-                futures = [executor.submit(self.call, *request) for request in requests[offset : offset + 4]]
+                futures = [executor.submit(self.query if request[0] == "server" else self.call, *request)
+                           for request in requests[offset : offset + 4]]
                 try:
                     results.extend(future.result() for future in futures)
                 finally:
@@ -688,6 +696,11 @@ class Provider:
         if vm_id not in record["vms"]:
             raise failure("vm_not_allowlisted")
         value = self.query("server", vm_id)
+        return self.validate_server(record, vm_id, value)
+
+    def validate_server(self, record, vm_id, value):
+        if vm_id not in record["vms"]:
+            raise failure("vm_not_allowlisted")
         if (
             ops.uuid_value(field(value, "id")) != vm_id
             or ops.uuid_value(field(value, "project_id")) != record["spec"]["context"]["project_id"]
@@ -726,8 +739,10 @@ class Provider:
     def preflight(self, record):
         with self.step("preflight"):
             self.context(record)
-            for vm_id in record["vms"]:
-                if self.server(record, vm_id) != "SHELVED_OFFLOADED":
+            vm_ids = list(record["vms"])
+            values = self.read_batch([("server", vm_id) for vm_id in vm_ids])
+            for vm_id, value in zip(vm_ids, values, strict=True):
+                if self.validate_server(record, vm_id, value) != "SHELVED_OFFLOADED":
                     raise failure("initial_offload_required")
 
     def verify_idle(self, record):
@@ -754,21 +769,41 @@ class Provider:
             self.context(record)
             return self.server(record, vm_id)
 
+    def ingress_rules(self, record, role):
+        """TCP paths used by SSH, HTTP/TLS and the native manager/worker link.
+
+        Workers initiate acquisition and manager connections; native peer
+        transfers are disabled. Only the manager needs incoming worker traffic.
+        Keep operator SSH confined to the manager and every peer to its /32.
+        """
+        chosen = selected_roles(record)
+        if role not in chosen:
+            raise failure("vm_not_selected")
+        rules = [("tcp", record["access"]["operator_cidr"], "22")] if role == "manager" else []
+        for peer in chosen:
+            if peer != role and (not is_worker(role) or peer == "manager"):
+                rules.append(("tcp", record["access"]["interfaces"][peer]["fixed_ip"] + "/32", "any"))
+        return rules
+
+    def group_role(self, record, role):
+        """Workers share identical manager-only ingress within this selection."""
+        chosen = selected_roles(record)
+        if role not in chosen:
+            raise failure("vm_not_selected")
+        return next(peer for peer in chosen if is_worker(peer)) if is_worker(role) else role
+
     def verify_ingress(self, record, role, group):
-        marker = "flowdc-" + record["network"]["generation"] + "-" + role
+        marker = "flowdc-" + record["network"]["generation"] + "-" + self.group_role(record, role)
         if (
             group.get("id") != record["network"]["seen_groups"].get(role)
             or group.get("description") != marker
             or ops.uuid_value(field(group, "project_id")) != record["spec"]["context"]["project_id"]
         ):
             raise failure("owned_group_identity_changed")
-        expected = {("tcp", record["access"]["operator_cidr"], 22, 22)} if role == "manager" else set()
-        for peer, interface in record["access"]["interfaces"].items():
-            if peer != role and peer in selected_roles(record):
-                expected.update(
-                    (protocol, interface["fixed_ip"] + "/32", None, None)
-                    for protocol in ("tcp", "udp", "icmp")
-                )
+        expected = {
+            (protocol, remote, 22 if ports == "22" else None, 22 if ports == "22" else None)
+            for protocol, remote, ports in self.ingress_rules(record, role)
+        }
         ingress = [rule for rule in field(group, "rules") if rule.get("direction") == "ingress"]
         actual = {
             (
@@ -867,7 +902,7 @@ class Provider:
                 ),
                 None,
             )
-            if known_role is not None and row.get("Name") != prefix + known_role:
+            if known_role is not None and row.get("Name") != prefix + self.group_role(record, known_role):
                 raise failure("owned_group_identity_changed")
             if row.get("Name") not in [prefix + role for role in record_roles(record)]:
                 continue
@@ -889,6 +924,19 @@ class Provider:
             if previous is not None and previous != value["id"]:
                 raise failure("owned_group_identity_changed")
             result[role] = value
+        # Store per-role lookup hints, but create only three owned groups. Every
+        # selected worker has the same manager /32 rule; sharing does not widen
+        # ingress or grant worker-to-worker access.
+        owners = {self.group_role(record, role) for role in selected_roles(record)}
+        if set(result) - owners:
+            raise failure("unexpected_owned_network_role")
+        result = {
+            role: result[self.group_role(record, role)]
+            for role in selected_roles(record) if self.group_role(record, role) in result
+        }
+        if any(record["network"]["seen_groups"].get(role, group["id"]) != group["id"]
+               for role, group in result.items()):
+            raise failure("owned_group_identity_changed")
         return result
 
     def floating(self, record):
@@ -940,7 +988,24 @@ class Provider:
         self.activating = not rollback
         with self.step("network_rollback" if rollback else "network_setup"):
             self.context(record)
-            groups = self.owned_groups(record)
+            role = next((role for role in selected_roles(record)
+                if role not in record["network"].get("configured", [])), None)
+            pinned = record["network"]["seen_groups"].get(role)
+            if not rollback and pinned is not None:
+                # A recorded identity is only a lookup hint. Revalidate the
+                # active group's identity/ownership freshly before each action.
+                # Activation checks every selected group; rollback still
+                # discovers the complete owned set, including lost responses.
+                group = self.call("group", pinned)
+                owner_role = self.group_role(record, role)
+                marker = "flowdc-" + record["network"]["generation"] + "-" + owner_role
+                if (group.get("id") != pinned or group.get("description") != marker
+                        or ops.uuid_value(field(group, "project_id")) != record["spec"]["context"]["project_id"]
+                        or "group-" + owner_role not in record["network"]["intents"]):
+                    raise failure("owned_group_identity_changed")
+                groups = {role: group}
+            else:
+                groups = self.owned_groups(record)
 
             def seen(current):
                 current["network"]["seen_groups"].update(
@@ -966,21 +1031,16 @@ class Provider:
 
                     journal.change(save)
                     return
-                marker = "flowdc-" + record["network"]["generation"] + "-" + role
+                owner_role = self.group_role(record, role)
+                marker = "flowdc-" + record["network"]["generation"] + "-" + owner_role
                 if role not in groups:
-                    self.network_intent(journal, "group-" + role, "group_create", marker)
+                    self.network_intent(journal, "group-" + owner_role, "group_create", marker)
                     return
                 group = groups[role]
                 rules = field(group, "rules")
                 if not isinstance(rules, list) or len(rules) > 64:
                     raise failure("provider_schema")
-                desired = [("tcp", record["access"]["operator_cidr"], "22")] if role == "manager" else []
-                for peer, interface in record["access"]["interfaces"].items():
-                    if peer != role and peer in selected_roles(record):
-                        desired += [
-                            (protocol, interface["fixed_ip"] + "/32", "any")
-                            for protocol in ("tcp", "udp", "icmp")
-                        ]
+                desired = self.ingress_rules(record, role)
                 for protocol, remote, ports in desired:
                     matches = [
                         rule
@@ -1029,8 +1089,13 @@ class Provider:
         if any(v.get("port_id") != manager["port_id"] for v in attached) or len(attached) > 1:
             raise failure("unexpected_public_entrypoints")
         if route["mode"] == "floating":
-            external = self.call("network", route["external_network_id"])
-            router = self.call("router", route["router_id"])
+            # These facts are independent. Join them under the same finite
+            # step deadline before validating the route or creating anything.
+            external, router, router_ports = self.read_batch([
+                ("network", route["external_network_id"]),
+                ("router", route["router_id"]),
+                ("router_ports", route["router_id"]),
+            ])
             if (
                 external.get("id") != route["external_network_id"]
                 or external.get("router:external") is not True
@@ -1040,8 +1105,7 @@ class Provider:
             ):
                 raise failure("external_route_unverified")
             connected = False
-            for port_id in ids(self.call("router_ports", route["router_id"])):
-                port = self.call("port", port_id)
+            for port in self.read_batch([("port", port_id) for port_id in ids(router_ports)]):
                 if (
                     port.get("network_id") == manager["network_id"]
                     and port.get("device_id") == route["router_id"]
@@ -1142,16 +1206,20 @@ class Provider:
                 )
                 self.call("attach", port["id"], *original, mutation=True)
                 return
-            if group:
-                if ids(self.call("group_ports", group["id"])):
-                    raise failure("owned_group_attached_elsewhere")
-                journal.change(
-                    lambda current, group=group: journal.event(
-                        current, "group_delete_intent", {"id": group["id"]}
-                    )
+        # Restore every selected attachment before deleting any shared group.
+        # A group attached to an unrelated port remains a refusal, never a cue
+        # to detach that port or change another project's resources.
+        unique_groups = {group["id"]: group for group in groups.values()}
+        for group in unique_groups.values():
+            if ids(self.call("group_ports", group["id"])):
+                raise failure("owned_group_attached_elsewhere")
+            journal.change(
+                lambda current, group=group: journal.event(
+                    current, "group_delete_intent", {"id": group["id"]}
                 )
-                self.call("group_delete", group["id"], mutation=True)
-                return
+            )
+            self.call("group_delete", group["id"], mutation=True)
+            return
         # An unobserved create could still arrive late: never declare rollback done.
         if any(
             key.startswith("group-")
