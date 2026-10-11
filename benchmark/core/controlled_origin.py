@@ -4,6 +4,7 @@ import ipaddress
 import threading
 import time
 from collections import Counter, deque
+import math
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from .truth import LEGACY, digest, encode, require, workload
@@ -196,6 +197,9 @@ class ControlledOrigin:
         for spec in plan["objects"].values():
             require(0 < spec["service_s"] <= 1, "object service time must be in (0,1]")
         self.plan, self.instrument = plan, instrument
+        idle_timeout = plan.get("connection_idle_timeout_s", 5)
+        require(type(idle_timeout) in (int, float) and math.isfinite(idle_timeout)
+                and .05 <= idle_timeout <= 35, "invalid origin connection idle timeout")
         self.condition, self.stop_event = threading.Condition(), threading.Event()
         self.anchor, self.requests, self.responses = None, 0, 0
         self.failure = None
@@ -208,7 +212,7 @@ class ControlledOrigin:
         class Handler(BaseHTTPRequestHandler):
             def setup(self):
                 super().setup()
-                self.connection.settimeout(5)
+                self.connection.settimeout(idle_timeout)
 
             def do_GET(self):
                 with owner.condition:
