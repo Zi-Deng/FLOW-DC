@@ -282,6 +282,23 @@ class Supervisor:
                 ops.safe_diagnostic(detail),
             )
 
+    def poll_seconds(self):
+        """Avoid fixed idle pauses between bounded setup/cleanup steps."""
+        record = self.journal.read()
+        if record["desired"] == "run":
+            progressing = not record["network"]["ready"] or any(
+                (record["vms"][key]["observed"] or {}).get("state") != "ACTIVE"
+                for key in selected_ids(record)
+            )
+        elif record["desired"] == "stop":
+            progressing = not record["network"]["rolled_back"] or any(
+                allowance(vm["account"]).obligation or vm["phase"] != "offloaded"
+                for vm in record["vms"].values()
+            )
+        else:
+            progressing = False
+        return 0.2 if progressing else 2
+
     def save_observation(self, vm_id, state, *, settle):
         def update(record):
             now = self.clock()

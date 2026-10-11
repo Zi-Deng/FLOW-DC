@@ -712,6 +712,12 @@ not sent, allowing rollback to finish after local access is restored. Once the
 runner might have launched, failures remain ambiguous; a timeout or lost reply
 never proves that creation was not sent. Older ambiguous intents are not relabeled.
 
+The supervisor pauses 0.2 seconds between setup or cleanup steps while those
+steps are progressing, and two seconds while idle or while all selected guests
+are active. Provider calls stay serial for mutations, retain their existing
+deadlines and stop checks, and no window, grant or cleanup reserve is extended.
+The shorter setup pause removes accumulated idle delay from the finite window.
+
 Idle does not poll the provider. If `pilot status` reports idle/no obligations but
 `UNKNOWN` observations, run `pilot reconcile`, wait for completed rollback and
 fresh offloaded observations, then inspect status and disable supervision within

@@ -150,6 +150,25 @@ class LifecycleTests(unittest.TestCase):
                 return
         self.fail("cleanup never became idle")
 
+    def test_progress_polling_keeps_idle_active_pacing_and_never_mutates(self):
+        self.assertEqual(self.supervisor.poll_seconds(), 2)
+        self.start()
+        before = self.journal.read()
+        actions = list(self.provider.actions)
+        self.assertEqual(self.supervisor.poll_seconds(), .2)
+        self.assertEqual(self.journal.read(), before)
+        self.assertEqual(self.provider.actions, actions)
+        self.tick(15)
+        self.assertTrue(all(vm["observed"]["state"] == "ACTIVE"
+                            for vm in self.journal.read()["vms"].values()))
+        self.assertEqual(self.supervisor.poll_seconds(), 2)
+        request(self.journal, "stop", clock=self.clock)
+        self.assertEqual(self.supervisor.poll_seconds(), .2)
+        self.drain()
+        self.assertEqual(self.supervisor.poll_seconds(), 2)
+        self.assertTrue(all(not vm["account"]["obligation"]
+                            for vm in self.journal.read()["vms"].values()))
+
     def test_busy_inside_tick_retries_without_checkpoint_or_replayed_unshelve(self):
         self.start()
         change = self.journal.change
