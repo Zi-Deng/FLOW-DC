@@ -190,7 +190,7 @@ class PilotCliTests(unittest.TestCase):
             original_tick()
 
         def pause(seconds):
-            self.assertEqual(seconds, 2)
+            self.assertIn(seconds, (0.2, 2))
             nonlocal sleeps, signalled
             sleeps += 1
             self.assertLess(sleeps, 100)

@@ -54,10 +54,14 @@ def origin_plan(raw):
     fields(
         plan,
         ("schema", "name", "schedule", "queue_bound", "assignments", "objects"),
-        ("queue_rejection_status", "queue_retry_after", "research_workload", "overload_windows"),
+        ("queue_rejection_status", "queue_retry_after", "research_workload", "overload_windows",
+         "connection_idle_timeout_s"),
     )
     plan.setdefault("queue_rejection_status", 503)
     plan.setdefault("queue_retry_after", "0.1")
+    idle_timeout = plan.get("connection_idle_timeout_s", 5)
+    require(type(idle_timeout) in (int, float) and math.isfinite(idle_timeout)
+            and .05 <= idle_timeout <= 35, "invalid origin connection idle timeout")
     require(type(plan["queue_rejection_status"]) is int and plan["queue_rejection_status"] in (429, 503))
     require(
         isinstance(plan["queue_retry_after"], str)

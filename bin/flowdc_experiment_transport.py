@@ -123,13 +123,18 @@ class Controller:
             return value
         require(idle(value), "controller_not_idle")
         if not clean(value):
+            # The proof inspects all enrolled VMs and their original networking,
+            # even when this run selects one worker. Six-VM verification can
+            # exceed the historical 90-second three-VM allowance.
             code, raw = execute(
-                [sys.executable, str(Path(__file__).resolve()), str(self.root), "verify-idle"], seconds=90
+                [sys.executable, str(Path(__file__).resolve()), str(self.root), "verify-idle"], seconds=180
             )
             if code:
                 raise ExperimentError(parse(raw).get("error", "fresh_idle_verification_failed"))
             self.call("reconcile")
-            deadline = time.monotonic() + 30
+            # Reconciliation publishes enrolled offload observations one tick
+            # at a time; give that read-only cleanup pass its own finite bound.
+            deadline = time.monotonic() + 180
             while not clean(value):
                 value = self.call("status", seconds=min(10, deadline - time.monotonic()))
                 require(value.get("desired") in ("idle", "stop"), "controller_not_idle")

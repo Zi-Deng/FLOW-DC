@@ -810,7 +810,7 @@ def supervise(journal):
                     raise
                 # Retain the verified actor lock and the in-memory stop latch.
                 # Do not bypass journal serialization or retry corruption errors.
-            time.sleep(2)
+            time.sleep(supervisor.poll_seconds())
 
 
 def run(args):

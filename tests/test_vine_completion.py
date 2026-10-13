@@ -5,6 +5,7 @@ import inspect
 import json
 import sys
 import tempfile
+import threading
 import types
 import unittest
 from pathlib import Path
@@ -16,6 +17,63 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "bin"))
 import flowdc_vine as vine
 from flowdc_vine_cohort import cohort
 from flowdc_vine_protocol import digest
+
+
+class VerificationResponsivenessTests(unittest.IsolatedAsyncioTestCase):
+    async def test_blocked_return_verification_keeps_control_socket_responsive(self):
+        entered, release = threading.Event(), threading.Event()
+
+        def accept():
+            entered.set()
+            self.assertTrue(release.wait(2))
+            return {"accepted": True}
+
+        async def reply(reader, writer):
+            await reader.readexactly(1)
+            writer.write(b"x")
+            await writer.drain()
+            writer.close()
+            await writer.wait_closed()
+
+        server = await asyncio.start_server(reply, "127.0.0.1", 0)
+        verification = asyncio.create_task(vine.accept_return(types.SimpleNamespace(accept=accept)))
+        try:
+            self.assertTrue(await asyncio.to_thread(entered.wait, 1))
+            self.assertFalse(verification.done())
+            reader, writer = await asyncio.wait_for(
+                asyncio.open_connection("127.0.0.1", server.sockets[0].getsockname()[1]), .5)
+            writer.write(b"x")
+            await writer.drain()
+            self.assertEqual(await asyncio.wait_for(reader.readexactly(1), .5), b"x")
+            writer.close()
+            await writer.wait_closed()
+        finally:
+            release.set()
+            server.close()
+            await server.wait_closed()
+        self.assertEqual(await verification, {"accepted": True})
+
+    async def test_repeated_cancellation_drains_verifier_before_cleanup(self):
+        entered, release, finished = threading.Event(), threading.Event(), threading.Event()
+
+        def accept():
+            entered.set()
+            release.wait(2)
+            finished.set()
+
+        verification = asyncio.create_task(vine.accept_return(types.SimpleNamespace(accept=accept)))
+        try:
+            self.assertTrue(await asyncio.to_thread(entered.wait, 1))
+            for _ in range(2):
+                verification.cancel()
+                await asyncio.sleep(0)
+                self.assertFalse(verification.done())
+                self.assertFalse(finished.is_set())
+        finally:
+            release.set()
+        with self.assertRaises(asyncio.CancelledError):
+            await verification
+        self.assertTrue(finished.is_set())
 
 
 class CompletionTests(unittest.TestCase):

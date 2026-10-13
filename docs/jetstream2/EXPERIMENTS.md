@@ -1,9 +1,10 @@
-# Bounded three-VM experiments
+# Bounded selected-topology experiments
 
 `bin/flowdc_experiment.py` adds offline preparation and explicit execution to the
-[installed pilot](LIFECYCLE.md). It uses exactly the registered manager, one worker
-and origin. It neither creates VMs nor installs packages, enrolls credentials,
-upgrades the supervisor, renews allowance or changes PAARC. The six pilot modules
+[installed pilot](LIFECYCLE.md). The shared-origin profile uses the registered
+manager, origin and a selected one, two or four workers; historical three-VM
+examples below retain their original interpretation. It neither creates VMs nor installs packages, enrolls credentials,
+upgrades the supervisor, renews allowance or changes PAARC. The pilot modules
 and their accounting remain controlled by the pilot, independently of experiment IDs.
 
 **These instructions do not authorize activation.** Running the new CLI against
@@ -18,6 +19,14 @@ Polars environment locally. Use the existing registered state root, reviewed
 installed pilot release, healthy supervisor, and persistent local user manager
 (`Linger=yes`). The requested window must fit every VM's remaining cumulative
 allowance. A fresh run identity never replenishes it.
+
+When idle provider observations are stale, execution permits up to 180 seconds
+for read-only verification of every enrolled VM and its original networking,
+including guests outside this run's worker subset. A separate bounded180-second
+wait allows the supervisor to publish its sequential offload reconciliation.
+No activation occurs before that proof and fresh controller reconciliation pass. A failed preflight leaves
+the run prepared; it does not consume a scientific acquisition attempt or reset
+the requested window. The VM window and cleanup reserves remain unchanged.
 
 A separately approved [finite pilot grant](LIFECYCLE.md#explicit-finite-allowance-extension)
 can increase cumulative limits while the controller is verified idle. It does not
