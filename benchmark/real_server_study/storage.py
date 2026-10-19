@@ -13,11 +13,11 @@ MOUNT = r'''
 import json,os,pathlib,pwd,subprocess,sys
 volume,root,expected=sys.argv[1:]
 assert root.startswith('/mnt/flowdc-external-') and root.rsplit('-',5)[0]=='/mnt/flowdc-external'
-prefix=volume[:20]
+serials={volume,volume[:20]}  # SCSI preserves UUID; virtio may truncate to20.
 disks=[]
 for block in pathlib.Path('/sys/class/block').iterdir():
  for p in (block/'serial',block/'device/serial'):
-  if p.exists() and p.read_text().strip()==prefix:disks.append('/dev/'+block.name)
+  if p.exists() and p.read_text().strip() in serials:disks.append('/dev/'+block.name)
 disks=list(set(disks));assert len(disks)==1,'volume serial not uniquely found'
 device=disks[0]
 assert int(subprocess.check_output(['blockdev','--getsize64',device]))>=256*2**30

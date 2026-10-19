@@ -150,6 +150,34 @@ class DesignTests(unittest.TestCase):
         with self.assertRaises(ValueError):cloud.allocation_gate(valid)
         compile(storage.MOUNT,'mount-fixture','exec');compile(storage.STAGE,'stage-fixture','exec')
 
+    def test_mount_accepts_exact_full_or_truncated_volume_serial_only(self):
+        volume='12345678-1234-4123-8123-123456789abc'
+        class Serial:
+            def __init__(self,value):self.value=value
+            def exists(self):return self.value is not None
+            def read_text(self):return self.value
+        class Block:
+            def __init__(self,name,value):self.name,self.value=name,value
+            def __truediv__(self,suffix):return Serial(self.value if suffix=='device/serial' else None)
+        cases=[([Block('sdb',volume)],True),([Block('vdb',volume[:20])],True),
+               ([Block('sdb','unrelated')],False),
+               ([Block('sdb',volume),Block('sdc',volume)],False)]
+        for blocks,accepted in cases:
+            with self.subTest(serials=[b.value for b in blocks]), \
+                 patch('pathlib.Path',return_value=SimpleNamespace(iterdir=lambda:blocks)), \
+                 patch.object(sys,'argv',['mount',volume,'/mnt/flowdc-external-'+volume,'NEW']), \
+                 patch('subprocess.check_output',side_effect=RuntimeError('measurement boundary')) as measure, \
+                 patch('subprocess.run') as mutate:
+                if accepted:
+                    with self.assertRaisesRegex(RuntimeError,'measurement boundary'):
+                        exec(storage.MOUNT,{})
+                    self.assertEqual(measure.call_args.args[0],['blockdev','--getsize64','/dev/'+blocks[0].name])
+                else:
+                    with self.assertRaisesRegex(AssertionError,'volume serial not uniquely found'):
+                        exec(storage.MOUNT,{})
+                    measure.assert_not_called()
+                mutate.assert_not_called()
+
     def test_first_attempt_and_order_refusals(self):
         with tempfile.TemporaryDirectory() as d:
             root=Path(d);runs=design.schedule();common.write_new(root/'schedule.json',{'runs':runs})
