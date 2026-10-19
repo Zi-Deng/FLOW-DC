@@ -307,12 +307,36 @@ and the [software evidence](CLEANUP-RELIABILITY-EVIDENCE.md).
 Guest service locks, launch acknowledgements and cancellation markers prevent a
 late launch from bypassing a preceding stop. An interrupted, unacknowledged guest
 launch remains uncertain rather than treating a momentarily absent unit as proof.
-If guest cleanup remains uncertain after cloud offload, ownership deliberately
-remains pending. Do not edit `state.json`, erase the ownership record, create a
-replacement pilot root, or activate solely to make validation green. Preserve the
-private service names in `state.json` and seek separately authorized operator
-recovery to verify those exact guest services. Lost floating routes, host trust
-changes, corrupt manifests or unavailable guests may require that manual checkpoint.
+If guest cleanup remains uncertain after cloud offload, ordinary cleanup leaves
+ownership pending. Do not edit `state.json`, erase the ownership record or create
+a replacement pilot root. To recover successful guest-cleanup evidence, preserve
+the private service names and use separately authorized operator recovery to
+verify those exact guest services. Lost routes, changed trust, corrupt manifests
+or unavailable guests may require that checkpoint.
+
+An explicitly abandoned **failed** run may instead release operational ownership:
+
+```bash
+python bin/flowdc_experiment.py retire-offloaded --state-root "$STATE" --run-id "$RUN"
+```
+
+This requires a started, failed `cleanup_incomplete` run with verified cloud
+cleanup and uncertain guest cleanup. Under experiment/maintenance locks it checks
+the unchanged registration, idle accounts without obligations/uncertainty, and
+freshly verifies every registered VM as `SHELVED_OFFLOADED`, owned network-resource
+absence and original port attachments. No VM is activated. Nova shelving does not
+retain in-memory state ([Compute API](https://docs.openstack.org/api-ref/compute/#shelve-server-shelve-action));
+current offload proves no executing guest process. It does **not** establish when
+the old guest service stopped or repair its scientific evidence.
+
+The command writes a hash-bound `retirement.json` before releasing ownership.
+Original `state.json`, errors, collected artifacts, `workload: failed` and
+`guest_cleanup: uncertain` stay unchanged. Its exit 0 and `retired_incomplete`
+status mean ownership retirement succeeded, never scientific completion or guest
+cleanup success. An interrupted release can be resumed after fresh verification;
+an already released receipt is historical and reusing it changes no later owner.
+The retired run remains visible through `status`; `run`, `stop` and remote
+`collect` refuse it. Retain it as a failed/incomplete first attempt in analysis.
 Use the installed pilot's existing stop/reconcile and emergency procedure to settle
 cloud obligations regardless of experiment-record damage. No experiment command
 claims it can prove unreachable guest state.
