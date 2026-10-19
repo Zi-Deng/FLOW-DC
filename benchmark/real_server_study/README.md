@@ -13,6 +13,12 @@ runs, six balanced Ratio/Gradient pairs, then six balanced Fixed-low/high pairs:
 28 planned runs, one logical attempt per row, disjoint URLs excluding old requests.
 Calibration prospectively selects equal main row counts targeting120s, forecasting
 at least60s and fitting the population/byte limits. No post-outcome retuning.
+The main-workload minimum is8,192rows: a120s target below that minimum clamps
+upward, while population, bytes and measured verification/finalization limits
+still apply. A prepared campaign using older selection code requires an explicit
+prospective selection amendment before any main attempt; never rewrite its
+protocol, calibration records or completed selections to imply this correction
+was present originally.
 Measured calibration verification/finalization cost also constrains the main row
 count before main outcomes. Execution reserves 300s acquisition, 180--300s
 verification, 120--180s finalization and a 30s margin; actual earlier completion

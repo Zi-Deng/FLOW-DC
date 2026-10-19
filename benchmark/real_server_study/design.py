@@ -38,7 +38,7 @@ def slice_size(calibration, mean_bytes, available_rows):
     require(finite(mean_bytes) and mean_bytes > 0, "invalid size estimate")
     rate = max(r["verification"]["credited_rows"] / r["acquisition_s"] for r in calibration)
     require(rate > 0, "calibration rate unavailable")
-    wanted = math.ceil(120 * rate / 256) * 256
+    wanted = max(8192, math.ceil(120 * rate / 256) * 256)
     upper = min(32768, available_rows // 24, math.floor(4 * 2**30 / (1.25 * mean_bytes))) // 256 * 256
     # Measured costs constrain size prospectively, before any main outcome.
     for name,maximum in (("verification_s",300),("finalization_s",180)):

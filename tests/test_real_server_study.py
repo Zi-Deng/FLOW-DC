@@ -72,6 +72,15 @@ class DesignTests(unittest.TestCase):
         rows[0]={'complete':False}
         with self.assertRaises(ValueError):design.slice_size(rows,150000,600000)
 
+    def test_slow_calibration_preserves_minimum_without_waiving_capacity(self):
+        rows=[{'complete':True,'verification':{'credited_rows':8185},'acquisition_s':144.755,
+               'rows':8192,'verification_s':43.513,'finalization_s':3.66}]*4
+        plan=design.slice_size(rows,152972,620011)
+        self.assertEqual(plan['rows_per_main_run'],8192)
+        self.assertGreaterEqual(plan['predicted_fastest_acquisition_s'],120)
+        with self.assertRaises(ValueError):design.slice_size(rows,152972,24*8191)
+        with self.assertRaises(ValueError):design.slice_size(rows,600000,620011)
+
     def test_fixed_selection_with_and_without_429(self):
         records=[{'phase':'calibration' if i<4 else 'adaptive','started_monotonic':100} for i in range(16)]
         selected=design.select_fixed(records,[events() for _ in records],.02)
