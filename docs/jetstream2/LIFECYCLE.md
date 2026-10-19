@@ -185,7 +185,7 @@ read/start/accounting operations; they do not expose the new grant command.
 | --- | --- |
 | Changed binding/limits | Inspect current status and the existing receipt. Reassess authorization; do not automatically regenerate expectations. |
 | Conflicting grant ID | Recover the original request and receipt. Changed content is not a retry. |
-| Active owner or lock contention | Finish/recover the existing experiment or maintenance operation through its supported commands, then inspect again. Never remove locks/owner files to force a grant. |
+| Active owner or lock contention | Finish/recover the existing experiment or maintenance operation through its supported commands, or explicitly [retire a failed offloaded experiment](EXPERIMENTS.md#artifact-layout-and-recovery) while retaining its incomplete evidence. Never remove locks/owner files to force a grant. |
 | Stale proof, provider mismatch or network rollback mismatch | Preserve evidence; verify cloud identity and original attachments. Use supported reconcile/recovery as appropriate, then repeat fresh verification. |
 | Provenance failure or dead supervisor | Repair the verified installation through guarded upgrade/recovery; do not bypass release checks. |
 | Obligations or active state | Keep supervision running and follow the cleanup/recovery procedure. |

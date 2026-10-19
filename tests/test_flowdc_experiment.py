@@ -724,6 +724,111 @@ sys.exit(cli.main())
         self.assertEqual(self.invoke("stop", selected)[0], 0)
         self.assertIsNone(self.store.owner())
 
+    def failed_offloaded_owner(self):
+        from dataclasses import asdict
+        from flowdc_pilot_supervisor import sample_clock
+
+        selected, manifest, state = self.prepare()
+        state.update(activation_intent=True, workload="failed", phase="cleanup_incomplete",
+                     cleanup="verified", guest_cleanup="uncertain", errors=["subprocess_timeout"],
+                     services=[{"case":"primary", "role":"origin"}],
+                     collected={"primary":{"file":"failed-artifact.tar", "valid":False}})
+        self.store.write(selected, "failed-artifact.tar", b"known incomplete retained artifact")
+        self.store.save(selected, "state.json", state)
+        self.store.claim(selected)
+
+        def idle(record):
+            record["desired"] = "idle"
+            record["network"].update(ready=False, rolled_back=True)
+            for vm in record["vms"].values():
+                vm.update(phase="offloaded", observed={"state":"SHELVED_OFFLOADED",
+                          "clock":asdict(sample_clock())})
+        self.journal.change(idle)
+        return selected, manifest, state
+
+    def test_retirement_preserves_failed_state_and_missing_guest_proof(self):
+        selected, _, _ = self.failed_offloaded_owner()
+        before = self.store.read(selected, "state.json")
+        journal_before = self.journal.read()
+        with patch.object(cli, "Controller") as controller, \
+             patch("flowdc_pilot_provider.Provider") as provider, \
+             patch.object(ops, "load_profile", return_value={}):
+            code, result = self.invoke("retire-offloaded", selected)
+        self.assertEqual(code, 0)
+        self.assertEqual(result["status"], "retired_incomplete")
+        self.assertEqual(result["data"]["guest_cleanup"], "uncertain")
+        self.assertEqual(result["data"]["workload"], "failed")
+        self.assertIsNone(self.store.owner())
+        self.assertEqual(self.store.read(selected, "state.json"), before)
+        self.assertEqual(self.store.read(selected, "failed-artifact.tar"), b"known incomplete retained artifact")
+        self.assertEqual(self.journal.read(), journal_before)
+        provider.return_value.verify_idle.assert_called_once_with(journal_before)
+        controller.return_value.call.assert_called_once_with("status")
+        self.assertEqual(self.invoke("run", selected)[1]["error"], "experiment_retired_no_remote_operations")
+        self.assertEqual(self.invoke("stop", selected)[1]["error"], "experiment_retired_no_remote_operations")
+        self.assertIn("retirement", self.invoke("status", selected)[1]["data"])
+
+    def test_retirement_failed_provider_proof_retains_owner(self):
+        selected, _, _ = self.failed_offloaded_owner()
+        with patch.object(cli, "Controller"), \
+             patch("flowdc_pilot_provider.Provider") as provider, \
+             patch.object(ops, "load_profile", return_value={}):
+            provider.return_value.verify_idle.side_effect = ValueError("not offloaded")
+            self.assertNotEqual(self.invoke("retire-offloaded", selected)[0], 0)
+        self.assertEqual(self.store.owner(), selected)
+        with self.assertRaises(FileNotFoundError):
+            self.store.read(selected, "retirement.json")
+
+    def test_retirement_rechecks_idle_after_provider_and_refuses_changed_state(self):
+        selected, _, _ = self.failed_offloaded_owner()
+        with patch.object(cli, "Controller"), \
+             patch("flowdc_pilot_provider.Provider") as provider, \
+             patch.object(ops, "load_profile", return_value={}):
+            provider.return_value.verify_idle.side_effect = lambda _: self.journal.change(
+                lambda record: record.update(desired="stop"))
+            self.assertNotEqual(self.invoke("retire-offloaded", selected)[0], 0)
+        self.assertEqual(self.store.owner(), selected)
+
+    def test_retirement_interrupted_release_is_recoverable_and_idempotent(self):
+        selected, _, _ = self.failed_offloaded_owner()
+        with patch.object(cli, "Controller"), \
+             patch("flowdc_pilot_provider.Provider"), \
+             patch.object(ops, "load_profile", return_value={}):
+            with patch.object(data.Store, "release", side_effect=OSError("fixture interruption")):
+                self.assertNotEqual(self.invoke("retire-offloaded", selected)[0], 0)
+            self.assertEqual(self.store.owner(), selected)
+            receipt = self.store.read(selected, "retirement.json")
+            self.assertEqual(self.invoke("retire-offloaded", selected)[0], 0)
+        second = self.store.create()
+        self.store.claim(second)
+        self.assertEqual(self.invoke("retire-offloaded", selected)[0], 0)
+        self.assertEqual(self.store.owner(), second)
+        self.assertEqual(self.store.read(selected, "retirement.json"), receipt)
+
+    def test_retirement_refuses_nonfailed_state(self):
+        selected, _, state = self.failed_offloaded_owner()
+        state["workload"] = "passed"
+        self.store.save(selected, "state.json", state)
+        self.assertEqual(self.invoke("retire-offloaded", selected)[1]["error"],
+                         "retirement_requires_failed_offloaded_run")
+        self.assertEqual(self.store.owner(), selected)
+
+    def test_retirement_receipt_refuses_changed_original_evidence(self):
+        selected, _, state = self.failed_offloaded_owner()
+        with patch.object(cli, "Controller"), \
+             patch("flowdc_pilot_provider.Provider"), \
+             patch.object(ops, "load_profile", return_value={}):
+            self.assertEqual(self.invoke("retire-offloaded", selected)[0], 0)
+        state["errors"].append("changed after retirement")
+        self.store.save(selected, "state.json", state)
+        self.assertEqual(self.invoke("retire-offloaded", selected)[1]["error"], "retirement_evidence_changed")
+
+    def test_retirement_refuses_malformed_receipt_without_releasing_owner(self):
+        selected, _, _ = self.failed_offloaded_owner()
+        self.store.write(selected, "retirement.json", b"{}\n")
+        self.assertNotEqual(self.invoke("retire-offloaded", selected)[0], 0)
+        self.assertEqual(self.store.owner(), selected)
+
     def test_interrupted_collection_after_artifact_write_preserves_snapshot(self):
         selected, manifest, state = self.prepare()
         self.infrastructure(manifest)

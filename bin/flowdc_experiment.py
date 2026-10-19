@@ -669,6 +669,65 @@ def cancel_active(store, selected):
     return value
 
 
+def retire_offloaded(store, selected, manifest, state):
+    """Release an obsolete failed owner; never infer its missing guest evidence."""
+    from flowdc_pilot_journal import private_lock, require_grant_idle
+    from flowdc_pilot_provider import Provider
+
+    require(state["activation_intent"] and state["workload"] == "failed"
+            and state["phase"] == "cleanup_incomplete" and state["cleanup"] == "verified"
+            and state["guest_cleanup"] == "uncertain", "retirement_requires_failed_offloaded_run")
+    state_hash = digest(store.read(selected, "state.json"))
+    try:
+        receipt = store.json(selected, "retirement.json")
+    except FileNotFoundError:
+        receipt = None
+    if receipt is not None:
+        fields(receipt, ("schema", "run_id", "registration_id", "state_sha256", "manifest_sha256",
+                        "verification_started_utc", "verified_utc", "registered_ids", "provider_state",
+                        "network_rollback_verified", "guest_cleanup", "scientific_status", "limitation"))
+        require(receipt["schema"] == "flowdc-offloaded-retirement-v1"
+                and receipt["run_id"] == selected
+                and receipt["registration_id"] == manifest["binding"]["registration_id"]
+                and receipt["state_sha256"] == state_hash
+                and receipt["manifest_sha256"] == state["manifest_sha256"]
+                and receipt["provider_state"] == "SHELVED_OFFLOADED"
+                and receipt["network_rollback_verified"] is True
+                and receipt["guest_cleanup"] == "uncertain"
+                and receipt["scientific_status"] == "failed_incomplete", "retirement_evidence_changed")
+        if store.owner() != selected:
+            return dict(public(state), retirement=receipt, ownership_released=True)
+    require(store.owner() == selected, "another_experiment_incomplete")
+    with ops.private_directory(store.root) as parent, private_lock(parent, "maintenance.lock", blocking=False):
+        controller = Controller(store.root, manifest["binding"])
+        controller.call("status")  # Verify installed release and immutable registration.
+        journal = Journal(store.root)
+        record = journal.read()
+        require_grant_idle(record)
+        started = time.time()
+        Provider(ops.load_profile(record["profile_path"])).verify_idle(record)
+        current = journal.read()
+        require_grant_idle(current)
+        require(binding(current) == binding(record)
+                and {k:v["account"] for k,v in current["vms"].items()}
+                == {k:v["account"] for k,v in record["vms"].items()}, "retirement_registration_changed")
+        require(digest(store.read(selected, "state.json")) == state_hash, "retirement_evidence_changed")
+        if receipt is None:
+            receipt = {"schema": "flowdc-offloaded-retirement-v1", "run_id": selected,
+                       "registration_id": record["registration_id"],
+                       "state_sha256": state_hash, "manifest_sha256": state["manifest_sha256"],
+                       "verification_started_utc": started, "verified_utc": time.time(),
+                       "registered_ids": sorted(record["vms"]),
+                       "provider_state": "SHELVED_OFFLOADED", "network_rollback_verified": True,
+                       "guest_cleanup": "uncertain", "scientific_status": "failed_incomplete",
+                       "limitation": "Current offload proves no executing guest process; historical guest stop and failed outputs remain unverified. No workload replay or allowance granted."}
+            store.write(selected, "retirement.json", encode(receipt))
+        # The receipt is durable before release. A crash here can be resumed;
+        # neither the original state nor an artifact is rewritten.
+        store.release(selected)
+    return dict(public(state), retirement=receipt, ownership_released=True)
+
+
 def operate(args):
     if args.command == "prepare":
         return prepare(args.spec)
@@ -676,7 +735,13 @@ def operate(args):
     store = Store(args.state_root)
     if args.command == "status":
         _, state = load(store, selected)
-        return public(state)
+        value = public(state)
+        try:
+            value["retirement"] = store.json(selected, "retirement.json")
+            value["ownership_released"] = store.owner() != selected
+        except FileNotFoundError:
+            pass
+        return value
     try:
         with store.lock():
             return operate_locked(args, store, selected)
@@ -688,6 +753,14 @@ def operate(args):
 
 def operate_locked(args, store, selected):
     manifest, state = load(store, selected, verify=args.command != "stop")
+    if args.command == "retire-offloaded":
+        return retire_offloaded(store, selected, manifest, state)
+    try:
+        store.read(selected, "retirement.json")
+    except FileNotFoundError:
+        pass
+    else:
+        raise ExperimentError("experiment_retired_no_remote_operations")
     if args.command == "run":
         return run(store, selected, manifest, state,
                    use_active_window=getattr(args, "use_active_window", False))
@@ -758,7 +831,7 @@ def main(argv=None):
         "prepare", help="Stage a new offline run; never activate VMs.", allow_abbrev=False
     )
     prepare_parser.add_argument("--spec", required=True)
-    for action in ("run", "status", "collect", "stop"):
+    for action in ("run", "status", "collect", "stop", "retire-offloaded"):
         command = commands.add_parser(action, allow_abbrev=False)
         command.add_argument("--state-root", required=True)
         command.add_argument("--run-id", required=True)
@@ -781,7 +854,7 @@ def main(argv=None):
     try:
         value = operate(args)
         successful = (
-            args.command in ("prepare", "status")
+            args.command in ("prepare", "status", "retire-offloaded")
             or (
                 args.command == "stop"
                 and value["cleanup"] == "verified"
@@ -799,7 +872,7 @@ def main(argv=None):
                 {
                     "schema_version": 1,
                     "operation": args.command,
-                    "status": "ok" if successful else "incomplete",
+                    "status": "retired_incomplete" if args.command == "retire-offloaded" else "ok" if successful else "incomplete",
                     "data": value,
                 }
             ).decode(),
