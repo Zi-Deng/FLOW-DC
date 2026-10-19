@@ -167,5 +167,3 @@ def report(study):
     with (out/"latex.log").open("wb") as log:
         for _ in range(2):
             subprocess.run(["pdflatex","-interaction=nonstopmode","-halt-on-error","report.tex"],cwd=out,stdout=log,stderr=log,check=True,timeout=60)
-
-

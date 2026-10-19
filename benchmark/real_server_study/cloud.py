@@ -336,5 +336,3 @@ def run_windows(packet):
                 until=time.monotonic()+seconds
                 while time.monotonic()<until:time.sleep(min(30,until-time.monotonic()))
         raise ValueError("sixteen-window envelope exhausted; no automatic additional attempts")
-
-
