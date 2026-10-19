@@ -239,6 +239,32 @@ class DesignTests(unittest.TestCase):
                 cloud.operational_grant(packet,{'state':str(state)})
             self.assertEqual(target.read_bytes(),original)
 
+    def test_cleanup_requires_fresh_provider_proof_after_durable_idle(self):
+        from unittest.mock import Mock
+        status=dict(supervisor_ready=True,desired='idle',checkpoint=None,network_rolled_back=True,
+                    vms=[dict(id=role,role=role,phase='offloaded',provider_state='UNKNOWN',
+                              observation_fresh=False,account=dict(obligation=False,uncertain=False))
+                         for role in ('manager','worker','origin')])
+        for refused in (False,True):
+            with self.subTest(refused=refused),tempfile.TemporaryDirectory() as d:
+                root=Path(d);common.write_new(root/'operator.json',{'state':'state','source':'source'})
+                controller=SimpleNamespace(call=Mock(return_value=status))
+                provider=Mock()
+                if refused:provider.verify_idle.side_effect=RuntimeError('fresh proof refused')
+                journal=SimpleNamespace(read=lambda:{'profile_path':'profile'})
+                with patch.object(cloud,'imports',return_value=(lambda _:journal,None,None,None)), \
+                     patch('flowdc_pilot_provider.Provider',return_value=provider), \
+                     patch('flowdc_ops.load_profile',return_value={}):
+                    if refused:
+                        with self.assertRaisesRegex(RuntimeError,'fresh proof refused'):
+                            cloud.cleanup(root,controller,root/'closed.json',{'runs':3})
+                        self.assertFalse((root/'closed.json').exists())
+                    else:
+                        cloud.cleanup(root,controller,root/'closed.json',{'runs':3})
+                        self.assertTrue(common.read_json(root/'closed.json')['cleaned'])
+                provider.verify_idle.assert_called_once_with(journal.read())
+                self.assertEqual([c.args[0] for c in controller.call.call_args_list],['stop','status'])
+
     def test_analysis_pending_uses_offline_auditor_without_extending_lease(self):
         compile(cloud.AUDIT,'bounded-audit-fixture','exec')
         for remains,expected_calls,status in [([840,800],2,'complete'),([840,150],1,'analysis_pending')]:

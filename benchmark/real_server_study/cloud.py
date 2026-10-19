@@ -175,20 +175,23 @@ def controller_for(packet):
 
 
 def cleanup(packet,controller,path,outcome):
-    from flowdc_experiment_transport import clean
+    from flowdc_experiment_transport import idle
     from flowdc_pilot_provider import Provider
     import flowdc_ops as ops
     controller.call("stop",seconds=30)
     end=time.monotonic()+600
     value=controller.call("status")
-    while not clean(value):
+    # Durable settlement can outlive the narrow interval in which all six
+    # journal observations are fresh. The provider proof below is still required.
+    while not idle(value):
         require(time.monotonic()<end,"cleanup unresolved; keep supervisor running")
         time.sleep(1);value=controller.call("status")
     op=read_json(packet/"operator.json")
     Journal,_,_,_=imports(op["source"])
     current=Journal(op["state"]).read()
     Provider(ops.load_profile(current["profile_path"])).verify_idle(current)
-    write_new(path,{"utc":utc(),"outcome":outcome,"cleaned":True,"cleanup":value})
+    write_new(path,{"utc":utc(),"outcome":outcome,"cleaned":True,"cleanup":value,
+                   "fresh_provider_verification":"offload and original networking verified after durable idle"})
 
 
 def wait_active(controller):

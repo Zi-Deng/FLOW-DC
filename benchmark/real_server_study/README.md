@@ -110,6 +110,10 @@ an expected bill. Preserve all prior grants/consumption/history/obligations.
 Stored rates total32SU/h; fresh identity/rate checks precede deployment. Provider
 delay is not a hard billing guarantee. Every exit requests cleanup and verifies
 fresh `SHELVED_OFFLOADED` and restored networking.
+Cleanup first requires durable idle/accounting settlement, then a fresh direct
+provider proof of offload and original networking. It does not depend on polling
+the brief interval when all journal observations happen to be fresh together;
+expired observations alone are never accepted as the fresh provider proof.
 The capacity check covers one worst-case run per window, separate bootstrap,
 analysis and collection windows, plus five contingency windows. More runs can
 share a window when the complete next-run reserve fits. This ceiling replaces
