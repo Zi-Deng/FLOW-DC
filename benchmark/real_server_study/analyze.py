@@ -1,6 +1,7 @@
 """Offline analysis; randomized adaptive inference and descriptive late Fixed."""
 import itertools
 import math
+import time
 from pathlib import Path
 
 import numpy as np
@@ -32,25 +33,38 @@ def randomization(values):
 
 def lower(values):
     s = summary(values)
-    # One-sided alpha .025 equals the lower endpoint of an ordinary95% t interval.
+    # One-sided alpha .025 equals the lower endpoint of an ordinary 95% t interval.
     return s["ci"][0] if s["ci"] else None
 
 
-def analyze(study):
+def analyze(study,seconds=None):
     study = Path(study)
+    deadline=time.monotonic()+seconds if seconds is not None else None
     scheduled = read_json(study/"schedule.json")["runs"]
     rows, hashes = [], {}
     for run in scheduled:
         directory = study/"runs"/run["run_id"]
-        if not (directory/"record.json").exists():
+        record_path=directory/"record.json"
+        if not record_path.exists() and (directory/"incomplete-record.json").exists():
+            record_path=directory/"incomplete-record.json"
+        if not record_path.exists():
             rows.append({**run,"status":"attempted_without_record" if directory.exists() else "unrun","complete":False})
             continue
-        r = read_json(directory/"record.json")
+        r = read_json(record_path)
         require(all(r[k] == v for k,v in run.items()), "scheduled run changed")
-        for name,digest in r["evidence"].items():
-            require(not Path(name).is_absolute() and ".." not in Path(name).parts and file_hash(directory/name)==digest, "retained evidence changed")
-        hashes[run["run_id"]] = file_hash(directory/"record.json")
+        hashes[run["run_id"]] = {"file":record_path.name,"sha256":file_hash(record_path)}
+        try:
+            for name,digest in r["evidence"].items():
+                require(not Path(name).is_absolute() and ".." not in Path(name).parts and
+                        file_hash(directory/name,deadline)==digest,"retained evidence changed")
+        except TimeoutError:
+            rows.append({**run,"complete":False,"status":"analysis_incomplete","goodput_Bps":None,"coverage":None})
+            continue
         if r["complete"]:
+            binding=read_json(directory/"attempt.json")
+            require(binding["protocol_sha256"]==file_hash(study/"protocol.json"),"attempt protocol binding changed")
+            for field,name in (("main_plan_sha256","main-plan.json"),("fixed_selection_sha256","fixed-selection.json")):
+                if field in binding:require(binding[field]==file_hash(study/name),"attempt selection binding changed")
             receipt=read_json(directory/"verification.json")
             require(receipt.pop("observations")==r["observations"] and receipt==r["verification"],"verification receipt and results differ")
             overview=read_json(directory/"native/overview.json")
@@ -81,7 +95,8 @@ def analyze(study):
                 "claim_supported":bool(len(pairs)==6 and estimate["mean"]>0 and estimate["p"]<.05 and
                     cov is not None and cov>=0 and lat is not None and lat>=0)},
               "fixed_comparison":"Later phase, data-selected settings; descriptive comparisons against adaptive arms only",
-              "planned_runs":28,"recorded_runs":len(hashes),"complete_runs":sum(r["complete"] for r in rows)}
+              "planned_runs":28,"recorded_runs":len(hashes),"complete_runs":sum(r["complete"] for r in rows),
+              "analysis_incomplete_runs":sum(r["status"]=="analysis_incomplete" for r in rows)}
     (study/"analysis").mkdir(exist_ok=True)
     target=study/"analysis/results.json"
     if target.exists():
@@ -123,14 +138,15 @@ def report(study):
       r"\setlength{\parindent}{0pt}\setlength{\parskip}{6pt}",r"\begin{document}",
       r"\title{\textcolor{navy}{FLOW-DC}\\Higher-concurrency real-host study}\author{Private research evidence report}\date{\today}\maketitle",
       r"\section{What was done}",
-      "Ratio and Gradient started at four, with minimum two and a safety ceiling of256, supported by256 downloader tasks. "
+      "Ratio and Gradient started at four, with minimum two and a safety ceiling of 256, supported by 256 downloader tasks. "
       "Their decision rules and selected options were unchanged. Four adaptive calibration runs preceded six paired adaptive blocks. "
-      "Six later Fixed-low/high blocks used settings selected deterministically from adaptive traces. The planned total was28 runs plus a300-URL health probe.",
+      "Six later Fixed-low/high blocks used settings selected deterministically from adaptive traces. The planned total was 28 runs plus a 300-URL health probe.",
       f"There are {result['recorded_runs']} recorded first attempts and {result['complete_runs']} fully accounted complete runs. "
-      "The inventory below retains stopped, incomplete and unrun cells. A completed process or HTTP200 alone does not establish decoded-image credit.",
+      "The inventory below retains stopped, incomplete and unrun cells. A completed process or HTTP 200 alone does not establish decoded-image credit.",
+      f"Evidence auditing was incomplete for {result['analysis_incomplete_runs']} runs. Those runs receive no complete-run credit or inferred zero goodput.",
       r"\section{Principal comparison}",
       f"Gradient minus Ratio has {g['n']} complete paired blocks. The mean verified-goodput difference is {number(g['mean'],1e6)} decimal MB/s. "
-      +("The ordinary95\\% paired interval is ["+number(ci[0],1e6)+", "+number(ci[1],1e6)+"] MB/s. " if ci else "An interval is unavailable. ")+
+      +("The ordinary 95\\% paired interval is ["+number(ci[0],1e6)+", "+number(ci[1],1e6)+"] MB/s. " if ci else "An interval is unavailable. ")+
       f"The primary two-sided paired-test p value is {number(g['p'])}; exact paired-randomization sensitivity p is {number(result['primary']['exact_randomization_p'])}.",
       "The predeclared positive claim is "+("supported" if result['primary']['claim_supported'] else "not supported")+". "
       "It additionally requires coverage-loss and p95-delay safeguards; nonsignificance does not establish equivalence.",
@@ -157,8 +173,8 @@ def report(study):
       "The endpoint is independently verified decoded original-row bytes divided by launch-through-verification elapsed time. "
       "Original row denominators include known failures. Unknown evidence is not silently assigned successful completion or imputed into complete-run intervals. "
       "Application-observed first-body delay is not packet RTT. Common Retry-After/admission guards remain enabled even in Fixed.",
-      "Report actual concurrency and any binding256 ceiling, client bottleneck, short acquisition, refusal or content failure. "
-      "An observed429 is explicit rate-limit behavior;503, transport errors and latency changes are separate signals. "
+      "Report actual concurrency and any binding 256 ceiling, client bottleneck, short acquisition, refusal or content failure. "
+      "An observed 429 is explicit rate-limit behavior; 503, transport errors and latency changes are separate signals. "
       "The selected high-load setting does not prove a configured server quota. One host/client/time window and distinct sampled URLs limit generality; server caches and background load are uncontrolled.",
       "Raw archives, native journals, hashes, protocol and attempt records remain private. This report is derived from retained results and is separate from the October17 study. "
       "It establishes neither distributed scaling nor independent-human reproduction nor manuscript submission readiness.",r"\end{document}"]

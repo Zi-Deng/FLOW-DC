@@ -40,6 +40,11 @@ def slice_size(calibration, mean_bytes, available_rows):
     require(rate > 0, "calibration rate unavailable")
     wanted = math.ceil(120 * rate / 256) * 256
     upper = min(32768, available_rows // 24, math.floor(4 * 2**30 / (1.25 * mean_bytes))) // 256 * 256
+    # Measured costs constrain size prospectively, before any main outcome.
+    for name,maximum in (("verification_s",300),("finalization_s",180)):
+        per_row=max(r.get(name,0)/r.get("rows",8192) for r in calibration)
+        if per_row>0:
+            upper=min(upper,math.floor((maximum-30)/(3*per_row)/256)*256)
     rows = min(wanted, upper)
     require(rows >= 8192 and rows/rate >= 60, "population/bytes cannot support sustained main observations")
     return {"rows_per_main_run": rows, "target_rows": wanted, "predicted_fastest_acquisition_s": rows/rate,

@@ -13,6 +13,11 @@ runs, six balanced Ratio/Gradient pairs, then six balanced Fixed-low/high pairs:
 28 planned runs, one logical attempt per row, disjoint URLs excluding old requests.
 Calibration prospectively selects equal main row counts targeting120s, forecasting
 at least60s and fitting the population/byte limits. No post-outcome retuning.
+Measured calibration verification/finalization cost also constrains the main row
+count before main outcomes. Execution reserves 300s acquisition, 180--300s
+verification, 120--180s finalization and a 30s margin; actual earlier completion
+can permit a second run in the same window. Infeasible calibration or unavailable
+Fixed selection ends the protocol with retained results and unrun cells.
 
 Fixed-low uses80% of the largest clean observed concurrency, also below an
 observed429 dispatch cap if present. Fixed-high uses that cap or, without429,
@@ -66,6 +71,9 @@ record the receipt time as `reported_at`, with that distinction in
 requires>=1,000SUs and an observation or current-balance report within24hours. No secrets.
 Preparation downloads pinned binary wheels and binds source/private-input hashes;
 it never activates guests or applies a grant.
+Execution rereads the allocation file and saves a hash-bound observation receipt;
+`cloud-bootstrap` and `cloud-run` also accept `--allocation` to select a refreshed
+file. The frozen preparation snapshot is not rewritten.
 
 ## Explicit cloud deployment/execution
 
@@ -93,6 +101,10 @@ an expected bill. Preserve all prior grants/consumption/history/obligations.
 Stored rates total32SU/h; fresh identity/rate checks precede deployment. Provider
 delay is not a hard billing guarantee. Every exit requests cleanup and verifies
 fresh `SHELVED_OFFLOADED` and restored networking.
+The last available window is reserved for terminal analysis/collection if the
+planned runs have not finished. Lease-limited probes, interrupted finalization
+and analysis-audit timeouts retain explicit noncreditable outcomes; they never
+authorize a replacement acquisition or an extra window.
 
 Keep<=160GiB artifacts and40GiB free reserve on the volume. Raw evidence remains
 there after offload; no automatic evidence-volume deletion. Only bounded metadata

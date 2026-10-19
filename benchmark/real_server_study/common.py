@@ -38,10 +38,12 @@ def sha256(data):
     return hashlib.sha256(data).hexdigest()
 
 
-def file_hash(path):
+def file_hash(path, deadline=None):
     h = hashlib.sha256()
     with Path(path).open("rb") as stream:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            if deadline is not None and time.monotonic()>deadline:
+                raise TimeoutError("analysis evidence audit deadline")
             h.update(chunk)
     return h.hexdigest()
 
@@ -147,6 +149,13 @@ def remaining(study):
     p = read_json(Path(study) / "execution.json")
     require(p["boot_id"] == Path("/proc/sys/kernel/random/boot_id").read_text().strip(), "guest reboot invalidates clock")
     return min(p["deadline_utc"] - time.time(), p["deadline_monotonic"] - time.monotonic())
+
+
+def terminal(study, reason, detail=""):
+    study=Path(study)
+    if not (study/"STOP.json").exists():
+        write_new(study/"STOP.json",{"utc":utc(),"reason":reason,"detail":detail})
+    return {"status":"stopped","runs":len(list((study/"runs").glob("*/attempt.json")))}
 
 
 def finite(value):

@@ -1,6 +1,7 @@
 """Guest execution: one immutable first attempt per identified run."""
 import contextlib
 import json
+import math
 import os
 import shutil
 import signal
@@ -10,7 +11,7 @@ import time
 
 import polars as pl
 
-from .common import ARTIFACT_CAP, RESERVE, file_hash, lock, protocol_check, read_json, remaining, require, utc, write_new
+from .common import ARTIFACT_CAP, RESERVE, file_hash, lock, protocol_check, read_json, remaining, require, terminal, utc, write_new
 from .design import activity_intervals, config, select_fixed
 from .prepare import build_main, guest_check, read_lines, robots_permit
 
@@ -78,7 +79,17 @@ def compact_outputs(directory):
                "removed_loose_duplicates":removed,"retained":"native.tar plus native/.flowdc, overview and outcome index"})
 
 
-def execute(study, source, run):
+def execution_budget(rows, calibration):
+    """Reserve all phases; scale measured calibration cost without outcome tuning."""
+    rate=max([r["verification_s"]/r["rows"] for r in calibration]+[0])
+    finish=max([r.get("finalization_s",r.get("compaction_s",0))/r["rows"] for r in calibration]+[0])
+    verification=max(180,math.ceil(30+3*rate*rows))
+    finalization=max(120,math.ceil(30+3*finish*rows))
+    require(verification<=300 and finalization<=180,"measured verification/finalization cannot fit bounded execution")
+    return {"verification":verification,"finalization":finalization,"total":300+verification+finalization+30}
+
+
+def execute(study, source, run, budget):
     directory = study / "runs" / run["run_id"]
     directory.mkdir(parents=True)  # An existing directory consumes the attempt.
     binding = {**run, "utc":utc(), "protocol_sha256":file_hash(study/"protocol.json"),
@@ -117,7 +128,7 @@ def execute(study, source, run):
                                 reason = reason or e.get("reason") or e.get("stop_reason")
                                 fatal = fatal or e.get("fatal",False)
                                 cooldown = max(cooldown,e.get("cooldown_until_utc",0))
-                if time.monotonic()-started >= 300 or remaining(study) < 180:
+                if time.monotonic()-started >= 300 or remaining(study) < budget["verification"]+budget["finalization"]+30:
                     reason = reason or "deadline"
                 if shutil.disk_usage(study).free < RESERVE:
                     reason = "storage_reserve"; fatal = True
@@ -127,17 +138,24 @@ def execute(study, source, run):
         finally:
             terminate(proc)
         acquired = time.monotonic()
+    # If verification/finalization is killed, retain an explicit noncreditable
+    # first-attempt record. Never restart acquisition to fill its missing outcome.
+    write_new(directory/"incomplete-record.json",{**run,"complete":False,"status":"interrupted",
+              "termination_reason":"verification_or_finalization_interrupted","evidence":{},
+              "started_monotonic":started,"acquired_monotonic":acquired,"rows":len(urls),
+              "execution_budget_s":budget})
     verification, complete = {}, False
     verify = [sys.executable,"-B","-m","benchmark.real_server_study.verify","--run-dir",str(directory),
               "--source",str(source),"--slice",cfg["input"],"--started",str(started),"--ended",str(acquired)]
     with (directory/"verification.json").open("x") as out,(directory/"verification.log").open("x") as err:
         try:
-            result = subprocess.run(verify,cwd=source,stdout=out,stderr=err,timeout=120)
+            result = subprocess.run(verify,cwd=source,stdout=out,stderr=err,timeout=budget["verification"])
             if result.returncode == 0:
                 verification = read_json(directory/"verification.json")
                 complete = proc.returncode == 0 and reason is None
         except subprocess.TimeoutExpired:
             reason = reason or "verification_timeout"
+            fatal = True
     ended = time.monotonic()
     events = read_lines(directory/"request-audit.jsonl") if (directory/"request-audit.jsonl").exists() else []
     for event in events:
@@ -161,6 +179,7 @@ def execute(study, source, run):
         compact_outputs(directory)
     row = {**run,"started_monotonic":started,"acquired_monotonic":acquired,"ended_monotonic":ended,
            "elapsed_s":ended-started,"acquisition_s":acquired-started,"rows":len(urls),
+           "verification_s":ended-acquired,"execution_budget_s":budget,
            "returncode":proc.returncode,"complete":complete,"termination_reason":reason,
            "fatal":fatal,"cooldown_until_utc":cooldown,"verification":verification,"observations":observation,
            "campaign_stop_reason":campaign_stop,
@@ -176,6 +195,7 @@ def execute(study, source, run):
     if complete:
         for name in ("native/.flowdc/final.json","native/.flowdc/owner.json","native/outcome-index.json","native/overview.json"):
             row["evidence"][name]=file_hash(directory/name)
+    row["finalization_s"]=time.monotonic()-compact_started
     write_new(directory/"record.json",row)
     return row
 
@@ -184,19 +204,27 @@ def run_window(study, source):
     guest_check(study)
     protocol_check(study,source)
     if (study/"STOP.json").exists():
-        return {"status":"stopped","runs":len(list((study/"runs").glob("*/record.json")))}
+        return terminal(study,"previous_stop")
     with lock(study/"study.lock"):
         for _ in range(2):
-            old = records(study)
+            try:
+                old = records(study)
+            except ValueError as error:
+                return terminal(study,"incomplete_first_attempt",str(error))
             if old and (old[-1]["fatal"] or old[-1]["status"] == "incomplete" or
                         (len(old)>1 and all(r["termination_reason"]=="refusal_threshold" for r in old[-2:]))):
-                write_new(study/"STOP.json",{"utc":utc(),"reason":"fatal, incomplete, or repeated refusal evidence"})
-                return {"status":"stopped","runs":len(old)}
+                return terminal(study,"fatal_incomplete_or_repeated_refusal")
             if len(old) == 4 and not (study/"main-plan.json").exists():
-                build_main(study)
+                try:
+                    build_main(study)
+                except ValueError as error:
+                    return terminal(study,"calibration_infeasible",str(error))
             if len(old) == 16 and not (study/"fixed-selection.json").exists():
-                selection = select_fixed(old,[read_lines(study/"runs"/r["run_id"]/"request-audit.jsonl") for r in old],
-                                         read_json(study/"probe-summary.json")["ttfb_p50_s"])
+                try:
+                    selection = select_fixed(old,[read_lines(study/"runs"/r["run_id"]/"request-audit.jsonl") for r in old],
+                                             read_json(study/"probe-summary.json")["ttfb_p50_s"])
+                except ValueError as error:
+                    return terminal(study,"fixed_selection_unavailable",str(error))
                 selection["evidence"] = {r["run_id"]:{name:file_hash(study/"runs"/r["run_id"]/name)
                     for name in ("record.json","request-audit.jsonl")} for r in old}
                 write_new(study/"fixed-selection.json",selection)
@@ -205,14 +233,26 @@ def run_window(study, source):
             wait = max([r["cooldown_until_utc"] for r in old]+[0])-time.time()
             if wait > 0:
                 return {"status":"cooldown","until_utc":time.time()+wait,"runs":len(old)}
-            if remaining(study) < 480:
-                return {"status":"window_complete","runs":len(old)}
-            require(shutil.disk_usage(study).free >= RESERVE, "storage reserve exhausted")
+            if shutil.disk_usage(study).free < RESERVE:
+                return terminal(study,"storage_reserve")
             retained = sum(p.stat().st_size for p in study.glob("runs/*/native.tar"))
-            require(retained + 8*2**30 <= ARTIFACT_CAP, "artifact budget insufficient for another bounded run")
+            if retained + 8*2**30 > ARTIFACT_CAP:
+                return terminal(study,"artifact_budget")
             run = read_json(study/"schedule.json")["runs"][len(old)]
-            check_inputs(study,run)
-            execute(study,source,run)
+            rows=pl.scan_parquet(study/"slices"/f"{run['slice']}.parquet").select(pl.len()).collect().item()
+            try:
+                budget=execution_budget(rows,[r for r in old if r["phase"]=="calibration" and r["complete"]])
+            except ValueError as error:
+                return terminal(study,"verification_capacity",str(error))
+            if remaining(study)<budget["total"]:
+                return {"status":"window_complete","runs":len(old)}
+            try:
+                check_inputs(study,run)
+                result=execute(study,source,run,budget)
+            except (OSError,ValueError,subprocess.SubprocessError) as error:
+                return terminal(study,"execution_or_finalization_incomplete",str(error))
+            if result["fatal"] or result["status"]=="incomplete":
+                return terminal(study,"fatal_or_incomplete_run",result.get("termination_reason") or "required verification failed")
             # Always finish a phase in its own window so ordering gates are visible.
             if len(old)+1 in (4,16,28):
                 break

@@ -62,6 +62,7 @@ def prepare_packet(source, directory, state, allocation, ssh_config, guest_pytho
            "budget_sha256":file_hash(directory/"deployment.json"),"budget_su":1000}
     write_new(directory/"grant-template.json",grant)
     write_new(directory/"operator.json",{"state":str(state),"source":str(source),"ssh_config":str(Path(ssh_config).resolve()),
+              "allocation_file":str(Path(allocation).resolve()),
               "guest_python":guest_python,"guest_root":"/mnt/flowdc-external-"+campaign,
               "worker_id":selected["worker"]["id"],"registration":j["registration_id"],"utc":utc(),
               "branch":subprocess.check_output(["git","-C",str(source),"branch","--show-current"],text=True).strip()})
@@ -127,9 +128,14 @@ def execution_receipt(deployment, operator, seconds, hostname):
             "boot_id":Path("/proc/sys/kernel/random/boot_id").read_text().strip()}
 
 
-def merged_gate(packet):
+def merged_gate(packet,allocation=None):
     deployment,op=read_json(packet/"deployment.json"),read_json(packet/"operator.json")
-    allocation_gate(deployment)
+    path=Path(allocation or op["allocation_file"])
+    facts=read_json(path)
+    require(all(facts[k]==deployment["allocation"][k] for k in ("allocation","expiry_date")),"allocation identity/renewal changed")
+    allocation_gate({"allocation":facts})
+    write_new(packet/f"allocation-observation-{time.time_ns()}.json",
+              {"utc":utc(),"sha256":file_hash(path),"facts":facts})
     require(source_identity(op["source"])==deployment["source"],"prepared source changed")
     subprocess.run(["git","-C",op["source"],"fetch","origin","main"],check=True,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=60)
     head=deployment["source"]["head"]
@@ -181,7 +187,25 @@ def wait_active(controller):
     return value
 
 
-def guest(packet,controller,number):
+def verify_rates(provider,record,deployment):
+    """Fresh flavor identity must support the retained per-VM rate assumptions."""
+    import flowdc_ops as ops
+    rows=[]
+    for vm in record["spec"]["vms"]:
+        if vm["id"] not in deployment["selected"].values():continue
+        with provider.step("preflight",vm["role"]):
+            provider.context(record)
+            value=provider.query("server",vm["id"])
+            require(provider.validate_server(record,vm["id"],value)=="SHELVED_OFFLOADED","selected VM not offloaded")
+            rate=vm["rate"]
+            require(rate["verified"] and ops.reference_id(value["flavor"])==rate["flavor_id"],"selected flavor/rate changed")
+            rows.append({"id":vm["id"],"flavor_id":rate["flavor_id"],"su_per_hour":rate["su_per_hour"]})
+    require(len(rows)==3 and sum(v["su_per_hour"] for v in rows)==deployment["registered_rate_total_per_hour"]==32,
+            "selected aggregate rate differs from frozen budget")
+    return {"utc":utc(),"servers":rows}
+
+
+def guest(packet,controller,number,final=False):
     from flowdc_experiment_transport import remaining as window_remaining
     deployment,op=read_json(packet/"deployment.json"),read_json(packet/"operator.json")
     installation=read_json(packet/"deployment-receipt.json")
@@ -190,6 +214,7 @@ def guest(packet,controller,number):
     cmd=[installation["python"],"-B","-m","benchmark.real_server_study","guest-window",
          "--study",op["guest_root"]+"/study","--source",op["guest_root"]+"/source",
          "--campaign-id",deployment["campaign_id"],"--vm-id",op["worker_id"],"--seconds",str(int(allowed))]
+    if final:cmd.append("--final-window")
     unit=f"flowdc-external-{deployment['campaign_id']}-{number}"
     remote=["sudo","-n","systemd-run","--quiet","--wait","--pipe","--collect","--unit",unit,
         "--property=RuntimeMaxSec="+str(int(allowed)),"--property=TimeoutStopSec=30","--property=KillMode=control-group",
@@ -198,18 +223,20 @@ def guest(packet,controller,number):
     return json.loads(ssh(packet,remote,timeout=allowed+45))
 
 
-def bootstrap(packet):
+def bootstrap(packet,allocation=None):
     """Explicitly apply finite allowance, activate one window, stage, probe, clean."""
     from .storage import create_volume,mount,stage
     packet=Path(packet).resolve()
-    deployment,op=merged_gate(packet)
+    deployment,op=merged_gate(packet,allocation)
     require((packet/"payload.json").exists(),"offline pinned payload missing")
     require(not (packet/"clock.json").exists(),"bootstrap already attempted; inspect retained state")
     Journal,allowance,binding,account_digest=imports(op["source"])
     from flowdc_pilot_provider import Provider
     import flowdc_ops as ops
     journal=Journal(op["state"]);j=journal.read()
-    Provider(ops.load_profile(j["profile_path"])).verify_idle(j)
+    provider=Provider(ops.load_profile(j["profile_path"]))
+    provider.verify_idle(j)
+    write_new(packet/"bootstrap-rates.json",verify_rates(provider,j,deployment))
     now=time.time()
     write_new(packet/"clock.json",{"utc_epoch":now,"monotonic":time.monotonic(),
               "boot_id":Path("/proc/sys/kernel/random/boot_id").read_text().strip()})
@@ -238,9 +265,13 @@ def bootstrap(packet):
         installation=stage(packet)
         require(installation["source_archive_sha256"]==deployment["source_archive_sha256"],"installation source mismatch")
         outcome=guest(packet,controller,0)
-        return outcome
+        if outcome["status"] in ("complete","stopped"):collect(packet)
     finally:
         cleanup(packet,controller,packet/"window-00.json",outcome)
+    if outcome["status"] in ("complete","stopped"):
+        from .analyze import report
+        report(packet/"collected")
+    return outcome
 
 
 def collect(packet):
@@ -289,12 +320,12 @@ with tarfile.open(fileobj=sys.stdout.buffer,mode='w|') as archive:
     return target
 
 
-def run_windows(packet):
+def run_windows(packet,allocation=None):
     """Continue unattempted runs only; all VM mutations remain supervisor-owned."""
     from .common import lock
     from .storage import mount
     packet=Path(packet).resolve()
-    deployment,op=merged_gate(packet)
+    deployment,op=merged_gate(packet,allocation)
     require((packet/"deployment-receipt.json").exists(),"bootstrap not completed")
     Journal,_,_,_=imports(op["source"]);journal=Journal(op["state"])
     clock,baseline=read_json(packet/"clock.json"),read_json(packet/"account-baseline.json")
@@ -313,6 +344,9 @@ def run_windows(packet):
             exposure=sum((j["vms"][v["id"]]["account"]["consumed"]-baseline[v["id"]])*v["rate"]["su_per_hour"]/3600
                          for v in j["spec"]["vms"] if v["id"] in chosen)
             require(exposure+32<=320,"operational SU budget exhausted")
+            from flowdc_pilot_provider import Provider
+            import flowdc_ops as ops
+            write_new(packet/f"window-{number:02}-rates-{time.time_ns()}.json",verify_rates(Provider(ops.load_profile(j["profile_path"])),j,deployment))
             controller=controller_for(packet);controller.preflight(1800)
             write_new(packet/f"window-{number:02}-intent.json",{"utc":utc(),"campaign_id":deployment["campaign_id"]})
             outcome=None
@@ -320,7 +354,7 @@ def run_windows(packet):
                 controller.call("start",seconds=30,window=1800);wait_active(controller)
                 refresh_ssh(packet,controller)
                 mount(packet)
-                outcome=guest(packet,controller,number)
+                outcome=guest(packet,controller,number,final=number==15 or left<3600 or exposure+64>320)
                 if outcome["status"] in ("complete","stopped"):
                     collect(packet)
             finally:

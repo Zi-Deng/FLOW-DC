@@ -6,7 +6,7 @@ import os
 import socket
 from pathlib import Path
 
-from .common import protocol_check, read_json, remaining, require, write_new
+from .common import protocol_check, read_json, remaining, require, terminal, write_new
 
 
 def main():
@@ -22,11 +22,13 @@ def main():
             cmd.add_argument("--campaign-id",required=True)
             cmd.add_argument("--vm-id",required=True)
             cmd.add_argument("--seconds",required=True,type=int)
+            cmd.add_argument("--final-window",action="store_true")
     cloud=sub.add_parser("cloud-prepare")
     for name in ("source","packet","state","allocation","ssh-config","guest-python","study"):
         cloud.add_argument("--"+name,required=True)
     for name in ("cloud-bootstrap","cloud-run"):
         run=sub.add_parser(name);run.add_argument("--packet",required=True,type=Path)
+        run.add_argument("--allocation",type=Path,help="Current allocation observation; defaults to the prepared private path")
     args=p.parse_args()
     os.umask(0o077)
     if args.command=="prepare":
@@ -50,18 +52,25 @@ def main():
         temporary=args.study/"execution.next.json"
         write_new(temporary,receipt);temporary.replace(args.study/"execution.json")
         os.sched_setaffinity(0,sorted(os.sched_getaffinity(0))[:4])
-        if not (args.study/"host-gate.json").exists():
-            host_gate(args.study)
-        if not (args.study/"probe-summary.json").exists():
-            require(not (args.study/"probe-results.jsonl").exists(),"probe already attempted without summary; no restart")
-            asyncio.run(probe(args.study))
-            print(json.dumps({"status":"window_complete","runs":0}));return
+        if args.final_window and len(list((args.study/"runs").glob("*/record.json")))<28:
+            terminal(args.study,"window_budget_exhausted")
+        if not (args.study/"STOP.json").exists():
+            try:
+                if not (args.study/"host-gate.json").exists():
+                    host_gate(args.study)
+                if not (args.study/"probe-summary.json").exists():
+                    if (args.study/"probe-results.jsonl").exists():
+                        terminal(args.study,"probe_interrupted")
+                    elif asyncio.run(probe(args.study))["passed"]:
+                        print(json.dumps({"status":"window_complete","runs":0}));return
+            except (OSError,ValueError) as error:
+                terminal(args.study,"host_gate_failed",str(error))
         result=run_window(args.study,args.source)
         if result["status"] in ("complete","stopped") and not (args.study/"analysis/results.json").exists():
-            if remaining(args.study)<600:
+            if remaining(args.study)<930:
                 print(json.dumps({"status":"analysis_pending","runs":result["runs"]}));return
             from .analyze import analyze
-            analyze(args.study)
+            analyze(args.study,seconds=min(900,remaining(args.study)-30))
         print(json.dumps(result))
     elif args.command in ("analyze","report"):
         from .analyze import analyze,report
@@ -73,10 +82,10 @@ def main():
         prepare_payload(Path(args.packet),Path(args.study))
     elif args.command=="cloud-bootstrap":
         from .cloud import bootstrap
-        print(json.dumps(bootstrap(args.packet)))
+        print(json.dumps(bootstrap(args.packet,args.allocation)))
     elif args.command=="cloud-run":
         from .cloud import run_windows
-        print(json.dumps(run_windows(args.packet)))
+        print(json.dumps(run_windows(args.packet,args.allocation)))
 
 
 if __name__=="__main__":

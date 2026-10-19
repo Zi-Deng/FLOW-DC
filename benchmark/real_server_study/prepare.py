@@ -14,7 +14,7 @@ from pathlib import Path
 import polars as pl
 
 from .common import (HOST, MAX_OBJECT, PREFIX, OPTIONS, NoRedirect, bounded_read, checked_url, decode_image,
-                     file_hash, opener, read_json, require, source_identity, tls_context, utc, write_new)
+                     file_hash, opener, read_json, remaining, require, source_identity, terminal, tls_context, utc, write_new)
 from .design import schedule, slice_size
 
 UA = "FLOW-DC/2.0 PAARC/2.0"
@@ -126,40 +126,53 @@ async def probe(study):
     async def dispatch(session, ctx, params):
         ctx.trace_request_ctx["sent"] = time.monotonic()
     trace.on_request_headers_sent.append(dispatch)
-    results = []
+    results, reason, transport_errors = [], None, 0
     with (study / "probe-results.jsonl").open("x") as log:
         async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(limit=1, ssl=tls_context(gate["ignore_time"])),
                     trace_configs=[trace], headers={"User-Agent": UA}, trust_env=False) as session:
             require(aiohttp.__version__ == "3.13.3", "pinned probe runtime required")
             session._retry_connection = False
             for url in rows:
+                if remaining(study)<45:
+                    reason="probe_deadline";break
                 checked_url(url)
-                timing = {}
-                async with session.get(url, allow_redirects=False, timeout=aiohttp.ClientTimeout(total=30), trace_request_ctx=timing) as response:
-                    require(response.status not in (401,403,429) and response.status < 500, "probe host refusal")
-                    body = bytearray()
-                    first = await response.content.read(1)
-                    delay = time.monotonic()-timing["sent"] if first else None
-                    body.extend(first)
-                    async for chunk in response.content.iter_chunked(65536):
-                        body.extend(chunk)
-                        require(len(body) <= MAX_OBJECT, "probe object too large")
-                    valid = False
-                    if response.status == 200:
-                        try:
-                            decode_image(body)
-                            valid = True
-                        except Exception:
-                            pass
-                    entry = dict(url=url,status=response.status,bytes=len(body),valid=valid,ttfb_s=delay)
-                    results.append(entry)
-                    log.write(__import__("json").dumps(entry)+"\n"); log.flush()
+                timing, body = {}, bytearray()
+                entry=dict(url=url,status=None,bytes=0,valid=False,ttfb_s=None,error=None)
+                try:
+                    async with session.get(url, allow_redirects=False, timeout=aiohttp.ClientTimeout(total=30), trace_request_ctx=timing) as response:
+                        entry.update(status=response.status,retry_after=response.headers.get("Retry-After"))
+                        if response.status in (401,403,429) or response.status>=500:
+                            reason="probe_host_refusal"
+                        else:
+                            first = await response.content.read(1)
+                            entry["ttfb_s"] = time.monotonic()-timing["sent"] if first else None
+                            body.extend(first)
+                            async for chunk in response.content.iter_chunked(65536):
+                                body.extend(chunk)
+                                require(len(body) <= MAX_OBJECT, "probe object too large")
+                            if response.status == 200:
+                                try:
+                                    decode_image(body);entry["valid"]=True
+                                except Exception:
+                                    pass
+                except (aiohttp.ClientError,asyncio.TimeoutError,ValueError) as error:
+                    entry["error"]=f"{type(error).__name__}: {error}"
+                    transport_errors+=1
+                    if isinstance(error,aiohttp.ClientSSLError) or transport_errors>=5 or isinstance(error,ValueError):
+                        reason="probe_transport_or_content_failure"
+                entry["bytes"]=len(body)
+                results.append(entry)
+                log.write(json.dumps(entry)+"\n");log.flush()
+                if reason:break
                 await asyncio.sleep(1)
     good = [r for r in results if r["valid"]]
-    require(len(good) >= 270, "probe coverage below ninety percent")
-    write_new(study / "probe-summary.json", dict(requests=len(results), valid=len(good),
-              mean_bytes=statistics.mean(r["bytes"] for r in good),
-              ttfb_p50_s=statistics.median(r["ttfb_s"] for r in good)))
+    passed=len(results)==300 and len(good)>=270 and reason is None
+    summary=dict(passed=passed,reason=reason or (None if passed else "probe_coverage"),requests=len(results),valid=len(good),
+                 mean_bytes=statistics.mean(r["bytes"] for r in good) if good else None,
+                 ttfb_p50_s=statistics.median(r["ttfb_s"] for r in good) if good else None)
+    write_new(study/"probe-summary.json",summary)
+    if not passed:terminal(study,summary["reason"])
+    return summary
 
 
 def build_main(study):

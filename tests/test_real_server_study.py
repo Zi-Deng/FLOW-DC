@@ -11,7 +11,8 @@ import threading
 import time
 import unittest
 from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
-from unittest.mock import patch
+from unittest.mock import AsyncMock,patch
+from types import SimpleNamespace
 
 import aiohttp
 
@@ -172,20 +173,112 @@ class DesignTests(unittest.TestCase):
                 prepare.guest_check(root)
             self.assertEqual(client.open.call_args.args[0],'http://169.254.169.254/openstack/latest/meta_data.json')
 
+    def test_phase_gate_failures_stop_without_replaying(self):
+        for count,gate,reason in ((4,'build_main','calibration_infeasible'),(16,'select_fixed','fixed_selection_unavailable')):
+            with self.subTest(count=count),tempfile.TemporaryDirectory() as d:
+                root=Path(d)
+                common.write_new(root/'probe-summary.json',{'ttfb_p50_s':.02})
+                old=[dict(r,complete=True,fatal=False,status='complete',termination_reason=None) for r in design.schedule()[:count]]
+                with patch.object(runner,'guest_check'),patch.object(runner,'protocol_check'),patch.object(runner,'records',return_value=old), \
+                     patch.object(runner,'read_lines',return_value=[]),patch.object(runner,gate,side_effect=ValueError('fixture gate')),patch.object(runner,'execute') as execute:
+                    result=runner.run_window(root,root)
+                self.assertEqual(result['status'],'stopped');execute.assert_not_called()
+                self.assertEqual(common.read_json(root/'STOP.json')['reason'],reason)
+
+    def test_verification_reserve_scales_and_constrains_work_before_main(self):
+        cal=[dict(rows=8192,verification_s=60,finalization_s=10,complete=True,
+                  verification={'credited_rows':8192},acquisition_s=80)]*4
+        plan=design.slice_size(cal,150000,600000)
+        self.assertEqual(plan['rows_per_main_run'],12288)
+        budget=runner.execution_budget(plan['rows_per_main_run'],cal)
+        self.assertGreaterEqual(budget['total'],300+budget['verification']+budget['finalization']+30)
+        self.assertGreater(budget['verification'],120)
+        with self.assertRaises(ValueError):runner.execution_budget(32768,cal)
+
+    def test_provisional_and_audit_timeout_never_receive_credit(self):
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d);runs=design.schedule()
+            common.write_new(root/'schedule.json',{'runs':runs});common.write_new(root/'protocol.json',{})
+            first=root/'runs'/runs[0]['run_id'];first.mkdir(parents=True)
+            common.write_new(first/'incomplete-record.json',dict(runs[0],complete=False,status='interrupted',evidence={}))
+            second=root/'runs'/runs[1]['run_id'];second.mkdir()
+            (second/'evidence.txt').write_text('fixture')
+            common.write_new(second/'record.json',dict(runs[1],complete=True,status='complete',evidence={'evidence.txt':common.file_hash(second/'evidence.txt')}))
+            r=analyze.analyze(root,seconds=0)
+            self.assertEqual(r['recorded_runs'],2);self.assertEqual(r['complete_runs'],0)
+            self.assertEqual(r['analysis_incomplete_runs'],1);self.assertFalse(r['primary']['claim_supported'])
+            self.assertEqual(r['runs'][0]['status'],'interrupted')
+
+    def test_runtime_allocation_can_refresh_a_pending_preparation(self):
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d);facts=dict(allocation='CIS240296',expiry_date='2027-04-17',cpu_su=2000,
+                                   observed_at=dt.datetime.now(dt.UTC).isoformat())
+            common.write_new(root/'allocation.json',facts)
+            common.write_new(root/'operator.json',dict(source='/unused',allocation_file=str(root/'allocation.json')))
+            common.write_new(root/'deployment.json',dict(source={'head':'fixture'},allocation=dict(facts,cpu_su=None)))
+            with patch.object(cloud,'source_identity',return_value={'head':'fixture'}),patch.object(cloud.subprocess,'run',return_value=SimpleNamespace(returncode=0)):
+                cloud.merged_gate(root)
+            observation=common.read_json(next(root.glob('allocation-observation-*.json')))
+            self.assertEqual(observation['facts']['cpu_su'],2000)
+            self.assertIsNone(common.read_json(root/'deployment.json')['allocation']['cpu_su'])
+
 
 class NetworkTests(unittest.TestCase):
     def setUp(self):
         class Handler(BaseHTTPRequestHandler):
             protocol_version='HTTP/1.1'
             def do_GET(self):
-                self.send_response(200);self.send_header('Content-Length','32');self.end_headers()
+                self.server.handled+=1
+                self.send_response(self.server.response_status);self.send_header('Content-Length','32');self.end_headers()
                 self.wfile.write(b'x');self.wfile.flush();time.sleep(.25)
                 self.wfile.write(b'x'*31)
             def log_message(self,*args):pass
         self.server=ThreadingHTTPServer(('127.0.0.1',0),Handler)
+        self.server.handled=0;self.server.response_status=200
         self.server.daemon_threads=True
         thread=threading.Thread(target=self.server.serve_forever,daemon=True);thread.start()
         self.addCleanup(self.server.server_close);self.addCleanup(self.server.shutdown)
+
+    def test_probe_refusal_timeout_and_lease_have_terminal_evidence(self):
+        import polars as pl
+        original_timeout=aiohttp.ClientTimeout
+        for mode in ('refusal','timeout','deadline'):
+            with self.subTest(mode=mode),tempfile.TemporaryDirectory() as d:
+                root=Path(d);common.write_new(root/'host-gate.json',dict(ignore_time=False))
+                url=f'http://127.0.0.1:{self.server.server_port}/probe'
+                pl.DataFrame({'url':[url]}).write_parquet(root/'probe.parquet')
+                self.server.response_status=503 if mode=='refusal' else 200
+                with patch.object(prepare,'guest_check'),patch.object(prepare,'checked_url',side_effect=lambda u:u), \
+                     patch.object(prepare,'remaining',return_value=44 if mode=='deadline' else 600), \
+                     patch.object(aiohttp,'ClientTimeout',side_effect=lambda **kw:original_timeout(total=.02)), \
+                     patch.object(prepare.asyncio,'sleep',new_callable=AsyncMock):
+                    result=asyncio.run(prepare.probe(root))
+                self.assertFalse(result['passed']);self.assertTrue((root/'STOP.json').exists())
+                self.assertEqual(result['requests'],0 if mode=='deadline' else 1)
+                if mode=='timeout':self.assertIn('Timeout',prepare.read_lines(root/'probe-results.jsonl')[0]['error'])
+
+    def test_header_trace_stop_precedes_actual_wire_write(self):
+        import single_download
+        async def run():
+            url=f'http://127.0.0.1:{self.server.server_port}/not-sent'
+            stream=io.StringIO();g=telemetry.Guard([url],stream,1)
+            check=g.check;calls=0
+            def stop_at_header_trace():
+                nonlocal calls
+                calls+=1
+                if calls==2:g.policy.reason='fixture_stop'
+                check()
+            with patch.object(telemetry,'checked_url',side_effect=lambda u:u),patch.object(g,'check',side_effect=stop_at_header_trace):
+                restore=g.install()
+                try:
+                    async with aiohttp.ClientSession() as session:
+                        await single_download.download_via_http_get(session,url,10)
+                finally:
+                    if g.sampler:g.sampler.cancel();await asyncio.gather(g.sampler,return_exceptions=True)
+                    restore()
+            self.assertEqual(calls,2);self.assertEqual(self.server.handled,0)
+            self.assertFalse(any(e['event']=='dispatch' for e in map(json.loads,stream.getvalue().splitlines())))
+        asyncio.run(run())
 
     def test_actual_native_three_methods_and_independent_archive_verifier(self):
         import download_batch
