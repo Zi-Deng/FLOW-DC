@@ -7,6 +7,7 @@ import socket
 from pathlib import Path
 import sys
 import tempfile
+import tarfile
 import threading
 import time
 import unittest
@@ -208,6 +209,83 @@ class DesignTests(unittest.TestCase):
             self.assertEqual(r['recorded_runs'],2);self.assertEqual(r['complete_runs'],0)
             self.assertEqual(r['analysis_incomplete_runs'],1);self.assertFalse(r['primary']['claim_supported'])
             self.assertEqual(r['runs'][0]['status'],'interrupted')
+            with patch.object(analyze,'audit_record'):
+                refreshed=analyze.analyze(root)
+            self.assertEqual(refreshed['analysis_incomplete_runs'],0)
+            self.assertEqual(refreshed['complete_runs'],1)
+            self.assertEqual(len(list((root/'runs').iterdir())),2)
+
+    def test_window_capacity_fast_and_worst_case_one_run_per_window(self):
+        import polars as pl
+        capacity=cloud.capacity_plan()
+        self.assertGreaterEqual(capacity['contingency_windows'],2)
+        for duration in (100,810):
+            with self.subTest(duration=duration),tempfile.TemporaryDirectory() as d:
+                root=Path(d);runs=design.schedule();elapsed=[0]
+                common.write_new(root/'schedule.json',{'runs':runs})
+                common.write_new(root/'main-plan.json',{})
+                common.write_new(root/'probe-summary.json',{'ttfb_p50_s':.02})
+                (root/'slices').mkdir()
+                for r in runs:pl.DataFrame({'url':['fixture']}).write_parquet(root/'slices'/f"{r['slice']}.parquet")
+                def execute(study,source,run,budget):
+                    directory=study/'runs'/run['run_id'];directory.mkdir(parents=True)
+                    row=dict(run,complete=True,status='complete',fatal=False,termination_reason=None,
+                             cooldown_until_utc=0,rows=1,verification_s=0,finalization_s=0)
+                    common.write_new(directory/'record.json',row);common.write_new(directory/'attempt.json',{})
+                    (directory/'request-audit.jsonl').write_text('')
+                    elapsed[0]+=duration
+                    return row
+                def sleep(seconds):elapsed[0]+=seconds
+                with patch.object(runner,'guest_check'),patch.object(runner,'protocol_check'),patch.object(runner,'check_inputs'), \
+                     patch.object(runner,'remaining',side_effect=lambda _:1020-elapsed[0]),patch.object(runner,'execute',side_effect=execute), \
+                     patch.object(runner.time,'sleep',side_effect=sleep),patch.object(runner,'select_fixed',return_value={'fixed-low':2,'fixed-high':8}), \
+                     patch.object(runner.shutil,'disk_usage',return_value=SimpleNamespace(free=200*2**30,used=0)):
+                    for window in range(1,common.MAX_WINDOWS-1):
+                        elapsed[0]=0
+                        result=runner.run_window(root,root)
+                        if result['status']=='complete':break
+                self.assertEqual(result['status'],'complete');self.assertEqual(len(runner.records(root)),28)
+                self.assertLessEqual(window+2,common.MAX_WINDOWS)  # bootstrap and collection
+                if duration==100:self.assertLess(window,14)
+
+    def test_closed_collection_and_report_retry_do_not_activate(self):
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d);raw=b'{"fixture":true}'
+            with tarfile.open(root/'return.tar','w') as archive:
+                info=tarfile.TarInfo('analysis/results.json');info.size=len(raw);archive.addfile(info,io.BytesIO(raw))
+            common.write_new(root/'terminal.json',{'status':'complete','runs':28})
+            with patch.object(cloud,'controller_for',side_effect=AssertionError('must not activate')),patch.object(cloud,'merged_gate',side_effect=AssertionError('offline')):
+                with patch.object(analyze,'report',side_effect=RuntimeError('temporary PDF failure')),self.assertRaises(RuntimeError):
+                    cloud.run_windows(root)
+                with patch.object(analyze,'report'):
+                    self.assertEqual(cloud.run_windows(root)['runs'],28)
+            self.assertEqual((root/'collected/analysis/results.json').read_bytes(),raw)
+
+    def test_partial_metadata_transfer_is_replaced_without_acquisition(self):
+        import subprocess
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d);raw=b'{"fixture":true}'
+            with tarfile.open(root/'fixture.tar','w') as archive:
+                info=tarfile.TarInfo('analysis/results.json');info.size=len(raw);archive.addfile(info,io.BytesIO(raw))
+            common.write_new(root/'operator.json',dict(guest_python='unused',guest_root='/unused'))
+            (root/'return.partial').write_bytes(b'interrupted transport')
+            popen=subprocess.Popen
+            def transfer(*args,**kwargs):
+                return popen([sys.executable,'-c','import pathlib,sys;sys.stdout.buffer.write(pathlib.Path(sys.argv[1]).read_bytes())',str(root/'fixture.tar')],**kwargs)
+            with patch.object(cloud,'ssh_configuration',return_value='unused'),patch.object(subprocess,'Popen',side_effect=transfer), \
+                 patch('shutil.disk_usage',return_value=SimpleNamespace(free=100*2**30)):
+                target=cloud.collect(root)
+            self.assertFalse((root/'return.partial').exists())
+            self.assertEqual((target/'analysis/results.json').read_bytes(),raw)
+
+    def test_artifact_budget_counts_loose_files_and_journals(self):
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d)
+            with patch.object(runner,'guest_check'),patch.object(runner,'protocol_check'),patch.object(runner,'records',return_value=[]), \
+                 patch.object(runner.shutil,'disk_usage',return_value=SimpleNamespace(free=100*2**30,used=150*2**30)):
+                result=runner.run_window(root,root)
+            self.assertEqual(result['status'],'stopped')
+            self.assertEqual(common.read_json(root/'STOP.json')['reason'],'artifact_budget')
 
     def test_runtime_allocation_can_refresh_a_pending_preparation(self):
         with tempfile.TemporaryDirectory() as d:

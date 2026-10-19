@@ -13,7 +13,7 @@ import time
 from pathlib import Path
 from uuid import uuid4
 
-from .common import file_hash, read_json, require, source_identity, utc, write_new
+from .common import CAMPAIGN_SECONDS, MAX_WINDOWS, OPERATIONAL_SU, file_hash, read_json, require, source_identity, utc, write_new
 
 
 def imports(source):
@@ -23,11 +23,22 @@ def imports(source):
     return Journal,allowance,allowance_binding_sha256,account_digest
 
 
+def capacity_plan():
+    # One worst-case run per window, distinct bootstrap/analysis/collection,
+    # plus five contingency windows. No extra scientific attempts are granted.
+    required=28+3
+    require(MAX_WINDOWS>=required+2 and MAX_WINDOWS*1800<=CAMPAIGN_SECONDS,"insufficient worst-case window capacity")
+    require(300+300+180+30<=1020 and 32*CAMPAIGN_SECONDS/3600<=OPERATIONAL_SU,"execution/SU capacity insufficient")
+    return {"scientific_runs":28,"core_windows":required,"contingency_windows":MAX_WINDOWS-required,
+            "worst_case_run_seconds":810,"nominal_envelope_su":32*CAMPAIGN_SECONDS/3600}
+
+
 def prepare_packet(source, directory, state, allocation, ssh_config, guest_python):
     source, directory, state = Path(source).resolve(),Path(directory).resolve(),Path(state).resolve()
     require(not directory.exists(), "deployment packet exists; preserve it")
     require(not subprocess.check_output(["git","-C",str(source),"status","--porcelain","--untracked-files=normal"],
             text=True,timeout=30).strip(), "deployment requires a clean committed source worktree")
+    capacity=capacity_plan()
     Journal,allowance,binding,account_digest = imports(source)
     j=Journal(state).read()
     require(j["desired"]=="idle" and not any(v["account"]["obligation"] or v["account"]["uncertain"] for v in j["vms"].values()), "outstanding accounting/cleanup")
@@ -38,7 +49,7 @@ def prepare_packet(source, directory, state, allocation, ssh_config, guest_pytho
     campaign=str(uuid4())
     rates={v["id"]:v["rate"]["su_per_hour"] for v in selected.values()}
     limits={key:max(allowance(j["vms"][key]["account"]).effective_limit+1,
-                    math.ceil(allowance(j["vms"][key]["account"]).consumed)+28800) for key in rates}
+                    math.ceil(allowance(j["vms"][key]["account"]).consumed)+CAMPAIGN_SECONDS) for key in rates}
     preview=sum((limits[k]-j["vms"][k]["account"]["consumed"])*rates[k]/3600 for k in rates)
     require(preview <= 1000, "existing-account preview exceeds selected 1000SU authorization bound")
     directory.mkdir(mode=0o700,parents=True)
@@ -46,12 +57,15 @@ def prepare_packet(source, directory, state, allocation, ssh_config, guest_pytho
         subprocess.run(["git","-C",str(source),"archive","HEAD"],stdout=output,check=True,timeout=60)
     identity=source_identity(source)
     protocol={"schema":"flowdc-external-deployment-v1","campaign_id":campaign,"source":identity,
+              "capacity_plan":capacity,
               "source_archive_sha256":file_hash(directory/"source.tar"),"selected":{k:v["id"] for k,v in selected.items()},
-              "max_windows":16,"max_window_seconds":1800,"deadline_seconds":28800,
-              "operational_budget_su":320,"controller_authorization_budget_su":1000,
+              "max_windows":MAX_WINDOWS,"max_window_seconds":1800,"deadline_seconds":CAMPAIGN_SECONDS,
+              "operational_budget_su":OPERATIONAL_SU,"controller_authorization_budget_su":1000,
               "allocation":facts,"registered_rate_total_per_hour":sum(rates.values()),
               "conservative_grant_preview_su":preview,"storage_gib":256,"retention_cap_gib":160,
               "reserve_gib":40,"cleanup":"all registered guests freshly SHELVED_OFFLOADED; preserve volume/evidence"}
+    protocol.update(storage_accounting="total campaign-volume filesystem use; includes loose outputs and journals",
+                    metadata_transfer_cap_gib=8,local_cache_peak_gib=16)
     write_new(directory/"deployment.json",protocol)
     grant={"schema":"flowdc-campaign-authorization-v1","campaign_id":campaign,
            "registration_id":j["registration_id"],"expected_binding_sha256":binding(j),
@@ -117,7 +131,7 @@ def allocation_gate(deployment):
     observed=dt.datetime.fromisoformat((facts.get("observed_at") or facts["reported_at"]).replace("Z","+00:00"))
     require(observed.tzinfo is not None and 0<=time.time()-observed.timestamp()<=86400,"allocation observation stale")
     cutoff=dt.datetime.fromisoformat(facts["expiry_date"]).replace(tzinfo=dt.UTC).timestamp()
-    require(time.time()+32400<cutoff,"allocation cutoff does not cover campaign and cleanup")
+    require(time.time()+CAMPAIGN_SECONDS+3600<cutoff,"allocation cutoff does not cover campaign and cleanup")
 
 
 def execution_receipt(deployment, operator, seconds, hostname):
@@ -245,8 +259,8 @@ def bootstrap(packet,allocation=None):
     request=read_json(packet/"grant-template.json")
     request.update(expected_binding_sha256=binding(j),expected_accounts_sha256=account_digest(j),
                    cumulative_limits_seconds={k:max(allowance(j["vms"][k]["account"]).effective_limit+1,
-                       math.ceil(j["vms"][k]["account"]["consumed"])+28800) for k in chosen},
-                   expires_at=dt.datetime.fromtimestamp(now+28800,dt.UTC).isoformat())
+                       math.ceil(j["vms"][k]["account"]["consumed"])+CAMPAIGN_SECONDS) for k in chosen},
+                   expires_at=dt.datetime.fromtimestamp(now+CAMPAIGN_SECONDS,dt.UTC).isoformat())
     write_new(packet/"grant.json",request)
     service=j["service"]
     command=[service["interpreter"],"-E","-s","-B",str(Path(service["release"])/"flowdc_ops.py"),
@@ -265,58 +279,74 @@ def bootstrap(packet,allocation=None):
         installation=stage(packet)
         require(installation["source_archive_sha256"]==deployment["source_archive_sha256"],"installation source mismatch")
         outcome=guest(packet,controller,0)
-        if outcome["status"] in ("complete","stopped"):collect(packet)
+        if outcome["status"] in ("complete","stopped"):
+            write_new(packet/"terminal.json",outcome)
     finally:
         cleanup(packet,controller,packet/"window-00.json",outcome)
-    if outcome["status"] in ("complete","stopped"):
-        from .analyze import report
-        report(packet/"collected")
     return outcome
 
 
 def collect(packet):
+    """Retry only a metadata transfer; closed transfers/extractions are reusable."""
+    import contextlib
     import os
     import selectors
+    import shutil
     import signal
     import tarfile
-    op=read_json(packet/"operator.json")
-    script=r'''import pathlib,sys,tarfile
+    packet=Path(packet)
+    target=packet/"collected"
+    if target.exists():return target
+    closed=packet/"return.tar"
+    if not closed.exists():
+        require(shutil.disk_usage(packet).free>=56*2**30,"metadata transfer/extraction would consume local reserve")
+        op=read_json(packet/"operator.json")
+        script="""import pathlib,sys,tarfile
 root=pathlib.Path(sys.argv[1])
+paths=list(root.glob('*'))+list(root.glob('analysis/*'))+list(root.glob('runs/*/*'))
 with tarfile.open(fileobj=sys.stdout.buffer,mode='w|') as archive:
- for p in root.rglob('*'):
-  rel=p.relative_to(root)
-  if p.is_file() and not p.is_symlink() and len(rel.parts)<=3 and p.suffix in ('.json','.jsonl','.log','.tex','.pdf'):
-   archive.add(p,arcname=str(rel),recursive=False)
-'''
-    require(not (packet/"collected").exists(),"collection exists; do not overwrite it")
-    command=[op["guest_python"],"-c",script,op["guest_root"]+"/study"]
-    with (packet/"return.tar").open("xb") as out:
-        proc=subprocess.Popen(["ssh","-F",ssh_configuration(packet),"--","worker",shlex.join(command)],
-                              stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,start_new_session=True)
-        count,deadline=0,time.monotonic()+180
-        try:
-            with selectors.DefaultSelector() as selector:
-                selector.register(proc.stdout,selectors.EVENT_READ)
-                while selector.get_map():
-                    require(time.monotonic()<deadline,"collection deadline")
-                    for key,_ in selector.select(.2):
-                        chunk=os.read(key.fd,min(1024*1024,8*2**30+1-count))
-                        if not chunk:
-                            selector.unregister(key.fileobj);continue
-                        count+=len(chunk)
-                        require(count<=8*2**30,"collection exceeds cache bound")
-                        out.write(chunk)
-                while os.waitid(os.P_PID,proc.pid,os.WEXITED|os.WNOHANG|os.WNOWAIT) is None:
-                    require(time.monotonic()<deadline,"collection exit deadline")
-                    time.sleep(.01)
-        finally:
-            with __import__('contextlib').suppress(ProcessLookupError):os.killpg(proc.pid,signal.SIGKILL)
-            code=proc.wait(timeout=5);proc.stdout.close()
-    require(code==0,"collection failed; preserve partial bytes")
-    target=packet/"collected";target.mkdir()
-    with tarfile.open(packet/"return.tar") as archive:
+ for p in sorted(paths):
+  if p.is_file() and not p.is_symlink() and p.suffix in ('.json','.jsonl','.log','.tex','.pdf'):
+   archive.add(p,arcname=str(p.relative_to(root)),recursive=False)
+"""
+        command=[op["guest_python"],"-c",script,op["guest_root"]+"/study"]
+        partial=packet/"return.partial"
+        if partial.exists():
+            require(partial.is_file() and not partial.is_symlink(),"unsafe partial transfer")
+            partial.unlink()  # Regenerable transfer bytes; guest originals stay intact.
+        with partial.open("xb") as out:
+            proc=subprocess.Popen(["ssh","-F",ssh_configuration(packet),"--","worker",shlex.join(command)],
+                                  stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,start_new_session=True)
+            count,deadline=0,time.monotonic()+900
+            try:
+                with selectors.DefaultSelector() as selector:
+                    selector.register(proc.stdout,selectors.EVENT_READ)
+                    while selector.get_map():
+                        require(time.monotonic()<deadline,"collection deadline")
+                        for key,_ in selector.select(.2):
+                            chunk=os.read(key.fd,min(1024*1024,8*2**30+1-count))
+                            if not chunk:
+                                selector.unregister(key.fileobj);continue
+                            count+=len(chunk)
+                            require(count<=8*2**30,"collection exceeds cache bound")
+                            out.write(chunk)
+                    while os.waitid(os.P_PID,proc.pid,os.WEXITED|os.WNOHANG|os.WNOWAIT) is None:
+                        require(time.monotonic()<deadline,"collection exit deadline")
+                        time.sleep(.01)
+            finally:
+                with contextlib.suppress(ProcessLookupError):os.killpg(proc.pid,signal.SIGKILL)
+                code=proc.wait(timeout=5);proc.stdout.close()
+        require(code==0,"collection failed; guest evidence preserved")
+        partial.replace(closed)
+    temporary=packet/"collected.partial"
+    if temporary.exists():
+        require(temporary.is_dir() and not temporary.is_symlink(),"unsafe partial extraction")
+        shutil.rmtree(temporary)
+    temporary.mkdir()
+    with tarfile.open(closed,mode="r:") as archive:
         require(all(m.isfile() and not Path(m.name).is_absolute() and ".." not in Path(m.name).parts for m in archive.getmembers()),"unsafe collection")
-        archive.extractall(target,filter="data")
+        archive.extractall(temporary,filter="data")
+    temporary.replace(target)
     return target
 
 
@@ -325,25 +355,30 @@ def run_windows(packet,allocation=None):
     from .common import lock
     from .storage import mount
     packet=Path(packet).resolve()
+    # Local report/extraction recovery never starts a VM or needs a new grant.
+    if (packet/"terminal.json").exists() and ((packet/"collected").exists() or (packet/"return.tar").exists()):
+        from .analyze import report
+        report(collect(packet))
+        return read_json(packet/"terminal.json")
     deployment,op=merged_gate(packet,allocation)
     require((packet/"deployment-receipt.json").exists(),"bootstrap not completed")
     Journal,_,_,_=imports(op["source"]);journal=Journal(op["state"])
     clock,baseline=read_json(packet/"clock.json"),read_json(packet/"account-baseline.json")
     require(clock["boot_id"]==Path("/proc/sys/kernel/random/boot_id").read_text().strip(),"control host reboot")
     with lock(packet/"controller.lock"):
-        for number in range(1,16):
+        for number in range(1,MAX_WINDOWS):
             path=packet/f"window-{number:02}.json"
             if path.exists():
                 require(read_json(path)["cleaned"],"previous cleanup unresolved")
                 continue
             require(not (packet/f"window-{number:02}-intent.json").exists(),"unfinished window intent requires diagnosis")
-            left=min(clock["utc_epoch"]+28800-time.time(),clock["monotonic"]+28800-time.monotonic())
+            left=min(clock["utc_epoch"]+CAMPAIGN_SECONDS-time.time(),clock["monotonic"]+CAMPAIGN_SECONDS-time.monotonic())
             require(left>=1800,"whole window cannot fit before original deadline")
             j=journal.read();chosen=list(deployment["selected"].values())
             require(all(j["vms"][k]["account"].get("campaign_id")==deployment["campaign_id"] for k in chosen),"campaign binding changed")
             exposure=sum((j["vms"][v["id"]]["account"]["consumed"]-baseline[v["id"]])*v["rate"]["su_per_hour"]/3600
                          for v in j["spec"]["vms"] if v["id"] in chosen)
-            require(exposure+32<=320,"operational SU budget exhausted")
+            require(exposure+32<=OPERATIONAL_SU,"operational SU budget exhausted")
             from flowdc_pilot_provider import Provider
             import flowdc_ops as ops
             write_new(packet/f"window-{number:02}-rates-{time.time_ns()}.json",verify_rates(Provider(ops.load_profile(j["profile_path"])),j,deployment))
@@ -354,19 +389,24 @@ def run_windows(packet,allocation=None):
                 controller.call("start",seconds=30,window=1800);wait_active(controller)
                 refresh_ssh(packet,controller)
                 mount(packet)
-                outcome=guest(packet,controller,number,final=number==15 or left<3600 or exposure+64>320)
+                outcome=(read_json(packet/"terminal.json") if (packet/"terminal.json").exists() else
+                         guest(packet,controller,number,final=number>=MAX_WINDOWS-3 or left<5400 or exposure+96>OPERATIONAL_SU))
+                if outcome["status"]=="analysis_pending" and (number>=MAX_WINDOWS-2 or left<3600 or exposure+64>OPERATIONAL_SU):
+                    outcome={"status":"stopped","reason":"analysis_budget_exhausted","runs":outcome["runs"]}
                 if outcome["status"] in ("complete","stopped"):
-                    collect(packet)
+                    if not (packet/"terminal.json").exists():write_new(packet/"terminal.json",outcome)
+                    from flowdc_experiment_transport import remaining as window_remaining
+                    if window_remaining(controller.call("status"))>=1020:collect(packet)
             finally:
                 cleanup(packet,controller,path,outcome)
-            if outcome and outcome["status"] in ("complete","stopped"):
+            if outcome and outcome["status"] in ("complete","stopped") and (packet/"collected").exists():
                 from .analyze import report
                 report(packet/"collected")
                 return outcome
             if outcome and outcome["status"]=="cooldown":
                 seconds=max(0,outcome["until_utc"]-time.time())
-                require(seconds<clock["utc_epoch"]+28800-time.time(),"cooldown cannot fit")
+                require(seconds<clock["utc_epoch"]+CAMPAIGN_SECONDS-time.time(),"cooldown cannot fit")
                 # Wait on the local control host while all guests are offloaded.
                 until=time.monotonic()+seconds
                 while time.monotonic()<until:time.sleep(min(30,until-time.monotonic()))
-        raise ValueError("sixteen-window envelope exhausted; no automatic additional attempts")
+        raise ValueError("finite window envelope exhausted; no automatic additional attempts")

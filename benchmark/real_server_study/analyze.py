@@ -7,7 +7,7 @@ from pathlib import Path
 import numpy as np
 from scipy import stats
 
-from .common import file_hash, read_json, require, write_new
+from .common import file_hash, read_json, require, replace_derived, write_new
 
 
 def summary(values, alpha=.05):
@@ -37,6 +37,27 @@ def lower(values):
     return s["ci"][0] if s["ci"] else None
 
 
+def audit_record(directory,r,study,deadline):
+    for name,digest in r["evidence"].items():
+        require(not Path(name).is_absolute() and ".." not in Path(name).parts and
+                file_hash(directory/name,deadline)==digest,"retained evidence changed")
+    if r["complete"]:
+        binding=read_json(directory/"attempt.json")
+        require(binding["protocol_sha256"]==file_hash(study/"protocol.json",deadline),"attempt protocol binding changed")
+        for field,name in (("main_plan_sha256","main-plan.json"),("fixed_selection_sha256","fixed-selection.json")):
+            if field in binding:require(binding[field]==file_hash(study/name,deadline),"attempt selection binding changed")
+        receipt=read_json(directory/"verification.json")
+        require(receipt.pop("observations")==r["observations"] and receipt==r["verification"],"verification receipt and results differ")
+        overview=read_json(directory/"native/overview.json")
+        for spec in overview["http_observations"]["files"]+overview["control_trajectories"]:
+            name=spec["path"]
+            require(not Path(name).is_absolute() and ".." not in Path(name).parts and
+                    file_hash(directory/"native"/name,deadline)==spec["sha256"],"retained observations/trace changed")
+        require(r["elapsed_s"] == r["ended_monotonic"]-r["started_monotonic"] and
+                r["goodput_Bps"] == r["verification"]["credited_bytes"]/r["elapsed_s"] and
+                r["coverage"] == r["verification"]["credited_rows"]/r["rows"], "primary arithmetic mismatch")
+
+
 def analyze(study,seconds=None):
     study = Path(study)
     deadline=time.monotonic()+seconds if seconds is not None else None
@@ -54,27 +75,10 @@ def analyze(study,seconds=None):
         require(all(r[k] == v for k,v in run.items()), "scheduled run changed")
         hashes[run["run_id"]] = {"file":record_path.name,"sha256":file_hash(record_path)}
         try:
-            for name,digest in r["evidence"].items():
-                require(not Path(name).is_absolute() and ".." not in Path(name).parts and
-                        file_hash(directory/name,deadline)==digest,"retained evidence changed")
+            audit_record(directory,r,study,deadline)
         except TimeoutError:
             rows.append({**run,"complete":False,"status":"analysis_incomplete","goodput_Bps":None,"coverage":None})
             continue
-        if r["complete"]:
-            binding=read_json(directory/"attempt.json")
-            require(binding["protocol_sha256"]==file_hash(study/"protocol.json"),"attempt protocol binding changed")
-            for field,name in (("main_plan_sha256","main-plan.json"),("fixed_selection_sha256","fixed-selection.json")):
-                if field in binding:require(binding[field]==file_hash(study/name),"attempt selection binding changed")
-            receipt=read_json(directory/"verification.json")
-            require(receipt.pop("observations")==r["observations"] and receipt==r["verification"],"verification receipt and results differ")
-            overview=read_json(directory/"native/overview.json")
-            for spec in overview["http_observations"]["files"]+overview["control_trajectories"]:
-                name=spec["path"]
-                require(not Path(name).is_absolute() and ".." not in Path(name).parts and
-                        file_hash(directory/"native"/name)==spec["sha256"],"retained observations/trace changed")
-            require(r["elapsed_s"] == r["ended_monotonic"]-r["started_monotonic"] and
-                    r["goodput_Bps"] == r["verification"]["credited_bytes"]/r["elapsed_s"] and
-                    r["coverage"] == r["verification"]["credited_rows"]/r["rows"], "primary arithmetic mismatch")
         rows.append(r)
     by = {(r["block"],r["arm"]):r for r in rows if r["phase"]=="adaptive" and r["complete"]}
     pairs = [(by[(b,"gradient-candidate-v1")],by[(b,"ratio-v1")]) for b in range(1,7)
@@ -100,7 +104,11 @@ def analyze(study,seconds=None):
     (study/"analysis").mkdir(exist_ok=True)
     target=study/"analysis/results.json"
     if target.exists():
-        require(read_json(target)==result,"reanalysis differs; preserve the existing result and diagnose")
+        old=read_json(target)
+        if old.get("analysis_incomplete_runs",0):
+            replace_derived(target,result)
+        else:
+            require(old==result,"completed reanalysis differs; preserve the existing result and diagnose")
     else:
         write_new(target,result)
     return result

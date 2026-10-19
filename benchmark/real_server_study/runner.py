@@ -206,7 +206,7 @@ def run_window(study, source):
     if (study/"STOP.json").exists():
         return terminal(study,"previous_stop")
     with lock(study/"study.lock"):
-        for _ in range(2):
+        while True:
             try:
                 old = records(study)
             except ValueError as error:
@@ -235,8 +235,9 @@ def run_window(study, source):
                 return {"status":"cooldown","until_utc":time.time()+wait,"runs":len(old)}
             if shutil.disk_usage(study).free < RESERVE:
                 return terminal(study,"storage_reserve")
-            retained = sum(p.stat().st_size for p in study.glob("runs/*/native.tar"))
-            if retained + 8*2**30 > ARTIFACT_CAP:
+            # The volume is campaign-owned. Count journals, loose duplicates,
+            # runtime and filesystem use as well as archives; reserve peak space.
+            if shutil.disk_usage(study).used + 20*2**30 > ARTIFACT_CAP:
                 return terminal(study,"artifact_budget")
             run = read_json(study/"schedule.json")["runs"][len(old)]
             rows=pl.scan_parquet(study/"slices"/f"{run['slice']}.parquet").select(pl.len()).collect().item()

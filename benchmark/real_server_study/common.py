@@ -8,6 +8,7 @@ import math
 import os
 import ssl
 import subprocess
+import tempfile
 import time
 import urllib.request
 import warnings
@@ -26,6 +27,9 @@ IMAGE_PIXELS = 89_478_485
 MAX_OBJECT = 64 * 2**20
 RESERVE = 40 * 2**30
 ARTIFACT_CAP = 160 * 2**30
+MAX_WINDOWS = 36
+CAMPAIGN_SECONDS = MAX_WINDOWS * 1800
+OPERATIONAL_SU = 640
 CORE = ("bin/download_batch.py", "bin/single_download.py", "bin/flowdc_methods.py", "bin/flowdc_integrity.py")
 
 
@@ -69,6 +73,15 @@ def write_new(path, value):
         stream.write(raw)
         stream.flush()
         os.fsync(stream.fileno())
+
+
+def replace_derived(path,value):
+    """Replace a regenerable result, never a scientific first-attempt record."""
+    path=Path(path)
+    with tempfile.NamedTemporaryFile(dir=path.parent,delete=False) as stream:
+        temporary=Path(stream.name)
+        stream.write(encode(value));stream.flush();os.fsync(stream.fileno())
+    temporary.replace(path)
 
 
 def utc():

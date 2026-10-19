@@ -94,22 +94,35 @@ environment/source, probes and cleans up. Ownership, device serial and filesyste
 identity are checked. No existing filesystem is formatted. Mutation intents are
 retained before dispatch; uncertain creation/attachment is not automatically retried.
 
-One eight-hour envelope,<=16 thirty-minute windows,600s/window cleanup reserve,
-320SUs planned operational exposure and1,000SUs controller authorization. The
+One eighteen-hour envelope,<=36 thirty-minute windows,600s/window cleanup reserve,
+640SUs operational ceiling and1,000SUs controller authorization. The
 latter includes unused cumulative allowance from the expired campaign and is not
 an expected bill. Preserve all prior grants/consumption/history/obligations.
 Stored rates total32SU/h; fresh identity/rate checks precede deployment. Provider
 delay is not a hard billing guarantee. Every exit requests cleanup and verifies
 fresh `SHELVED_OFFLOADED` and restored networking.
-The last available window is reserved for terminal analysis/collection if the
+The capacity check covers one worst-case run per window, separate bootstrap,
+analysis and collection windows, plus five contingency windows. More runs can
+share a window when the complete next-run reserve fits. This ceiling replaces
+the initial zero-slack 16-window proposal; it grants no additional acquisitions.
+At the stored rate, eighteen hours is 576SUs before provider overrun, below the
+640SU ceiling ([provider rates](https://docs.jetstream-cloud.org/general/instance-flavors/)).
+The last windows are reserved for terminal analysis/collection if the
 planned runs have not finished. Lease-limited probes, interrupted finalization
 and analysis-audit timeouts retain explicit noncreditable outcomes; they never
 authorize a replacement acquisition or an extra window.
 
-Keep<=160GiB artifacts and40GiB free reserve on the volume. Raw evidence remains
+Keep<=160GiB total campaign-volume use and40GiB free reserve; admission reserves
+20GiB of peak space for the next run, counting loose duplicates and journals.
+Raw evidence remains
 there after offload; no automatic evidence-volume deletion. Only bounded metadata
 and analyzed results are collected locally. Source changes, interrupted attempts,
 time/storage stops and missing evidence remain explicit; do not create extra runs.
+Metadata transfer is bounded to8GiB/900s with16GiB local peak space for transfer
+plus extraction, preserving40GiB free. Interrupted transfers can be replaced;
+closed transfers/extractions are reused, and PDF retries use collected files
+without VM activation. An incomplete derived analysis may be superseded by a
+full re-audit of the same retained first attempts; completed analyses remain fixed.
 
 ## Qualification and reports
 

@@ -66,11 +66,14 @@ def main():
             except (OSError,ValueError) as error:
                 terminal(args.study,"host_gate_failed",str(error))
         result=run_window(args.study,args.source)
-        if result["status"] in ("complete","stopped") and not (args.study/"analysis/results.json").exists():
+        target=args.study/"analysis/results.json"
+        if result["status"] in ("complete","stopped") and (not target.exists() or read_json(target).get("analysis_incomplete_runs",0)):
             if remaining(args.study)<930:
                 print(json.dumps({"status":"analysis_pending","runs":result["runs"]}));return
             from .analyze import analyze
-            analyze(args.study,seconds=min(900,remaining(args.study)-30))
+            analyzed=analyze(args.study,seconds=min(900,remaining(args.study)-30))
+            if analyzed["analysis_incomplete_runs"]:
+                result={"status":"analysis_pending","runs":result["runs"]}
         print(json.dumps(result))
     elif args.command in ("analyze","report"):
         from .analyze import analyze,report
