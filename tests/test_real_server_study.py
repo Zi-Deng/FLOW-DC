@@ -230,6 +230,27 @@ class DesignTests(unittest.TestCase):
                 cloud.operational_grant(packet,{'state':str(state)})
             self.assertEqual(target.read_bytes(),original)
 
+    def test_analysis_pending_uses_offline_auditor_without_extending_lease(self):
+        compile(cloud.AUDIT,'bounded-audit-fixture','exec')
+        for remains,expected_calls,status in [([840,800],2,'complete'),([840,150],1,'analysis_pending')]:
+            with tempfile.TemporaryDirectory() as d:
+                packet=Path(d)
+                common.write_new(packet/'deployment.json',{'campaign_id':'campaign'})
+                common.write_new(packet/'operator.json',{'guest_root':'/mnt/study','worker_id':'worker'})
+                common.write_new(packet/'deployment-receipt.json',{'python':'/mnt/study/venv/bin/python'})
+                answers=[b'{"status":"analysis_pending","runs":28}',b'{"status":"complete","runs":28}']
+                with patch('flowdc_experiment_transport.remaining',side_effect=remains), \
+                     patch.object(cloud,'ssh',side_effect=answers) as call:
+                    result=cloud.guest(packet,SimpleNamespace(call=lambda _:{}),9)
+                self.assertEqual((result['status'],call.call_count),(status,expected_calls))
+                if expected_calls==2:
+                    command=call.call_args.args[1]
+                    self.assertIn(cloud.AUDIT,command)
+                    self.assertIn('--property=RuntimeMaxSec=680',command)
+                    self.assertNotIn('guest-window',command)
+                    self.assertNotIn('--seconds',command)
+        with self.assertRaises(ValueError):cloud.collect(Path('/unused'),seconds=901)
+
     def test_guest_requires_observed_cloud_uuid(self):
         with tempfile.TemporaryDirectory() as d:
             root=Path(d)

@@ -219,6 +219,25 @@ def verify_rates(provider,record,deployment):
     return {"utc":utc(),"servers":rows}
 
 
+AUDIT = r'''
+import json,os,sys
+from pathlib import Path
+for name in ('POLARS_MAX_THREADS','OMP_NUM_THREADS','OPENBLAS_NUM_THREADS'):os.environ[name]='4'
+os.sched_setaffinity(0,sorted(os.sched_getaffinity(0))[:4])
+from benchmark.real_server_study.common import lock,read_json,remaining
+from benchmark.real_server_study.analyze import analyze
+study=Path(sys.argv[1]);seconds=min(900,int(sys.argv[2])-30,remaining(study)-30)
+result={'status':'analysis_pending','runs':int(sys.argv[3])}
+if seconds>0:
+ with lock(study/'study.lock'):
+  audited=analyze(study,seconds=seconds)
+ if not audited['analysis_incomplete_runs']:
+  result['status']='stopped' if (study/'STOP.json').exists() else 'complete'
+  if (study/'STOP.json').exists():result['reason']=read_json(study/'STOP.json')['reason']
+print(json.dumps(result))
+'''
+
+
 def guest(packet,controller,number,final=False):
     from flowdc_experiment_transport import remaining as window_remaining
     deployment,op=read_json(packet/"deployment.json"),read_json(packet/"operator.json")
@@ -234,7 +253,20 @@ def guest(packet,controller,number,final=False):
         "--property=RuntimeMaxSec="+str(int(allowed)),"--property=TimeoutStopSec=30","--property=KillMode=control-group",
         "--property=MemoryMax=24G","--property=CPUQuota=400%","--property=LimitNOFILE=4096","--property=UMask=0077",
         "--uid=exouser","--gid=exouser","--working-directory="+op["guest_root"]+"/source",*cmd]
-    return json.loads(ssh(packet,remote,timeout=allowed+45))
+    started=time.monotonic()
+    outcome=json.loads(ssh(packet,remote,timeout=allowed+45))
+    if outcome['status']=='analysis_pending':
+        # The frozen guest's930s admission is often unreachable after cold setup.
+        # Invoke the SAME offline auditor within the unextended original lease.
+        budget=int(min(allowed-(time.monotonic()-started),window_remaining(controller.call('status'))-120))
+        if budget>=60:
+            audit=remote[:]
+            audit[audit.index(unit)]=unit+'-audit'
+            audit[audit.index('--property=RuntimeMaxSec='+str(int(allowed)))]=('--property=RuntimeMaxSec='+str(budget))
+            audit=audit[:audit.index(installation['python'])]+[installation['python'],'-B','-c',AUDIT,
+                op['guest_root']+'/study',str(budget),str(outcome['runs'])]
+            outcome=json.loads(ssh(packet,audit,timeout=budget+30))
+    return outcome
 
 
 def operational_grant(packet,op):
@@ -309,7 +341,7 @@ def bootstrap(packet,allocation=None):
     return outcome
 
 
-def collect(packet):
+def collect(packet,seconds=900):
     """Retry only a metadata transfer; closed transfers/extractions are reusable."""
     import contextlib
     import os
@@ -318,6 +350,7 @@ def collect(packet):
     import signal
     import tarfile
     packet=Path(packet)
+    require(1<=seconds<=900,'collection deadline outside finite bound')
     target=packet/"collected"
     if target.exists():return target
     closed=packet/"return.tar"
@@ -340,7 +373,7 @@ with tarfile.open(fileobj=sys.stdout.buffer,mode='w|') as archive:
         with partial.open("xb") as out:
             proc=subprocess.Popen(["ssh","-F",ssh_configuration(packet),"--","worker",shlex.join(command)],
                                   stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,start_new_session=True)
-            count,deadline=0,time.monotonic()+900
+            count,deadline=0,time.monotonic()+seconds
             try:
                 with selectors.DefaultSelector() as selector:
                     selector.register(proc.stdout,selectors.EVENT_READ)
@@ -419,7 +452,8 @@ def run_windows(packet,allocation=None):
                 if outcome["status"] in ("complete","stopped"):
                     if not (packet/"terminal.json").exists():write_new(packet/"terminal.json",outcome)
                     from flowdc_experiment_transport import remaining as window_remaining
-                    if window_remaining(controller.call("status"))>=1020:collect(packet)
+                    seconds=int(min(900,window_remaining(controller.call("status"))-120))
+                    if seconds>=60:collect(packet,seconds=seconds)
             finally:
                 cleanup(packet,controller,path,outcome)
             if outcome and outcome["status"] in ("complete","stopped") and (packet/"collected").exists():

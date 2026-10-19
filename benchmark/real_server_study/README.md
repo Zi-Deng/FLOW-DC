@@ -111,7 +111,11 @@ the initial zero-slack 16-window proposal; it grants no additional acquisitions.
 At the stored rate, eighteen hours is 576SUs before provider overrun, below the
 640SU ceiling ([provider rates](https://docs.jetstream-cloud.org/general/instance-flavors/)).
 The last windows are reserved for terminal analysis/collection if the
-planned runs have not finished. Lease-limited probes, interrupted finalization
+planned runs have not finished. The unchanged offline auditor can use the time
+remaining in the original guest lease after cold setup, without extending that
+lease or starting acquisitions. Metadata transfer uses at most900s, clipped to
+the remaining work time with its cleanup margin intact.
+Lease-limited probes, interrupted finalization
 and analysis-audit timeouts retain explicit noncreditable outcomes; they never
 authorize a replacement acquisition or an extra window.
 
