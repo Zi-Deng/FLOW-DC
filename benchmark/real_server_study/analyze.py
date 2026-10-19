@@ -25,7 +25,9 @@ def summary(values, alpha=.05):
 
 
 def randomization(values):
-    require(len(values) == 6, "exact primary randomization requires six complete pairs")
+    # Historical output key exact_randomization_p denotes this 64-sign-flip
+    # sensitivity. It does not enumerate the balanced 3/3 order assignment.
+    require(len(values) == 6, "paired sign-flip sensitivity requires six complete pairs")
     observed = abs(sum(values))
     null = [abs(sum(s*d for s,d in zip(signs,values))) for signs in itertools.product((-1,1),repeat=6)]
     return sum(v >= observed-1e-9 for v in null)/len(null)
@@ -155,7 +157,8 @@ def report(study):
       r"\section{Principal comparison}",
       f"Gradient minus Ratio has {g['n']} complete paired blocks. The mean verified-goodput difference is {number(g['mean'],1e6)} decimal MB/s. "
       +("The ordinary 95\\% paired interval is ["+number(ci[0],1e6)+", "+number(ci[1],1e6)+"] MB/s. " if ci else "An interval is unavailable. ")+
-      f"The primary two-sided paired-test p value is {number(g['p'])}; exact paired-randomization sensitivity p is {number(result['primary']['exact_randomization_p'])}.",
+      f"The primary two-sided paired-test p value is {number(g['p'])}; planned 64-sign-flip sensitivity p is {number(result['primary']['exact_randomization_p'])}.",
+      "The sign-flip sensitivity assumes paired sign exchangeability. It does not enumerate the 20 assignments permitted by exactly balanced method order; it must not be described as that design's exact randomization test.",
       "The predeclared positive claim is "+("supported" if result['primary']['claim_supported'] else "not supported")+". "
       "It additionally requires coverage-loss and p95-delay safeguards; nonsignificance does not establish equivalence.",
       r"\begin{center}\includegraphics[width=\linewidth]{goodput.pdf}\end{center}",

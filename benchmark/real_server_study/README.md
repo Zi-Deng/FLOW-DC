@@ -34,9 +34,14 @@ and transport failures<1%. The source contains the exact deterministic rules.
 
 All Fixed runs follow all adaptive first attempts. Primary inference is the six
 paired Gradient–Ratio differences: two-sided paired t, ordinary95% intervals,
-exact paired randomization sensitivity, two one-sided alpha.025 safeguards
+paired64-sign-flip sensitivity, two one-sided alpha.025 safeguards
 (1percentage point coverage,10% run-level p95 latency). Comparisons against later
 Fixed are descriptive and confounded with time/phase. Requests are not replicates.
+The historical result key `exact_randomization_p` contains the64-sign-flip
+sensitivity under paired sign exchangeability. It is not an exact test of the
+balanced3/3method-order allocation, which permits20assignments. Report that
+distinction; a separate enumeration of the20allowed assignments is an additional
+design-consistent sensitivity and has minimum two-sided p=.1.
 
 Stops: five429/503s,1% rolling refusals after200 responses, or three qualifying
 10s latency windows>=3x probe baseline; honor Retry-After and10min cooldown across
