@@ -206,6 +206,39 @@ def wait_active(controller):
     return value
 
 
+def wait_ssh(packet,controller,number):
+    """Probe only /usr/bin/true; never replay a possibly dispatched mutation."""
+    from flowdc_experiment_transport import remaining
+    deadline=time.monotonic()+min(45,max(0,remaining(controller.call('status'))-30))
+    checks=[];ready=False
+    try:
+        for attempt in range(6):
+            left=deadline-time.monotonic()
+            if left<=0:break
+            transient=True
+            try:
+                result=subprocess.run(['ssh','-F',ssh_configuration(packet),'--','worker','/usr/bin/true'],
+                    stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=min(5,left))
+                error=result.stderr[-2048:].decode('utf8','replace')
+                checks.append({'returncode':result.returncode,'stderr':error})
+                if result.returncode==0:
+                    ready=True;break
+                transient=result.returncode==255 and any(text in error for text in
+                    ('Connection refused','Connection timed out','Connection reset','Connection closed'))
+            except subprocess.TimeoutExpired as exc:
+                error=(exc.stderr or b'')[-2048:].decode('utf8','replace')
+                checks.append({'returncode':None,'error':'read-only SSH probe timeout','stderr':error})
+            if any(text in error.lower() for text in ('permission denied','host key verification failed',
+                   'remote host identification has changed','bad permissions','unprotected private key file','no matching host key')):
+                transient=False
+            if not transient:break
+            if attempt<5:time.sleep(min(2,max(0,deadline-time.monotonic())))
+    finally:
+        write_new(packet/f'window-{number:02}-ssh-readiness.json',
+                  {'utc':utc(),'ready':ready,'checks':checks,'command':'/usr/bin/true','image_requests':0})
+    require(ready,'SSH readiness failed before guest mutation; no acquisition replay')
+
+
 def verify_rates(provider,record,deployment):
     """Fresh flavor identity must support the retained per-VM rate assumptions."""
     import flowdc_ops as ops
@@ -336,6 +369,7 @@ def bootstrap(packet,allocation=None):
     try:
         controller.call("start",seconds=30,window=1800);wait_active(controller)
         refresh_ssh(packet,controller)
+        wait_ssh(packet,controller,0)
         create_volume(packet,ops.load_profile(j["profile_path"]),op["worker_id"])
         mount(packet,new=True)
         installation=stage(packet)
@@ -428,8 +462,11 @@ def run_windows(packet,allocation=None):
     Journal,_,_,_=imports(op["source"]);journal=Journal(op["state"])
     clock,baseline=read_json(packet/"clock.json"),read_json(packet/"account-baseline.json")
     require(clock["boot_id"]==Path("/proc/sys/kernel/random/boot_id").read_text().strip(),"control host reboot")
+    window_limit=op.get('max_windows',deployment.get('max_windows',MAX_WINDOWS))
+    require(type(window_limit) is int and MAX_WINDOWS<=window_limit<=MAX_WINDOWS+6,
+            'finite operational window cap must be36..42; original time/SU limits still apply')
     with lock(packet/"controller.lock"):
-        for number in range(1,MAX_WINDOWS):
+        for number in range(1,window_limit):
             path=packet/f"window-{number:02}.json"
             if path.exists():
                 require(read_json(path)["cleaned"],"previous cleanup unresolved")
@@ -451,10 +488,11 @@ def run_windows(packet,allocation=None):
             try:
                 controller.call("start",seconds=30,window=1800);wait_active(controller)
                 refresh_ssh(packet,controller)
+                wait_ssh(packet,controller,number)
                 mount(packet)
                 outcome=(read_json(packet/"terminal.json") if (packet/"terminal.json").exists() else
-                         guest(packet,controller,number,final=number>=MAX_WINDOWS-2 or left<5400 or exposure+96>OPERATIONAL_SU))
-                if outcome["status"]=="analysis_pending" and (number>=MAX_WINDOWS-2 or left<3600 or exposure+64>OPERATIONAL_SU):
+                         guest(packet,controller,number,final=number>=window_limit-2 or left<5400 or exposure+96>OPERATIONAL_SU))
+                if outcome["status"]=="analysis_pending" and (number>=window_limit-2 or left<3600 or exposure+64>OPERATIONAL_SU):
                     outcome={"status":"stopped","reason":"analysis_budget_exhausted","runs":outcome["runs"]}
                 if outcome["status"] in ("complete","stopped"):
                     if not (packet/"terminal.json").exists():write_new(packet/"terminal.json",outcome)

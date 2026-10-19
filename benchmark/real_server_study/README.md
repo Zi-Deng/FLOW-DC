@@ -112,6 +112,12 @@ One eighteen-hour envelope,<=36 thirty-minute windows,600s/window cleanup reserv
 640SUs operational ceiling and1,000SUs controller authorization. The
 latter includes unused cumulative allowance from the expired campaign and is not
 an expected bill. Preserve all prior grants/consumption/history/obligations.
+An explicitly authorized startup-contingency decision can set `max_windows` in
+the private operator record to36--42 (default: prepared36). This permits extra
+short operational windows within the SAME original18-hour/640SU bounds; it does
+not add scientific first attempts, extend any guest window/grant/clock, or reset
+accounts. Record the named-campaign decision before application. The coordinator
+still refuses any whole window that cannot fit before the original deadline.
 Stored rates total32SU/h; fresh identity/rate checks precede deployment. Provider
 delay is not a hard billing guarantee. Every exit requests cleanup and verifies
 fresh `SHELVED_OFFLOADED` and restored networking.
@@ -127,6 +133,10 @@ At the stored rate, eighteen hours is 576SUs before provider overrun, below the
 640SU ceiling ([provider rates](https://docs.jetstream-cloud.org/general/instance-flavors/)).
 Cold-start readiness may wait up to360s within the same original1800s window;
 guest acquisition still requires its complete remaining execution reserve.
+After Nova readiness and fresh routing, at most six read-only SSH probes (45s
+total,5s/check) wait for transient connection failures before guest mutation.
+Authentication/trust failures stop immediately; mount and acquisition commands
+are never automatically replayed. These checks use the original work deadline.
 The last two windows are reserved for terminal analysis/collection if the
 planned runs have not finished. The unchanged offline auditor can use the time
 remaining in the original guest lease after cold setup, without extending that

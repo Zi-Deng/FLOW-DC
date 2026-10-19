@@ -300,6 +300,38 @@ class DesignTests(unittest.TestCase):
                     with self.assertRaisesRegex(ValueError,'activation timeout'):cloud.wait_active(controller)
                     self.assertLessEqual(clock[0],360)
 
+    def test_ssh_readiness_retries_only_a_bounded_read_only_probe(self):
+        from unittest.mock import Mock
+        for returns,passed,calls in (([255,0],True,2),([255]*6,False,6)):
+            with self.subTest(passed=passed),tempfile.TemporaryDirectory() as d:
+                packet=Path(d);controller=Mock();controller.call.return_value={}
+                results=[SimpleNamespace(returncode=code,stderr=b'Connection refused' if code else b'') for code in returns]
+                with patch('flowdc_experiment_transport.remaining',return_value=700), \
+                     patch.object(cloud,'ssh_configuration',return_value='trusted'), \
+                     patch.object(cloud.subprocess,'run',side_effect=results) as run,patch.object(cloud.time,'sleep'):
+                    if passed:cloud.wait_ssh(packet,controller,19)
+                    else:
+                        with self.assertRaisesRegex(ValueError,'SSH readiness failed'):cloud.wait_ssh(packet,controller,19)
+                self.assertEqual(run.call_count,calls)
+                for call in run.call_args_list:
+                    self.assertEqual(call.args[0],['ssh','-F','trusted','--','worker','/usr/bin/true'])
+                    self.assertLessEqual(call.kwargs['timeout'],5)
+                receipt=common.read_json(packet/'window-19-ssh-readiness.json')
+                self.assertEqual((receipt['ready'],receipt['image_requests']),(passed,0))
+
+    def test_ssh_readiness_refuses_authentication_and_trust_failures_immediately(self):
+        from unittest.mock import Mock
+        for error in (b'Permission denied (publickey)\nConnection closed by UNKNOWN port 65535',
+                      b'REMOTE HOST IDENTIFICATION HAS CHANGED\nConnection closed',
+                      b'Host key verification failed\nConnection closed'):
+            with self.subTest(error=error),tempfile.TemporaryDirectory() as d:
+                controller=Mock();controller.call.return_value={}
+                with patch('flowdc_experiment_transport.remaining',return_value=700), \
+                     patch.object(cloud,'ssh_configuration',return_value='trusted'), \
+                     patch.object(cloud.subprocess,'run',return_value=SimpleNamespace(returncode=255,stderr=error)) as run:
+                    with self.assertRaisesRegex(ValueError,'SSH readiness failed'):cloud.wait_ssh(Path(d),controller,19)
+                run.assert_called_once()
+
     def test_full_envelope_keeps_only_two_final_analysis_collection_windows(self):
         from unittest.mock import Mock
         campaign='campaign';ids=['manager','worker','origin']
@@ -308,8 +340,9 @@ class DesignTests(unittest.TestCase):
         journal=dict(vms={key:dict(account=dict(campaign_id=campaign,consumed=0)) for key in ids},
                      spec=dict(vms=[dict(id=key,rate=dict(su_per_hour=rate)) for key,rate in zip(ids,[16,8,8])]),
                      profile_path='profile')
-        for number,final in ((33,False),(34,True)):
-            with self.subTest(number=number),tempfile.TemporaryDirectory() as d:
+        for limit,number,final in ((36,33,False),(36,34,True),(42,39,False),(42,40,True),
+                                   (43,1,None),(True,1,None),(35,1,None)):
+            with self.subTest(limit=limit,number=number),tempfile.TemporaryDirectory() as d:
                 packet=Path(d)
                 common.write_new(packet/'deployment-receipt.json',{})
                 common.write_new(packet/'clock.json',dict(utc_epoch=time.time(),monotonic=time.monotonic(),
@@ -320,16 +353,20 @@ class DesignTests(unittest.TestCase):
                 def close_window(packet,controller,path,outcome):common.write_new(path,{'cleaned':True})
                 def collected(packet,seconds):
                     (packet/'collected').mkdir();return packet/'collected'
-                with patch.object(cloud,'merged_gate',return_value=(deployment,op)), \
+                with patch.object(cloud,'merged_gate',return_value=(deployment,dict(op,max_windows=limit))), \
                      patch.object(cloud,'imports',return_value=(lambda _:SimpleNamespace(read=lambda:journal),None,None,None)), \
                      patch('flowdc_pilot_provider.Provider'),patch('flowdc_ops.load_profile',return_value={}), \
                      patch.object(cloud,'verify_rates',return_value={}),patch.object(cloud,'controller_for',return_value=controller), \
-                     patch.object(cloud,'wait_active'),patch.object(cloud,'refresh_ssh'),patch.object(storage,'mount'), \
+                     patch.object(cloud,'wait_active'),patch.object(cloud,'refresh_ssh'),patch.object(cloud,'wait_ssh'),patch.object(storage,'mount'), \
                      patch.object(cloud,'guest',return_value=dict(status='complete',runs=28)) as guest, \
                      patch.object(cloud,'cleanup',side_effect=close_window),patch.object(cloud,'collect',side_effect=collected), \
                      patch('flowdc_experiment_transport.remaining',return_value=1000),patch.object(analyze,'report'):
-                    self.assertEqual(cloud.run_windows(packet)['runs'],28)
-                self.assertEqual(guest.call_args.kwargs['final'],final)
+                    if final is None:
+                        with self.assertRaisesRegex(ValueError,'finite operational window cap'):cloud.run_windows(packet)
+                        guest.assert_not_called()
+                    else:self.assertEqual(cloud.run_windows(packet)['runs'],28)
+                if final is not None:self.assertEqual(guest.call_args.kwargs['final'],final)
+                self.assertEqual((cloud.CAMPAIGN_SECONDS,cloud.OPERATIONAL_SU),(64800,640))
 
 
     def test_guest_requires_observed_cloud_uuid(self):
