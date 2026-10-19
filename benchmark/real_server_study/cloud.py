@@ -242,7 +242,9 @@ def guest(packet,controller,number,final=False):
     from flowdc_experiment_transport import remaining as window_remaining
     deployment,op=read_json(packet/"deployment.json"),read_json(packet/"operator.json")
     installation=read_json(packet/"deployment-receipt.json")
-    allowed=min(1020,window_remaining(controller.call("status"))-120)
+    # remaining() already excludes600s cleanup plus180s provider-action lead.
+    # Reserve30s for SSH dispatch, rather than a second120s work-time deduction.
+    allowed=min(1020,window_remaining(controller.call("status"))-30)
     require(allowed>=480,"guest lease insufficient")
     cmd=[installation["python"],"-B","-m","benchmark.real_server_study","guest-window",
          "--study",op["guest_root"]+"/study","--source",op["guest_root"]+"/source",

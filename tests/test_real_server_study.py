@@ -243,6 +243,7 @@ class DesignTests(unittest.TestCase):
                      patch.object(cloud,'ssh',side_effect=answers) as call:
                     result=cloud.guest(packet,SimpleNamespace(call=lambda _:{}),9)
                 self.assertEqual((result['status'],call.call_count),(status,expected_calls))
+                self.assertIn('--property=RuntimeMaxSec=810',call.call_args_list[0].args[1])
                 if expected_calls==2:
                     command=call.call_args.args[1]
                     self.assertIn(cloud.AUDIT,command)
@@ -250,6 +251,7 @@ class DesignTests(unittest.TestCase):
                     self.assertNotIn('guest-window',command)
                     self.assertNotIn('--seconds',command)
         with self.assertRaises(ValueError):cloud.collect(Path('/unused'),seconds=901)
+
 
     def test_guest_requires_observed_cloud_uuid(self):
         with tempfile.TemporaryDirectory() as d:
