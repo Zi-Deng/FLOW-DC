@@ -1,0 +1,8 @@
+aiohttp==3.13.3
+polars==1.37.1
+Pillow==12.3.0
+numpy==2.5.3
+scipy==1.18.0
+matplotlib==3.11.2
+yarl==1.24.5
+tqdm==4.67.1

@@ -31,6 +31,9 @@ LEGACY = Workload("bounded-fixture-v1", 256, 64 * 2**20, 16 * 2**20,
                   128 * 2**20, 192 * 2**20, 180, 8192, 16384, 262144)
 RESEARCH = Workload("bounded-research-v2", 32768, 512 * 2**20, 32 * 2**20,
                     2 * 2**30, 2 * 2**30, 300, 524288, 131072, 2097152)
+EXTERNAL = Workload("bounded-external-v1", 32768, 4 * 2**30, 64 * 2**20,
+                    8 * 2**30, 12 * 2**30, 300, 524288, 131072, 2097152,
+                    max_attempts=2)
 
 
 def workload(name=None):
@@ -38,6 +41,8 @@ def workload(name=None):
         return LEGACY
     if name == RESEARCH.name:
         return RESEARCH
+    if name == EXTERNAL.name:
+        return EXTERNAL
     raise ValueError("unknown finite research workload profile")
 
 
