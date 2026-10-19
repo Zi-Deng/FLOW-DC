@@ -125,7 +125,9 @@ share a window when the complete next-run reserve fits. This ceiling replaces
 the initial zero-slack 16-window proposal; it grants no additional acquisitions.
 At the stored rate, eighteen hours is 576SUs before provider overrun, below the
 640SU ceiling ([provider rates](https://docs.jetstream-cloud.org/general/instance-flavors/)).
-The last windows are reserved for terminal analysis/collection if the
+Cold-start readiness may wait up to360s within the same original1800s window;
+guest acquisition still requires its complete remaining execution reserve.
+The last two windows are reserved for terminal analysis/collection if the
 planned runs have not finished. The unchanged offline auditor can use the time
 remaining in the original guest lease after cold setup, without extending that
 lease or starting acquisitions. Metadata transfer uses at most900s, clipped to

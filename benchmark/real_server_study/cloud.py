@@ -196,7 +196,9 @@ def cleanup(packet,controller,path,outcome):
 
 def wait_active(controller):
     from flowdc_experiment_transport import ready
-    deadline=time.monotonic()+300
+    # Cold provider/network setup can exceed300s. This is only a readiness
+    # wait; guest admission still requires the original remaining work budget.
+    deadline=time.monotonic()+360
     value=controller.call("status")
     while not ready(value):
         require(time.monotonic()<deadline,"activation timeout")
@@ -451,7 +453,7 @@ def run_windows(packet,allocation=None):
                 refresh_ssh(packet,controller)
                 mount(packet)
                 outcome=(read_json(packet/"terminal.json") if (packet/"terminal.json").exists() else
-                         guest(packet,controller,number,final=number>=MAX_WINDOWS-3 or left<5400 or exposure+96>OPERATIONAL_SU))
+                         guest(packet,controller,number,final=number>=MAX_WINDOWS-2 or left<5400 or exposure+96>OPERATIONAL_SU))
                 if outcome["status"]=="analysis_pending" and (number>=MAX_WINDOWS-2 or left<3600 or exposure+64>OPERATIONAL_SU):
                     outcome={"status":"stopped","reason":"analysis_budget_exhausted","runs":outcome["runs"]}
                 if outcome["status"] in ("complete","stopped"):

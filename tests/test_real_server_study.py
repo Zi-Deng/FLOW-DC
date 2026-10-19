@@ -287,6 +287,50 @@ class DesignTests(unittest.TestCase):
                     self.assertNotIn('--seconds',command)
         with self.assertRaises(ValueError):cloud.collect(Path('/unused'),seconds=901)
 
+    def test_slow_readiness_wait_is_bounded_without_changing_guest_budget(self):
+        for ready_at,succeeds in ((310,True),(400,False)):
+            clock=[0]
+            def advance(seconds):clock[0]+=seconds
+            controller=SimpleNamespace(call=lambda _:dict(ready=clock[0]>=ready_at))
+            with patch.object(cloud.time,'monotonic',side_effect=lambda:clock[0]), \
+                 patch.object(cloud.time,'sleep',side_effect=advance), \
+                 patch('flowdc_experiment_transport.ready',side_effect=lambda v:v['ready']):
+                if succeeds:self.assertTrue(cloud.wait_active(controller)['ready'])
+                else:
+                    with self.assertRaisesRegex(ValueError,'activation timeout'):cloud.wait_active(controller)
+                    self.assertLessEqual(clock[0],360)
+
+    def test_full_envelope_keeps_only_two_final_analysis_collection_windows(self):
+        from unittest.mock import Mock
+        campaign='campaign';ids=['manager','worker','origin']
+        deployment=dict(campaign_id=campaign,selected=dict(zip(ids,ids)))
+        op=dict(state='state',source='source')
+        journal=dict(vms={key:dict(account=dict(campaign_id=campaign,consumed=0)) for key in ids},
+                     spec=dict(vms=[dict(id=key,rate=dict(su_per_hour=rate)) for key,rate in zip(ids,[16,8,8])]),
+                     profile_path='profile')
+        for number,final in ((33,False),(34,True)):
+            with self.subTest(number=number),tempfile.TemporaryDirectory() as d:
+                packet=Path(d)
+                common.write_new(packet/'deployment-receipt.json',{})
+                common.write_new(packet/'clock.json',dict(utc_epoch=time.time(),monotonic=time.monotonic(),
+                    boot_id=Path('/proc/sys/kernel/random/boot_id').read_text().strip()))
+                common.write_new(packet/'account-baseline.json',{key:0 for key in ids})
+                for old in range(1,number):common.write_new(packet/f'window-{old:02}.json',{'cleaned':True})
+                controller=Mock();controller.call.return_value={}
+                def close_window(packet,controller,path,outcome):common.write_new(path,{'cleaned':True})
+                def collected(packet,seconds):
+                    (packet/'collected').mkdir();return packet/'collected'
+                with patch.object(cloud,'merged_gate',return_value=(deployment,op)), \
+                     patch.object(cloud,'imports',return_value=(lambda _:SimpleNamespace(read=lambda:journal),None,None,None)), \
+                     patch('flowdc_pilot_provider.Provider'),patch('flowdc_ops.load_profile',return_value={}), \
+                     patch.object(cloud,'verify_rates',return_value={}),patch.object(cloud,'controller_for',return_value=controller), \
+                     patch.object(cloud,'wait_active'),patch.object(cloud,'refresh_ssh'),patch.object(storage,'mount'), \
+                     patch.object(cloud,'guest',return_value=dict(status='complete',runs=28)) as guest, \
+                     patch.object(cloud,'cleanup',side_effect=close_window),patch.object(cloud,'collect',side_effect=collected), \
+                     patch('flowdc_experiment_transport.remaining',return_value=1000),patch.object(analyze,'report'):
+                    self.assertEqual(cloud.run_windows(packet)['runs'],28)
+                self.assertEqual(guest.call_args.kwargs['final'],final)
+
 
     def test_guest_requires_observed_cloud_uuid(self):
         with tempfile.TemporaryDirectory() as d:
