@@ -152,31 +152,50 @@ class DesignTests(unittest.TestCase):
 
     def test_mount_accepts_exact_full_or_truncated_volume_serial_only(self):
         volume='12345678-1234-4123-8123-123456789abc'
-        class Serial:
-            def __init__(self,value):self.value=value
-            def exists(self):return self.value is not None
-            def read_text(self):return self.value
-        class Block:
-            def __init__(self,name,value):self.name,self.value=name,value
-            def __truediv__(self,suffix):return Serial(self.value if suffix=='device/serial' else None)
-        cases=[([Block('sdb',volume)],True),([Block('vdb',volume[:20])],True),
-               ([Block('sdb','unrelated')],False),
-               ([Block('sdb',volume),Block('sdc',volume)],False)]
+        cases=[([volume],True),([volume[:20]],True),(['unrelated'],False),([volume,volume],False)]
         for blocks,accepted in cases:
-            with self.subTest(serials=[b.value for b in blocks]), \
-                 patch('pathlib.Path',return_value=SimpleNamespace(iterdir=lambda:blocks)), \
+            listing={'blockdevices':[{'path':'/dev/sd'+chr(98+i),'serial':s,'type':'disk'} for i,s in enumerate(blocks)]}
+            def measure(args,**kwargs):
+                if args[0]=='lsblk':return json.dumps(listing)
+                raise RuntimeError('measurement boundary')
+            with self.subTest(serials=blocks), \
                  patch.object(sys,'argv',['mount',volume,'/mnt/flowdc-external-'+volume,'NEW']), \
-                 patch('subprocess.check_output',side_effect=RuntimeError('measurement boundary')) as measure, \
+                 patch('subprocess.check_output',side_effect=measure) as measured, \
                  patch('subprocess.run') as mutate:
                 if accepted:
                     with self.assertRaisesRegex(RuntimeError,'measurement boundary'):
                         exec(storage.MOUNT,{})
-                    self.assertEqual(measure.call_args.args[0],['blockdev','--getsize64','/dev/'+blocks[0].name])
+                    self.assertEqual(measured.call_args.args[0],['blockdev','--getsize64','/dev/sdb'])
                 else:
                     with self.assertRaisesRegex(AssertionError,'volume serial not uniquely found'):
                         exec(storage.MOUNT,{})
-                    measure.assert_not_called()
+                    self.assertEqual(measured.call_count,1)
                 mutate.assert_not_called()
+
+    def test_mount_adopts_empty_owned_filesystem_without_formatting(self):
+        volume='12345678-1234-4123-8123-123456789abc'
+        listing={'blockdevices':[{'path':'/dev/sdb','serial':volume,'type':'disk'}]}
+        for expected,filesystem,contents,error in [('NEW','fs-id',[],None),
+                ('fs-id','fs-id',['retained-data'],None),('wrong','fs-id',[],'UUID changed'),
+                ('NEW',None,[],'filesystem not ready'),('NEW','fs-id',['existing-data'],'unexpected data')]:
+            calls=[]
+            def command(args,**kwargs):
+                calls.append(args)
+                if args[0]=='blkid':return SimpleNamespace(returncode=0 if filesystem else 2,stdout=filesystem or '')
+                if args[0]=='findmnt':return SimpleNamespace(returncode=0,stdout='fs-id')
+                raise AssertionError('unexpected mutation')
+            target=SimpleNamespace(is_symlink=lambda:False,mkdir=lambda **_:None,
+                        iterdir=lambda:[SimpleNamespace(name=n) for n in contents])
+            with self.subTest(expected=expected,filesystem=filesystem,contents=contents), \
+                 patch('pathlib.Path',return_value=target),patch('os.chown'),patch('os.chmod'), \
+                 patch('pwd.getpwnam',return_value=SimpleNamespace(pw_uid=1000)), \
+                 patch.object(sys,'argv',['mount',volume,'/mnt/flowdc-external-'+volume,expected]), \
+                 patch('subprocess.check_output',side_effect=lambda args,**_:json.dumps(listing) if args[0]=='lsblk' else str(256*2**30)), \
+                 patch('subprocess.run',side_effect=command),patch.object(sys,'stdout',io.StringIO()):
+                if error:
+                    with self.assertRaisesRegex(AssertionError,error):exec(storage.MOUNT,{})
+                else:exec(storage.MOUNT,{})
+            self.assertFalse(any('mkfs' in arg for call in calls for arg in call))
 
     def test_first_attempt_and_order_refusals(self):
         with tempfile.TemporaryDirectory() as d:

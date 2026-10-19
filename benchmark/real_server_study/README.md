@@ -90,8 +90,11 @@ cluster or local acquisition fallback is used. The supervisor is not upgraded.
 
 Bootstrap applies the finite grant, activates one window, creates a campaign-owned
 256GiB volume, attaches it only to the selected worker, stages an isolated pinned
-environment/source, probes and cleans up. Ownership, device serial and filesystem
-identity are checked. No existing filesystem is formatted. Mutation intents are
+environment/source, probes and cleans up. Ownership, exact full/truncated volume
+serial from `lsblk`, size and filesystem identity are checked. The helper adopts
+only an empty filesystem on the newly campaign-created volume (featured guests
+can automount it); it never formats a filesystem or replaces an unrelated mount.
+Later windows require the recorded filesystem UUID. Mutation intents are
 retained before dispatch; uncertain creation/attachment is not automatically retried.
 
 One eighteen-hour envelope,<=36 thirty-minute windows,600s/window cleanup reserve,
