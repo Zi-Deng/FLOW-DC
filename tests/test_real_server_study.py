@@ -207,6 +207,29 @@ class DesignTests(unittest.TestCase):
             (root/'runs'/design.schedule()[3]['run_id']).mkdir(parents=True)
             with self.assertRaises(ValueError):runner.records(root)
 
+    def test_operational_grant_keeps_private_same_bytes_outside_packet(self):
+        # The caller's default umask must not make a controller input public.
+        import os
+        sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'bin'))
+        campaign='12345678-1234-4123-8123-123456789abc'
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d);packet=root/'packet';packet.mkdir()
+            state=root/'controller';state.mkdir(mode=0o700)
+            common.write_new(packet/'deployment.json',{'campaign_id':campaign})
+            common.write_new(packet/'grant.json',{'campaign_id':campaign,'unchanged':'original'})
+            old=os.umask(0o022)
+            try:target=cloud.operational_grant(packet,{'state':str(state)})
+            finally:os.umask(old)
+            self.assertEqual(target.parent,state/'authorizations')
+            self.assertEqual(target.stat().st_mode&0o777,0o600)
+            self.assertEqual(target.read_bytes(),(packet/'grant.json').read_bytes())
+            self.assertEqual(cloud.operational_grant(packet,{'state':str(state)}),target)
+            original=target.read_bytes()
+            (packet/'grant.json').write_text(json.dumps({'campaign_id':campaign,'changed':True}))
+            with self.assertRaisesRegex(ValueError,'different bytes'):
+                cloud.operational_grant(packet,{'state':str(state)})
+            self.assertEqual(target.read_bytes(),original)
+
     def test_guest_requires_observed_cloud_uuid(self):
         with tempfile.TemporaryDirectory() as d:
             root=Path(d)

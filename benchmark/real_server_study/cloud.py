@@ -237,6 +237,28 @@ def guest(packet,controller,number,final=False):
     return json.loads(ssh(packet,remote,timeout=allowed+45))
 
 
+def operational_grant(packet,op):
+    """Keep identical grant bytes outside Git, as the installed CLI requires."""
+    import os
+    import flowdc_ops as ops
+    raw=(packet/"grant.json").read_bytes()
+    campaign=ops.uuid_value(read_json(packet/"deployment.json")["campaign_id"])
+    require(read_json(packet/"grant.json")["campaign_id"]==campaign,"grant campaign differs")
+    directory=Path(op["state"])/"authorizations"
+    name=campaign+".json"
+    with ops.private_directory(directory,create=True) as parent:
+        try:
+            with ops.open_private_at(parent,name) as fd:
+                with os.fdopen(os.dup(fd),"rb") as stream:existing=stream.read(len(raw)+1)
+            require(existing==raw,"operational grant already exists with different bytes")
+        except FileNotFoundError:
+            fd=os.open(name,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600,dir_fd=parent)
+            with os.fdopen(fd,"wb") as stream:
+                stream.write(raw);stream.flush();os.fsync(stream.fileno())
+            os.fsync(parent)
+    return directory/name
+
+
 def bootstrap(packet,allocation=None):
     """Explicitly apply finite allowance, activate one window, stage, probe, clean."""
     from .storage import create_volume,mount,stage
@@ -262,9 +284,10 @@ def bootstrap(packet,allocation=None):
                        math.ceil(j["vms"][k]["account"]["consumed"])+CAMPAIGN_SECONDS) for k in chosen},
                    expires_at=dt.datetime.fromtimestamp(now+CAMPAIGN_SECONDS,dt.UTC).isoformat())
     write_new(packet/"grant.json",request)
+    grant_path=operational_grant(packet,op)
     service=j["service"]
     command=[service["interpreter"],"-E","-s","-B",str(Path(service["release"])/"flowdc_ops.py"),
-             "pilot","campaign-apply","--state-root",op["state"],"--grant",str(packet/"grant.json")]
+             "pilot","campaign-apply","--state-root",op["state"],"--grant",str(grant_path)]
     with (packet/"grant-application.json").open("xb") as out,(packet/"grant-application.stderr").open("xb") as err:
         result=subprocess.run(command,stdout=out,stderr=err,timeout=240)
     require(result.returncode==0,"campaign grant refused; no activation")
