@@ -244,22 +244,28 @@ def report(study, output=None):
     else:
         from .ablation_controlled import cases
 
-        runs = [
-            dict(
-                r,
-                audited=False,
-                status="audit_pending" if (study / "runs" / r["run_id"]).exists() else "unstarted",
+        def inventory(parent, run):
+            directory = study / parent / run["run_id"]
+            path = directory / "record.json"
+            row = read_json(path) if path.exists() else {}
+            status = (
+                (
+                    row.get("status")
+                    if row.get("status") in ("alias", "no_candidate", "timeout", "failed")
+                    else "audit_pending"
+                )
+                if path.exists()
+                else ("interrupted" if directory.exists() else "unstarted")
             )
-            for r in ablation.schedule()
-        ]
-        lab = [
-            dict(
-                r,
+            return dict(
+                run,
                 audited=False,
-                status="audit_pending" if (study / "controlled" / r["run_id"]).exists() else "unstarted",
+                status=status,
+                **({"alias_of": row["alias_of"]} if status == "alias" else {}),
             )
-            for r in cases()
-        ]
+
+        runs = [inventory("runs", r) for r in ablation.schedule()]
+        lab = [inventory("controlled", r) for r in cases()]
         value = dict(
             protocol_sha256=file_hash(study / "protocol.json"),
             runs=runs,
@@ -428,6 +434,10 @@ def report(study, output=None):
                 + ". Its partial output is not included as a complete-run efficacy observation."
             )
     closures = sorted(study.parent.glob("window-[0-9][0-9].json"))
+    for name in ("acquisition-ended.json", "recovery-skipped.json"):
+        path = study.parent / name
+        if path.exists():
+            lines.append(esc(name) + ": " + esc(read_json(path).get("reason", "finite campaign stop")) + ".")
     if closures:
         last = read_json(closures[-1])
         lines += [

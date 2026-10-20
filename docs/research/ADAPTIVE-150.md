@@ -115,3 +115,18 @@ review invocations precede activation. The maintainer authorized this study to r
 before one final PR. No PR is opened until science, audit, report and cleanup
 finish; human merge remains required. No default promotion or submission
 readiness follows from these exploratory experiments.
+
+The two-review/two-repair ceiling permits a final bounded operational repair
+after the last review. Qualification then records the last reviewed SHA, final
+SHA, exact delta digest, dispositions for every material finding and current-head
+CI. It explicitly records that the final head has no additional independent
+review. This path permits only the study's finalization/collection/report files,
+their tests and this document; controller/product changes are excluded. The final
+human merge handoff includes that delta. There is no automatic third paid review.
+
+Acquisition reserves9000 seconds for the current lease and a later finalization
+lease with settlement/preflight margin. Audit deferral also requires a plausible
+next-window admission after cleanup and sufficient SUs. Collection reserves up
+to900 aggregate seconds across at most eight attempts. An interrupted local
+extraction is rebuilt only from the digest-verified local archive, without a new
+VM activation or image request.

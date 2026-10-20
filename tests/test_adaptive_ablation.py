@@ -296,6 +296,9 @@ class CloudBoundaryTests(unittest.TestCase):
     def test_cooldown_that_cannot_fit_finalizes_in_current_window(self):
         self._cloud_scenario("cooldown")
 
+    def test_declining_clock_collects_before_next_window_becomes_inadmissible(self):
+        self._cloud_scenario("edge")
+
     def _cloud_scenario(self, scenario):
         from unittest.mock import MagicMock
         from benchmark.real_server_study import ablation_cloud
@@ -318,6 +321,7 @@ class CloudBoundaryTests(unittest.TestCase):
             controller = MagicMock()
             record = {"baseline": {"worker": 0}, "campaign_id": "fixture"}
             calls = []
+            clock = {"left": {"lost_ack": 28800, "late": 8500, "cooldown": 9500, "edge": 9250}[scenario]}
 
             def remote(_packet, _number, action, _seconds):
                 calls.append(action)
@@ -326,7 +330,13 @@ class CloudBoundaryTests(unittest.TestCase):
                         raise OSError("simulated transport loss")
                     if scenario == "cooldown":
                         return dict(status="cooldown", until_utc=__import__("time").time() + 600)
+                    if scenario == "edge":
+                        clock["left"] -= 4000
+                        return dict(status="complete")
                     raise AssertionError("acquisition must not start in finalization reserve")
+                if scenario == "edge":
+                    clock["left"] -= 1000
+                    return dict(audit_elapsed_s=1000, audit_pending=1)
                 return {"audit_elapsed_s": 0.1, "audit_pending": int(scenario == "lost_ack" and _number == 0)}
 
             def collect(*_args):
@@ -343,7 +353,7 @@ class CloudBoundaryTests(unittest.TestCase):
                 patch.object(
                     ablation_cloud,
                     "wall_left",
-                    return_value={"lost_ack": 28800, "late": 5000, "cooldown": 8000}[scenario],
+                    side_effect=lambda _record: clock["left"],
                 ),
                 patch.object(ablation_cloud, "remote", side_effect=remote),
                 patch.object(ablation_cloud.onset_cloud, "ready"),
@@ -369,6 +379,7 @@ class CloudBoundaryTests(unittest.TestCase):
                     "lost_ack": ["acquire", "audit", "audit"],
                     "late": ["audit"],
                     "cooldown": ["acquire", "audit"],
+                    "edge": ["acquire", "audit"],
                 }[scenario],
             )
             self.assertEqual(quiet.call_count, int(scenario == "lost_ack"))
@@ -579,3 +590,144 @@ class ControlledFailureTests(unittest.TestCase):
                     ablation_controlled.window(root, ROOT)
                 spawn.assert_called_once()
                 process.wait.assert_called_once_with(timeout=120)
+
+
+class FinalRepairTests(unittest.TestCase):
+    def test_extraction_timeout_retries_from_local_verified_archive(self):
+        import shutil
+        from types import SimpleNamespace
+        from benchmark.real_server_study import ablation_collect
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            study = root / "study"
+            study.mkdir()
+            packet = root / "packet"
+            packet.mkdir()
+            common.write_new(study / "protocol.json", {"fixture": True})
+            receipt = ablation_collect.pack(study)
+            shutil.copyfile(study / "collection.tar.gz", packet / "collection.tar.gz")
+            common.write_new(packet / "collection.json", receipt)
+            common.write_new(packet / "operator.json", {"guest_root": "/unused"})
+            common.write_new(packet / "deployment-receipt.json", {"python": sys.executable})
+
+            def interrupted(_archive, destination, *_args, **_kwargs):
+                (destination / "incomplete").write_bytes(b"prefix")
+                raise TimeoutError("fixture deadline")
+
+            with (
+                patch.object(
+                    ablation_collect.shutil, "disk_usage", return_value=SimpleNamespace(free=100 * 2**30)
+                ),
+                patch.object(ablation_collect.cloud, "ssh") as ssh,
+            ):
+                with patch.object(ablation_collect, "extract", side_effect=interrupted):
+                    with self.assertRaises(TimeoutError):
+                        ablation_collect.collect(packet, 10)
+                self.assertFalse((packet / "collected.partial").exists())
+                # Also recover temporary extraction left by an uncatchable kill.
+                (packet / "collected.partial").mkdir()
+                (packet / "collected.partial/stale").write_text("derived")
+                target = ablation_collect.collect(packet, 10)
+                self.assertTrue(common.read_json(target / "protocol.json")["fixture"])
+                ssh.assert_not_called()
+                self.assertLess(ablation_collect.collection_spent(packet), 20)
+
+    def test_status_only_inventory_preserves_alias_missing_and_interrupted(self):
+        from benchmark.real_server_study import ablation_analysis
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            study = root / "study"
+            study.mkdir()
+            common.write_new(study / "protocol.json", {"fixture": True})
+            runs = ablation.schedule()
+            alias = next(r for r in runs if r["phase"] == "validation" and r["arm"].startswith("high-"))
+            target = next(
+                r
+                for r in runs
+                if r["phase"] == "validation"
+                and r["block"] == alias["block"]
+                and r["arm"] == alias["arm"].replace("high-", "balanced-", 1)
+            )
+            for run, status in ((alias, "alias"), (runs[0], "no_candidate")):
+                p = study / "runs" / run["run_id"]
+                p.mkdir(parents=True)
+                common.write_new(p / "record.json", dict(run, status=status, alias_of=target["run_id"]))
+            (study / "runs" / runs[1]["run_id"]).mkdir()
+            common.write_new(root / "recovery-skipped.json", {"reason": "finite reserve fixture"})
+            with patch.object(ablation_analysis.subprocess, "run"):
+                ablation_analysis.report(study, root / "report")
+            values = {r["run_id"]: r for r in common.read_json(root / "report/results.json")["runs"]}
+            self.assertEqual(values[alias["run_id"]]["status"], "alias")
+            self.assertEqual(values[runs[0]["run_id"]]["status"], "no_candidate")
+            self.assertEqual(values[runs[1]["run_id"]]["status"], "interrupted")
+            self.assertIn("finite reserve fixture", (root / "report/report.tex").read_text())
+
+    def test_bounded_final_assessment_binds_delta_and_all_material_findings(self):
+        from benchmark.real_server_study import ablation_cloud
+        import json
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            review = root / "review"
+            review.mkdir()
+            old = "1" * 40
+            new = "2" * 40
+            delta = b"fixed operational delta"
+            common.write_new(root / "operator.json", {"source": str(ROOT)})
+            common.write_new(review / "report.json", {"findings": [{"severity": "P1"}, {"severity": "P2"}]})
+            report_sha = common.file_hash(review / "report.json")
+            common.write_new(
+                review / "review.json",
+                dict(
+                    repository="Zi-Deng/FLOW-DC",
+                    head=old,
+                    status="completed",
+                    invocation=2,
+                    report_sha256=report_sha,
+                ),
+            )
+            assessment = dict(
+                reviewed_head=old,
+                final_head=new,
+                report_sha256=report_sha,
+                delta_sha256=common.sha256(delta),
+                review_invocations_used=2,
+                repair_rounds_used=2,
+                independent_final_head_review=False,
+                material_dispositions={"0": {"status": "fixed"}, "1": {"status": "fixed"}},
+            )
+            common.write_new(root / "final-repair-assessment.json", assessment)
+            proof = dict(
+                head=new,
+                reviewed_head=old,
+                review_directory=str(review),
+                review_metadata_sha256=common.file_hash(review / "review.json"),
+                repair_assessment_sha256=common.file_hash(root / "final-repair-assessment.json"),
+                ci_runs=[1, 2],
+            )
+            common.write_new(root / "qualification.json", proof)
+
+            def output(args, **kwargs):
+                if args[0] == "git":
+                    return (
+                        "benchmark/real_server_study/ablation_cloud.py\n" if "--name-only" in args else delta
+                    )
+                return json.dumps(
+                    dict(
+                        headSha=new,
+                        conclusion="success",
+                        event="workflow_dispatch",
+                        name="FLOW-DC regression tests" if args[3] == "1" else "agentic workflow tests",
+                    )
+                )
+
+            with patch.object(ablation_cloud.subprocess, "check_output", side_effect=output):
+                ablation_cloud.qualified(root, {"source": {"head": new}})
+                assessment["material_dispositions"].pop("1")
+                common.replace_derived(root / "final-repair-assessment.json", assessment)
+                proof["repair_assessment_sha256"] = common.file_hash(root / "final-repair-assessment.json")
+                common.replace_derived(root / "qualification.json", proof)
+                with self.assertRaises(ValueError):
+                    ablation_cloud.qualified(root, {"source": {"head": new}})

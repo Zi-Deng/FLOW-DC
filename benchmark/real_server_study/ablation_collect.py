@@ -94,7 +94,31 @@ def extract(archive, destination, maximum, *, deadline=None):
         )
 
 
+def collection_spent(packet):
+    total = 0
+    for path in Path(packet).glob("collection-attempt-*-intent.json"):
+        closed = path.with_name(path.name.replace("-intent", ""))
+        total += read_json(closed)["elapsed_s"] if closed.exists() else read_json(path)["seconds"]
+    return total
+
+
 def collect(packet, seconds=900):
+    packet = Path(packet)
+    if (packet / "collected").exists():
+        return packet / "collected"
+    seconds = min(seconds, 900 - collection_spent(packet))
+    require(seconds > 0, "aggregate collection budget exhausted")
+    index = len(list(packet.glob("collection-attempt-*-intent.json")))
+    require(index < 8, "finite collection attempts exhausted")
+    write_new(packet / f"collection-attempt-{index:02}-intent.json", dict(seconds=seconds))
+    began = time.monotonic()
+    try:
+        return _collect(packet, seconds)
+    finally:
+        write_new(packet / f"collection-attempt-{index:02}.json", dict(elapsed_s=time.monotonic() - began))
+
+
+def _collect(packet, seconds):
     packet = Path(packet)
     target = packet / "collected"
     if target.exists():
@@ -149,15 +173,21 @@ def collect(packet, seconds=900):
             "retained collection changed",
         )
     partial = packet / "collected.partial"
-    require(not partial.exists(), "partial extraction needs inspection")
+    if partial.exists():
+        require(partial.is_dir() and not partial.is_symlink(), "unsafe extraction temporary")
+        shutil.rmtree(partial)  # Derived from the verified local archive above.
     partial.mkdir()
-    extract(archive, partial, 8 * 2**30, deadline=deadline)
-    expanded = 0
-    for bundle in sorted(partial.glob("*/**/metadata.tar.gz")):
-        destination = bundle.parent / "metadata"
-        destination.mkdir()
-        extract(bundle, destination, 512 * 2**20, deadline=deadline)
-        expanded += sum(p.stat().st_size for p in destination.rglob("*") if p.is_file())
-        require(expanded <= 24 * 2**30, "total metadata expansion bound")
+    try:
+        extract(archive, partial, 8 * 2**30, deadline=deadline)
+        expanded = 0
+        for bundle in sorted(partial.glob("*/**/metadata.tar.gz")):
+            destination = bundle.parent / "metadata"
+            destination.mkdir()
+            extract(bundle, destination, 512 * 2**20, deadline=deadline)
+            expanded += sum(p.stat().st_size for p in destination.rglob("*") if p.is_file())
+            require(expanded <= 24 * 2**30, "total metadata expansion bound")
+    except BaseException:
+        shutil.rmtree(partial)
+        raise
     partial.replace(target)
     return target

@@ -15,7 +15,22 @@ from pathlib import Path
 from uuid import uuid4
 
 from . import ablation, cloud, onset_cloud, storage
-from .common import file_hash, lock, read_json, replace_derived, require, source_identity, utc, write_new
+from .common import (
+    file_hash,
+    lock,
+    read_json,
+    replace_derived,
+    require,
+    sha256,
+    source_identity,
+    utc,
+    write_new,
+)
+
+# Two leases plus settlement/preflight margin. A deferred audit additionally
+# needs 3600s admission after up to1200s settlement and fresh preflight.
+FINALIZATION_RESERVE = 9000
+NEXT_WINDOW_RESERVE = 4800
 
 
 def prepare(study, source, previous, packet):
@@ -79,22 +94,58 @@ def prepare(study, source, previous, packet):
 def qualified(packet, deployment):
     proof = read_json(packet / "qualification.json")
     head = deployment["source"]["head"]
+    reviewed = proof.get("reviewed_head", head)
     require(proof["head"] == head, "qualification source changed")
     review = Path(proof["review_directory"])
     meta = read_json(review / "review.json")
     report = read_json(review / "report.json")
     require(
         meta["repository"] == "Zi-Deng/FLOW-DC"
-        and meta["head"] == head
+        and meta["head"] == reviewed
         and meta["status"] == "completed"
         and meta["report_sha256"] == file_hash(review / "report.json")
         and file_hash(review / "review.json") == proof["review_metadata_sha256"],
         "review qualification invalid",
     )
-    require(
-        not any(f["severity"] in ("P0", "P1", "P2") for f in report["findings"]),
-        "material review findings remain",
-    )
+    material = {str(i) for i, f in enumerate(report["findings"]) if f["severity"] in ("P0", "P1", "P2")}
+    if reviewed == head:
+        require(not material, "material review findings remain")
+    else:
+        # Maintainer's two-review/two-repair policy: qualify the final bounded
+        # repair delta explicitly, never relabel the old review as final-head.
+        assessment = read_json(packet / "final-repair-assessment.json")
+        source = read_json(packet / "operator.json")["source"]
+        delta = subprocess.check_output(
+            ["git", "-C", source, "diff", "--no-ext-diff", "--no-textconv", reviewed, head]
+        )
+        paths = set(
+            subprocess.check_output(
+                ["git", "-C", source, "diff", "--name-only", reviewed, head], text=True
+            ).splitlines()
+        )
+        allowed = {
+            "benchmark/real_server_study/ablation_cloud.py",
+            "benchmark/real_server_study/ablation_collect.py",
+            "benchmark/real_server_study/ablation_analysis.py",
+            "tests/test_adaptive_ablation.py",
+            "docs/research/ADAPTIVE-150.md",
+        }
+        require(
+            meta["invocation"] == 2
+            and assessment["review_invocations_used"] == 2
+            and assessment["repair_rounds_used"] == 2
+            and assessment["reviewed_head"] == reviewed
+            and assessment["final_head"] == head
+            and assessment["report_sha256"] == meta["report_sha256"]
+            and assessment["delta_sha256"] == sha256(delta)
+            and file_hash(packet / "final-repair-assessment.json") == proof["repair_assessment_sha256"]
+            and set(assessment["material_dispositions"]) == material
+            and all(v["status"] == "fixed" for v in assessment["material_dispositions"].values())
+            and assessment["independent_final_head_review"] is False
+            and bool(paths)
+            and paths <= allowed,
+            "bounded final repair assessment invalid",
+        )
     observations = []
     for run_id in proof["ci_runs"]:
         run = json.loads(
@@ -123,7 +174,16 @@ def qualified(packet, deployment):
         "required CI missing",
     )
     replace_derived(
-        packet / "qualification-observation.json", dict(utc=utc(), head=head, ci=observations, review=meta)
+        packet / "qualification-observation.json",
+        dict(
+            utc=utc(),
+            head=head,
+            reviewed_head=reviewed,
+            independent_final_head_review=reviewed == head,
+            repair_assessment_sha256=proof.get("repair_assessment_sha256"),
+            ci=observations,
+            review=meta,
+        ),
     )
 
 
@@ -318,6 +378,13 @@ def run(packet):
     with lock(packet / "controller.lock"):
         if (packet / "collected").exists():
             return dict(status="collected", report=str(report(packet / "collected")), cloud_activation=False)
+        if (packet / "collection.tar.gz").exists() and (packet / "collection.json").exists():
+            # A local extraction retry requires no VM window or image request.
+            record = read_json(packet / "campaign.json")
+            seconds = min(900, wall_left(record) - 120)
+            require(seconds > 0, "finite report/collection reserve exhausted")
+            collect(packet, seconds)
+            return dict(status="collected", report=str(report(packet / "collected")), cloud_activation=False)
         journal, record = authorize(packet)
         for number in range(ablation.LIMITS["max_windows"]):
             closed = packet / f"window-{number:02}.json"
@@ -366,13 +433,17 @@ def run(packet):
                     write_new(packet / "staging-intent.json", dict(utc=utc()))
                     storage.stage(packet)
                 seconds = int(
-                    min(2820, remaining(onset_cloud.local_status(journal)) - 90, wall_left(record) - 900)
+                    min(
+                        2820,
+                        remaining(onset_cloud.local_status(journal)) - 90,
+                        wall_left(record) - NEXT_WINDOW_RESERVE,
+                    )
                 )
                 # Keep one full window available for audit/collection/cleanup.
                 offline_only = (
                     (packet / "acquisition-ended.json").exists()
                     or number == 7
-                    or wall_left(record) < 7200
+                    or wall_left(record) < FINALIZATION_RESERVE
                     or onset_cloud.exposure(record, journal) + 64 > 300
                 )
                 if offline_only:
@@ -397,7 +468,7 @@ def run(packet):
                 if outcome and outcome["status"] == "cooldown":
                     can_recover = (
                         number < 6
-                        and outcome["until_utc"] - time.time() + 7800 < wall_left(record)
+                        and outcome["until_utc"] - time.time() + FINALIZATION_RESERVE < wall_left(record)
                         and onset_cloud.exposure(record, journal) + 64 <= 300
                     )
                     if not can_recover:
@@ -426,8 +497,8 @@ def run(packet):
                     seconds = int(
                         min(
                             1200 - onset_cloud.audit_spent(packet),
-                            remaining(onset_cloud.local_status(journal)) - 150,
-                            wall_left(record) - 900,
+                            remaining(onset_cloud.local_status(journal)) - 1050,
+                            wall_left(record) - 2100,
                         )
                     )
                     if seconds >= 60:
@@ -440,13 +511,19 @@ def run(packet):
                     # Finish resumable audit units in the next offline window
                     # before sealing collection, unless its finite budget is
                     # exhausted or this is already the final window.
-                    continue_audit = pending_audit and onset_cloud.audit_spent(packet) <= 1140 and number < 7
+                    continue_audit = (
+                        pending_audit
+                        and onset_cloud.audit_spent(packet) <= 1140
+                        and number < 7
+                        and wall_left(record) >= NEXT_WINDOW_RESERVE
+                        and onset_cloud.exposure(record, journal) + 32 <= 300
+                    )
                     if not continue_audit and remaining(onset_cloud.local_status(journal)) >= 180:
                         seconds = int(
                             min(
                                 900,
                                 remaining(onset_cloud.local_status(journal)) - 60,
-                                wall_left(record) - 780,
+                                wall_left(record) - 1200,
                             )
                         )
                         if seconds >= 60:
