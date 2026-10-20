@@ -445,7 +445,7 @@ def bootstrap(packet,allocation=None):
     return outcome
 
 
-def collect(packet,seconds=900):
+def collect(packet,seconds=900,metadata_limit=8*2**30):
     """Retry only a metadata transfer; closed transfers/extractions are reusable."""
     import contextlib
     import os
@@ -455,6 +455,7 @@ def collect(packet,seconds=900):
     import tarfile
     packet=Path(packet)
     require(1<=seconds<=900,'collection deadline outside finite bound')
+    require(type(metadata_limit) is int and 0<metadata_limit<=8*2**30,'invalid metadata bound')
     target=packet/"collected"
     if target.exists():return target
     closed=packet/"return.tar"
@@ -463,14 +464,27 @@ def collect(packet,seconds=900):
         op=read_json(packet/"operator.json")
         script="""import hashlib,io,json,pathlib,sys,tarfile
 root=pathlib.Path(sys.argv[1])
-paths=set(root.glob('*'))|set(root.glob('analysis/*'))|set(root.glob('runs/*/*'))
+paths=set(root.glob('*'))|set(root.glob('analysis/**/*'))|set(root.glob('runs/*/*'))
 for record in root.glob('runs/*/record.json'):
- for name in json.loads(record.read_text()).get('evidence',{}):
+ row=json.loads(record.read_text())
+ if not row.get('complete'):
+  for kind in ('intent.json','measurement.json','result.json'):
+   paths.update(record.parent.glob('native/.flowdc/attempts/*/*/'+kind))
+ for name in row.get('evidence',{}):
   relative=pathlib.Path(name)
   if relative.is_absolute() or '..' in relative.parts:raise ValueError('unsafe metadata path')
   if relative.suffix in ('.json','.jsonl','.log','.tex','.pdf'):
    p=record.parent/relative
    if not p.is_file() or p.is_symlink():raise ValueError('required metadata missing')
+   paths.add(p)
+ overview=record.parent/'native/overview.json'
+ if overview.is_file():
+  document=json.loads(overview.read_text())
+  for spec in document.get('http_observations',{}).get('files',[])+document.get('control_trajectories',[]):
+   relative=pathlib.Path(spec['path'])
+   if relative.is_absolute() or '..' in relative.parts:raise ValueError('unsafe measurement path')
+   p=overview.parent/relative
+   if not p.is_file() or p.is_symlink():raise ValueError('required observation missing')
    paths.add(p)
 manifest={}
 with tarfile.open(fileobj=sys.stdout.buffer,mode='w|') as archive:
@@ -500,11 +514,11 @@ with tarfile.open(fileobj=sys.stdout.buffer,mode='w|') as archive:
                     while selector.get_map():
                         require(time.monotonic()<deadline,"collection deadline")
                         for key,_ in selector.select(.2):
-                            chunk=os.read(key.fd,min(1024*1024,8*2**30+1-count))
+                            chunk=os.read(key.fd,min(1024*1024,metadata_limit+1-count))
                             if not chunk:
                                 selector.unregister(key.fileobj);continue
                             count+=len(chunk)
-                            require(count<=8*2**30,"collection exceeds cache bound")
+                            require(count<=metadata_limit,"collection exceeds cache bound")
                             out.write(chunk)
                     while os.waitid(os.P_PID,proc.pid,os.WEXITED|os.WNOHANG|os.WNOWAIT) is None:
                         require(time.monotonic()<deadline,"collection exit deadline")
@@ -521,7 +535,7 @@ with tarfile.open(fileobj=sys.stdout.buffer,mode='w|') as archive:
     temporary.mkdir()
     with tarfile.open(closed,mode="r:") as archive:
         members=archive.getmembers()
-        require(len({m.name for m in members})==len(members) and sum(m.size for m in members)<=8*2**30 and
+        require(len({m.name for m in members})==len(members) and sum(m.size for m in members)<=metadata_limit and
                 all(m.isfile() and not Path(m.name).is_absolute() and ".." not in Path(m.name).parts for m in members),"unsafe collection")
         archive.extractall(temporary,filter="data")
     if (temporary/'metadata-manifest.json').exists():

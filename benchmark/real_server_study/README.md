@@ -1,5 +1,7 @@
 # Higher-concurrency real-host study
 
+For the separate finite search above Fixed66, see the [TaiBIF onset protocol](../../docs/research/TAIBIF-ONSET.md).
+
 Issue #43 implements one current runner, separate from the completed October17
 study. Its private frozen scripts and evidence remain unchanged.
 
