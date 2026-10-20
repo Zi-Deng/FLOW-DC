@@ -156,7 +156,15 @@ Metadata transfer is bounded to8GiB/900s with16GiB local peak space for transfer
 plus extraction, preserving40GiB free. Interrupted transfers can be replaced;
 closed transfers/extractions are reused, and PDF retries use collected files
 without VM activation. An incomplete derived analysis may be superseded by a
-full re-audit of the same retained first attempts; completed analyses remain fixed.
+completed audit of the same retained first attempts; completed analyses remain fixed.
+The bounded cloud auditor can resume successful native-archive digest checks from
+a prior partial frozen analysis. It binds each current record and protocol, requires
+archive mtime/ctime to predate the prior result, then checks that inode, size,
+mtime and ctime remain unchanged between cache admission and reuse. It rehashes
+metadata and previously unaudited or changed archives. It preserves
+the input proof and a reuse receipt. This relies on the immutable study artifacts
+and exclusive study lock; it is not a simultaneous filesystem snapshot or continuous
+bit-rot detection. No acquisition, statistical rule or run credit is changed.
 
 ## Qualification and reports
 

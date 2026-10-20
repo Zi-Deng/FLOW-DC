@@ -257,18 +257,65 @@ def verify_rates(provider,record,deployment):
     return {"utc":utc(),"servers":rows}
 
 
+ARCHIVE_CACHE = r'''
+def install_archive_cache(module,study,threshold=64*2**20):
+ # Reuse only successful raw digest checks from a prior partial frozen audit.
+ # The study lock excludes acquisition writers. Native archives are immutable;
+ # ctime/mtime must predate that audit result, and are checked again on use.
+ from pathlib import Path
+ from benchmark.real_server_study.common import file_hash,read_json,require,replace_derived,write_new
+ proof_path=study/'analysis/results.json'
+ if not proof_path.exists():return
+ require(not proof_path.is_symlink(),'partial audit result is a symlink')
+ proof=read_json(proof_path);cutoff=proof_path.stat().st_mtime_ns
+ if not proof.get('analysis_incomplete_runs'):return
+ require(proof['protocol_sha256']==file_hash(study/'protocol.json'),'partial audit protocol changed')
+ cached={}
+ def stamp(path):
+  require(not path.is_symlink() and path.is_file(),'archive is not a regular retained file')
+  st=path.stat();return (st.st_ino,st.st_size,st.st_mtime_ns,st.st_ctime_ns)
+ for row in proof['runs']:
+  if not row.get('complete'):continue
+  run_id=row['run_id'];require(Path(run_id).name==run_id and run_id not in ('.','..'),'unsafe audit run identity')
+  binding=proof['run_record_hashes'][run_id]
+  require(binding['file']=='record.json','complete audit record path changed')
+  require(file_hash(study/'runs'/run_id/'record.json')==binding['sha256'],'partial audit record changed')
+  require(read_json(study/'runs'/run_id/'record.json')==row,'partial audit row changed')
+  archive=study/'runs'/run_id/'native.tar';facts=stamp(archive)
+  digest=row['evidence']['native.tar']
+  require(digest==row['verification']['archive_sha256'],'archive receipt differs')
+  if facts[1]>=threshold and max(facts[2:])<=cutoff:cached[str(archive)]=(facts,digest)
+ # Preserve the input proof before replacing the regenerable partial result.
+ proof_hash=file_hash(proof_path)
+ saved=study/'analysis'/('archive-audit-input-'+proof_hash+'.json')
+ if not saved.exists():write_new(saved,proof_path.read_bytes())
+ require(file_hash(saved)==proof_hash,'saved partial audit proof changed')
+ original=module.file_hash
+ def checked(path,deadline=None):
+  previous=cached.get(str(Path(path)))
+  if previous is not None and stamp(Path(path))==previous[0]:return previous[1]
+  return original(path,deadline)
+ module.file_hash=checked
+ replace_derived(study/'analysis/archive-audit-resume.json',
+  {'prior_result_sha256':proof_hash,'input_file':saved.name,'prior_result_mtime_ns':cutoff,
+   'eligible_archives':{str(Path(k).relative_to(study)):{'sha256':v[1],'stat':v[0]} for k,v in cached.items()},
+   'scope':'Prior successful raw digests; unchanged inode/size/mtime/ctime checked on reuse. Metadata is rehashed. Not continuous bit-rot detection or a simultaneous filesystem snapshot.'})
+'''
+
 AUDIT = r'''
-import json,os,sys
+import importlib,json,os,sys
 from pathlib import Path
 for name in ('POLARS_MAX_THREADS','OMP_NUM_THREADS','OPENBLAS_NUM_THREADS'):os.environ[name]='4'
 os.sched_setaffinity(0,sorted(os.sched_getaffinity(0))[:4])
 from benchmark.real_server_study.common import lock,read_json,remaining
-from benchmark.real_server_study.analyze import analyze
+module=importlib.import_module('benchmark.real_server_study.analyze')
 study=Path(sys.argv[1]);seconds=min(900,int(sys.argv[2])-30,remaining(study)-30)
 result={'status':'analysis_pending','runs':int(sys.argv[3])}
+''' + ARCHIVE_CACHE + r'''
 if seconds>0:
  with lock(study/'study.lock'):
-  audited=analyze(study,seconds=seconds)
+  install_archive_cache(module,study)
+  audited=module.analyze(study,seconds=seconds)
  if not audited['analysis_incomplete_runs']:
   result['status']='stopped' if (study/'STOP.json').exists() else 'complete'
   if (study/'STOP.json').exists():result['reason']=read_json(study/'STOP.json')['reason']

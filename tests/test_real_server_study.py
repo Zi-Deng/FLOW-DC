@@ -12,7 +12,7 @@ import threading
 import time
 import unittest
 from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
-from unittest.mock import AsyncMock,patch
+from unittest.mock import AsyncMock,Mock,patch
 from types import SimpleNamespace
 
 import aiohttp
@@ -264,6 +264,46 @@ class DesignTests(unittest.TestCase):
                         self.assertTrue(common.read_json(root/'closed.json')['cleaned'])
                 provider.verify_idle.assert_called_once_with(journal.read())
                 self.assertEqual([c.args[0] for c in controller.call.call_args_list],['stop','status'])
+
+    def test_archive_audit_resume_reuses_only_verified_unchanged_payloads(self):
+        namespace={};exec(cloud.ARCHIVE_CACHE,namespace)
+        for mode in ('unchanged','incomplete','modified','newer','record_changed','row_changed','protocol_changed'):
+            with self.subTest(mode=mode),tempfile.TemporaryDirectory() as d:
+                root=Path(d);directory=root/'runs'/'run';directory.mkdir(parents=True)
+                (root/'analysis').mkdir();common.write_new(root/'protocol.json',{'study':'same'})
+                archive=directory/'native.tar';archive.write_bytes(b'original payload')
+                metadata=directory/'metadata.json';common.write_new(metadata,{'retained':True})
+                sha=common.file_hash(archive)
+                row={'run_id':'run','complete':mode!='incomplete','evidence':{'native.tar':sha},
+                     'verification':{'archive_sha256':sha}}
+                common.write_new(directory/'record.json',row)
+                proof={'analysis_incomplete_runs':1,'protocol_sha256':common.file_hash(root/'protocol.json'),
+                       'runs':[row],'run_record_hashes':{'run':{'file':'record.json','sha256':common.file_hash(directory/'record.json')}}}
+                if mode=='row_changed':proof['runs']=[{**row,'extra':'unbound'}]
+                target=root/'analysis/results.json';common.write_new(target,proof)
+                if mode=='modified':archive.write_bytes(b'altered! payload')
+                if mode=='newer':
+                    import os
+                    stamp=target.stat().st_mtime_ns+1_000_000_000
+                    os.utime(archive,ns=(stamp,stamp))
+                if mode=='record_changed':(directory/'record.json').write_text('{}')
+                if mode=='protocol_changed':(root/'protocol.json').write_text('{}')
+                original=Mock(wraps=common.file_hash);module=SimpleNamespace(file_hash=original)
+                if mode.endswith('_changed'):
+                    with self.assertRaisesRegex(ValueError,'changed'):
+                        namespace['install_archive_cache'](module,root,threshold=1)
+                    continue
+                namespace['install_archive_cache'](module,root,threshold=1)
+                self.assertEqual(module.file_hash(archive),common.file_hash(archive))
+                self.assertEqual(original.call_count,0 if mode=='unchanged' else 1)
+                module.file_hash(metadata);self.assertEqual(original.call_args.args[0],metadata)
+                if mode=='unchanged':
+                    # Mutation after cache setup must also force a real rehash.
+                    archive.write_bytes(b'changed again')
+                    self.assertNotEqual(module.file_hash(archive),sha)
+                    self.assertEqual(original.call_args.args[0],archive)
+                receipt=common.read_json(root/'analysis/archive-audit-resume.json')
+                self.assertEqual(common.read_json(root/'analysis'/receipt['input_file']),proof)
 
     def test_analysis_pending_uses_offline_auditor_without_extending_lease(self):
         compile(cloud.AUDIT,'bounded-audit-fixture','exec')
