@@ -61,7 +61,7 @@ are120 seconds with evaluation20–60; others180 seconds with evaluation30–90.
 150 qualification requires backlog throughout evaluation, at least90% of time
 at150 actual HTTP requests, and one continuous30-second span. Balanced selection
 requires median delay <=3× initial low-load baseline. All selection requires
->=99% verified credit among dispatched rows and no failed warning response.
+>=99% verified credit among dispatched terminal rows and no failed warning response.
 Select the lowest actual median among settings within5% of the best verified
 evaluation-window goodput, then lower p95 delay, then identifier. Three of three
 held-out windows must qualify for a replicated150 result. Report ordinary paired
@@ -84,7 +84,7 @@ It alone drains owned work for up to30 seconds and archives a verified prefix
 on shutdown. The native full-manifest completion flag remains false. The study
 verifier separately recognizes protocol-window completion, reconciles all
 original rows, and accepts only exact guard-proven planned admission rejections.
-Unknown interruptions earn no credit. V1 record interpretation is unchanged.
+Exact planned body/admission censoring is reported separately and excluded from the terminal-row success constraint; it remains in original-row coverage. Unknown interruptions earn no credit. V1 record interpretation is unchanged.
 
 The cloud bridge uses the established trusted manager/worker/origin topology and
 supervisor, preserving accounts, grants and cleanup obligations. It admits at

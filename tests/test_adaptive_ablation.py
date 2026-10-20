@@ -213,7 +213,12 @@ class ReceiptTests(unittest.TestCase):
                 record_sha256=str(n),
                 protocol_window_complete=True,
                 stop_reason=None,
-                verification={"credited_rows": 100, "dispatched_rows": 100, "original_rows": 32768},
+                verification={
+                    "credited_rows": 100,
+                    "dispatched_rows": 100,
+                    "dispatched_terminal_rows": 100,
+                    "original_rows": 32768,
+                },
                 exposure=dict(
                     balanced=True,
                     qualified=qualifies,
@@ -359,3 +364,91 @@ class CloudBoundaryTests(unittest.TestCase):
             common.write_new(review / "report.json", {"findings": []})
             with self.assertRaises(ValueError):
                 ablation_cloud.qualified(root, {"source": {"head": "new"}})
+
+
+class NativeLaunchTests(unittest.IsolatedAsyncioTestCase):
+    async def test_launch_timer_controls_the_same_native_module(self):
+        payload = io.BytesIO()
+        Image.new("RGB", (17, 13), (17, 90, 4)).save(payload, "JPEG")
+        raw = payload.getvalue()
+
+        async def handle(request):
+            await asyncio.sleep(0.03)
+            return web.Response(body=raw, content_type="image/jpeg")
+
+        app = web.Application()
+        app.router.add_get("/{name}", handle)
+        server = web.AppRunner(app)
+        await server.setup()
+        site = web.TCPSite(server, "127.0.0.1", 0)
+        await site.start()
+        port = site._server.sockets[0].getsockname()[1]
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                study = Path(tmp)
+                directory = study / "runs/fixture"
+                directory.mkdir(parents=True)
+                manifest = study / "input.parquet"
+                pl.DataFrame({"url": [f"http://127.0.0.1:{port}/{n}.jpg" for n in range(256)]}).write_parquet(
+                    manifest
+                )
+                common.write_new(study / "protocol.json", {})
+                common.write_new(study / "execution.json", {})
+                common.write_new(study / "host-gate.json", {"ignore_time": False})
+                common.write_new(study / "probe-summary.json", {"ttfb_p50_s": 0.05})
+                cfg = dict(
+                    input=str(manifest),
+                    output=str(directory / "native"),
+                    url="url",
+                    control_method="ratio-v2",
+                    concurrent_downloads=16,
+                    http_connection_limit=8,
+                    C_min=2,
+                    C_init=4,
+                    C_max=16,
+                    research_profile=True,
+                    research_workload=ablation.PROFILE,
+                    max_retry_attempts=1,
+                    compress_tar=False,
+                )
+                common.write_new(directory / "flowdc-config.json", cfg)
+                common.write_new(directory / "execution.json", {})
+                common.write_new(
+                    directory / "attempt.json",
+                    dict(
+                        protocol_sha256=common.file_hash(study / "protocol.json"),
+                        execution_sha256=common.file_hash(study / "execution.json"),
+                        slice_sha256=common.file_hash(manifest),
+                        body_reservation=2**20,
+                    ),
+                )
+                script = """import sys
+from pathlib import Path
+from benchmark.real_server_study import ablation,ablation_run,telemetry
+from benchmark.real_server_study.common import read_json
+root=Path(sys.argv[1]);ablation.check=lambda *a:None;ablation_run.guest_check=lambda *a:None
+ablation.schedule=lambda:[dict(run_id='fixture',phase='screen',network_seconds=.25)]
+ablation.config=lambda *a:read_json(root/'runs/fixture/flowdc-config.json')
+telemetry.checked_url=lambda u:u
+ablation_run.launch(root,Path(sys.argv[2]),'fixture')
+"""
+                process = await asyncio.create_subprocess_exec(
+                    sys.executable,
+                    "-c",
+                    script,
+                    str(study),
+                    str(ROOT),
+                    cwd=ROOT,
+                    stdout=asyncio.subprocess.DEVNULL,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                _, err = await asyncio.wait_for(process.communicate(), 15)
+                self.assertEqual(process.returncode, 0, err.decode())
+                events, invalid = ablation_run.audit_events(directory / "request-audit.jsonl")
+                self.assertFalse(invalid)
+                self.assertEqual(events[-1]["stop_reason"], "planned_window_end")
+                index = common.read_json(directory / "native/outcome-index.json")
+                self.assertGreater(index["counts"]["unattempted"], 128)
+                self.assertTrue((directory / "native.tar").exists())
+        finally:
+            await server.cleanup()

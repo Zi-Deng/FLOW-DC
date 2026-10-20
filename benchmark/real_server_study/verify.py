@@ -205,6 +205,7 @@ def verify(run_dir, slice_path, source, started=None, ended=None, credit_urls=Fa
     require(not active and dispatched_tokens <= ended_tokens, "unclosed network requests")
     attempted = Counter(e["url"] for e in audit if e["event"] == "attempt")
     dispatched = Counter(e["url"] for e in audit if e["event"] == "dispatch")
+    censored_dispatched = set()
     require(sum(attempted.values()) == obs["attempts"] and (set(attempted) <= set(frame["url"]) if planned_window else set(attempted) == set(frame["url"])), "request audit denominator mismatch")
     if planned_window:
         marker=read_json(run_dir/"planned-stop.json")
@@ -213,6 +214,8 @@ def verify(run_dir, slice_path, source, started=None, ended=None, credit_urls=Fa
             error=str(record.get("error") or "")
             if record["disposition"] == "failed" and "study dispatch stopped:" in error:
                 require(any(reason in error for reason in ("planned_window_end","planned_body_budget")), "unplanned guard rejection")
+                url=expected_ids[record['row_id']][1]['url']
+                if url in dispatched:censored_dispatched.add(url)
         unknown=[]
         for spec in overview["http_observations"]["files"]:
             measurement=read_json(native/spec["path"])
@@ -225,7 +228,10 @@ def verify(run_dir, slice_path, source, started=None, ended=None, credit_urls=Fa
             "row_errors": dict(Counter(str(r.get("error")) for r in index["rows"] if r["disposition"] != "verified")),
             "row_final_status": dict(Counter(str(r.get("status_code")) for r in index["rows"])),
             "credited_bytes": credited, "credited_rows": credited_rows, "decode_failures": decode_failures,
-            **({"attempted_rows":len(attempted), "dispatched_rows":len(dispatched), "original_rows":frame.height, "protocol_window_complete":True} if planned_window else {}),
+            **({"attempted_rows":len(attempted), "dispatched_rows":len(dispatched),
+                "administratively_censored_dispatched_rows":len(censored_dispatched),
+                "dispatched_terminal_rows":len(dispatched)-len(censored_dispatched),
+                "original_rows":frame.height, "protocol_window_complete":True} if planned_window else {}),
             "archive_mismatch": 0, "archive_sha256": archive_sha, "observations": obs}
     if credit_urls:
         result['credited_url_bytes'] = credited_urls

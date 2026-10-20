@@ -4,7 +4,6 @@ import argparse
 import asyncio
 import json
 import os
-import runpy
 import shutil
 import socket
 import subprocess
@@ -108,7 +107,11 @@ def launch(study, source, run_id):
                 "--config",
                 str(directory / "flowdc-config.json"),
             ]
-            runpy.run_path(sys.argv[0], run_name="__main__")
+            # The timer and acquisition must share one module's shutdown flag.
+            # Executing a second __main__ copy would leave that copy running.
+            import download_batch
+
+            asyncio.run(download_batch.main())
         finally:
             restore()
             if guard.timer:

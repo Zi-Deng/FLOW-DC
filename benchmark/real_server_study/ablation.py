@@ -283,7 +283,8 @@ def select(records):
                 and not r.get("stop_reason")
                 and r["exposure"].get("warning_response") != "failed"
                 and r["exposure"].get("balanced" if label == "balanced" else "qualified")
-                and r["verification"]["credited_rows"] / max(1, r["verification"]["dispatched_rows"]) >= 0.99
+                and r["verification"]["credited_rows"] / max(1, r["verification"]["dispatched_terminal_rows"])
+                >= 0.99
             ]
             if not rows:
                 continue

@@ -305,7 +305,7 @@ def report(study, output=None):
         "Two redesigned methods start at four permits, minimum two, with an internal ceiling of 512 and a common HTTP/TCP ceiling of 256. Multiplicative startup, elapsed smoothing, utilization gating, refreshed delay baseline and method feedback are separately exercised in 24 normalized controlled cases. These cases use known image bytes and capacity four--one--four; they do not prove public-host capacity.",
         "The public matrix contains two pipeline diagnostics, 16 full-factorial screening runs and 18 held-out validation slots. Grid factors are startup multiplier 1.25/1.5, baseline age 10/120 seconds and target delay ratio 2/3. Screening and validation populations are disjoint; matched arms reuse identical frozen URLs within their stage. There is no cache busting. Validation has three independent initializations per arm. Identical balanced and high selections alias one execution and are never extra replicates.",
         "Screening evaluation is seconds 20--60 after first dispatch; capacity and validation use seconds 30--90. Network windows are 120/180 seconds, followed by a bounded 30-second drain. Body allowance can terminate a window early. Original manifests contain 32,768 rows; nondispatched rows remain unattempted, and partial or unknown outcomes are not credited.",
-        "Balanced selection requires median first-byte delay no more than three times the initial low-load baseline. Both selection classes require at least 99 percent credited among dispatched rows and no failed warning response. Among settings within five percent of the best verified evaluation-window goodput, select the lowest actual median, then p95 delay, then fixed identifier. This is conditional selection, not a global optimum.",
+        "Balanced selection requires median first-byte delay no more than three times the initial low-load baseline. Both selection classes require at least 99 percent credited among dispatched terminal rows and no failed warning response. Among settings within five percent of the best verified evaluation-window goodput, select the lowest actual median, then p95 delay, then fixed identifier. This is conditional selection, not a global optimum.",
         r"\section{All first-attempt statuses}\small\begin{longtable}{p{.42\linewidth}lrrrr}\toprule Run & Status & Median & Peak & 150 s & MB/s\\\midrule\endhead",
     ]
     for r in value["runs"]:
@@ -349,7 +349,7 @@ def report(study, output=None):
         label = esc(r["run_id"].replace("gradient-candidate-", "Gradient-"))
         lines.append(
             label
-            + f": original rows {v['original_rows']}; dispatched {v['dispatched_rows']}; verified {v['credited_rows']}; dispositions "
+            + f": original rows {v['original_rows']}; dispatched {v['dispatched_rows']}; terminal {v['dispatched_terminal_rows']}; administrative censoring {v['administratively_censored_dispatched_rows']}; verified {v['credited_rows']}; dispositions "
             + esc(v["dispositions"])
             + "."
         )
