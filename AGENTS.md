@@ -75,6 +75,7 @@ These instructions apply to the whole repository unless a deeper `AGENTS.md` ove
 
 ## Cloud Operations
 
+- Obtain explicit maintainer permission before sending each email, including support replies and follow-ups. Broad task authorization does not authorize email submission.
 - Jetstream2 resources are real and billed. Do not activate, unshelve, resize or reconfigure VMs, networks or credentials, or grant allowances, without explicit maintainer authorization for that operation.
 - Read-only inspection and offline preparation are fine. Follow `docs/jetstream2/README.md` and `docs/jetstream2/LIFECYCLE.md`; only `SHELVED_OFFLOADED` counts as cleaned up.
 - The local `flowdc-pilot` systemd user service supervises the pilot. Do not stop, restart or upgrade it as a side effect of another task.

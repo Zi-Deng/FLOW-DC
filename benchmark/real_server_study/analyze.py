@@ -25,7 +25,9 @@ def summary(values, alpha=.05):
 
 
 def randomization(values):
-    require(len(values) == 6, "exact primary randomization requires six complete pairs")
+    # Historical output key exact_randomization_p denotes this 64-sign-flip
+    # sensitivity. It does not enumerate the balanced 3/3 order assignment.
+    require(len(values) == 6, "paired sign-flip sensitivity requires six complete pairs")
     observed = abs(sum(values))
     null = [abs(sum(s*d for s,d in zip(signs,values))) for signs in itertools.product((-1,1),repeat=6)]
     return sum(v >= observed-1e-9 for v in null)/len(null)
@@ -147,15 +149,16 @@ def report(study):
       r"\title{\textcolor{navy}{FLOW-DC}\\Higher-concurrency real-host study}\author{Private research evidence report}\date{\today}\maketitle",
       r"\section{What was done}",
       "Ratio and Gradient started at four, with minimum two and a safety ceiling of 256, supported by 256 downloader tasks. "
-      "Their decision rules and selected options were unchanged. Four adaptive calibration runs preceded six paired adaptive blocks. "
-      "Six later Fixed-low/high blocks used settings selected deterministically from adaptive traces. The planned total was 28 runs plus a 300-URL health probe.",
+      "Their decision rules and selected options were unchanged. The design specified four adaptive calibration runs followed by six paired adaptive blocks. "
+      "Six later Fixed-low/high blocks were planned with settings selected deterministically from adaptive traces. The planned total was 28 runs plus a 300-URL health probe.",
       f"There are {result['recorded_runs']} recorded first attempts and {result['complete_runs']} fully accounted complete runs. "
       "The inventory below retains stopped, incomplete and unrun cells. A completed process or HTTP 200 alone does not establish decoded-image credit.",
       f"Evidence auditing was incomplete for {result['analysis_incomplete_runs']} runs. Those runs receive no complete-run credit or inferred zero goodput.",
       r"\section{Principal comparison}",
       f"Gradient minus Ratio has {g['n']} complete paired blocks. The mean verified-goodput difference is {number(g['mean'],1e6)} decimal MB/s. "
       +("The ordinary 95\\% paired interval is ["+number(ci[0],1e6)+", "+number(ci[1],1e6)+"] MB/s. " if ci else "An interval is unavailable. ")+
-      f"The primary two-sided paired-test p value is {number(g['p'])}; exact paired-randomization sensitivity p is {number(result['primary']['exact_randomization_p'])}.",
+      f"The primary two-sided paired-test p value is {number(g['p'])}; planned 64-sign-flip sensitivity p is {number(result['primary']['exact_randomization_p'])}.",
+      "The sign-flip sensitivity assumes paired sign exchangeability. It does not enumerate the 20 assignments permitted by exactly balanced method order; it must not be described as that design's exact randomization test.",
       "The predeclared positive claim is "+("supported" if result['primary']['claim_supported'] else "not supported")+". "
       "It additionally requires coverage-loss and p95-delay safeguards; nonsignificance does not establish equivalence.",
       r"\begin{center}\includegraphics[width=\linewidth]{goodput.pdf}\end{center}",
@@ -173,10 +176,10 @@ def report(study):
     else:lines.append("Fixed selection has not been completed. No supported Fixed setting is inferred.")
     if (study/"host-gate.json").exists() and read_json(study/"host-gate.json")["ignore_time"]:
         lines.append("For the moth host only, certificate/CRL validity-period checks were suppressed; cryptographic trust-chain and hostname checks remained enabled. No global unverified TLS context was used.")
-    lines += [r"\section{Every planned first attempt}\small\begin{longtable}{llrr}\toprule Arm & Status & Block & MB/s\\\midrule\endhead"]
+    lines += [r"\section{Every planned first attempt}\small\begin{longtable}{lllrr}\toprule Phase & Arm & Status & Block & MB/s\\\midrule\endhead"]
     for r in result['runs']:
         value=number(r.get('goodput_Bps'),1e6)
-        lines.append(f"{labels.get(r['arm'],escape(r['arm']))} & {escape(r['status'])} & {r['block']} & {value} "+r"\\")
+        lines.append(f"{escape(r['phase'])} & {labels.get(r['arm'],escape(r['arm']))} & {escape(r['status'])} & {r['block']} & {value} "+r"\\")
     lines += [r"\bottomrule\end{longtable}\normalsize",r"\section{Interpretation and limits}",
       "The endpoint is independently verified decoded original-row bytes divided by launch-through-verification elapsed time. "
       "Original row denominators include known failures. Unknown evidence is not silently assigned successful completion or imputed into complete-run intervals. "

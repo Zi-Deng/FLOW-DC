@@ -67,14 +67,19 @@ class Controller:
 
     def call(self, action, seconds=10, window=1800):
         require(action in ("status", "start", "stop", "reconcile"))
+        current = self.journal.read()
         require(
-            registration_binding(self.journal.read()) == registration_binding(self.expected),
+            registration_binding(current) == registration_binding(self.expected),
             "registration_changed",
         )
         verify_release(self.record["service"], self.root)
         argv = [*self.command, action, "--state-root", str(self.root)]
         if action == "start":
             argv += ["--window-seconds", str(window)]
+            if window > 1800:
+                require(all(allowance(current["vms"][key]["account"]).campaign_id is not None
+                            for key in selected_ids(self.expected)), "long_window_requires_campaign")
+                argv.append("--full-window")
             if "selection" in self.expected:
                 for vm_id in self.expected["selection"]["worker_ids"]:
                     argv += ["--worker-id", vm_id]
@@ -112,7 +117,7 @@ class Controller:
             current = self.journal.read()
             require(ready(value), "active_window_not_ready")
             require(
-                current["window"] == {"seconds": window, "inspection": True}
+                current["window"] == {"seconds": window, "inspection": window <= 1800}
                 and current["desired"] == "run" and current["checkpoint"] is None
                 and current["network"]["ready"] is True
                 and set(selected_ids(current)) == set(selected_ids(self.expected))
@@ -146,9 +151,9 @@ class Controller:
             if vm["id"] not in selected_ids(self.expected):
                 continue
             try:
-                allowance(vm["account"]).activation_intent(
-                    sample_clock(), window_seconds=window, inspection=True
-                )
+                account = allowance(vm["account"])
+                require(window <= 1800 or account.campaign_id is not None, "long_window_requires_campaign")
+                account.activation_intent(sample_clock(), window_seconds=window, inspection=window <= 1800)
             except ValueError:
                 raise ExperimentError("insufficient_allowance") from None
         return value

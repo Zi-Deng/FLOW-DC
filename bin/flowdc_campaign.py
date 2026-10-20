@@ -17,6 +17,91 @@ def account_digest(record):
     return sha({key:value['account'] for key,value in record['vms'].items()})
 
 
+def activation_binding(record, vm_id):
+    """Identify the last durable unshelve, without binding moving charge samples."""
+    intents = [(i, event) for i, event in enumerate(record['events'])
+               if event['kind'] == 'unshelve_intent' and event['data'].get('id') == vm_id]
+    if not intents:
+        raise failure('activation_intent_missing')
+    index, event = intents[-1]
+    return sha({'registration_id': record['registration_id'], 'vm_id': vm_id,
+                'network_generation': record['network']['generation'],
+                'event_index': index, 'event': event})
+
+
+def validate_disposition(value):
+    """Explicit operator attestation backed by a retained provider response."""
+    try:
+        ops.fields(value, ('schema', 'resolution_id', 'registration_id', 'vm_id',
+            'intent_sha256', 'provider_reference', 'provider_evidence_file',
+            'provider_evidence_sha256', 'disposition', 'future_activation_possible'))
+        if value['schema'] != 'flowdc-activation-disposition-v1':
+            raise ValueError
+        for key in ('resolution_id', 'registration_id', 'vm_id'):
+            if ops.uuid_value(value[key]) != value[key]:
+                raise ValueError
+        import re
+        for key in ('intent_sha256', 'provider_evidence_sha256'):
+            if not isinstance(value[key], str) or not re.fullmatch(r'[0-9a-f]{64}', value[key]):
+                raise ValueError
+        if (value['disposition'] not in ('rejected', 'cancelled', 'failed', 'completed')
+                or value['future_activation_possible'] is not False
+                or not isinstance(value['provider_reference'], str)
+                or not 1 <= len(value['provider_reference']) <= 512):
+            raise ValueError
+        ops.absolute_path(value['provider_evidence_file'])
+    except (KeyError, TypeError, ValueError, ops.OpsError):
+        raise failure('invalid_activation_disposition', invalid=True) from None
+    return value
+
+
+def disposition_receipt(record, evidence):
+    validate_disposition(evidence)
+    for event in record['events']:
+        if event['kind'] == 'activation_resolved' and event['data']['request']['resolution_id'] == evidence['resolution_id']:
+            receipt = event['data']
+            if receipt['request'] != evidence or receipt['request_sha256'] != sha(evidence):
+                raise failure('activation_resolution_replay_conflict')
+            return copy.deepcopy(receipt)
+    return None
+
+
+def resolve_activation(record, evidence, observation, now):
+    """Settle only a provider-confirmed terminal intent; never force global idle."""
+    from flowdc_pilot import ClockSample
+    existing = disposition_receipt(record, evidence)
+    if existing is not None:
+        return copy.deepcopy(record), existing, False
+    key = evidence['vm_id']
+    if evidence['registration_id'] != record['registration_id'] or key not in record['vms']:
+        raise failure('activation_resolution_identity_changed')
+    vm = record['vms'][key]
+    if (record['desired'] != 'stop' or vm['phase'] not in ('unshelve_intent', 'requested')
+            or vm.get('activation_seen', False) or not allowance(vm['account']).obligation
+            or evidence['intent_sha256'] != activation_binding(record, key)):
+        raise failure('activation_resolution_intent_changed')
+    try:
+        ops.fields(observation, ('state', 'clock'))
+        sampled = ClockSample(**observation['clock'])
+        if (observation['state'] != 'SHELVED_OFFLOADED' or sampled.boot_id != now.boot_id
+                or not 0 <= now.utc - sampled.utc <= 120
+                or not 0 <= now.boottime - sampled.boottime <= 120):
+            raise ValueError
+    except (KeyError, TypeError, ValueError, ops.OpsError):
+        raise failure('activation_resolution_fresh_offload_required') from None
+    before = allowance(vm['account'])
+    after = before.observe(now, state='SHELVED_OFFLOADED')
+    candidate = copy.deepcopy(record)
+    candidate['vms'][key].update(account=asdict(after), phase='offloaded', observed=copy.deepcopy(observation))
+    receipt = {'request': copy.deepcopy(evidence), 'request_sha256': sha(evidence),
+               'clock': asdict(now), 'observation': copy.deepcopy(observation),
+               'before': asdict(before), 'after': asdict(after),
+               'limitation': 'Operator-attested provider disposition, not an inferred cancellation. '
+                             'Consumption retained; supervisor must finish network rollback and cleanup.'}
+    candidate['events'].append({'kind': 'activation_resolved', 'data': receipt})
+    return candidate, receipt, True
+
+
 def validate_recovery_request(request):
     """Explicit operator recovery of confirmed activity outside supervision."""
     try:
@@ -151,7 +236,7 @@ def validate_request(request):
             if ops.uuid_value(key) != key: raise ValueError
         if set(request['cumulative_limits_seconds']) != set(ids): raise ValueError
         for value in request['cumulative_limits_seconds'].values(): ops.integer(value,1,604800)
-        ops.integer(request['max_window_seconds'],601,1800)
+        ops.integer(request['max_window_seconds'],601,3600)
         ops.timestamp(request['expires_at'])
         budget=ops.number(request['budget_su'])
         if not 0 < budget <= 1e9: raise ValueError

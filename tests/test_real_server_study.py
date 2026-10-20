@@ -12,7 +12,7 @@ import threading
 import time
 import unittest
 from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
-from unittest.mock import AsyncMock,patch
+from unittest.mock import AsyncMock,Mock,patch
 from types import SimpleNamespace
 
 import aiohttp
@@ -71,6 +71,15 @@ class DesignTests(unittest.TestCase):
         with self.assertRaises(ValueError):design.slice_size(rows,150000,500)
         rows[0]={'complete':False}
         with self.assertRaises(ValueError):design.slice_size(rows,150000,600000)
+
+    def test_slow_calibration_preserves_minimum_without_waiving_capacity(self):
+        rows=[{'complete':True,'verification':{'credited_rows':8185},'acquisition_s':144.755,
+               'rows':8192,'verification_s':43.513,'finalization_s':3.66}]*4
+        plan=design.slice_size(rows,152972,620011)
+        self.assertEqual(plan['rows_per_main_run'],8192)
+        self.assertGreaterEqual(plan['predicted_fastest_acquisition_s'],120)
+        with self.assertRaises(ValueError):design.slice_size(rows,152972,24*8191)
+        with self.assertRaises(ValueError):design.slice_size(rows,600000,620011)
 
     def test_fixed_selection_with_and_without_429(self):
         records=[{'phase':'calibration' if i<4 else 'adaptive','started_monotonic':100} for i in range(16)]
@@ -150,6 +159,53 @@ class DesignTests(unittest.TestCase):
         with self.assertRaises(ValueError):cloud.allocation_gate(valid)
         compile(storage.MOUNT,'mount-fixture','exec');compile(storage.STAGE,'stage-fixture','exec')
 
+    def test_mount_accepts_exact_full_or_truncated_volume_serial_only(self):
+        volume='12345678-1234-4123-8123-123456789abc'
+        cases=[([volume],True),([volume[:20]],True),(['unrelated'],False),([volume,volume],False)]
+        for blocks,accepted in cases:
+            listing={'blockdevices':[{'path':'/dev/sd'+chr(98+i),'serial':s,'type':'disk'} for i,s in enumerate(blocks)]}
+            def measure(args,**kwargs):
+                if args[0]=='lsblk':return json.dumps(listing)
+                raise RuntimeError('measurement boundary')
+            with self.subTest(serials=blocks), \
+                 patch.object(sys,'argv',['mount',volume,'/mnt/flowdc-external-'+volume,'NEW']), \
+                 patch('subprocess.check_output',side_effect=measure) as measured, \
+                 patch('subprocess.run') as mutate:
+                if accepted:
+                    with self.assertRaisesRegex(RuntimeError,'measurement boundary'):
+                        exec(storage.MOUNT,{})
+                    self.assertEqual(measured.call_args.args[0],['blockdev','--getsize64','/dev/sdb'])
+                else:
+                    with self.assertRaisesRegex(AssertionError,'volume serial not uniquely found'):
+                        exec(storage.MOUNT,{})
+                    self.assertEqual(measured.call_count,1)
+                mutate.assert_not_called()
+
+    def test_mount_adopts_empty_owned_filesystem_without_formatting(self):
+        volume='12345678-1234-4123-8123-123456789abc'
+        listing={'blockdevices':[{'path':'/dev/sdb','serial':volume,'type':'disk'}]}
+        for expected,filesystem,contents,error in [('NEW','fs-id',[],None),
+                ('fs-id','fs-id',['retained-data'],None),('wrong','fs-id',[],'UUID changed'),
+                ('NEW',None,[],'filesystem not ready'),('NEW','fs-id',['existing-data'],'unexpected data')]:
+            calls=[]
+            def command(args,**kwargs):
+                calls.append(args)
+                if args[0]=='blkid':return SimpleNamespace(returncode=0 if filesystem else 2,stdout=filesystem or '')
+                if args[0]=='findmnt':return SimpleNamespace(returncode=0,stdout='fs-id')
+                raise AssertionError('unexpected mutation')
+            target=SimpleNamespace(is_symlink=lambda:False,mkdir=lambda **_:None,
+                        iterdir=lambda:[SimpleNamespace(name=n) for n in contents])
+            with self.subTest(expected=expected,filesystem=filesystem,contents=contents), \
+                 patch('pathlib.Path',return_value=target),patch('os.chown'),patch('os.chmod'), \
+                 patch('pwd.getpwnam',return_value=SimpleNamespace(pw_uid=1000)), \
+                 patch.object(sys,'argv',['mount',volume,'/mnt/flowdc-external-'+volume,expected]), \
+                 patch('subprocess.check_output',side_effect=lambda args,**_:json.dumps(listing) if args[0]=='lsblk' else str(256*2**30)), \
+                 patch('subprocess.run',side_effect=command),patch.object(sys,'stdout',io.StringIO()):
+                if error:
+                    with self.assertRaisesRegex(AssertionError,error):exec(storage.MOUNT,{})
+                else:exec(storage.MOUNT,{})
+            self.assertFalse(any('mkfs' in arg for call in calls for arg in call))
+
     def test_first_attempt_and_order_refusals(self):
         with tempfile.TemporaryDirectory() as d:
             root=Path(d);runs=design.schedule();common.write_new(root/'schedule.json',{'runs':runs})
@@ -159,6 +215,220 @@ class DesignTests(unittest.TestCase):
             root=Path(d);common.write_new(root/'schedule.json',{'runs':design.schedule()})
             (root/'runs'/design.schedule()[3]['run_id']).mkdir(parents=True)
             with self.assertRaises(ValueError):runner.records(root)
+
+    def test_operational_grant_keeps_private_same_bytes_outside_packet(self):
+        # The caller's default umask must not make a controller input public.
+        import os
+        sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'bin'))
+        campaign='12345678-1234-4123-8123-123456789abc'
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d);packet=root/'packet';packet.mkdir()
+            state=root/'controller';state.mkdir(mode=0o700)
+            common.write_new(packet/'deployment.json',{'campaign_id':campaign})
+            common.write_new(packet/'grant.json',{'campaign_id':campaign,'unchanged':'original'})
+            old=os.umask(0o022)
+            try:target=cloud.operational_grant(packet,{'state':str(state)})
+            finally:os.umask(old)
+            self.assertEqual(target.parent,state/'authorizations')
+            self.assertEqual(target.stat().st_mode&0o777,0o600)
+            self.assertEqual(target.read_bytes(),(packet/'grant.json').read_bytes())
+            self.assertEqual(cloud.operational_grant(packet,{'state':str(state)}),target)
+            original=target.read_bytes()
+            (packet/'grant.json').write_text(json.dumps({'campaign_id':campaign,'changed':True}))
+            with self.assertRaisesRegex(ValueError,'different bytes'):
+                cloud.operational_grant(packet,{'state':str(state)})
+            self.assertEqual(target.read_bytes(),original)
+
+    def test_cleanup_requires_fresh_provider_proof_after_durable_idle(self):
+        from unittest.mock import Mock
+        status=dict(supervisor_ready=True,desired='idle',checkpoint=None,network_rolled_back=True,
+                    vms=[dict(id=role,role=role,phase='offloaded',provider_state='UNKNOWN',
+                              observation_fresh=False,account=dict(obligation=False,uncertain=False))
+                         for role in ('manager','worker','origin')])
+        for refused in (False,True):
+            with self.subTest(refused=refused),tempfile.TemporaryDirectory() as d:
+                root=Path(d);common.write_new(root/'operator.json',{'state':'state','source':'source'})
+                controller=SimpleNamespace(call=Mock(return_value=status))
+                provider=Mock()
+                if refused:provider.verify_idle.side_effect=RuntimeError('fresh proof refused')
+                journal=SimpleNamespace(read=lambda:{'profile_path':'profile'})
+                with patch.object(cloud,'imports',return_value=(lambda _:journal,None,None,None)), \
+                     patch('flowdc_pilot_provider.Provider',return_value=provider), \
+                     patch('flowdc_ops.load_profile',return_value={}):
+                    if refused:
+                        with self.assertRaisesRegex(RuntimeError,'fresh proof refused'):
+                            cloud.cleanup(root,controller,root/'closed.json',{'runs':3})
+                        self.assertFalse((root/'closed.json').exists())
+                    else:
+                        cloud.cleanup(root,controller,root/'closed.json',{'runs':3})
+                        self.assertTrue(common.read_json(root/'closed.json')['cleaned'])
+                provider.verify_idle.assert_called_once_with(journal.read())
+                self.assertEqual([c.args[0] for c in controller.call.call_args_list],['stop','status'])
+
+    def test_evidence_audit_resume_reuses_only_verified_unchanged_files(self):
+        namespace={};exec(cloud.EVIDENCE_CACHE,namespace)
+        for mode in ('unchanged','completed','incomplete','modified','newer','record_changed','row_changed','protocol_changed','overview_changed','observation_modified','observation_missing','observation_symlink'):
+            with self.subTest(mode=mode),tempfile.TemporaryDirectory() as d:
+                root=Path(d);directory=root/'runs'/'run';directory.mkdir(parents=True)
+                (root/'analysis').mkdir();common.write_new(root/'protocol.json',{'study':'same'})
+                archive=directory/'native.tar';archive.write_bytes(b'original payload')
+                metadata=directory/'metadata.json';common.write_new(metadata,{'retained':True})
+                native=directory/'native';native.mkdir();observation=native/'observation.jsonl'
+                observation.write_bytes(b'original measurement')
+                overview=native/'overview.json'
+                common.write_new(overview,{'http_observations':{'files':[{'path':observation.name,'sha256':common.file_hash(observation)}]},'control_trajectories':[]})
+                sha=common.file_hash(archive)
+                row={'run_id':'run','complete':mode!='incomplete','evidence':{'native.tar':sha,'native/overview.json':common.file_hash(overview)},
+                     'verification':{'archive_sha256':sha}}
+                common.write_new(directory/'record.json',row)
+                proof={'analysis_incomplete_runs':0 if mode=='completed' else 1,'protocol_sha256':common.file_hash(root/'protocol.json'),
+                       'runs':[row],'run_record_hashes':{'run':{'file':'record.json','sha256':common.file_hash(directory/'record.json')}}}
+                if mode=='row_changed':proof['runs']=[{**row,'extra':'unbound'}]
+                target=root/'analysis/results.json';common.write_new(target,proof)
+                if mode=='modified':archive.write_bytes(b'altered! payload')
+                if mode=='newer':
+                    import os
+                    stamp=target.stat().st_mtime_ns+1_000_000_000
+                    os.utime(archive,ns=(stamp,stamp))
+                if mode=='record_changed':(directory/'record.json').write_text('{}')
+                if mode=='protocol_changed':(root/'protocol.json').write_text('{}')
+                if mode=='overview_changed':overview.write_text('{}')
+                if mode=='observation_modified':observation.write_bytes(b'changed measurement')
+                if mode in ('observation_missing','observation_symlink'):
+                    observation.unlink()
+                    if mode=='observation_symlink':observation.symlink_to(metadata)
+                original=Mock(wraps=common.file_hash);module=SimpleNamespace(file_hash=original)
+                if mode.endswith('_changed'):
+                    with self.assertRaisesRegex(ValueError,'changed'):
+                        namespace['install_evidence_cache'](module,root,threshold=1)
+                    continue
+                namespace['install_evidence_cache'](module,root,threshold=1)
+                self.assertEqual(module.file_hash(archive),common.file_hash(archive))
+                self.assertEqual(original.call_count,0 if mode in ('unchanged','completed','observation_modified','observation_missing','observation_symlink') else 1)
+                before=original.call_count
+                if mode in ('observation_missing','observation_symlink'):
+                    with self.assertRaises((FileNotFoundError,ValueError)):module.file_hash(observation)
+                    continue
+                self.assertEqual(module.file_hash(observation),common.file_hash(observation))
+                self.assertEqual(original.call_count,before+(mode in ('incomplete','observation_modified')))
+                module.file_hash(metadata);self.assertEqual(original.call_args.args[0],metadata)
+                if mode in ('unchanged','completed'):
+                    calls=original.call_count
+                    module.file_hash(metadata)
+                    self.assertEqual(original.call_count,calls)
+                    with self.assertRaises(TimeoutError):module.file_hash(metadata,deadline=0)
+                    # Mutation after cache setup must also force a real rehash.
+                    archive.write_bytes(b'changed again')
+                    self.assertNotEqual(module.file_hash(archive),sha)
+                    self.assertEqual(original.call_args.args[0],archive)
+                    previous=module.file_hash(observation);observation.write_bytes(b'changed later')
+                    self.assertNotEqual(module.file_hash(observation),previous)
+                receipt=common.read_json(root/'analysis/archive-audit-resume.json')
+                self.assertEqual(common.read_json(root/'analysis'/receipt['input_file']),proof)
+
+    def test_analysis_pending_uses_offline_auditor_without_extending_lease(self):
+        compile(cloud.AUDIT,'bounded-audit-fixture','exec')
+        for remains,expected_calls,status in [([840,800],2,'complete'),([840,150],1,'analysis_pending')]:
+            with tempfile.TemporaryDirectory() as d:
+                packet=Path(d)
+                common.write_new(packet/'deployment.json',{'campaign_id':'campaign'})
+                common.write_new(packet/'operator.json',{'guest_root':'/mnt/study','worker_id':'worker'})
+                common.write_new(packet/'deployment-receipt.json',{'python':'/mnt/study/venv/bin/python'})
+                answers=[b'{"status":"analysis_pending","runs":28}',b'{"status":"complete","runs":28}']
+                with patch('flowdc_experiment_transport.remaining',side_effect=remains), \
+                     patch.object(cloud,'ssh',side_effect=answers) as call:
+                    result=cloud.guest(packet,SimpleNamespace(call=lambda _:{}),9)
+                self.assertEqual((result['status'],call.call_count),(status,expected_calls))
+                self.assertIn('--property=RuntimeMaxSec=810',call.call_args_list[0].args[1])
+                if expected_calls==2:
+                    command=call.call_args.args[1]
+                    self.assertIn(cloud.AUDIT,command)
+                    self.assertIn('--property=RuntimeMaxSec=680',command)
+                    self.assertNotIn('guest-window',command)
+                    self.assertNotIn('--seconds',command)
+        with self.assertRaises(ValueError):cloud.collect(Path('/unused'),seconds=901)
+
+    def test_slow_readiness_wait_is_bounded_without_changing_guest_budget(self):
+        for ready_at,succeeds in ((310,True),(400,False)):
+            clock=[0]
+            def advance(seconds):clock[0]+=seconds
+            controller=SimpleNamespace(call=lambda _:dict(ready=clock[0]>=ready_at))
+            with patch.object(cloud.time,'monotonic',side_effect=lambda:clock[0]), \
+                 patch.object(cloud.time,'sleep',side_effect=advance), \
+                 patch('flowdc_experiment_transport.ready',side_effect=lambda v:v['ready']):
+                if succeeds:self.assertTrue(cloud.wait_active(controller)['ready'])
+                else:
+                    with self.assertRaisesRegex(ValueError,'activation timeout'):cloud.wait_active(controller)
+                    self.assertLessEqual(clock[0],360)
+
+    def test_ssh_readiness_retries_only_a_bounded_read_only_probe(self):
+        from unittest.mock import Mock
+        for returns,passed,calls in (([255,0],True,2),([255]*6,False,6)):
+            with self.subTest(passed=passed),tempfile.TemporaryDirectory() as d:
+                packet=Path(d);controller=Mock();controller.call.return_value={}
+                results=[SimpleNamespace(returncode=code,stderr=b'Connection refused' if code else b'') for code in returns]
+                with patch('flowdc_experiment_transport.remaining',return_value=700), \
+                     patch.object(cloud,'ssh_configuration',return_value='trusted'), \
+                     patch.object(cloud.subprocess,'run',side_effect=results) as run,patch.object(cloud.time,'sleep'):
+                    if passed:cloud.wait_ssh(packet,controller,19)
+                    else:
+                        with self.assertRaisesRegex(ValueError,'SSH readiness failed'):cloud.wait_ssh(packet,controller,19)
+                self.assertEqual(run.call_count,calls)
+                for call in run.call_args_list:
+                    self.assertEqual(call.args[0],['ssh','-F','trusted','--','worker','/usr/bin/true'])
+                    self.assertLessEqual(call.kwargs['timeout'],5)
+                receipt=common.read_json(packet/'window-19-ssh-readiness.json')
+                self.assertEqual((receipt['ready'],receipt['image_requests']),(passed,0))
+
+    def test_ssh_readiness_refuses_authentication_and_trust_failures_immediately(self):
+        from unittest.mock import Mock
+        for error in (b'Permission denied (publickey)\nConnection closed by UNKNOWN port 65535',
+                      b'REMOTE HOST IDENTIFICATION HAS CHANGED\nConnection closed',
+                      b'Host key verification failed\nConnection closed'):
+            with self.subTest(error=error),tempfile.TemporaryDirectory() as d:
+                controller=Mock();controller.call.return_value={}
+                with patch('flowdc_experiment_transport.remaining',return_value=700), \
+                     patch.object(cloud,'ssh_configuration',return_value='trusted'), \
+                     patch.object(cloud.subprocess,'run',return_value=SimpleNamespace(returncode=255,stderr=error)) as run:
+                    with self.assertRaisesRegex(ValueError,'SSH readiness failed'):cloud.wait_ssh(Path(d),controller,19)
+                run.assert_called_once()
+
+    def test_full_envelope_keeps_only_two_final_analysis_collection_windows(self):
+        from unittest.mock import Mock
+        campaign='campaign';ids=['manager','worker','origin']
+        deployment=dict(campaign_id=campaign,selected=dict(zip(ids,ids)))
+        op=dict(state='state',source='source')
+        journal=dict(vms={key:dict(account=dict(campaign_id=campaign,consumed=0)) for key in ids},
+                     spec=dict(vms=[dict(id=key,rate=dict(su_per_hour=rate)) for key,rate in zip(ids,[16,8,8])]),
+                     profile_path='profile')
+        for limit,number,final in ((36,33,False),(36,34,True),(42,39,False),(42,40,True),
+                                   (43,1,None),(True,1,None),(35,1,None)):
+            with self.subTest(limit=limit,number=number),tempfile.TemporaryDirectory() as d:
+                packet=Path(d)
+                common.write_new(packet/'deployment-receipt.json',{})
+                common.write_new(packet/'clock.json',dict(utc_epoch=time.time(),monotonic=time.monotonic(),
+                    boot_id=Path('/proc/sys/kernel/random/boot_id').read_text().strip()))
+                common.write_new(packet/'account-baseline.json',{key:0 for key in ids})
+                for old in range(1,number):common.write_new(packet/f'window-{old:02}.json',{'cleaned':True})
+                controller=Mock();controller.call.return_value={}
+                def close_window(packet,controller,path,outcome):common.write_new(path,{'cleaned':True})
+                def collected(packet,seconds):
+                    (packet/'collected').mkdir();return packet/'collected'
+                with patch.object(cloud,'merged_gate',return_value=(deployment,dict(op,max_windows=limit))), \
+                     patch.object(cloud,'imports',return_value=(lambda _:SimpleNamespace(read=lambda:journal),None,None,None)), \
+                     patch('flowdc_pilot_provider.Provider'),patch('flowdc_ops.load_profile',return_value={}), \
+                     patch.object(cloud,'verify_rates',return_value={}),patch.object(cloud,'controller_for',return_value=controller), \
+                     patch.object(cloud,'wait_active'),patch.object(cloud,'refresh_ssh'),patch.object(cloud,'wait_ssh'),patch.object(storage,'mount'), \
+                     patch.object(cloud,'guest',return_value=dict(status='complete',runs=28)) as guest, \
+                     patch.object(cloud,'cleanup',side_effect=close_window),patch.object(cloud,'collect',side_effect=collected), \
+                     patch('flowdc_experiment_transport.remaining',return_value=1000),patch.object(analyze,'report'):
+                    if final is None:
+                        with self.assertRaisesRegex(ValueError,'finite operational window cap'):cloud.run_windows(packet)
+                        guest.assert_not_called()
+                    else:self.assertEqual(cloud.run_windows(packet)['runs'],28)
+                if final is not None:self.assertEqual(guest.call_args.kwargs['final'],final)
+                self.assertEqual((cloud.CAMPAIGN_SECONDS,cloud.OPERATIONAL_SU),(64800,640))
+
 
     def test_guest_requires_observed_cloud_uuid(self):
         with tempfile.TemporaryDirectory() as d:

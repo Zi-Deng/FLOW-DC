@@ -98,7 +98,7 @@ class CampaignTests(unittest.TestCase):
         self.assertEqual(uncertain.remaining,0)
 
     def test_finite_budget_expiry_and_stale_accounts_refuse_without_mutation(self):
-        for name,value in [('budget_su',1),('max_window_seconds',1801),
+        for name,value in [('budget_su',1),('max_window_seconds',3601),
                 ('expires_at',datetime.fromtimestamp(self.clock().utc+8*86400,UTC).isoformat()),
                 ('expected_accounts_sha256','0'*64)]:
             request = copy.deepcopy(self.request); request[name]=value
@@ -108,6 +108,34 @@ class CampaignTests(unittest.TestCase):
         request['cumulative_limits_seconds'][request['selected_ids'][0]]=604801
         with self.assertRaises(ops.OpsError): validate_request(request)
         with self.assertRaises(AccountingError): Allowance(campaign_id='bad')
+
+    def test_explicit_hour_campaign_preserves_inspection_default_and_old_grants(self):
+        request = copy.deepcopy(self.request)
+        request['max_window_seconds'] = 3600
+        _, _, after = self.apply(request)
+        account = allowance(next(iter(after['vms'].values()))['account'])
+        with self.assertRaises(AccountingError):
+            account.activation_intent(self.clock(), window_seconds=3600, inspection=True)
+        active = account.activation_intent(self.clock(), window_seconds=3600, inspection=False)
+        self.assertEqual(active.shutdown_at_consumed - active.consumed, 3000)
+        with self.assertRaises(AccountingError):
+            account.activation_intent(self.clock(), window_seconds=3601, inspection=False)
+
+    def test_transport_hour_start_uses_explicit_full_window_flag(self):
+        import json
+        from unittest.mock import patch
+        import flowdc_experiment_transport as transport
+        request = copy.deepcopy(self.request); request['max_window_seconds'] = 3600
+        _, _, after = self.apply(request)
+        controller = transport.Controller.__new__(transport.Controller)
+        controller.root = self.journal.root
+        controller.journal = self.journal
+        controller.record = controller.expected = after
+        controller.command = ['fake', 'pilot']
+        response = json.dumps({'data':{'registration_id':after['registration_id'],'desired':'idle'}}).encode()
+        with patch.object(transport,'verify_release'),patch.object(transport,'execute',return_value=(0,response)) as execute:
+            controller.call('start',window=3600)
+        self.assertIn('--full-window',execute.call_args.args[0])
 
     def test_commit_rechecks_snapshot_age_and_local_failure_rolls_back(self):
         def change_then_probe(record):

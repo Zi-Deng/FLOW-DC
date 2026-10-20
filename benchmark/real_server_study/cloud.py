@@ -175,30 +175,68 @@ def controller_for(packet):
 
 
 def cleanup(packet,controller,path,outcome):
-    from flowdc_experiment_transport import clean
+    from flowdc_experiment_transport import idle
     from flowdc_pilot_provider import Provider
     import flowdc_ops as ops
     controller.call("stop",seconds=30)
     end=time.monotonic()+600
     value=controller.call("status")
-    while not clean(value):
+    # Durable settlement can outlive the narrow interval in which all six
+    # journal observations are fresh. The provider proof below is still required.
+    while not idle(value):
         require(time.monotonic()<end,"cleanup unresolved; keep supervisor running")
         time.sleep(1);value=controller.call("status")
     op=read_json(packet/"operator.json")
     Journal,_,_,_=imports(op["source"])
     current=Journal(op["state"]).read()
     Provider(ops.load_profile(current["profile_path"])).verify_idle(current)
-    write_new(path,{"utc":utc(),"outcome":outcome,"cleaned":True,"cleanup":value})
+    write_new(path,{"utc":utc(),"outcome":outcome,"cleaned":True,"cleanup":value,
+                   "fresh_provider_verification":"offload and original networking verified after durable idle"})
 
 
 def wait_active(controller):
     from flowdc_experiment_transport import ready
-    deadline=time.monotonic()+300
+    # Cold provider/network setup can exceed300s. This is only a readiness
+    # wait; guest admission still requires the original remaining work budget.
+    deadline=time.monotonic()+360
     value=controller.call("status")
     while not ready(value):
         require(time.monotonic()<deadline,"activation timeout")
         time.sleep(1);value=controller.call("status")
     return value
+
+
+def wait_ssh(packet,controller,number):
+    """Probe only /usr/bin/true; never replay a possibly dispatched mutation."""
+    from flowdc_experiment_transport import remaining
+    deadline=time.monotonic()+min(45,max(0,remaining(controller.call('status'))-30))
+    checks=[];ready=False
+    try:
+        for attempt in range(6):
+            left=deadline-time.monotonic()
+            if left<=0:break
+            transient=True
+            try:
+                result=subprocess.run(['ssh','-F',ssh_configuration(packet),'--','worker','/usr/bin/true'],
+                    stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=min(5,left))
+                error=result.stderr[-2048:].decode('utf8','replace')
+                checks.append({'returncode':result.returncode,'stderr':error})
+                if result.returncode==0:
+                    ready=True;break
+                transient=result.returncode==255 and any(text in error for text in
+                    ('Connection refused','Connection timed out','Connection reset','Connection closed'))
+            except subprocess.TimeoutExpired as exc:
+                error=(exc.stderr or b'')[-2048:].decode('utf8','replace')
+                checks.append({'returncode':None,'error':'read-only SSH probe timeout','stderr':error})
+            if any(text in error.lower() for text in ('permission denied','host key verification failed',
+                   'remote host identification has changed','bad permissions','unprotected private key file','no matching host key')):
+                transient=False
+            if not transient:break
+            if attempt<5:time.sleep(min(2,max(0,deadline-time.monotonic())))
+    finally:
+        write_new(packet/f'window-{number:02}-ssh-readiness.json',
+                  {'utc':utc(),'ready':ready,'checks':checks,'command':'/usr/bin/true','image_requests':0})
+    require(ready,'SSH readiness failed before guest mutation; no acquisition replay')
 
 
 def verify_rates(provider,record,deployment):
@@ -219,11 +257,95 @@ def verify_rates(provider,record,deployment):
     return {"utc":utc(),"servers":rows}
 
 
+EVIDENCE_CACHE = r'''
+def install_evidence_cache(module,study,threshold=64*2**20):
+ # Reuse successful payload/measurement digests from a prior partial frozen audit.
+ # The study lock excludes acquisition writers. Native archives are immutable;
+ # ctime/mtime must predate that audit result, and are checked again on use.
+ import stat,time
+ from pathlib import Path
+ from benchmark.real_server_study.common import file_hash,read_json,require,replace_derived,write_new
+ proof_path=study/'analysis/results.json'
+ if not proof_path.exists():return
+ require(not proof_path.is_symlink(),'partial audit result is a symlink')
+ proof=read_json(proof_path);cutoff=proof_path.stat().st_mtime_ns
+ require(proof['protocol_sha256']==file_hash(study/'protocol.json'),'partial audit protocol changed')
+ cached={};measurement_count=0;manifests={}
+ def stamp(path):
+  st=path.stat(follow_symlinks=False)
+  require(stat.S_ISREG(st.st_mode),'cached evidence is not a regular retained file')
+  return (st.st_ino,st.st_size,st.st_mtime_ns,st.st_ctime_ns)
+ for row in proof['runs']:
+  if not row.get('complete'):continue
+  run_id=row['run_id'];require(Path(run_id).name==run_id and run_id not in ('.','..'),'unsafe audit run identity')
+  binding=proof['run_record_hashes'][run_id]
+  require(binding['file']=='record.json','complete audit record path changed')
+  require(file_hash(study/'runs'/run_id/'record.json')==binding['sha256'],'partial audit record changed')
+  require(read_json(study/'runs'/run_id/'record.json')==row,'partial audit row changed')
+  archive=study/'runs'/run_id/'native.tar';facts=stamp(archive)
+  digest=row['evidence']['native.tar']
+  require(digest==row['verification']['archive_sha256'],'archive receipt differs')
+  if facts[1]>=threshold and max(facts[2:])<=cutoff:cached[str(archive)]=(facts,digest)
+  overview_path=study/'runs'/run_id/'native/overview.json'
+  overview_hash=row['evidence']['native/overview.json']
+  require(file_hash(overview_path)==overview_hash,'measurement manifest changed')
+  manifests[run_id]=overview_hash;overview=read_json(overview_path)
+  for spec in overview['http_observations']['files']+overview['control_trajectories']:
+   name=Path(spec['path']);require(not name.is_absolute() and '..' not in name.parts,'unsafe measurement path')
+   cached[str(overview_path.parent/name)]=(None,spec['sha256']);measurement_count+=1
+ # Preserve the input proof before replacing the regenerable partial result.
+ proof_hash=file_hash(proof_path)
+ saved=study/'analysis'/('archive-audit-input-'+proof_hash+'.json')
+ if not saved.exists():write_new(saved,proof_path.read_bytes())
+ require(file_hash(saved)==proof_hash,'saved partial audit proof changed')
+ original=module.file_hash;fresh={}
+ def checked(path,deadline=None):
+  if deadline is not None and time.monotonic()>=deadline:raise TimeoutError('offline audit deadline')
+  path=Path(path);current=stamp(path)
+  previous=cached.get(str(path))
+  if previous is not None:
+   if (previous[0] is None and max(current[2:])<=cutoff) or current==previous[0]:return previous[1]
+  if str(path) in fresh and fresh[str(path)][0]==current:return fresh[str(path)][1]
+  digest=original(path,deadline)
+  require(stamp(path)==current,'retained file changed while hashing')
+  fresh[str(path)]=(current,digest)
+  return digest
+ module.file_hash=checked
+ replace_derived(study/'analysis/archive-audit-resume.json',
+  {'prior_result_sha256':proof_hash,'input_file':saved.name,'prior_result_mtime_ns':cutoff,
+   'eligible_archives':{str(Path(k).relative_to(study)):{'sha256':v[1],'stat':v[0]} for k,v in cached.items() if v[0] is not None},
+   'measurement_manifest_sha256':manifests,'prior_verified_measurement_files':measurement_count,
+   'scope':'Prior successful payload and per-attempt measurement digests; archive stamps checked on reuse, measurement mtime/ctime must predate the prior result. Structural metadata/manifests are rehashed. Not continuous bit-rot detection or a simultaneous filesystem snapshot.'})
+'''
+
+AUDIT = r'''
+import importlib,json,os,sys
+from pathlib import Path
+for name in ('POLARS_MAX_THREADS','OMP_NUM_THREADS','OPENBLAS_NUM_THREADS'):os.environ[name]='4'
+os.sched_setaffinity(0,sorted(os.sched_getaffinity(0))[:4])
+from benchmark.real_server_study.common import lock,read_json,remaining
+module=importlib.import_module('benchmark.real_server_study.analyze')
+study=Path(sys.argv[1]);seconds=min(900,int(sys.argv[2])-30,remaining(study)-30)
+result={'status':'analysis_pending','runs':int(sys.argv[3])}
+''' + EVIDENCE_CACHE + r'''
+if seconds>0:
+ with lock(study/'study.lock'):
+  install_evidence_cache(module,study)
+  audited=module.analyze(study,seconds=seconds)
+ if not audited['analysis_incomplete_runs']:
+  result['status']='stopped' if (study/'STOP.json').exists() else 'complete'
+  if (study/'STOP.json').exists():result['reason']=read_json(study/'STOP.json')['reason']
+print(json.dumps(result))
+'''
+
+
 def guest(packet,controller,number,final=False):
     from flowdc_experiment_transport import remaining as window_remaining
     deployment,op=read_json(packet/"deployment.json"),read_json(packet/"operator.json")
     installation=read_json(packet/"deployment-receipt.json")
-    allowed=min(1020,window_remaining(controller.call("status"))-120)
+    # remaining() already excludes600s cleanup plus180s provider-action lead.
+    # Reserve30s for SSH dispatch, rather than a second120s work-time deduction.
+    allowed=min(1020,window_remaining(controller.call("status"))-30)
     require(allowed>=480,"guest lease insufficient")
     cmd=[installation["python"],"-B","-m","benchmark.real_server_study","guest-window",
          "--study",op["guest_root"]+"/study","--source",op["guest_root"]+"/source",
@@ -234,7 +356,42 @@ def guest(packet,controller,number,final=False):
         "--property=RuntimeMaxSec="+str(int(allowed)),"--property=TimeoutStopSec=30","--property=KillMode=control-group",
         "--property=MemoryMax=24G","--property=CPUQuota=400%","--property=LimitNOFILE=4096","--property=UMask=0077",
         "--uid=exouser","--gid=exouser","--working-directory="+op["guest_root"]+"/source",*cmd]
-    return json.loads(ssh(packet,remote,timeout=allowed+45))
+    started=time.monotonic()
+    outcome=json.loads(ssh(packet,remote,timeout=allowed+45))
+    if outcome['status']=='analysis_pending':
+        # The frozen guest's930s admission is often unreachable after cold setup.
+        # Invoke the SAME offline auditor within the unextended original lease.
+        budget=int(min(allowed-(time.monotonic()-started),window_remaining(controller.call('status'))-120))
+        if budget>=60:
+            audit=remote[:]
+            audit[audit.index(unit)]=unit+'-audit'
+            audit[audit.index('--property=RuntimeMaxSec='+str(int(allowed)))]=('--property=RuntimeMaxSec='+str(budget))
+            audit=audit[:audit.index(installation['python'])]+[installation['python'],'-B','-c',AUDIT,
+                op['guest_root']+'/study',str(budget),str(outcome['runs'])]
+            outcome=json.loads(ssh(packet,audit,timeout=budget+30))
+    return outcome
+
+
+def operational_grant(packet,op):
+    """Keep identical grant bytes outside Git, as the installed CLI requires."""
+    import os
+    import flowdc_ops as ops
+    raw=(packet/"grant.json").read_bytes()
+    campaign=ops.uuid_value(read_json(packet/"deployment.json")["campaign_id"])
+    require(read_json(packet/"grant.json")["campaign_id"]==campaign,"grant campaign differs")
+    directory=Path(op["state"])/"authorizations"
+    name=campaign+".json"
+    with ops.private_directory(directory,create=True) as parent:
+        try:
+            with ops.open_private_at(parent,name) as fd:
+                with os.fdopen(os.dup(fd),"rb") as stream:existing=stream.read(len(raw)+1)
+            require(existing==raw,"operational grant already exists with different bytes")
+        except FileNotFoundError:
+            fd=os.open(name,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600,dir_fd=parent)
+            with os.fdopen(fd,"wb") as stream:
+                stream.write(raw);stream.flush();os.fsync(stream.fileno())
+            os.fsync(parent)
+    return directory/name
 
 
 def bootstrap(packet,allocation=None):
@@ -262,9 +419,10 @@ def bootstrap(packet,allocation=None):
                        math.ceil(j["vms"][k]["account"]["consumed"])+CAMPAIGN_SECONDS) for k in chosen},
                    expires_at=dt.datetime.fromtimestamp(now+CAMPAIGN_SECONDS,dt.UTC).isoformat())
     write_new(packet/"grant.json",request)
+    grant_path=operational_grant(packet,op)
     service=j["service"]
     command=[service["interpreter"],"-E","-s","-B",str(Path(service["release"])/"flowdc_ops.py"),
-             "pilot","campaign-apply","--state-root",op["state"],"--grant",str(packet/"grant.json")]
+             "pilot","campaign-apply","--state-root",op["state"],"--grant",str(grant_path)]
     with (packet/"grant-application.json").open("xb") as out,(packet/"grant-application.stderr").open("xb") as err:
         result=subprocess.run(command,stdout=out,stderr=err,timeout=240)
     require(result.returncode==0,"campaign grant refused; no activation")
@@ -274,6 +432,7 @@ def bootstrap(packet,allocation=None):
     try:
         controller.call("start",seconds=30,window=1800);wait_active(controller)
         refresh_ssh(packet,controller)
+        wait_ssh(packet,controller,0)
         create_volume(packet,ops.load_profile(j["profile_path"]),op["worker_id"])
         mount(packet,new=True)
         installation=stage(packet)
@@ -286,7 +445,7 @@ def bootstrap(packet,allocation=None):
     return outcome
 
 
-def collect(packet):
+def collect(packet,seconds=900):
     """Retry only a metadata transfer; closed transfers/extractions are reusable."""
     import contextlib
     import os
@@ -295,19 +454,36 @@ def collect(packet):
     import signal
     import tarfile
     packet=Path(packet)
+    require(1<=seconds<=900,'collection deadline outside finite bound')
     target=packet/"collected"
     if target.exists():return target
     closed=packet/"return.tar"
     if not closed.exists():
         require(shutil.disk_usage(packet).free>=56*2**30,"metadata transfer/extraction would consume local reserve")
         op=read_json(packet/"operator.json")
-        script="""import pathlib,sys,tarfile
+        script="""import hashlib,io,json,pathlib,sys,tarfile
 root=pathlib.Path(sys.argv[1])
-paths=list(root.glob('*'))+list(root.glob('analysis/*'))+list(root.glob('runs/*/*'))
+paths=set(root.glob('*'))|set(root.glob('analysis/*'))|set(root.glob('runs/*/*'))
+for record in root.glob('runs/*/record.json'):
+ for name in json.loads(record.read_text()).get('evidence',{}):
+  relative=pathlib.Path(name)
+  if relative.is_absolute() or '..' in relative.parts:raise ValueError('unsafe metadata path')
+  if relative.suffix in ('.json','.jsonl','.log','.tex','.pdf'):
+   p=record.parent/relative
+   if not p.is_file() or p.is_symlink():raise ValueError('required metadata missing')
+   paths.add(p)
+manifest={}
 with tarfile.open(fileobj=sys.stdout.buffer,mode='w|') as archive:
  for p in sorted(paths):
   if p.is_file() and not p.is_symlink() and p.suffix in ('.json','.jsonl','.log','.tex','.pdf'):
-   archive.add(p,arcname=str(p.relative_to(root)),recursive=False)
+   name=str(p.relative_to(root));digest=hashlib.sha256()
+   with p.open('rb') as stream:
+    for chunk in iter(lambda:stream.read(1024*1024),b''):digest.update(chunk)
+   manifest[name]={'sha256':digest.hexdigest(),'bytes':p.stat().st_size}
+   archive.add(p,arcname=name,recursive=False)
+ data=json.dumps({'schema':'flowdc-metadata-collection-v1','files':manifest},sort_keys=True).encode()
+ info=tarfile.TarInfo('metadata-manifest.json');info.size=len(data);info.mode=0o600
+ archive.addfile(info,io.BytesIO(data))
 """
         command=[op["guest_python"],"-c",script,op["guest_root"]+"/study"]
         partial=packet/"return.partial"
@@ -317,7 +493,7 @@ with tarfile.open(fileobj=sys.stdout.buffer,mode='w|') as archive:
         with partial.open("xb") as out:
             proc=subprocess.Popen(["ssh","-F",ssh_configuration(packet),"--","worker",shlex.join(command)],
                                   stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,start_new_session=True)
-            count,deadline=0,time.monotonic()+900
+            count,deadline=0,time.monotonic()+seconds
             try:
                 with selectors.DefaultSelector() as selector:
                     selector.register(proc.stdout,selectors.EVENT_READ)
@@ -344,8 +520,19 @@ with tarfile.open(fileobj=sys.stdout.buffer,mode='w|') as archive:
         shutil.rmtree(temporary)
     temporary.mkdir()
     with tarfile.open(closed,mode="r:") as archive:
-        require(all(m.isfile() and not Path(m.name).is_absolute() and ".." not in Path(m.name).parts for m in archive.getmembers()),"unsafe collection")
+        members=archive.getmembers()
+        require(len({m.name for m in members})==len(members) and sum(m.size for m in members)<=8*2**30 and
+                all(m.isfile() and not Path(m.name).is_absolute() and ".." not in Path(m.name).parts for m in members),"unsafe collection")
         archive.extractall(temporary,filter="data")
+    if (temporary/'metadata-manifest.json').exists():
+        manifest=read_json(temporary/'metadata-manifest.json')
+        require(manifest['schema']=='flowdc-metadata-collection-v1','unsupported collection manifest')
+        files={str(p.relative_to(temporary)) for p in temporary.rglob('*') if p.is_file()}-{'metadata-manifest.json'}
+        require(files==set(manifest['files']),'collection manifest membership mismatch')
+        for name,expected in manifest['files'].items():
+            path=temporary/name
+            require(path.stat().st_size==expected['bytes'] and file_hash(path)==expected['sha256'],
+                    'collected metadata digest mismatch')
     temporary.replace(target)
     return target
 
@@ -365,8 +552,11 @@ def run_windows(packet,allocation=None):
     Journal,_,_,_=imports(op["source"]);journal=Journal(op["state"])
     clock,baseline=read_json(packet/"clock.json"),read_json(packet/"account-baseline.json")
     require(clock["boot_id"]==Path("/proc/sys/kernel/random/boot_id").read_text().strip(),"control host reboot")
+    window_limit=op.get('max_windows',deployment.get('max_windows',MAX_WINDOWS))
+    require(type(window_limit) is int and MAX_WINDOWS<=window_limit<=MAX_WINDOWS+6,
+            'finite operational window cap must be36..42; original time/SU limits still apply')
     with lock(packet/"controller.lock"):
-        for number in range(1,MAX_WINDOWS):
+        for number in range(1,window_limit):
             path=packet/f"window-{number:02}.json"
             if path.exists():
                 require(read_json(path)["cleaned"],"previous cleanup unresolved")
@@ -388,15 +578,17 @@ def run_windows(packet,allocation=None):
             try:
                 controller.call("start",seconds=30,window=1800);wait_active(controller)
                 refresh_ssh(packet,controller)
+                wait_ssh(packet,controller,number)
                 mount(packet)
                 outcome=(read_json(packet/"terminal.json") if (packet/"terminal.json").exists() else
-                         guest(packet,controller,number,final=number>=MAX_WINDOWS-3 or left<5400 or exposure+96>OPERATIONAL_SU))
-                if outcome["status"]=="analysis_pending" and (number>=MAX_WINDOWS-2 or left<3600 or exposure+64>OPERATIONAL_SU):
+                         guest(packet,controller,number,final=number>=window_limit-2 or left<5400 or exposure+96>OPERATIONAL_SU))
+                if outcome["status"]=="analysis_pending" and (number>=window_limit-2 or left<3600 or exposure+64>OPERATIONAL_SU):
                     outcome={"status":"stopped","reason":"analysis_budget_exhausted","runs":outcome["runs"]}
                 if outcome["status"] in ("complete","stopped"):
                     if not (packet/"terminal.json").exists():write_new(packet/"terminal.json",outcome)
                     from flowdc_experiment_transport import remaining as window_remaining
-                    if window_remaining(controller.call("status"))>=1020:collect(packet)
+                    seconds=int(min(900,window_remaining(controller.call("status"))-120))
+                    if seconds>=60:collect(packet,seconds=seconds)
             finally:
                 cleanup(packet,controller,path,outcome)
             if outcome and outcome["status"] in ("complete","stopped") and (packet/"collected").exists():

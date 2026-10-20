@@ -491,6 +491,37 @@ journal. Neither elapsed time nor another offloaded observation cancels that int
 Cleanup verifies cloud context and VM identity even if selected networking drifts;
 network restoration retains its own stricter attachment checks and can remain pending.
 
+### Provider-confirmed terminal activation disposition
+
+`pilot resolve-activation --state-root PATH --evidence PATH` previews a narrowly
+scoped resolution; add `--apply` to commit it. This does not unshelve, clear the
+journal or force global idle. It can run from a qualified candidate checkout
+alongside the verified existing supervisor, before an idle-only guarded upgrade.
+The supervisor must remain running to complete normal network rollback and cleanup.
+
+The private evidence JSON uses schema `flowdc-activation-disposition-v1` with
+`resolution_id`, `registration_id`, `vm_id`, `intent_sha256`, `provider_reference`,
+`provider_evidence_file`, `provider_evidence_sha256`, `disposition` and
+`future_activation_possible: false`. Obtain the intent digest with
+`flowdc_campaign.activation_binding(record, vm_id)`. The response file and JSON
+must satisfy existing private-file checks. Retain the actual support response;
+an automatic ticket acknowledgment, absent event or another offloaded observation
+is not an authoritative terminal disposition. The invoking operator attests that
+support confirmed rejected/cancelled/failed/completed and no future activation
+from this request. The tool checks the retained response digest; it does not
+authenticate or interpret natural-language provider decisions automatically.
+
+Application requires the exact unchanged intent, desired stop, an outstanding
+never-observed activation, verified live supervision, and a fresh identity-checked
+offload read. It charges through settlement, preserves limits/uncertainty/history,
+and appends a replay-safe receipt without fabricating an ACTIVE observation.
+Fresh network restoration and ordinary cleanup remain necessary afterward.
+
+Campaign grants may explicitly specify up to3600seconds. Ordinary inspection
+still defaults to1800seconds; experiment transport uses `--full-window` only
+with an explicit campaign for the longer window. Old1800-second grants do not
+authorize3600seconds. Cleanup reserve600seconds and provider lead remain unchanged.
+
 This is local durable state, not a tamper-proof quota service. Deleting both the
 binding and journal, copying all credentials into another independent installation,
 restoring an old backup over current history, or manually activating VMs outside

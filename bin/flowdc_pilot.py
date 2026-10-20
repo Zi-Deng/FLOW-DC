@@ -75,7 +75,7 @@ class Allowance:
             if (not canonical_id
                     or self.campaign_limit is None or self.campaign_expires_utc is None
                     or type(self.campaign_window_seconds) is not int
-                    or not 601 <= self.campaign_window_seconds <= 1800):
+                    or not 601 <= self.campaign_window_seconds <= 3600):
                 raise AccountingError("invalid_campaign_account")
             finite_seconds(self.campaign_limit)
             finite_seconds(self.campaign_expires_utc)

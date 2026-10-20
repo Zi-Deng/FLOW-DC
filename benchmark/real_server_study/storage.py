@@ -13,20 +13,17 @@ MOUNT = r'''
 import json,os,pathlib,pwd,subprocess,sys
 volume,root,expected=sys.argv[1:]
 assert root.startswith('/mnt/flowdc-external-') and root.rsplit('-',5)[0]=='/mnt/flowdc-external'
-prefix=volume[:20]
-disks=[]
-for block in pathlib.Path('/sys/class/block').iterdir():
- for p in (block/'serial',block/'device/serial'):
-  if p.exists() and p.read_text().strip()==prefix:disks.append('/dev/'+block.name)
-disks=list(set(disks));assert len(disks)==1,'volume serial not uniquely found'
+serials={volume,volume[:20]}  # SCSI preserves UUID; virtio may truncate to20.
+inventory=json.loads(subprocess.check_output(['lsblk','--json','--bytes','--nodeps','--output','PATH,SERIAL,SIZE,TYPE'],text=True))
+disks=list({d['path'] for d in inventory['blockdevices'] if d.get('type')=='disk' and d.get('serial') in serials})
+assert len(disks)==1 and disks[0].startswith('/dev/'),'volume serial not uniquely found'
 device=disks[0]
 assert int(subprocess.check_output(['blockdev','--getsize64',device]))>=256*2**30
 value=subprocess.run(['blkid','-o','value','-s','UUID',device],capture_output=True,text=True)
-if expected=='NEW':
- assert value.returncode==2 and not value.stdout.strip(),'new volume unexpectedly contains a filesystem'
- subprocess.run(['mkfs.ext4','-q',device],check=True,timeout=120)
- value=subprocess.run(['blkid','-o','value','-s','UUID',device],capture_output=True,text=True,check=True)
-else:assert value.returncode==0 and value.stdout.strip()==expected,'filesystem UUID changed'
+# Featured guests can autoformat/automount a newly attached volume. Never race
+# that service or reformat a filesystem; adopt only the campaign-owned empty FS.
+assert value.returncode==0 and value.stdout.strip(),'campaign filesystem not ready; no formatting performed'
+if expected!='NEW':assert value.stdout.strip()==expected,'filesystem UUID changed'
 target=pathlib.Path(root);assert not target.is_symlink()
 target.mkdir(mode=0o700,exist_ok=True)
 mounted=subprocess.run(['findmnt','-n','-o','UUID','--mountpoint',root],capture_output=True,text=True)
@@ -34,6 +31,8 @@ if mounted.returncode==0:assert mounted.stdout.strip()==value.stdout.strip()
 else:
  assert not any(target.iterdir()),'refusing to shadow existing files'
  subprocess.run(['mount',device,root],check=True,timeout=30)
+if expected=='NEW':
+ assert all(p.name=='lost+found' and p.is_dir() and not any(p.iterdir()) for p in target.iterdir()),'new campaign filesystem contains unexpected data'
 uid=pwd.getpwnam('exouser').pw_uid;os.chown(root,uid,uid);os.chmod(root,0o700)
 print(json.dumps({'volume_id':volume,'filesystem_uuid':value.stdout.strip(),'root':root}))
 '''
@@ -107,6 +106,7 @@ def mount(packet, new=False):
     volume=read_json(packet/"volume.json")
     deployment=read_json(packet/"deployment.json")
     require(volume["campaign_id"]==deployment["campaign_id"] and op["guest_root"]=="/mnt/flowdc-external-"+deployment["campaign_id"],"volume mount binding changed")
+    require(volume.get("created_for_campaign") is True,"only campaign-created volumes may be mounted")
     expected="NEW" if new else read_json(packet/"volume-mount.json")["filesystem_uuid"]
     result=json.loads(ssh(packet,["sudo","-n","/usr/bin/python3","-c",MOUNT,volume["volume_id"],op["guest_root"],expected],timeout=180))
     if new:

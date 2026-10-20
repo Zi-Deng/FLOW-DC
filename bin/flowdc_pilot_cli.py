@@ -87,6 +87,7 @@ def arguments(commands):
         "campaign-apply",
         "account-recovery-preview",
         "account-recovery-apply",
+        "resolve-activation",
         "runtime-check",
         "topology-preview",
         "topology-apply",
@@ -115,6 +116,9 @@ def arguments(commands):
             parser.add_argument("--grant", required=True)
         if action in ("account-recovery-preview", "account-recovery-apply"):
             parser.add_argument("--request", required=True)
+        if action == "resolve-activation":
+            parser.add_argument("--evidence", required=True)
+            parser.add_argument("--apply", action="store_true", help="Apply a provider-confirmed disposition; default preview only.")
         if action == "start":
             parser.add_argument("--window-seconds", type=int, default=1800)
             parser.add_argument(
@@ -638,6 +642,49 @@ def extend_allowance(journal, path, *, clock=sample_clock, campaign=False, recov
         return grant_outcome(receipt, applied, current, campaign=campaign, recovery=recovery)
 
 
+def resolve_activation(journal, path, apply=False, *, clock=sample_clock):
+    """Candidate CLI can settle an intent while the verified old service watches."""
+    from flowdc_campaign import disposition_receipt, resolve_activation as preview, validate_disposition
+    evidence = validate_disposition(ops.read_document(str(path)))
+    with ops.private_file(evidence['provider_evidence_file']) as fd:
+        body = ops.read_bounded_file(fd)
+    if hashlib.sha256(body).hexdigest() != evidence['provider_evidence_sha256']:
+        raise failure('provider_disposition_evidence_changed')
+    with (
+        ops.private_directory(journal.root / 'runs', create=True) as runs,
+        private_lock(runs, 'experiment.lock', blocking=False),
+        ops.private_directory(journal.root) as parent,
+        private_lock(parent, 'maintenance.lock', blocking=False),
+    ):
+        before = journal.read()
+        existing = disposition_receipt(before, evidence)
+        if existing is not None:
+            return ops.outcome('pilot resolve-activation', 'ok', data={'receipt': existing, 'applied': False}), 0
+        service = before['service']
+        if service is None:
+            raise failure('service_not_installed')
+        verify_release(service, journal.root)
+        require_persistent_session()
+        verify_unit_origin(reloaded=True, running=True)
+        if not journal.supervisor_locked() or not heartbeat_fresh(before, clock()):
+            raise failure('supervisor_not_ready')
+        # The operator response is a trusted attestation, not a command to Nova.
+        state = Provider(ops.load_profile(before['profile_path'])).observe(before, evidence['vm_id'])
+        observation = {'state': state, 'clock': asdict(clock())}
+        _, receipt, _ = preview(before, evidence, observation, clock())
+        if apply:
+            def commit(current):
+                nonlocal receipt
+                if current['service'] != service or not heartbeat_fresh(current, clock()):
+                    raise failure('activation_resolution_controller_changed')
+                candidate, receipt, _ = preview(current, evidence, observation, clock())
+                current.clear()
+                current.update(candidate)
+            journal.change(commit)
+        return ops.outcome('pilot resolve-activation', 'ok', data={
+            'receipt': receipt, 'applied': apply, 'cleanup_complete': False}), 0
+
+
 def prepare(args):
     # Offline validated facts gate registration; supervisor performs fresh cloud
     # identity/state validation before any activation or network mutation.
@@ -853,6 +900,8 @@ def run(args):
                 },
             ), 0
         journal = Journal(args.state_root)
+        if args.pilot_command == "resolve-activation":
+            return resolve_activation(journal, args.evidence, args.apply)
         if args.pilot_command == "account-recovery-preview":
             from flowdc_campaign import recovery_preview, validate_recovery_request
             _, receipt, applicable = recovery_preview(journal.read(), validate_recovery_request(ops.read_document(args.request)), sample_clock())
