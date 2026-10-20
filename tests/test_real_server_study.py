@@ -267,7 +267,7 @@ class DesignTests(unittest.TestCase):
 
     def test_evidence_audit_resume_reuses_only_verified_unchanged_files(self):
         namespace={};exec(cloud.EVIDENCE_CACHE,namespace)
-        for mode in ('unchanged','incomplete','modified','newer','record_changed','row_changed','protocol_changed','overview_changed','observation_modified','observation_missing','observation_symlink'):
+        for mode in ('unchanged','completed','incomplete','modified','newer','record_changed','row_changed','protocol_changed','overview_changed','observation_modified','observation_missing','observation_symlink'):
             with self.subTest(mode=mode),tempfile.TemporaryDirectory() as d:
                 root=Path(d);directory=root/'runs'/'run';directory.mkdir(parents=True)
                 (root/'analysis').mkdir();common.write_new(root/'protocol.json',{'study':'same'})
@@ -281,7 +281,7 @@ class DesignTests(unittest.TestCase):
                 row={'run_id':'run','complete':mode!='incomplete','evidence':{'native.tar':sha,'native/overview.json':common.file_hash(overview)},
                      'verification':{'archive_sha256':sha}}
                 common.write_new(directory/'record.json',row)
-                proof={'analysis_incomplete_runs':1,'protocol_sha256':common.file_hash(root/'protocol.json'),
+                proof={'analysis_incomplete_runs':0 if mode=='completed' else 1,'protocol_sha256':common.file_hash(root/'protocol.json'),
                        'runs':[row],'run_record_hashes':{'run':{'file':'record.json','sha256':common.file_hash(directory/'record.json')}}}
                 if mode=='row_changed':proof['runs']=[{**row,'extra':'unbound'}]
                 target=root/'analysis/results.json';common.write_new(target,proof)
@@ -304,7 +304,7 @@ class DesignTests(unittest.TestCase):
                     continue
                 namespace['install_evidence_cache'](module,root,threshold=1)
                 self.assertEqual(module.file_hash(archive),common.file_hash(archive))
-                self.assertEqual(original.call_count,0 if mode in ('unchanged','observation_modified','observation_missing','observation_symlink') else 1)
+                self.assertEqual(original.call_count,0 if mode in ('unchanged','completed','observation_modified','observation_missing','observation_symlink') else 1)
                 before=original.call_count
                 if mode in ('observation_missing','observation_symlink'):
                     with self.assertRaises((FileNotFoundError,ValueError)):module.file_hash(observation)
@@ -312,7 +312,11 @@ class DesignTests(unittest.TestCase):
                 self.assertEqual(module.file_hash(observation),common.file_hash(observation))
                 self.assertEqual(original.call_count,before+(mode in ('incomplete','observation_modified')))
                 module.file_hash(metadata);self.assertEqual(original.call_args.args[0],metadata)
-                if mode=='unchanged':
+                if mode in ('unchanged','completed'):
+                    calls=original.call_count
+                    module.file_hash(metadata)
+                    self.assertEqual(original.call_count,calls)
+                    with self.assertRaises(TimeoutError):module.file_hash(metadata,deadline=0)
                     # Mutation after cache setup must also force a real rehash.
                     archive.write_bytes(b'changed again')
                     self.assertNotEqual(module.file_hash(archive),sha)

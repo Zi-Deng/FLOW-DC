@@ -262,14 +262,13 @@ def install_evidence_cache(module,study,threshold=64*2**20):
  # Reuse successful payload/measurement digests from a prior partial frozen audit.
  # The study lock excludes acquisition writers. Native archives are immutable;
  # ctime/mtime must predate that audit result, and are checked again on use.
- import stat
+ import stat,time
  from pathlib import Path
  from benchmark.real_server_study.common import file_hash,read_json,require,replace_derived,write_new
  proof_path=study/'analysis/results.json'
  if not proof_path.exists():return
  require(not proof_path.is_symlink(),'partial audit result is a symlink')
  proof=read_json(proof_path);cutoff=proof_path.stat().st_mtime_ns
- if not proof.get('analysis_incomplete_runs'):return
  require(proof['protocol_sha256']==file_hash(study/'protocol.json'),'partial audit protocol changed')
  cached={};measurement_count=0;manifests={}
  def stamp(path):
@@ -299,13 +298,18 @@ def install_evidence_cache(module,study,threshold=64*2**20):
  saved=study/'analysis'/('archive-audit-input-'+proof_hash+'.json')
  if not saved.exists():write_new(saved,proof_path.read_bytes())
  require(file_hash(saved)==proof_hash,'saved partial audit proof changed')
- original=module.file_hash
+ original=module.file_hash;fresh={}
  def checked(path,deadline=None):
-  previous=cached.get(str(Path(path)))
+  if deadline is not None and time.monotonic()>=deadline:raise TimeoutError('offline audit deadline')
+  path=Path(path);current=stamp(path)
+  previous=cached.get(str(path))
   if previous is not None:
-   current=stamp(Path(path))
    if (previous[0] is None and max(current[2:])<=cutoff) or current==previous[0]:return previous[1]
-  return original(path,deadline)
+  if str(path) in fresh and fresh[str(path)][0]==current:return fresh[str(path)][1]
+  digest=original(path,deadline)
+  require(stamp(path)==current,'retained file changed while hashing')
+  fresh[str(path)]=(current,digest)
+  return digest
  module.file_hash=checked
  replace_derived(study/'analysis/archive-audit-resume.json',
   {'prior_result_sha256':proof_hash,'input_file':saved.name,'prior_result_mtime_ns':cutoff,
@@ -457,13 +461,29 @@ def collect(packet,seconds=900):
     if not closed.exists():
         require(shutil.disk_usage(packet).free>=56*2**30,"metadata transfer/extraction would consume local reserve")
         op=read_json(packet/"operator.json")
-        script="""import pathlib,sys,tarfile
+        script="""import hashlib,io,json,pathlib,sys,tarfile
 root=pathlib.Path(sys.argv[1])
-paths=list(root.glob('*'))+list(root.glob('analysis/*'))+list(root.glob('runs/*/*'))
+paths=set(root.glob('*'))|set(root.glob('analysis/*'))|set(root.glob('runs/*/*'))
+for record in root.glob('runs/*/record.json'):
+ for name in json.loads(record.read_text()).get('evidence',{}):
+  relative=pathlib.Path(name)
+  if relative.is_absolute() or '..' in relative.parts:raise ValueError('unsafe metadata path')
+  if relative.suffix in ('.json','.jsonl','.log','.tex','.pdf'):
+   p=record.parent/relative
+   if not p.is_file() or p.is_symlink():raise ValueError('required metadata missing')
+   paths.add(p)
+manifest={}
 with tarfile.open(fileobj=sys.stdout.buffer,mode='w|') as archive:
  for p in sorted(paths):
   if p.is_file() and not p.is_symlink() and p.suffix in ('.json','.jsonl','.log','.tex','.pdf'):
-   archive.add(p,arcname=str(p.relative_to(root)),recursive=False)
+   name=str(p.relative_to(root));digest=hashlib.sha256()
+   with p.open('rb') as stream:
+    for chunk in iter(lambda:stream.read(1024*1024),b''):digest.update(chunk)
+   manifest[name]={'sha256':digest.hexdigest(),'bytes':p.stat().st_size}
+   archive.add(p,arcname=name,recursive=False)
+ data=json.dumps({'schema':'flowdc-metadata-collection-v1','files':manifest},sort_keys=True).encode()
+ info=tarfile.TarInfo('metadata-manifest.json');info.size=len(data);info.mode=0o600
+ archive.addfile(info,io.BytesIO(data))
 """
         command=[op["guest_python"],"-c",script,op["guest_root"]+"/study"]
         partial=packet/"return.partial"
@@ -500,8 +520,19 @@ with tarfile.open(fileobj=sys.stdout.buffer,mode='w|') as archive:
         shutil.rmtree(temporary)
     temporary.mkdir()
     with tarfile.open(closed,mode="r:") as archive:
-        require(all(m.isfile() and not Path(m.name).is_absolute() and ".." not in Path(m.name).parts for m in archive.getmembers()),"unsafe collection")
+        members=archive.getmembers()
+        require(len({m.name for m in members})==len(members) and sum(m.size for m in members)<=8*2**30 and
+                all(m.isfile() and not Path(m.name).is_absolute() and ".." not in Path(m.name).parts for m in members),"unsafe collection")
         archive.extractall(temporary,filter="data")
+    if (temporary/'metadata-manifest.json').exists():
+        manifest=read_json(temporary/'metadata-manifest.json')
+        require(manifest['schema']=='flowdc-metadata-collection-v1','unsupported collection manifest')
+        files={str(p.relative_to(temporary)) for p in temporary.rglob('*') if p.is_file()}-{'metadata-manifest.json'}
+        require(files==set(manifest['files']),'collection manifest membership mismatch')
+        for name,expected in manifest['files'].items():
+            path=temporary/name
+            require(path.stat().st_size==expected['bytes'] and file_hash(path)==expected['sha256'],
+                    'collected metadata digest mismatch')
     temporary.replace(target)
     return target
 

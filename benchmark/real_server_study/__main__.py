@@ -29,6 +29,9 @@ def main():
     for name in ("cloud-bootstrap","cloud-run"):
         run=sub.add_parser(name);run.add_argument("--packet",required=True,type=Path)
         run.add_argument("--allocation",type=Path,help="Current allocation observation; defaults to the prepared private path")
+    offline=sub.add_parser('cloud-offline',help='Finish only audits/collection of28 closed runs; at most two60-minute windows')
+    offline.add_argument('--packet',required=True,type=Path)
+    offline.add_argument('--continuation',required=True,type=Path)
     args=p.parse_args()
     os.umask(0o077)
     if args.command=="prepare":
@@ -89,6 +92,9 @@ def main():
     elif args.command=="cloud-run":
         from .cloud import run_windows
         print(json.dumps(run_windows(args.packet,args.allocation)))
+    elif args.command=='cloud-offline':
+        from .offline import run
+        print(json.dumps(run(args.packet,args.continuation)))
 
 
 if __name__=="__main__":

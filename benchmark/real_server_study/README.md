@@ -99,6 +99,52 @@ and noninteractive sudo/systemd. Only the first worker downloads from the moth
 host; manager and origin-role guests support the existing lifecycle. No TaskVine
 cluster or local acquisition fallback is used. The supervisor is not upgraded.
 
+## Offline continuation after scientific acquisition
+
+`cloud-offline` is a separate explicit operation for a study with all28 scientific
+records already closed and individually complete. It never calls the download
+runner, public-host probe, workload builder or acquisition launcher. Keep the
+frozen scientific source and input records unchanged. A newly qualified
+operational controller is required for explicitly granted60-minute windows;
+the ordinary inspection default and historical grants remain30minutes.
+
+```bash
+python -m benchmark.real_server_study cloud-offline \
+  --packet /absolute/private/original-packet \
+  --continuation /absolute/private/offline-continuation
+```
+
+Invocation requires settled original cleanup and closure receipts. It creates
+one continuation identity and applies a grant through the installed controller.
+The original registration, clocks, grants and consumption are not reset. Its
+maximum is two activation requests (failed activation counts), each3600seconds,
+within a four-hour envelope prepared immediately before authorization. A retry
+reuses that envelope and receipts; an unresolved intent requires diagnosis,
+never automatic replay. The500-SU new-exposure ceiling is separate from the
+preserved1000-SU cumulative-account authorization and unused old balances.
+The latest supplied allocation renewal/balance is recorded with its original
+observation provenance, rather than represented as a fresh portal observation.
+
+An audit invocation uses at most1200seconds and a separate offline lease;
+historical acquisition leases are not overwritten. Previously verified payload
+and measurement digests can be reused only with the bound partial-result proof,
+unchanged structural manifests and existing file checks. Changed/unaudited files
+are read; missing/symlink files refuse. Repeated digest requests in one locked
+audit reuse identical file stamps. Cached accesses still enforce the deadline.
+This assumes closed immutable artifacts, not continuous bit-rot detection.
+
+Collection uses at most900seconds and8GiB, with the existing56GiB local free-space
+admission. It includes native overview/index/owner/final metadata declared by
+run evidence, plus run records, traces and analysis. It excludes native payload
+archives and images. The transferred file manifest binds each path, size and
+digest and is checked after safe extraction. A second window can finish audit
+or collection; a failed call stops for diagnosis. Local report/extraction retries
+do not activate VMs. Final acceptance also requires local numerical/evidence
+reconciliation and fresh offload/network cleanup proof; a collected report alone
+does not establish independent-human reproduction.
+
+### Original acquisition campaign
+
 Bootstrap applies the finite grant, activates one window, creates a campaign-owned
 256GiB volume, attaches it only to the selected worker, stages an isolated pinned
 environment/source, probes and cleans up. Ownership, exact full/truncated volume
