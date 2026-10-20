@@ -208,6 +208,8 @@ def verify(run_dir, slice_path, source, started=None, ended=None, credit_urls=Fa
     censored_dispatched = set()
     require(sum(attempted.values()) == obs["attempts"] and (set(attempted) <= set(frame["url"]) if planned_window else set(attempted) == set(frame["url"])), "request audit denominator mismatch")
     if planned_window:
+        from .ablation import terminal_fault
+        require(not any(terminal_fault(event) for event in audit),'terminal public fault in credited window')
         marker=read_json(run_dir/"planned-stop.json")
         require(marker["reason"] == (audit[-1]["stop_reason"] or "input_exhausted") and marker["protocol_sha256"] == read_json(run_dir/"attempt.json")["protocol_sha256"], "planned-stop binding changed")
         for record in index["rows"]:

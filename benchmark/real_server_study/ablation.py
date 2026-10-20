@@ -40,6 +40,29 @@ LIMITS = dict(
 PLANNED = ("planned_window_end", "planned_body_budget")
 
 
+def terminal_fault(event):
+    """Refusal evidence has priority even after a planned window stop."""
+    if event.get("event") == "headers" and event.get("status") in (401, 403, 429, 503):
+        return {
+            401: "access_refusal",
+            403: "access_refusal",
+            429: "explicit_429",
+            503: "service_unavailable",
+        }[event["status"]]
+    return (event.get("fatal_reason") or event.get("reason") or "fatal_stop") if event.get("fatal") else None
+
+
+def recovered(value, baseline):
+    return (
+        value.get("passed") is True
+        and value.get("reason") is None
+        and value.get("requests") == 128
+        and value.get("valid", 0) >= 0.95 * 128
+        and value.get("ttfb_p50_s") is not None
+        and value["ttfb_p50_s"] <= 1.5 * baseline
+    )
+
+
 def grid():
     return [
         dict(startup_growth_factor=a, baseline_max_age_s=b, target_delay_ratio=c)
@@ -60,7 +83,7 @@ def schedule():
             block=0,
             slice="capacity",
             network_seconds=180,
-            budget_seconds=480,
+            budget_seconds=600,
         )
         for n, cap in enumerate((256, 512))
     ]
@@ -78,7 +101,7 @@ def schedule():
                     block=block,
                     slice=f"tuning-{i}",
                     network_seconds=120,
-                    budget_seconds=300,
+                    budget_seconds=420,
                 )
             )
     arms = (
@@ -103,7 +126,7 @@ def schedule():
                     block=block + 1,
                     slice=f"validation-{block + 1}",
                     network_seconds=180,
-                    budget_seconds=480,
+                    budget_seconds=600,
                 )
             )
     return runs
@@ -309,6 +332,14 @@ class Policy(OnsetPolicy):
         super().__init__(baseline, rate)
         self.initial_baseline = baseline
         self.warning = False
+
+    def header(self, now, status, retry_after=None):
+        super().header(now, status, retry_after)
+        fault = terminal_fault(dict(event="headers", status=status))
+        if fault:
+            self.fatal = True
+            self.fatal_reason = self.fatal_reason or fault
+            self.reason = self.fatal_reason
 
     def tick(self, now):
         self.baseline = self.initial_baseline * 5 / 3

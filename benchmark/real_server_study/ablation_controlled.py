@@ -177,7 +177,7 @@ def window(study, source):
             row = read_json(directory / "record.json")
             require(row["artifacts_valid"] and row["realized_stimulus"], "controlled case unqualified")
             continue
-        if remaining(study) < 120:
+        if remaining(study) < 180:
             return False
         directory.mkdir()
         write_new(directory / "intent.json", dict(cell, utc=utc()))
@@ -195,10 +195,35 @@ def window(study, source):
         ]
         with (directory / "stdout.log").open("xb") as out, (directory / "stderr.log").open("xb") as err:
             process = subprocess.Popen(command, cwd=source, stdout=out, stderr=err, start_new_session=True)
+            timed_out = False
             try:
-                code = process.wait(timeout=60)
+                code = process.wait(timeout=120)
+            except subprocess.TimeoutExpired:
+                timed_out = True
+                code = None
             finally:
                 terminate(process)
+        if code != 0 and not (directory / "record.json").exists():
+            from .ablation_analysis import seal
+
+            row = dict(
+                cell,
+                status="timeout" if timed_out else "failed",
+                utc=utc(),
+                artifacts_valid=False,
+                realized_stimulus=False,
+                original_rows=8192,
+                verified_rows=0,
+                verified_bytes=0,
+                verification_errors=["controlled child timeout" if timed_out else "controlled child failed"],
+                metadata_bundle=seal(directory),
+            )
+            row["evidence"] = {
+                p.name: file_hash(p)
+                for p in directory.iterdir()
+                if p.is_file() and p.suffix in (".json", ".jsonl", ".log", ".gz")
+            }
+            write_new(directory / "record.json", row)
         require(code == 0, "controlled case failed; no public-host testing")
     return True
 

@@ -13,7 +13,7 @@ from pathlib import Path
 
 from . import ablation
 from .common import file_hash, lock, read_json, remaining, replace_derived, require, utc, write_new
-from .onset_run import audit_events, fatal_signal
+from .onset_run import audit_events
 from .prepare import guest_check, host_gate, robots_permit
 from .runner import compact_outputs, terminate
 from .telemetry import Guard
@@ -27,6 +27,9 @@ class WindowGuard(Guard):
         self.first_dispatch = None
 
     def check(self):
+        if self.policy.reason in ablation.PLANNED and self.policy.fatal_reason == "body_budget":
+            self.policy.fatal = False
+            self.policy.fatal_reason = None
         if self.policy.reason == "body_budget":
             self.policy.reason = "planned_body_budget"
             self.policy.fatal = False
@@ -195,7 +198,10 @@ def execute(study, source, run):
     with (directory / "stdout.log").open("xb") as out, (directory / "stderr.log").open("xb") as err:
         process = subprocess.Popen(command, cwd=source, stdout=out, stderr=err, start_new_session=True)
         offset = 0
-        deadline = started + min(run["budget_seconds"] - 100, run["network_seconds"] + 120)
+        # Network dispatch still ends at its frozen timer. Archive finalization
+        # needs its own reservation; retained 8192-row runs took ~44 seconds
+        # after network closure, before ~50 seconds of independent verification.
+        deadline = started + run["budget_seconds"] - 90
         try:
             while process.poll() is None:
                 path = directory / "request-audit.jsonl"
@@ -209,7 +215,7 @@ def execute(study, source, run):
                                 offset = at
                                 break
                             event = json.loads(line)
-                            fatal = fatal or fatal_signal(event)
+                            fatal = fatal or ablation.terminal_fault(event)
                             if event["event"] == "stop" and event.get("reason") not in ablation.PLANNED:
                                 reason = reason or event["reason"]
                 if reason or fatal or time.monotonic() >= deadline:
@@ -226,7 +232,7 @@ def execute(study, source, run):
         else ([], True)
     )
     for e in events:
-        fatal = fatal or fatal_signal(e)
+        fatal = fatal or ablation.terminal_fault(e)
         if e["event"] in ("stop", "closed") and (e.get("reason") or e.get("stop_reason")) not in (
             *ablation.PLANNED,
             None,
@@ -382,11 +388,7 @@ def window(study, source):
             if not (study / f"recovery-{n}-summary.json").exists():
                 value = asyncio.run(probe(study, n))
                 base = read_json(study / "probe-summary.json")
-                passed = (
-                    value["valid"] >= 0.95 * value["requests"]
-                    and value["ttfb_p50_s"] is not None
-                    and value["ttfb_p50_s"] <= 1.5 * base["ttfb_p50_s"]
-                )
+                passed = ablation.recovered(value, base["ttfb_p50_s"])
                 if not passed:
                     write_new(study / "END.json", {"reason": "recovery_failed_or_cooldown_limit"})
                     return {"status": "stopped"}

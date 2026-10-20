@@ -252,10 +252,11 @@ class ReceiptTests(unittest.TestCase):
             dest = root / "out"
             dest.mkdir()
             extract(run / receipt["path"], dest, 1024**2)
+            with self.assertRaises(ValueError):
+                extract(run / receipt["path"], root / "expired", 1024**2, deadline=0)
             self.assertTrue(common.read_json(dest / "native/overview.json")["fixture"])
             self.assertFalse((dest / "native/payload.jpg").exists())
-            with self.assertRaises(ValueError):
-                seal(run)
+            self.assertEqual(seal(run)["sha256"], receipt["sha256"])
             with self.assertRaises(ValueError):
                 extract(run / receipt["path"], root / "small", 1)
 
@@ -287,6 +288,15 @@ class ReceiptTests(unittest.TestCase):
 
 class CloudBoundaryTests(unittest.TestCase):
     def test_provider_failure_quiesces_and_cleans_without_scientific_replay(self):
+        self._cloud_scenario("lost_ack")
+
+    def test_late_window_is_reserved_for_finalization(self):
+        self._cloud_scenario("late")
+
+    def test_cooldown_that_cannot_fit_finalizes_in_current_window(self):
+        self._cloud_scenario("cooldown")
+
+    def _cloud_scenario(self, scenario):
         from unittest.mock import MagicMock
         from benchmark.real_server_study import ablation_cloud
         import flowdc_ops
@@ -312,8 +322,12 @@ class CloudBoundaryTests(unittest.TestCase):
             def remote(_packet, _number, action, _seconds):
                 calls.append(action)
                 if action == "acquire":
-                    raise OSError("simulated transport loss")
-                return {"audit_elapsed_s": 0.1}
+                    if scenario == "lost_ack":
+                        raise OSError("simulated transport loss")
+                    if scenario == "cooldown":
+                        return dict(status="cooldown", until_utc=__import__("time").time() + 600)
+                    raise AssertionError("acquisition must not start in finalization reserve")
+                return {"audit_elapsed_s": 0.1, "audit_pending": int(scenario == "lost_ack" and _number == 0)}
 
             def collect(*_args):
                 (packet / "collected").mkdir()
@@ -326,7 +340,11 @@ class CloudBoundaryTests(unittest.TestCase):
                 patch.object(ablation_cloud.cloud, "refresh_ssh"),
                 patch.object(ablation_cloud.cloud, "wait_ssh"),
                 patch.object(ablation_cloud.storage, "mount"),
-                patch.object(ablation_cloud, "wall_left", return_value=28800),
+                patch.object(
+                    ablation_cloud,
+                    "wall_left",
+                    return_value={"lost_ack": 28800, "late": 5000, "cooldown": 8000}[scenario],
+                ),
                 patch.object(ablation_cloud, "remote", side_effect=remote),
                 patch.object(ablation_cloud.onset_cloud, "ready"),
                 patch.object(
@@ -345,9 +363,20 @@ class CloudBoundaryTests(unittest.TestCase):
             ):
                 result = ablation_cloud.run(packet)
             self.assertTrue(result["cleanup_complete"])
-            self.assertEqual(calls, ["acquire", "audit"])
-            quiet.assert_called_once()
-            self.assertEqual([c.args[0] for c in controller.call.call_args_list], ["start", "stop"])
+            self.assertEqual(
+                calls,
+                {
+                    "lost_ack": ["acquire", "audit", "audit"],
+                    "late": ["audit"],
+                    "cooldown": ["acquire", "audit"],
+                }[scenario],
+            )
+            self.assertEqual(quiet.call_count, int(scenario == "lost_ack"))
+            self.assertEqual(
+                [c.args[0] for c in controller.call.call_args_list],
+                ["start", "stop"] * (2 if scenario == "lost_ack" else 1),
+            )
+            self.assertEqual((packet / "recovery-skipped.json").exists(), scenario == "cooldown")
             self.assertTrue((packet / "acquisition-ended.json").exists())
 
     def test_qualification_refuses_wrong_review_head_before_cloud_calls(self):
@@ -452,3 +481,101 @@ ablation_run.launch(root,Path(sys.argv[2]),'fixture')
                 self.assertTrue((directory / "native.tar").exists())
         finally:
             await server.cleanup()
+
+
+class StopRecoveryTests(unittest.TestCase):
+    def test_refusals_during_planned_drain_are_terminal(self):
+        for planned in ablation.PLANNED:
+            for status in (401, 403, 429, 503):
+                policy = ablation.Policy(0.1, 100)
+                policy.reason = planned
+                policy.header(1, status)
+                self.assertTrue(policy.fatal)
+                self.assertNotIn(policy.reason, ablation.PLANNED)
+                self.assertEqual(ablation.terminal_fault(dict(event="headers", status=status)), policy.reason)
+
+    def test_planned_body_budget_during_drain_does_not_become_fatal(self):
+        policy = ablation.Policy(0.1, 100)
+        policy.reason = "planned_window_end"
+        policy.fatal = True
+        policy.fatal_reason = "body_budget"
+        guard = ablation_run.WindowGuard([], io.StringIO(), 0.1, policy=policy, seconds=1)
+        try:
+            with self.assertRaises(RuntimeError):
+                guard.check()
+            self.assertFalse(policy.fatal)
+            self.assertIsNone(policy.fatal_reason)
+            policy.header(2, 429)
+            with self.assertRaises(RuntimeError):
+                guard.check()
+            self.assertTrue(policy.fatal)
+            self.assertEqual(policy.fatal_reason, "explicit_429")
+        finally:
+            downloader.shutdown_flag = False
+
+    def test_recovery_requires_all_planned_requests_and_no_stop(self):
+        value = dict(passed=True, reason=None, requests=128, valid=125, ttfb_p50_s=0.1)
+        self.assertTrue(ablation.recovered(value, 0.1))
+        for change in (
+            {"passed": False},
+            {"reason": "health_refusal"},
+            {"requests": 41, "valid": 40},
+            {"valid": 120},
+            {"ttfb_p50_s": 0.151},
+        ):
+            self.assertFalse(ablation.recovered({**value, **change}, 0.1))
+
+    def test_interrupted_archive_caches_recover_without_replaying_source(self):
+        from benchmark.real_server_study.ablation_analysis import seal
+        from benchmark.real_server_study.ablation_collect import pack, extract
+
+        with tempfile.TemporaryDirectory() as tmp:
+            study = Path(tmp)
+            run = study / "runs/run"
+            run.mkdir(parents=True)
+            common.write_new(run / "intent.json", {"attempt": 1})
+            (run / "metadata.tar.gz.partial").write_bytes(b"truncated")
+            receipt = seal(run)
+            self.assertFalse((run / "metadata.tar.gz.partial").exists())
+            # Receipt was committed but archive rename was interrupted.
+            (run / "metadata.tar.gz").rename(run / "metadata.tar.gz.partial")
+            self.assertEqual(seal(run), receipt)
+            (study / "collection.tar.gz.partial").write_bytes(b"truncated")
+            closed = pack(study)
+            self.assertEqual(pack(study), closed)
+            dest = study / "out"
+            dest.mkdir()
+            extract(study / "collection.tar.gz", dest, 2**20)
+            self.assertTrue((dest / "runs/run/metadata-bundle.json").exists())
+            with (run / "metadata.tar.gz").open("ab") as out:
+                out.write(b"corruption")
+            with self.assertRaises(ValueError):
+                seal(run)
+
+
+class ControlledFailureTests(unittest.TestCase):
+    def test_timeout_retains_failed_record_and_refuses_replay(self):
+        import subprocess
+        from unittest.mock import MagicMock
+        from benchmark.real_server_study import ablation_controlled
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            cell = ablation_controlled.cases()[0]
+            process = MagicMock()
+            process.wait.side_effect = subprocess.TimeoutExpired("fixture", 120)
+            with (
+                patch.object(ablation_controlled, "cases", return_value=[cell]),
+                patch.object(common, "remaining", return_value=1000),
+                patch.object(ablation_controlled.subprocess, "Popen", return_value=process) as spawn,
+                patch.object(ablation_controlled, "terminate"),
+            ):
+                with self.assertRaises(ValueError):
+                    ablation_controlled.window(root, ROOT)
+                record = common.read_json(root / "controlled" / cell["run_id"] / "record.json")
+                self.assertEqual(record["status"], "timeout")
+                self.assertFalse(record["artifacts_valid"])
+                with self.assertRaises(ValueError):
+                    ablation_controlled.window(root, ROOT)
+                spawn.assert_called_once()
+                process.wait.assert_called_once_with(timeout=120)

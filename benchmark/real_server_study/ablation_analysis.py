@@ -12,15 +12,45 @@ from .common import file_hash, lock, read_json, replace_derived, require, utc
 from .onset_run import audit_events
 
 
+def closed_archive(target, receipt):
+    """Recover only derived archive bytes; never replay acquisition."""
+    partial = target.with_name(target.name + ".partial")
+    for path in (target, receipt, partial):
+        require(not path.is_symlink(), "archive cache symlink")
+    if receipt.exists():
+        value = read_json(receipt)
+        candidate = target if target.exists() else partial
+        require(
+            candidate.is_file()
+            and candidate.stat().st_size == value["bytes"]
+            and file_hash(candidate) == value["sha256"],
+            "receipted archive changed",
+        )
+        if candidate == partial:
+            partial.replace(target)
+        return value
+    if target.exists():
+        require(not (target.parent / "record.json").exists(), "unreceipted finalized archive")
+        target.unlink()  # Derived interrupted bytes; journals remain untouched.
+    if partial.exists():
+        require(partial.is_file(), "invalid archive temporary")
+        partial.unlink()
+    return None
+
+
 def seal(directory):
     """Bundle journals once; retained native files and third-party payloads stay put."""
     directory = Path(directory)
     target = directory / "metadata.tar.gz"
-    require(not target.exists(), "metadata bundle already sealed")
+    receipt = directory / "metadata-bundle.json"
+    previous = closed_archive(target, receipt)
+    if previous:
+        return previous
+    partial = target.with_name(target.name + ".partial")
     paths = [p for p in directory.rglob("*") if p.is_file() and p.suffix in (".json", ".jsonl", ".log")]
     require(not any(p.is_symlink() for p in paths), "metadata symlink")
     manifest = {}
-    with tarfile.open(target, "x:gz", compresslevel=1) as archive:
+    with tarfile.open(partial, "x:gz", compresslevel=1) as archive:
         for p in sorted(paths):
             name = str(p.relative_to(directory))
             before = p.stat()
@@ -36,7 +66,12 @@ def seal(directory):
         member = tarfile.TarInfo("bundle-manifest.json")
         member.size = len(raw)
         archive.addfile(member, io.BytesIO(raw))
-    return dict(path=target.name, sha256=file_hash(target), bytes=target.stat().st_size, files=len(manifest))
+    value = dict(
+        path=target.name, sha256=file_hash(partial), bytes=partial.stat().st_size, files=len(manifest)
+    )
+    replace_derived(receipt, value)
+    partial.replace(target)
+    return value
 
 
 def audit(study, source, seconds=1200):
@@ -120,6 +155,10 @@ def audit(study, source, seconds=1200):
                     events, invalid = audit_events(directory / "request-audit.jsonl")
                     require(not invalid, "malformed audit")
                     require(
+                        not any(ablation.terminal_fault(e) for e in events),
+                        "terminal public fault in credited window",
+                    )
+                    require(
                         row["exposure"]
                         == ablation.exposure(
                             events,
@@ -200,7 +239,34 @@ def report(study, output=None):
     study = Path(study)
     out = Path(output) if output else study.parent / "final-report"
     out.mkdir(parents=True, exist_ok=True)
-    value = read_json(study / "analysis/results.json")
+    if (study / "analysis/results.json").exists():
+        value = read_json(study / "analysis/results.json")
+    else:
+        from .ablation_controlled import cases
+
+        runs = [
+            dict(
+                r,
+                audited=False,
+                status="audit_pending" if (study / "runs" / r["run_id"]).exists() else "unstarted",
+            )
+            for r in ablation.schedule()
+        ]
+        lab = [
+            dict(
+                r,
+                audited=False,
+                status="audit_pending" if (study / "controlled" / r["run_id"]).exists() else "unstarted",
+            )
+            for r in cases()
+        ]
+        value = dict(
+            protocol_sha256=file_hash(study / "protocol.json"),
+            runs=runs,
+            controlled=lab,
+            audit_pending=sum(r["status"] == "audit_pending" for r in runs + lab),
+            limitations="No aggregate audit completed within the finite envelope; numeric outcomes are withheld. Status-only inventory, not efficacy evidence.",
+        )
     require(value["protocol_sha256"] == file_hash(study / "protocol.json"), "report protocol mismatch")
     rows = {r["run_id"]: r for r in value["runs"]}
 
@@ -382,11 +448,18 @@ def report(study, output=None):
             + f" & {r.get('verified_rows', '--')} & {r.get('realized_stimulus', False)} "
             + r"\\"
         )
+    gate = read_json(study / "host-gate.json") if (study / "host-gate.json").exists() else {}
     lines += [
         r"\bottomrule\end{longtable}\normalsize",
         r"\section{Stops, limits and provenance}",
         "Three-times baseline is a warning; five-times baseline over three qualified ten-second bins stops an arm. A latency-only stop permits a predefined cooldown and low-load recovery, with at most three cooldowns. Access refusals, 429/503, TLS or integrity failures end public testing. Latency growth alone is not proof of a server rate-limit mechanism.",
         "The live envelope is eight hours, eight one-hour VM windows, 300 conservative SUs, 1.2 million public request intents, 200 GiB bodies and 256 GiB artifacts. No favorable retries replace first attempts. Unknown, interrupted, unstarted, aliased and audit-pending slots remain visible.",
+        "Public images are drawn from the frozen TaiBIF moth population at moth.tbn.org.tw/images/. Dataset, license, sampling and URL provenance are retained in protocol.json and the frozen manifests. "
+        + (
+            "The previously authorized host-specific certificate validity-period exception was used; certificate-chain and hostname verification remained enabled. Certificate, peer and robots observations are retained in host-gate.json."
+            if gate.get("ignore_time")
+            else "Certificate and robots observations, when acquired, are retained in host-gate.json."
+        ),
         esc(value["limitations"]),
         "Protocol SHA-256: "
         + r"\texttt{"

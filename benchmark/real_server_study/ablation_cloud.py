@@ -340,7 +340,8 @@ def run(packet):
                 ),
                 "campaign binding changed",
             )
-            Provider(ops.load_profile(current["profile_path"])).verify_idle(current)
+            # preflight refreshes stale idle observations and verifies enrolled
+            # offload/network state; avoid a duplicate full inventory here.
             controller = cloud.controller_for(packet)
             controller.preflight(3600)
             write_new(
@@ -367,7 +368,14 @@ def run(packet):
                 seconds = int(
                     min(2820, remaining(onset_cloud.local_status(journal)) - 90, wall_left(record) - 900)
                 )
-                if (packet / "acquisition-ended.json").exists() or number == 7:
+                # Keep one full window available for audit/collection/cleanup.
+                offline_only = (
+                    (packet / "acquisition-ended.json").exists()
+                    or number == 7
+                    or wall_left(record) < 7200
+                    or onset_cloud.exposure(record, journal) + 64 > 300
+                )
+                if offline_only:
                     outcome = dict(status="stopped", reason="offline-only finalization")
                 elif seconds >= 120:
                     try:
@@ -386,9 +394,35 @@ def run(packet):
                         except (OSError, ValueError, subprocess.SubprocessError):
                             safe = False
                     write_new(packet / f"window-{number:02}-guest.json", outcome)
-                    if outcome["status"] in ("complete", "stopped"):
-                        write_new(packet / "acquisition-ended.json", outcome)
+                if outcome and outcome["status"] == "cooldown":
+                    can_recover = (
+                        number < 6
+                        and outcome["until_utc"] - time.time() + 7800 < wall_left(record)
+                        and onset_cloud.exposure(record, journal) + 64 <= 300
+                    )
+                    if not can_recover:
+                        write_new(
+                            packet / "recovery-skipped.json",
+                            dict(
+                                utc=utc(),
+                                reason="cooldown and finalization cannot fit",
+                                requested_cooldown_until=outcome["until_utc"],
+                            ),
+                        )
+                        outcome = dict(outcome, status="stopped", recovery="not attempted: finite reserve")
+                if (
+                    outcome
+                    and outcome["status"] in ("complete", "stopped")
+                    and not (packet / "acquisition-ended.json").exists()
+                ):
+                    write_new(packet / "acquisition-ended.json", outcome)
                 if safe and outcome and outcome["status"] in ("complete", "stopped"):
+                    previous_audits = sorted(packet.glob("window-*-audit.json"))
+                    pending_audit = (
+                        read_json(previous_audits[-1]).get("audit_pending", 0) > 0
+                        if previous_audits
+                        else True
+                    )
                     seconds = int(
                         min(
                             1200 - onset_cloud.audit_spent(packet),
@@ -402,7 +436,12 @@ def run(packet):
                         )
                         audited = remote(packet, number, "audit", seconds)
                         write_new(packet / f"window-{number:02}-audit.json", audited)
-                    if remaining(onset_cloud.local_status(journal)) >= 180:
+                        pending_audit = audited.get("audit_pending", 0) > 0
+                    # Finish resumable audit units in the next offline window
+                    # before sealing collection, unless its finite budget is
+                    # exhausted or this is already the final window.
+                    continue_audit = pending_audit and onset_cloud.audit_spent(packet) <= 1140 and number < 7
+                    if not continue_audit and remaining(onset_cloud.local_status(journal)) >= 180:
                         seconds = int(
                             min(
                                 900,
@@ -445,7 +484,6 @@ def run(packet):
                 return read_json(packet / "complete.json")
             if outcome and outcome["status"] == "cooldown":
                 wait = outcome["until_utc"] - time.time()
-                require(wait + 3600 < wall_left(record), "cooldown cannot fit; no extra activation")
                 while wait > 0:
                     time.sleep(min(30, wait))
                     wait = outcome["until_utc"] - time.time()

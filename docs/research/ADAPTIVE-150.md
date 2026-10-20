@@ -70,6 +70,14 @@ run-level intervals and missing pairs; no universal superiority/optimum claim.
 Frozen TaiBIF URL populations are disjoint across capacity, tuning and validation.
 Arms within a stage use matched manifests; cache state is not guaranteed cold.
 There is no cache busting, success selection, retry or extra scientific attempt.
+Processing reservations are420 seconds per screen and600 per capacity/validation
+run, including the unchanged120/180-second network windows. Retained8192-row
+evidence took about45 seconds of networking,44 of native finalization and50 of
+independent verification. The original300/480-second reservations could truncate
+larger successful prefixes. These prospective ceilings reserve processing time
+within the same eight-hour/global campaign limits; they authorize no extra
+traffic, run or VM window. Admission may leave later slots unstarted if actual
+processing or provider delays consume the finite envelope.
 A3× delay warning tests downward response within2 ticks. Three ten-second bins
 at5× baseline stop an arm. Only latency stops permit a ten-minute cooldown and
 one predefined low-load recovery (>=95% valid, median <=1.5× initial baseline).

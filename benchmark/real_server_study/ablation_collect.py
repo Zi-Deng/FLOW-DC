@@ -10,22 +10,19 @@ import time
 from pathlib import Path
 
 from . import ablation, cloud
-from .common import file_hash, read_json, require, write_new
+from .common import file_hash, read_json, replace_derived, require, write_new
 
 
 def pack(study):
-    from .ablation_analysis import seal
+    from .ablation_analysis import closed_archive, seal
 
     study = Path(study)
     target = study / "collection.tar.gz"
-    if target.exists():
-        require((study / "collection.json").exists(), "packing interrupted; preserve partial archive")
-        receipt = read_json(study / "collection.json")
-        require(
-            target.stat().st_size == receipt["bytes"] and file_hash(target) == receipt["sha256"],
-            "closed collection changed",
-        )
-        return receipt
+    receipt = study / "collection.json"
+    previous = closed_archive(target, receipt)
+    if previous:
+        return previous
+    partial = target.with_name(target.name + ".partial")
     paths = [p for p in study.iterdir() if p.is_file() and p.suffix in (".json", ".jsonl", ".parquet")]
     paths.extend(p for p in (study / "slices").glob("*.parquet"))
     paths.extend(p for p in (study / "analysis").rglob("*") if p.is_file())
@@ -34,16 +31,16 @@ def pack(study):
             if not directory.is_dir():
                 continue
             bundle = directory / "metadata.tar.gz"
-            if not bundle.exists():
-                seal(directory)  # Caller has established quiescence.
+            seal(directory)  # Validate/recover the closed bundle after quiescence.
             paths.append(bundle)
+            paths.append(directory / "metadata-bundle.json")
             if (directory / "record.json").exists():
                 paths.append(directory / "record.json")
     for directory in [study / "health", *study.glob("recovery-[0-9]")]:
         if directory.exists():
             paths.extend(p for p in directory.rglob("*") if p.is_file() and p.suffix in (".json", ".jsonl"))
     manifest = {}
-    with tarfile.open(target, "x:gz", compresslevel=1) as archive:
+    with tarfile.open(partial, "x:gz", compresslevel=1) as archive:
         for p in sorted(set(paths)):
             require(not p.is_symlink(), "metadata symlink")
             name = str(p.relative_to(study))
@@ -53,29 +50,31 @@ def pack(study):
         m = tarfile.TarInfo("metadata-manifest.json")
         m.size = len(raw)
         archive.addfile(m, io.BytesIO(raw))
-    require(target.stat().st_size <= ablation.LIMITS["metadata_bytes"], "compressed metadata bound exceeded")
-    value = dict(bytes=target.stat().st_size, sha256=file_hash(target), files=len(manifest))
-    write_new(study / "collection.json", value)
+    require(partial.stat().st_size <= ablation.LIMITS["metadata_bytes"], "compressed metadata bound exceeded")
+    value = dict(bytes=partial.stat().st_size, sha256=file_hash(partial), files=len(manifest))
+    replace_derived(receipt, value)
+    partial.replace(target)
     return value
 
 
-def extract(archive, destination, maximum):
-    with tarfile.open(archive, "r:*") as stream:
-        members = stream.getmembers()
-        require(
-            len(members) <= 2000000
-            and len({m.name for m in members}) == len(members)
-            and sum(m.size for m in members) <= maximum,
-            "metadata expansion bound",
-        )
-        require(
-            all(
-                m.isfile() and not Path(m.name).is_absolute() and ".." not in Path(m.name).parts
-                for m in members
-            ),
-            "unsafe metadata",
-        )
-        stream.extractall(destination, filter="data")
+def extract(archive, destination, maximum, *, deadline=None):
+    seen, size = set(), 0
+    with tarfile.open(archive, "r|*") as stream:
+        for member in stream:
+            require(deadline is None or time.monotonic() < deadline, "collection deadline")
+            require(
+                member.isfile()
+                and not Path(member.name).is_absolute()
+                and ".." not in Path(member.name).parts,
+                "unsafe metadata",
+            )
+            size += member.size
+            require(
+                member.name not in seen and len(seen) < 2000000 and size <= maximum,
+                "metadata expansion bound",
+            )
+            seen.add(member.name)
+            stream.extract(member, destination, filter="data")
     manifest = (
         read_json(destination / "metadata-manifest.json")
         if (destination / "metadata-manifest.json").exists()
@@ -87,9 +86,11 @@ def extract(archive, destination, maximum):
     }
     require(actual == set(manifest), "metadata membership mismatch")
     for name, spec in manifest.items():
+        require(deadline is None or time.monotonic() < deadline, "collection deadline")
         p = destination / name
         require(
-            p.stat().st_size == spec["bytes"] and file_hash(p) == spec["sha256"], "metadata digest mismatch"
+            p.stat().st_size == spec["bytes"] and file_hash(p, deadline) == spec["sha256"],
+            "metadata digest mismatch",
         )
 
 
@@ -103,6 +104,7 @@ def collect(packet, seconds=900):
     receipt = read_json(packet / "deployment-receipt.json")
     root = op["guest_root"]
     began = time.monotonic()
+    deadline = began + seconds
     require(0 < seconds <= 900, "collection budget")
     path = packet / "collection.json"
     if not path.exists():
@@ -137,23 +139,24 @@ def collect(packet, seconds=900):
         require(
             result.returncode == 0
             and partial.stat().st_size == spec["bytes"]
-            and file_hash(partial) == spec["sha256"],
+            and file_hash(partial, deadline) == spec["sha256"],
             "collection transfer incomplete",
         )
         partial.replace(archive)
-    require(
-        archive.stat().st_size == spec["bytes"] and file_hash(archive) == spec["sha256"],
-        "retained collection changed",
-    )
+    else:
+        require(
+            archive.stat().st_size == spec["bytes"] and file_hash(archive, deadline) == spec["sha256"],
+            "retained collection changed",
+        )
     partial = packet / "collected.partial"
     require(not partial.exists(), "partial extraction needs inspection")
     partial.mkdir()
-    extract(archive, partial, 8 * 2**30)
+    extract(archive, partial, 8 * 2**30, deadline=deadline)
     expanded = 0
     for bundle in sorted(partial.glob("*/**/metadata.tar.gz")):
         destination = bundle.parent / "metadata"
         destination.mkdir()
-        extract(bundle, destination, 512 * 2**20)
+        extract(bundle, destination, 512 * 2**20, deadline=deadline)
         expanded += sum(p.stat().st_size for p in destination.rglob("*") if p.is_file())
         require(expanded <= 24 * 2**30, "total metadata expansion bound")
     partial.replace(target)
