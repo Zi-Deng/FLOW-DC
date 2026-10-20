@@ -36,11 +36,17 @@ EXTERNAL = Workload("bounded-external-v1", 32768, 4 * 2**30, 64 * 2**20,
                     max_attempts=2)
 
 
+ABLATION = Workload("bounded-adaptive-ablation-v1", 32768, 6 * 2**30, 128 * 2**20,
+                    16 * 2**30, 24 * 2**30, 300, 1048576, 131072, 2097152, max_attempts=1)
+
+
 def workload(name=None):
     if name is None or name == LEGACY.name:
         return LEGACY
     if name == RESEARCH.name:
         return RESEARCH
+    if name == ABLATION.name:
+        return ABLATION
     if name == EXTERNAL.name:
         return EXTERNAL
     raise ValueError("unknown finite research workload profile")

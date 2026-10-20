@@ -191,6 +191,7 @@ def create_partition_config(base_config: dict, partition_file: str, output_name:
 
         # Download settings
         "concurrent_downloads": base_config.get('concurrent_downloads'),  # None = auto-detect
+        "http_connection_limit": base_config.get('http_connection_limit'),
         "timeout": base_config.get('timeout', base_config.get('timeout_sec', 30)),
 
         # PAARC toggle

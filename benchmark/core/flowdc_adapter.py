@@ -35,6 +35,7 @@ class FlowDCConfig:
     method_options: dict = field(default_factory=dict)
     shared_control_file: str | None = None
     research_workload: str | None = None
+    http_connection_limit: int | None = None
 
 
 class FlowDCAdapter:
@@ -75,6 +76,7 @@ class FlowDCAdapter:
             "url": config.url_column,
             "label": config.label_column,
             "concurrent_downloads": config.concurrent_downloads,
+            "http_connection_limit": config.http_connection_limit,
             "timeout": config.timeout_sec,
             "enable_paarc": config.enable_paarc,
             "control_method": config.control_method,
