@@ -61,6 +61,8 @@ class DesignTests(unittest.TestCase):
         rows = [dict(phase='search', complete=True, cap=cap, record_sha256=str(cap), run_id=str(cap),
                      exposure=dict(qualified=True, steady_goodput_Bps=100 if cap >= 128 else 90)) for cap in onset.CAPS]
         self.assertEqual(onset.select_fixed(rows)['cap'], 128)
+        rows[0]['exposure']['qualified'] = False
+        self.assertEqual(onset.select_fixed(rows)['cap'], 128)
         rows[0]['complete'] = False
         with self.assertRaises(ValueError): onset.select_fixed(rows)
         with tempfile.TemporaryDirectory() as d:
@@ -90,8 +92,53 @@ class DesignTests(unittest.TestCase):
             records, invalid = onset_run.audit_events(p)
             self.assertTrue(invalid); self.assertEqual(records, [{'event':'start'}])
         policy = onset.Policy(.1, 100)
-        policy.header(0, 429); policy.header(1, 503)
+        policy.header(0, 429); policy.header(1, 403); policy.header(2, 503)
         self.assertEqual(policy.reason, 'explicit_429')
+        self.assertTrue(policy.fatal)
+        decision = dict(reason=policy.reason, fatal=policy.fatal)
+        self.assertFalse(onset_run.recovery_allowed(decision))
+        self.assertEqual(onset_run.fatal_signal({'event':'headers','status':403}), 'access_refusal')
+
+    def test_interrupted_attempt_closes_without_replaying_health_or_acquisition(self):
+        with tempfile.TemporaryDirectory() as d:
+            study = Path(d); run = onset.schedule()[0]
+            common.write_new(study/'schedule.json', {'runs':onset.schedule()})
+            (study/'runs'/run['run_id']).mkdir(parents=True)
+            with patch.object(onset, 'check'), patch.object(onset_run, 'guest_check'), \
+                 patch.object(onset_run, 'health') as health, patch.object(onset_run, 'host_gate') as gate:
+                outcome = onset_run.window(study, study)
+            self.assertEqual(outcome['status'], 'stopped')
+            self.assertTrue(common.read_json(study/'STOP.json')['fatal'])
+            health.assert_not_called(); gate.assert_not_called()
+
+    def test_aggregate_audit_budget_charges_uncertain_attempts_and_refunds_known_unused_time(self):
+        with tempfile.TemporaryDirectory() as d:
+            packet = Path(d)
+            common.write_new(packet/'window-00-audit-intent.json', {'seconds':900})
+            common.write_new(packet/'window-00-audit.json', {'audit_elapsed_s':400})
+            common.write_new(packet/'window-01-audit-intent.json', {'seconds':800})
+            self.assertEqual(onset_cloud.audit_spent(packet), 1200)
+            common.write_new(packet/'window-01-audit.json', {'audit_elapsed_s':50})
+            self.assertEqual(onset_cloud.audit_spent(packet), 450)
+
+    def test_qualification_requires_review_receipt_and_fresh_github_head(self):
+        for mode in ('pass','stale','failed','material','tampered'):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as d:
+                root = Path(d); review = root/'review'; review.mkdir()
+                common.write_new(review/'report.json', {'findings':[{'severity':'P2'}] if mode == 'material' else []})
+                common.write_new(review/'review.json', {'status':'completed','head':'head','repository':'Zi-Deng/FLOW-DC',
+                                 'pr':49,'report_sha256':common.file_hash(review/'report.json')})
+                common.write_new(root/'qualification.json', {'head':'head','review_head':'head','ci_passed':True,
+                                 'review_accepted':True,'review_directory':str(review),'pr':49,
+                                 'review_metadata_sha256':common.file_hash(review/'review.json')})
+                if mode == 'tampered': (review/'review.json').write_text('{}')
+                response = {'headRefOid':'other' if mode == 'stale' else 'head',
+                            'statusCheckRollup':[{'name':name,'conclusion':'FAILURE' if mode == 'failed' else 'SUCCESS'}
+                                                 for name in ('flowdc-tests','agentic-quality')]}
+                with patch.object(subprocess := onset_cloud.subprocess, 'check_output', return_value=json.dumps(response)):
+                    if mode == 'pass': onset_cloud.qualification_gate(root, {'source':{'head':'head'}})
+                    else:
+                        with self.assertRaises(ValueError): onset_cloud.qualification_gate(root, {'source':{'head':'head'}})
 
     def test_unreviewed_head_and_exhausted_cloud_windows_cannot_activate(self):
         for mode in ('unreviewed', 'two_windows', 'su_exhausted'):
@@ -134,6 +181,44 @@ class DesignTests(unittest.TestCase):
                 self.assertEqual(result['runs'][0]['status'], 'stopped')
                 path.write_text('{"event":"closed"}\n')
                 with self.assertRaisesRegex(ValueError, 'evidence changed'): onset_analysis.audit(study, study)
+
+    def test_acquisition_failure_collects_offline_without_replay_even_after_uncertain_stop(self):
+        for stopped in (True, False):
+            with self.subTest(quiescent=stopped), tempfile.TemporaryDirectory() as d:
+                packet = Path(d); report = packet/'final-report'; report.mkdir()
+                common.write_new(report/'report-manifest.json', {'audit_pending':0})
+                common.write_new(packet/'deployment.json', {'campaign_id':'campaign'})
+                common.write_new(packet/'operator.json', {'source':'source','state':'state','guest_root':'root','guest_python':'python'})
+                common.write_new(packet/'deployment-receipt.json', {'python':'python'})
+                common.write_new(packet/'retained-volume.json', {'volume':{'volume_id':'volume'},'root':'root','mount':{'filesystem_uuid':'fs'}})
+                current = {'profile_path':'profile','vms':{'vm':{'account':{'campaign_id':'campaign'}}}}
+                journal = Mock(); journal.read.return_value = current
+                controller = Mock()
+                actions = []
+                def remote(packet, number, action, seconds, final=False):
+                    actions.append(action)
+                    if action == 'acquire': raise ValueError('fixture interrupted transport')
+                    return {'audit_elapsed_s':.1,'audit_pending':0}
+                def collected(*args, **kwargs):
+                    (packet/'collected').mkdir(exist_ok=True)
+                with patch.object(onset_cloud.cloud, 'imports', return_value=(lambda _:journal,None,None,None)), \
+                     patch.object(onset_cloud, 'authorize', return_value=(journal, {'campaign_id':'campaign','baseline':{'vm':0}})), \
+                     patch.object(onset_cloud, 'wall_left', return_value=14400), patch.object(onset_cloud,'exposure',return_value=0), \
+                     patch.object(onset_cloud,'local_status',return_value={}), patch.object(onset_cloud,'ready'), \
+                     patch.object(onset_cloud,'remote',side_effect=remote), \
+                     patch.object(onset_cloud,'quiesce',side_effect=(lambda *_:{'after':'inactive'}) if stopped else ValueError('uncertain')), \
+                     patch.object(onset_cloud.cloud,'controller_for',return_value=controller), \
+                     patch.object(onset_cloud.cloud,'refresh_ssh'), patch.object(onset_cloud.cloud,'wait_ssh'), \
+                     patch.object(onset_cloud.cloud,'ssh',return_value=b'{}'), patch.object(onset_cloud.cloud,'collect',side_effect=collected), \
+                     patch('flowdc_pilot_provider.Provider'), patch('flowdc_ops.load_profile',return_value={}), \
+                     patch('flowdc_experiment_transport.remaining',return_value=2600), patch('flowdc_experiment_transport.idle',return_value=True), \
+                     patch.object(onset_analysis,'report',return_value=report/'report.pdf'):
+                    result = onset_cloud.run(packet)
+                self.assertEqual(actions, ['acquire','audit'])
+                self.assertTrue(result['cleanup_complete'])
+                self.assertEqual(result['windows_used'], 1 if stopped else 2)
+                self.assertTrue((packet/'acquisition-failed.json').exists())
+                self.assertEqual(sum(c.args[0]=='start' for c in controller.call.call_args_list), 1 if stopped else 2)
 
 
 class StopTests(unittest.TestCase):
@@ -179,13 +264,30 @@ class NativeTests(unittest.TestCase):
         buf = io.BytesIO(); Image.new('RGB', (8, 8), '#339977').save(buf, format='JPEG'); body = buf.getvalue()
         class Handler(BaseHTTPRequestHandler):
             def do_GET(self):
+                self.server.handled += 1
                 self.send_response(200); self.send_header('Content-Length', str(len(body))); self.end_headers()
                 self.wfile.write(body)
             def log_message(self, *args): pass
         self.server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+        self.server.handled = 0
         self.server.daemon_threads = True
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
         self.addCleanup(self.server.server_close); self.addCleanup(self.server.shutdown)
+
+    def test_health_is_bounded_and_never_replayed(self):
+        with tempfile.TemporaryDirectory() as d:
+            study = Path(d)
+            urls = [f'http://127.0.0.1:{self.server.server_port}/{i}' for i in range(12)]
+            pl.DataFrame({'url':urls}).write_parquet(study/'probe.parquet')
+            common.write_new(study/'host-gate.json', {'ignore_time':False})
+            with patch.object(onset_run, 'guest_check'), patch.object(onset_run, 'checked_url', side_effect=lambda u:u), \
+                 patch.object(onset_run, 'remaining', return_value=600):
+                result = asyncio.run(onset_run.health(study))
+                self.assertTrue(result['passed']); self.assertEqual(result['valid'], 12)
+                self.assertGreater(result['ttfb_p50_s'], 0)
+                self.assertEqual(self.server.handled, 12)
+                with self.assertRaises(ValueError): asyncio.run(onset_run.health(study))
+                self.assertEqual(self.server.handled, 12)
 
     def test_native_known_images_budget_and_credited_url_receipt(self):
         import download_batch

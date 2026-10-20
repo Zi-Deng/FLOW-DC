@@ -32,6 +32,17 @@ def audit_events(path):
     return events, invalid
 
 
+def fatal_signal(event):
+    if event['event'] == 'headers' and event.get('status') in (401, 403):
+        return 'access_refusal'
+    return (event.get('fatal_reason') or event.get('reason') or 'fatal_stop') if event.get('fatal') else None
+
+
+def recovery_allowed(decision):
+    return not decision.get('fatal') and decision['reason'] in (
+        'explicit_429', 'service_unavailable', 'sustained_latency', 'body_completion_collapse')
+
+
 def rows(study):
     result, gap = [], False
     for run in read_json(study/'schedule.json')['runs']:
@@ -49,6 +60,8 @@ def rows(study):
 def used_budget(study):
     """Unsettled attempts retain their full body/artifact reservations."""
     body, artifacts = 0, 0
+    if (study/'storage-baseline.json').exists():
+        artifacts = read_json(study/'storage-baseline.json')['fixed_artifact_bytes']+2*2**30
     for path in study.glob('runs/*/attempt.json'):
         binding = read_json(path)
         record = path.with_name('record.json')
@@ -82,9 +95,13 @@ async def health(study, recovery=False):
     semaphore = asyncio.Semaphore(2)
     begin = time.monotonic()
     require(aiohttp.__version__ == '3.13.3', 'pinned aiohttp required')
+    trace = aiohttp.TraceConfig()
+    async def sent(session, ctx, params):
+        ctx.trace_request_ctx['sent'] = time.monotonic()
+    trace.on_request_headers_sent.append(sent)
     with (study/f'{name}-results.jsonl').open('x') as log:
         async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(limit=2, ssl=tls_context(gate['ignore_time'])),
-                                        headers={'User-Agent': UA}, trust_env=False) as session:
+                                        headers={'User-Agent': UA}, trace_configs=[trace], trust_env=False) as session:
             session._retry_connection = False
             async def fetch(url):
                 nonlocal total, stop, pending_reads
@@ -93,9 +110,9 @@ async def health(study, recovery=False):
                         stop = stop or 'health_deadline'; return
                     checked_url(url)
                     row = dict(url=url, status=None, valid=False, bytes=0, ttfb_s=None)
-                    body = bytearray(); started = time.monotonic()
+                    body, timing = bytearray(), {}
                     try:
-                        async with session.get(url, allow_redirects=False, timeout=aiohttp.ClientTimeout(total=30)) as response:
+                        async with session.get(url, allow_redirects=False, timeout=aiohttp.ClientTimeout(total=30), trace_request_ctx=timing) as response:
                             row.update(status=response.status, retry_after=response.headers.get('Retry-After'))
                             if response.status in (401, 403, 429) or response.status >= 500:
                                 stop = 'health_refusal'
@@ -110,7 +127,7 @@ async def health(study, recovery=False):
                                         pending_reads -= amount
                                     total += len(chunk)
                                     if not chunk: break
-                                    if not body: row['ttfb_s'] = time.monotonic()-started
+                                    if not body: row['ttfb_s'] = time.monotonic()-timing['sent']
                                     body.extend(chunk)
                                     require(len(body) <= 64*2**20, 'health object too large')
                                 if response.status == 200:
@@ -168,6 +185,7 @@ def launch(study, source, run_id):
             restore()
             guard.emit('closed', active=len(guard.active), logical_attempts=len(guard.counts),
                        body_bytes=guard.body_bytes, stop_reason=policy.reason, fatal=policy.fatal,
+                       fatal_reason=policy.fatal_reason,
                        cooldown_until_utc=policy.cooldown_until)
 
 
@@ -193,7 +211,7 @@ def execute(study, source, run):
         robots_permit(gate['robots_txt'], pl.read_parquet(cfg['input'])['url'].to_list())
     command = [sys.executable, '-B', '-m', 'benchmark.real_server_study.onset_run', 'launch',
                '--study', str(study), '--source', str(source), '--run-id', run['run_id']]
-    reason, cooldown, offset = None, 0, 0
+    reason, fatal_reason, cooldown, offset = None, None, 0, 0
     started = time.monotonic()
     with (directory/'stdout.log').open('x') as out, (directory/'stderr.log').open('x') as err:
         process = subprocess.Popen(command, cwd=source, stdout=out, stderr=err, start_new_session=True)
@@ -206,7 +224,12 @@ def execute(study, source, run):
                         while True:
                             before = stream.tell(); line = stream.readline()
                             if not line.endswith('\n'): offset = before; break
-                            event = json.loads(line)
+                            try:
+                                event = json.loads(line)
+                            except ValueError:
+                                fatal_reason = 'malformed_request_audit'; reason = reason or fatal_reason
+                                break
+                            fatal_reason = fatal_reason or fatal_signal(event)
                             if event['event'] in ('stop', 'closed'):
                                 reason = reason or event.get('reason') or event.get('stop_reason')
                                 cooldown = max(cooldown, event.get('cooldown_until_utc', 0))
@@ -214,6 +237,7 @@ def execute(study, source, run):
                     reason = reason or 'acquisition_deadline'
                 if shutil.disk_usage(study).free < onset.LIMITS['free_bytes']:
                     reason = 'storage_reserve'
+                    fatal_reason = 'storage_reserve'
                 if reason:
                     terminate(process); break
                 time.sleep(.2)
@@ -223,9 +247,12 @@ def execute(study, source, run):
     write_new(directory/'incomplete-record.json', {**run, 'complete': False, 'termination_reason': 'verification_interrupted'})
     verification, observations = {}, {}
     events, invalid_audit = audit_events(directory/'request-audit.jsonl') if (directory/'request-audit.jsonl').exists() else ([], True)
-    if invalid_audit: reason = reason or 'malformed_request_audit'
+    if invalid_audit:
+        reason = reason or 'malformed_request_audit'
+        fatal_reason = fatal_reason or 'malformed_request_audit'
     # A killed audit may end in an incomplete JSON line; do not convert it to a clean result.
     for event in events:
+        fatal_reason = fatal_reason or fatal_signal(event)
         if event['event'] in ('closed', 'stop'):
             reason = reason or event.get('stop_reason') or event.get('reason')
             cooldown = max(cooldown, event.get('cooldown_until_utc', 0))
@@ -244,8 +271,10 @@ def execute(study, source, run):
                     observations = value
             else:
                 reason = reason or 'verification_failed'
+                fatal_reason = fatal_reason or 'verification_failed'
         except subprocess.TimeoutExpired:
             reason = reason or 'verification_timeout'
+            fatal_reason = fatal_reason or 'verification_timeout'
     complete = normal and bool(verification) and not reason
     if complete:
         dead = verification.get('row_final_status', {})
@@ -262,6 +291,7 @@ def execute(study, source, run):
                        e.get('active') == 0 and 'body_bytes' in e), allocation)
     artifact_bytes = sum(p.stat().st_size for p in directory.rglob('*') if p.is_file() and not p.is_symlink())
     row = dict(run, configured_cap=cfg['C_max'], audit_invalid=invalid_audit,
+               fatal=bool(fatal_reason), fatal_reason=fatal_reason,
                utc=utc(), complete=complete, returncode=process.returncode, termination_reason=reason,
                cooldown_until_utc=cooldown, rows=onset.ROWS, started_monotonic=started,
                acquired_monotonic=acquired, ended_monotonic=ended, acquisition_s=acquired-started,
@@ -285,37 +315,52 @@ def execute(study, source, run):
     return row
 
 
-def stop(study, reason, row=None):
+def stop(study, reason, row=None, fatal=False):
     if not (study/'STOP.json').exists():
         write_new(study/'STOP.json', dict(reason=reason, utc=utc(), run_id=row['run_id'] if row else None,
+                  fatal=fatal or bool(row and row.get('fatal')), fatal_reason=row.get('fatal_reason') if row else None,
                   cooldown_until_utc=max(time.time()+600, row.get('cooldown_until_utc', 0)) if row else 0))
 
 
 def window(study, source, final=False):
     onset.check(study, source); guest_check(study)
     with lock(study/'study.lock'):
+        try:
+            recorded = rows(study)
+        except (ValueError, KeyError, FileNotFoundError):
+            stop(study, 'interrupted_attempt', fatal=True)
+            return dict(status='stopped', reason='interrupted_attempt', runs=len(list(study.glob('runs/*/attempt.json'))))
+        if not (study/'storage-baseline.json').exists():
+            require(not any(study.glob('runs/*/attempt.json')), 'storage baseline missing after acquisition')
+            fixed = sum(p.stat().st_size for p in study.parent.rglob('*') if p.is_file() and not p.is_symlink())
+            write_new(study/'storage-baseline.json', {'fixed_artifact_bytes':fixed,
+                      'future_analysis_reserve_bytes':2*2**30, 'utc':utc()})
         if not (study/'host-gate.json').exists(): host_gate(study)
         if not (study/'probe-summary.json').exists():
             if (study/'probe-intent.json').exists():
                 stop(study, 'interrupted_health_probe')
             elif not asyncio.run(health(study))['passed']:
                 stop(study, 'health_failed')
-        recorded = rows(study)
         for run in read_json(study/'schedule.json')['runs'][len(recorded):]:
             if (study/'STOP.json').exists(): break
             if remaining(study) < 720:
                 if final: stop(study, 'finite_window_budget_exhausted')
                 break
             if run['phase'] == 'validation' and not (study/'fixed-selection.json').exists():
-                write_new(study/'fixed-selection.json', onset.select_fixed(recorded))
+                try:
+                    selected = onset.select_fixed(recorded)
+                except ValueError:
+                    stop(study, 'no_adequately_exercised_fixed_setting')
+                    break
+                write_new(study/'fixed-selection.json', selected)
             row = execute(study, source, run)
             recorded.append({**row, 'record_sha256': file_hash(study/'runs'/run['run_id']/'record.json')})
-            if row['termination_reason'] or not row['complete'] or (run['phase'] == 'search' and not row['exposure']['qualified']):
+            if row['termination_reason'] or not row['complete']:
                 stop(study, row['termination_reason'] or 'insufficient_achieved_exposure', row)
                 break
         if (study/'STOP.json').exists():
             decision = read_json(study/'STOP.json')
-            recoverable = decision['reason'] in ('explicit_429', 'service_unavailable', 'sustained_latency', 'body_completion_collapse')
+            recoverable = recovery_allowed(decision)
             if recoverable and not (study/'recovery-summary.json').exists() and not (study/'recovery-intent.json').exists():
                 wait = decision['cooldown_until_utc']-time.time()
                 if wait > 0:

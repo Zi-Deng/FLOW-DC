@@ -24,8 +24,11 @@ windows, while backlogged with >=8 active requests and pending age>=5seconds.
 Body completion is provisional until independent image verification. Record actual
 inflight, cap, queueing, pending ages, bytes, response statuses and allowed headers.
 
-If every search stage qualifies cleanly, select the lowest cap within5% of the
-highest observed verified steady goodput. Freeze that setting, then run three
+If every search stage finishes cleanly, select among adequately exercised settings
+the lowest cap within5% of the highest observed verified steady goodput. An
+under-exercised stage alone does not terminate escalation: increasing the cap may
+increase actual HTTP load. If no setting qualifies, validation remains unstarted.
+Freeze the selection, then run three
 position-balanced blocks of Ratio, Gradient and selected Fixed. Adaptive methods
 retain minimum2, initialization4, ceiling256,256 tasks, native rules and common
 Retry-After safeguards. These are exploratory paired comparisons with independent
@@ -62,7 +65,9 @@ python -m benchmark.real_server_study onset-cloud-prepare \
 
 Before execution, record actual current-head CI and accepted independent review in
 `PRIVATE_PACKET/qualification.json`: `head`, `review_head`, `ci_passed`,
-`review_accepted`, with links/receipt paths for inspection. The supplied study
+`review_accepted`, `pr`, `review_directory` and `review_metadata_sha256`. The gate
+verifies the completed review receipt/report digest, refuses remaining P0/P1/P2
+findings and checks the PR's current GitHub head and required successful CI. The supplied study
 authorization permits qualified branch execution before the single final human
 merge; it does not waive review or scientific evidence requirements.
 
@@ -74,7 +79,12 @@ python -m benchmark.real_server_study onset-report --study COLLECTED_STUDY
 ```
 
 An existing acquisition intent consumes its attempt; interrupted acquisition is
-never replayed. Audit units carry forward successful unchanged archive checks,
+never replayed. Interrupted acquisition becomes a stopped inventory and the driver
+continues offline auditing/collection, after stopping its owned guest unit or a
+fresh offload. A fatal access/TLS/storage condition remains sticky even when an
+earlier429 was the first signal; it prohibits recovery. Audit time is charged
+across both windows, reserving the full allowance when an invocation is uncertain.
+Audit units carry forward successful unchanged archive checks,
 while small metadata and observation digests are rechecked. Metadata transfer may
 resume without image downloads. The PDF/LaTeX are generated beside collected data
 in `final-report/`, so collected manifest contents remain unchanged.

@@ -465,8 +465,10 @@ def collect(packet,seconds=900,metadata_limit=8*2**30):
         script="""import hashlib,io,json,pathlib,sys,tarfile
 root=pathlib.Path(sys.argv[1])
 paths=set(root.glob('*'))|set(root.glob('analysis/**/*'))|set(root.glob('runs/*/*'))
-for record in root.glob('runs/*/record.json'):
- row=json.loads(record.read_text())
+for directory in root.glob('runs/*'):
+ if not directory.is_dir() or directory.is_symlink():continue
+ record=directory/'record.json'
+ row=json.loads(record.read_text()) if record.exists() else {'complete':False}
  if not row.get('complete'):
   for kind in ('intent.json','measurement.json','result.json'):
    paths.update(record.parent.glob('native/.flowdc/attempts/*/*/'+kind))

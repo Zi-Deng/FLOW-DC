@@ -9,7 +9,7 @@ import time
 from uuid import uuid4
 
 from . import cloud, onset, storage
-from .common import file_hash, lock, read_json, require, source_identity, utc, write_new
+from .common import file_hash, lock, read_json, replace_derived, require, source_identity, utc, write_new
 
 
 def prepare(study, source, previous_packet, packet):
@@ -63,6 +63,27 @@ def wall_left(record):
     return min(clock['utc']+14400-now.utc, clock['boottime']+14400-now.boottime)
 
 
+def qualification_gate(packet, deployment):
+    proof = read_json(packet/'qualification.json'); head = deployment['source']['head']
+    require(proof['head'] == head and proof['review_head'] == head and proof['ci_passed'] and proof['review_accepted'],
+            'qualified current-head review/CI required')
+    directory = Path(proof['review_directory'])
+    require(file_hash(directory/'review.json') == proof['review_metadata_sha256'], 'review receipt changed')
+    meta = read_json(directory/'review.json')
+    require(meta['status'] == 'completed' and meta['head'] == head and meta['repository'] == 'Zi-Deng/FLOW-DC' and
+            meta['pr'] == proof['pr'] and file_hash(directory/'report.json') == meta['report_sha256'], 'review identity/digest changed')
+    report = read_json(directory/'report.json')
+    require(not any(f['severity'] in ('P0','P1','P2') for f in report['findings']), 'material review findings remain')
+    remote = json.loads(subprocess.check_output(['gh','pr','view',str(proof['pr']),'--repo','Zi-Deng/FLOW-DC',
+                        '--json','headRefOid,statusCheckRollup'], text=True, timeout=30))
+    checks = {r.get('name',r.get('context')): r for r in remote['statusCheckRollup']}
+    require(remote['headRefOid'] == head and all(name in checks and
+            (checks[name].get('conclusion') == 'SUCCESS' or checks[name].get('state') == 'SUCCESS')
+            for name in ('flowdc-tests','agentic-quality')), 'fresh current-head CI required')
+    replace_derived(packet/'qualification-observation.json', {'utc':utc(),'head':head,'github':remote,
+                    'review_metadata_sha256':proof['review_metadata_sha256']})
+
+
 def authorize(packet):
     deployment, op = read_json(packet/'deployment.json'), read_json(packet/'operator.json')
     Journal, allowance, binding, account_digest = cloud.imports(op['source'])
@@ -70,9 +91,7 @@ def authorize(packet):
     from flowdc_pilot_supervisor import sample_clock
     import flowdc_ops as ops
     journal = Journal(op['state']); current = journal.read()
-    qualification = read_json(packet/'qualification.json')
-    require(qualification['head'] == deployment['source']['head'] and qualification['ci_passed'] and
-            qualification['review_accepted'] and qualification['review_head'] == qualification['head'], 'qualified current-head review/CI required')
+    qualification_gate(packet, deployment)
     require(source_identity(op['source']) == deployment['source'], 'prepared source changed')
     require(not subprocess.check_output(['git', '-C', op['source'], 'status', '--porcelain'], text=True).strip(), 'uncommitted deployment source')
     facts = read_json(op['allocation_file'])
@@ -148,6 +167,37 @@ def remote(packet, number, action, seconds, final=False):
     return json.loads(raw)
 
 
+def quiesce(packet, number):
+    """Stop only this window's owned acquisition unit before touching artifacts."""
+    op, deployment = read_json(packet/'operator.json'), read_json(packet/'deployment.json')
+    unit = f"flowdc-onset-{deployment['campaign_id']}-{number}-acquire.service"
+    script = """import json,subprocess,sys
+unit=sys.argv[1]
+def state():
+ p=subprocess.run(['systemctl','show','--property=ActiveState','--value',unit],capture_output=True,text=True,timeout=10)
+ if p.returncode not in (0,4):raise RuntimeError('unit state unknown')
+ return p.stdout.strip() or 'not-found'
+before=state()
+if before not in ('inactive','failed','not-found'):
+ subprocess.run(['sudo','-n','systemctl','stop',unit],check=True,timeout=45)
+after=state()
+assert after in ('inactive','failed','not-found'),'acquisition not quiescent'
+print(json.dumps({'unit':unit,'before':before,'after':after}))
+"""
+    return json.loads(cloud.ssh(packet, [op['guest_python'], '-c', script, unit], timeout=75))
+
+
+def audit_spent(packet):
+    used = 0
+    for intent in packet.glob('window-*-audit-intent.json'):
+        reservation = read_json(intent)['seconds']
+        closed = intent.with_name(intent.name.replace('-intent',''))
+        elapsed = read_json(closed).get('audit_elapsed_s', reservation) if closed.exists() else reservation
+        require(type(elapsed) in (int,float) and math.isfinite(elapsed) and elapsed >= 0, 'invalid audit charge')
+        used += elapsed
+    return used
+
+
 def run(packet):
     packet = Path(packet).resolve(); os.umask(0o077)
     deployment, op = read_json(packet/'deployment.json'), read_json(packet/'operator.json')
@@ -186,23 +236,37 @@ def run(packet):
                     cloud.ssh(packet, ['mkdir', '--', op['guest_root']])
                     storage.stage(packet)
                 seconds = int(min(2820, remaining(local_status(journal))-60, wall_left(record)-780))
-                if seconds >= 120:
-                    outcome = remote(packet, number, 'acquire', seconds, final=number == 1)
+                acquisition_safe = True
+                if (packet/'acquisition-failed.json').exists():
+                    outcome = {'status':'stopped','reason':'prior acquisition failure; offline only'}
+                elif seconds >= 120:
+                    try:
+                        outcome = remote(packet, number, 'acquire', seconds, final=number == 1)
+                    except (OSError, ValueError, subprocess.SubprocessError) as error:
+                        outcome = {'status':'stopped','reason':'acquisition invocation failed','error_type':type(error).__name__}
+                        write_new(packet/'acquisition-failed.json', {'utc':utc(),'window':number,**outcome})
+                        try:
+                            proof = quiesce(packet, number)
+                            write_new(packet/f'window-{number:02}-quiescence.json', proof)
+                        except (OSError, ValueError, subprocess.SubprocessError):
+                            acquisition_safe = False
                     write_new(packet/f'window-{number:02}-guest.json', outcome)
                 if outcome and outcome['status'] == 'cooldown' and (number == 1 or
                         outcome['until_utc']-time.time()+3600 >= wall_left(record)):
                     write_new(packet/'recovery-skipped.json', {'utc':utc(), 'reason':'recovery cannot fit finite windows/expiry',
                               'requested_cooldown_until':outcome['until_utc']})
                     outcome = {**outcome, 'status':'stopped', 'recovery':'not attempted: budget/expiry'}
-                if outcome and outcome['status'] != 'cooldown':
-                    seconds = int(min(1200, remaining(local_status(journal))-120))
+                if outcome and outcome['status'] != 'cooldown' and acquisition_safe:
+                    seconds = int(min(1200-audit_spent(packet), remaining(local_status(journal))-120))
+                    audited = None
                     if seconds >= 60:
+                        write_new(packet/f'window-{number:02}-audit-intent.json', {'utc':utc(),'seconds':seconds})
                         audited = remote(packet, number, 'audit', seconds)
                         write_new(packet/f'window-{number:02}-audit.json', audited)
-                        if outcome['status'] in ('complete', 'stopped') and not audited['audit_pending']:
-                            seconds = int(min(900, remaining(local_status(journal))-60))
-                            if seconds >= 60:
-                                cloud.collect(packet, seconds=seconds, metadata_limit=onset.LIMITS['metadata_bytes'])
+                    if outcome['status'] in ('complete', 'stopped'):
+                        seconds = int(min(900, remaining(local_status(journal))-60))
+                        if seconds >= 60:
+                            cloud.collect(packet, seconds=seconds, metadata_limit=onset.LIMITS['metadata_bytes'])
             finally:
                 controller.call('stop', seconds=30)
                 deadline = time.monotonic()+600
@@ -214,9 +278,11 @@ def run(packet):
                           'new_exposure_su':exposure(record, journal), 'fresh_offload_and_network_verified':True})
             if (packet/'collected').exists():
                 from .onset_analysis import report
-                report(packet/'collected')
+                pdf = report(packet/'collected')
+                report_status = read_json(pdf.with_name('report-manifest.json'))
                 write_new(packet/'complete.json', {'utc':utc(), 'windows_used':number+1,
-                          'new_exposure_su':exposure(record, journal), 'cleanup_complete':True})
+                          'new_exposure_su':exposure(record, journal), 'cleanup_complete':True,
+                          'audit_pending':report_status['audit_pending'], 'scope':'bounded study package; not submission readiness'})
                 return read_json(packet/'complete.json')
             if outcome and outcome['status'] == 'cooldown':
                 wait = outcome['until_utc']-time.time()

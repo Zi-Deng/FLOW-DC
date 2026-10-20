@@ -115,26 +115,33 @@ def config(study, run):
 
 def summarize(events, cap, credited=None):
     """Actual header-to-body exposure; decoded credit may be supplied by verifier."""
-    from .design import activity_intervals
+    from .design import activity_intervals, weighted_quantile
     starts = [e['monotonic_s'] for e in events if e['event'] == 'dispatch']
     if not starts:
         return dict(qualified=False, achieved_peak=0, qualified_seconds=0, steady_goodput_Bps=None)
     started = min(starts)
     intervals = activity_intervals(events, started)
     exposure = sum(end-begin for begin, end, active, backlog in intervals if backlog and active >= .8*cap)
+    weighted = [(active, end-begin) for begin, end, active, backlog in intervals if backlog]
     ends = [e for e in events if e['event'] == 'network_end' and e.get('dispatched') and
             e['monotonic_s'] >= started+10]
     last = max((e['monotonic_s'] for e in ends), default=started+10)
     useful = sum((credited or {}).get(e['token'], 0) for e in ends)
     return dict(qualified=exposure >= 20, achieved_peak=max(e.get('inflight', 0) for e in events),
+                backlogged_seconds=sum(w for active, w in weighted),
+                actual_median=weighted_quantile(weighted, .5) if weighted else None,
+                actual_p95=weighted_quantile(weighted, .95) if weighted else None,
                 qualified_seconds=exposure, steady_goodput_Bps=useful/(last-started-10)
                 if credited is not None and last > started+10 else None)
 
 
 def select_fixed(rows):
+    search = [r for r in rows if r['phase'] == 'search']
+    require(len(search) == len(CAPS) and all(r['complete'] and not r.get('termination_reason') for r in search),
+            'all search stages must finish cleanly before validation')
     clean = [r for r in rows if r['phase'] == 'search' and r['complete'] and
              r['exposure']['qualified'] and r['exposure']['steady_goodput_Bps'] is not None and not r.get('termination_reason')]
-    require(len(clean) == len(CAPS), 'all search stages must qualify before validation')
+    require(clean, 'no adequately exercised Fixed setting')
     best = max(r['exposure']['steady_goodput_Bps'] for r in clean)
     require(best > 0, 'no verified steady goodput')
     return dict(cap=min(r['cap'] for r in clean if r['exposure']['steady_goodput_Bps'] >= .95*best),
@@ -149,13 +156,15 @@ class Policy(StopPolicy):
         self.rate = rate
         self.ends, self.samples = deque(), deque()
         self.current = (0, False, 0)
+        self.fatal_reason = None
 
     def header(self, now, status, retry_after=None):
         first = self.reason
         super().header(now, status, retry_after)
         if status in (401, 403, 429, 503):
             self.reason = first or {401:'access_refusal', 403:'access_refusal', 429:'explicit_429', 503:'service_unavailable'}[status]
-            self.fatal = status in (401, 403)
+            self.fatal = self.fatal or status in (401, 403)
+            if status in (401, 403): self.fatal_reason = self.fatal_reason or 'access_refusal'
             import time
             self.cooldown_until = max(self.cooldown_until, time.time()+600)
 

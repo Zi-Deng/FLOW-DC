@@ -96,6 +96,7 @@ class Guard:
         if self.policy.reason:
             if self.last_stop != self.policy.reason:
                 self.emit("stop", reason=self.policy.reason, fatal=self.policy.fatal,
+                          fatal_reason=getattr(self.policy, 'fatal_reason', None),
                           inflight=len(self.active), cap=self.semaphore.limit if self.semaphore else None,
                           cooldown_until_utc=self.policy.cooldown_until)
                 self.last_stop = self.policy.reason
@@ -122,6 +123,7 @@ class Guard:
                           cpu_s=sum(os.times()[:2]))
                 if self.policy.reason and self.last_stop != self.policy.reason:
                     self.emit("stop", reason=self.policy.reason, fatal=self.policy.fatal,
+                              fatal_reason=getattr(self.policy, 'fatal_reason', None),
                               inflight=len(self.active), cap=self.semaphore.limit if self.semaphore else None,
                               cooldown_until_utc=self.policy.cooldown_until)
                     self.last_stop = self.policy.reason
@@ -147,7 +149,8 @@ class Guard:
             wanted = n
             available = self.body_limit-self.body_bytes-self.body_reserved
             if wanted > available:
-                self.policy.reason, self.policy.fatal = 'body_budget', True
+                self.policy.reason = self.policy.reason or 'body_budget'
+                self.policy.fatal, self.policy.fatal_reason = True, 'body_budget'
                 self.check()
             self.body_reserved += wanted
             try:
@@ -171,6 +174,7 @@ class Guard:
             self.active.add(token)
             self.active_since[token] = time.monotonic()
             self.emit("dispatch", token=token, url=url, inflight=len(self.active),
+                      user_agent=params.headers.get('User-Agent'),
                       cap=self.semaphore.limit if self.semaphore else None)
 
         def guarded_init(obj, *args, **kwargs):
@@ -215,8 +219,10 @@ class Guard:
                 return response
             except Exception as error:
                 if "CERTIFICATE_VERIFY_FAILED" in str(error) or "SSLCertVerificationError" in type(error).__name__:
-                    self.policy.reason, self.policy.fatal = "tls_failure", True
-                self.emit("error", token=self.token.get(), error=f"{type(error).__name__}: {error}")
+                    self.policy.reason = self.policy.reason or 'tls_failure'
+                    self.policy.fatal, self.policy.fatal_reason = True, 'tls_failure'
+                self.emit("error", token=self.token.get(), error=f"{type(error).__name__}: {error}",
+                          fatal=self.policy.fatal, fatal_reason=getattr(self.policy, 'fatal_reason', None))
                 raise
 
         async def observed_fetch(session, url, timeout):
