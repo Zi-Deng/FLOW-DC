@@ -32,9 +32,39 @@ def main():
     offline=sub.add_parser('cloud-offline',help='Finish only audits/collection of28 closed runs; at most two60-minute windows')
     offline.add_argument('--packet',required=True,type=Path)
     offline.add_argument('--continuation',required=True,type=Path)
+    for name in ('onset-prepare','onset-cloud-prepare','onset-cloud-run','onset-audit','onset-report'):
+        command=sub.add_parser(name)
+        if name!='onset-cloud-run':command.add_argument('--study',required=True,type=Path)
+        if name in ('onset-prepare','onset-cloud-prepare','onset-audit'):
+            command.add_argument('--source',required=True,type=Path)
+        if name=='onset-prepare':
+            command.add_argument('--previous',required=True,type=Path)
+            command.add_argument('--completed',required=True,type=Path)
+        if name=='onset-cloud-prepare':command.add_argument('--previous-packet',required=True,type=Path)
+        if name in ('onset-cloud-prepare','onset-cloud-run'):command.add_argument('--packet',required=True,type=Path)
+        if name=='onset-audit':command.add_argument('--seconds',type=int,default=1200)
     args=p.parse_args()
     os.umask(0o077)
-    if args.command=="prepare":
+    if args.command.startswith('onset-'):
+        if args.command=='onset-prepare':
+            from .onset import prepare
+            result=prepare(args.study,args.source,args.previous,args.completed)
+            print(json.dumps({'schema':result['schema'],'excluded_urls':result['excluded_dispatch_urls']}))
+        elif args.command=='onset-cloud-prepare':
+            from .onset_cloud import prepare
+            result=prepare(args.study,args.source,args.previous_packet,args.packet)
+            print(json.dumps({'campaign_id':result['campaign_id'],'effects':'offline packet only'}))
+        elif args.command=='onset-cloud-run':
+            from .onset_cloud import run
+            print(json.dumps(run(args.packet)))
+        elif args.command=='onset-audit':
+            from .onset_analysis import audit
+            result=audit(args.study,args.source,args.seconds)
+            print(json.dumps({'interpretation':result['interpretation'],'audit_pending':result['audit_pending']}))
+        else:
+            from .onset_analysis import report
+            print(report(args.study))
+    elif args.command=="prepare":
         from .prepare import prepare
         prepare(args.study,args.source,args.previous)
     elif args.command=="guest-window":

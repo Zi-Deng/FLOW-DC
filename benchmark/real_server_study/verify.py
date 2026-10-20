@@ -93,7 +93,7 @@ def observations(run_dir, started=None, ended=None, initial=4, strict=False):
             "fraction_decisions_at_256": sum(after == 256 for _, _, after, _ in limits) / len(limits) if limits else None}
 
 
-def verify(run_dir, slice_path, source, started=None, ended=None):
+def verify(run_dir, slice_path, source, started=None, ended=None, credit_urls=False):
     source = Path(source)
     sys.path.insert(0, str(source))
     sys.path.insert(0, str(source / "bin"))
@@ -142,6 +142,7 @@ def verify(run_dir, slice_path, source, started=None, ended=None):
     require(isinstance(json.loads(members["native/overview.json"]), dict), "invalid archived overview")
     credited, credited_rows, decode_failures = 0, 0, 0
     verified_bytes = 0
+    credited_urls = {}
     for row in index["rows"]:
         position, metadata = expected_ids[row["row_id"]]
         require(row["source_position"] == position and row["source_manifest"] == manifest, "row provenance mismatch")
@@ -168,6 +169,8 @@ def verify(run_dir, slice_path, source, started=None, ended=None):
             continue
         credited += len(raw)
         credited_rows += 1
+        if credit_urls:
+            credited_urls[metadata['url']] = len(raw)
     require(set(members) == expected_names, "unexpected/missing archive members")
     counts = Counter(r["disposition"] for r in index["rows"])
     require(all(index["counts"][k] == counts[k] for k in ("verified", "failed", "skipped", "unattempted")), "disposition count mismatch")
@@ -199,12 +202,15 @@ def verify(run_dir, slice_path, source, started=None, ended=None):
     dispatched = Counter(e["url"] for e in audit if e["event"] == "dispatch")
     require(sum(attempted.values()) == obs["attempts"] and set(attempted) == set(frame["url"]), "request audit denominator mismatch")
     require(all(n <= cfg.max_retry_attempts and dispatched[url] <= n for url, n in attempted.items()), "unexpected request replay")
-    return {"native_run_complete": final["run_complete"], "final_useful_payload_bytes": final["useful_final_payload_bytes"],
+    result = {"native_run_complete": final["run_complete"], "final_useful_payload_bytes": final["useful_final_payload_bytes"],
             "flowdc_verified_payload_bytes": verified_bytes, "dispositions": dict(counts),
             "row_errors": dict(Counter(str(r.get("error")) for r in index["rows"] if r["disposition"] != "verified")),
             "row_final_status": dict(Counter(str(r.get("status_code")) for r in index["rows"])),
             "credited_bytes": credited, "credited_rows": credited_rows, "decode_failures": decode_failures,
             "archive_mismatch": 0, "archive_sha256": archive_sha, "observations": obs}
+    if credit_urls:
+        result['credited_url_bytes'] = credited_urls
+    return result
 
 
 def main():
@@ -215,8 +221,9 @@ def main():
     parser.add_argument("--started", type=float, required=True)
     parser.add_argument("--ended", type=float, required=True)
     parser.add_argument("--partial", action="store_true")
+    parser.add_argument("--credit-urls", action="store_true")
     args = parser.parse_args()
-    result = observations(args.run_dir, args.started, args.ended) if args.partial else verify(args.run_dir, args.slice, args.source, args.started, args.ended)
+    result = observations(args.run_dir, args.started, args.ended) if args.partial else verify(args.run_dir, args.slice, args.source, args.started, args.ended, args.credit_urls)
     # stdout is a bounded JSON interface; native artifacts are never changed.
     print(json.dumps(result, allow_nan=False))
 

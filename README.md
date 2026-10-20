@@ -6,6 +6,8 @@ A pipeline for dataset acquisition with per-host concurrency control, verified o
 
 The [higher-concurrency real-host study](benchmark/real_server_study/README.md) compares Ratio and Gradient with a 256-request safety ceiling, then evaluates two data-selected Fixed settings. It uses the existing supervised Jetstream lifecycle; preparation alone never activates VMs. Its `bounded-external-v1` profile adds finite external-study capacity without changing earlier workload profiles. Later Fixed comparisons are descriptive because they run after the adaptive phase.
 
+The separate [bounded TaiBIF onset study](docs/research/TAIBIF-ONSET.md) searches Fixed settings from66 through256, measures actual request concurrency and sparse throughput collapse, and conditionally evaluates automatic Ratio/Gradient selection against an independently tuned Fixed setting. It stops public-host escalation at the first adverse signal and uses at most two60-minute Jetstream2 windows with an80-SU new-exposure admission limit.
+
 For closed studies, `python -m benchmark.real_server_study cloud-offline --packet PATH --continuation PATH` finishes only evidence auditing and metadata collection. Its separate finite authorization permits at most two 60-minute VM windows in four hours, with a 1,200-second audit ceiling and a 500-SU continuation exposure limit. It never repeats image downloads. Ambiguous activation requires provider-confirmed disposition and supported cleanup before continuation; see the study and lifecycle documentation.
 
 ## Overview
