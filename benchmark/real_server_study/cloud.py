@@ -257,11 +257,12 @@ def verify_rates(provider,record,deployment):
     return {"utc":utc(),"servers":rows}
 
 
-ARCHIVE_CACHE = r'''
-def install_archive_cache(module,study,threshold=64*2**20):
- # Reuse only successful raw digest checks from a prior partial frozen audit.
+EVIDENCE_CACHE = r'''
+def install_evidence_cache(module,study,threshold=64*2**20):
+ # Reuse successful payload/measurement digests from a prior partial frozen audit.
  # The study lock excludes acquisition writers. Native archives are immutable;
  # ctime/mtime must predate that audit result, and are checked again on use.
+ import stat
  from pathlib import Path
  from benchmark.real_server_study.common import file_hash,read_json,require,replace_derived,write_new
  proof_path=study/'analysis/results.json'
@@ -270,10 +271,11 @@ def install_archive_cache(module,study,threshold=64*2**20):
  proof=read_json(proof_path);cutoff=proof_path.stat().st_mtime_ns
  if not proof.get('analysis_incomplete_runs'):return
  require(proof['protocol_sha256']==file_hash(study/'protocol.json'),'partial audit protocol changed')
- cached={}
+ cached={};measurement_count=0;manifests={}
  def stamp(path):
-  require(not path.is_symlink() and path.is_file(),'archive is not a regular retained file')
-  st=path.stat();return (st.st_ino,st.st_size,st.st_mtime_ns,st.st_ctime_ns)
+  st=path.stat(follow_symlinks=False)
+  require(stat.S_ISREG(st.st_mode),'cached evidence is not a regular retained file')
+  return (st.st_ino,st.st_size,st.st_mtime_ns,st.st_ctime_ns)
  for row in proof['runs']:
   if not row.get('complete'):continue
   run_id=row['run_id'];require(Path(run_id).name==run_id and run_id not in ('.','..'),'unsafe audit run identity')
@@ -285,6 +287,13 @@ def install_archive_cache(module,study,threshold=64*2**20):
   digest=row['evidence']['native.tar']
   require(digest==row['verification']['archive_sha256'],'archive receipt differs')
   if facts[1]>=threshold and max(facts[2:])<=cutoff:cached[str(archive)]=(facts,digest)
+  overview_path=study/'runs'/run_id/'native/overview.json'
+  overview_hash=row['evidence']['native/overview.json']
+  require(file_hash(overview_path)==overview_hash,'measurement manifest changed')
+  manifests[run_id]=overview_hash;overview=read_json(overview_path)
+  for spec in overview['http_observations']['files']+overview['control_trajectories']:
+   name=Path(spec['path']);require(not name.is_absolute() and '..' not in name.parts,'unsafe measurement path')
+   cached[str(overview_path.parent/name)]=(None,spec['sha256']);measurement_count+=1
  # Preserve the input proof before replacing the regenerable partial result.
  proof_hash=file_hash(proof_path)
  saved=study/'analysis'/('archive-audit-input-'+proof_hash+'.json')
@@ -293,13 +302,16 @@ def install_archive_cache(module,study,threshold=64*2**20):
  original=module.file_hash
  def checked(path,deadline=None):
   previous=cached.get(str(Path(path)))
-  if previous is not None and stamp(Path(path))==previous[0]:return previous[1]
+  if previous is not None:
+   current=stamp(Path(path))
+   if (previous[0] is None and max(current[2:])<=cutoff) or current==previous[0]:return previous[1]
   return original(path,deadline)
  module.file_hash=checked
  replace_derived(study/'analysis/archive-audit-resume.json',
   {'prior_result_sha256':proof_hash,'input_file':saved.name,'prior_result_mtime_ns':cutoff,
-   'eligible_archives':{str(Path(k).relative_to(study)):{'sha256':v[1],'stat':v[0]} for k,v in cached.items()},
-   'scope':'Prior successful raw digests; unchanged inode/size/mtime/ctime checked on reuse. Metadata is rehashed. Not continuous bit-rot detection or a simultaneous filesystem snapshot.'})
+   'eligible_archives':{str(Path(k).relative_to(study)):{'sha256':v[1],'stat':v[0]} for k,v in cached.items() if v[0] is not None},
+   'measurement_manifest_sha256':manifests,'prior_verified_measurement_files':measurement_count,
+   'scope':'Prior successful payload and per-attempt measurement digests; archive stamps checked on reuse, measurement mtime/ctime must predate the prior result. Structural metadata/manifests are rehashed. Not continuous bit-rot detection or a simultaneous filesystem snapshot.'})
 '''
 
 AUDIT = r'''
@@ -311,10 +323,10 @@ from benchmark.real_server_study.common import lock,read_json,remaining
 module=importlib.import_module('benchmark.real_server_study.analyze')
 study=Path(sys.argv[1]);seconds=min(900,int(sys.argv[2])-30,remaining(study)-30)
 result={'status':'analysis_pending','runs':int(sys.argv[3])}
-''' + ARCHIVE_CACHE + r'''
+''' + EVIDENCE_CACHE + r'''
 if seconds>0:
  with lock(study/'study.lock'):
-  install_archive_cache(module,study)
+  install_evidence_cache(module,study)
   audited=module.analyze(study,seconds=seconds)
  if not audited['analysis_incomplete_runs']:
   result['status']='stopped' if (study/'STOP.json').exists() else 'complete'

@@ -157,14 +157,16 @@ plus extraction, preserving40GiB free. Interrupted transfers can be replaced;
 closed transfers/extractions are reused, and PDF retries use collected files
 without VM activation. An incomplete derived analysis may be superseded by a
 completed audit of the same retained first attempts; completed analyses remain fixed.
-The bounded cloud auditor can resume successful native-archive digest checks from
-a prior partial frozen analysis. It binds each current record and protocol, requires
-archive mtime/ctime to predate the prior result, then checks that inode, size,
-mtime and ctime remain unchanged between cache admission and reuse. It rehashes
-metadata and previously unaudited or changed archives. It preserves
-the input proof and a reuse receipt. This relies on the immutable study artifacts
-and exclusive study lock; it is not a simultaneous filesystem snapshot or continuous
-bit-rot detection. No acquisition, statistical rule or run credit is changed.
+The bounded cloud auditor resumes successful payload and measurement-file digest
+checks from a prior partial frozen analysis. It binds each current record and
+protocol, rehashes structural metadata (including measurement manifests), and
+checks cached archive stamps. Each cached per-attempt measurement file must still
+be a regular file with mtime/ctime predating the partial result; changed or missing
+files cannot silently receive cached credit. Previously unaudited files are hashed.
+The exact prior input proof and eligibility receipt are retained. This relies on
+immutable study artifacts and the exclusive study lock; it is not a simultaneous
+filesystem snapshot or continuous bit-rot detection. No acquisition, statistical
+rule or scientific first attempt is changed.
 
 ## Qualification and reports
 

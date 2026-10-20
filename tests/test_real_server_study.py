@@ -265,16 +265,20 @@ class DesignTests(unittest.TestCase):
                 provider.verify_idle.assert_called_once_with(journal.read())
                 self.assertEqual([c.args[0] for c in controller.call.call_args_list],['stop','status'])
 
-    def test_archive_audit_resume_reuses_only_verified_unchanged_payloads(self):
-        namespace={};exec(cloud.ARCHIVE_CACHE,namespace)
-        for mode in ('unchanged','incomplete','modified','newer','record_changed','row_changed','protocol_changed'):
+    def test_evidence_audit_resume_reuses_only_verified_unchanged_files(self):
+        namespace={};exec(cloud.EVIDENCE_CACHE,namespace)
+        for mode in ('unchanged','incomplete','modified','newer','record_changed','row_changed','protocol_changed','overview_changed','observation_modified','observation_missing','observation_symlink'):
             with self.subTest(mode=mode),tempfile.TemporaryDirectory() as d:
                 root=Path(d);directory=root/'runs'/'run';directory.mkdir(parents=True)
                 (root/'analysis').mkdir();common.write_new(root/'protocol.json',{'study':'same'})
                 archive=directory/'native.tar';archive.write_bytes(b'original payload')
                 metadata=directory/'metadata.json';common.write_new(metadata,{'retained':True})
+                native=directory/'native';native.mkdir();observation=native/'observation.jsonl'
+                observation.write_bytes(b'original measurement')
+                overview=native/'overview.json'
+                common.write_new(overview,{'http_observations':{'files':[{'path':observation.name,'sha256':common.file_hash(observation)}]},'control_trajectories':[]})
                 sha=common.file_hash(archive)
-                row={'run_id':'run','complete':mode!='incomplete','evidence':{'native.tar':sha},
+                row={'run_id':'run','complete':mode!='incomplete','evidence':{'native.tar':sha,'native/overview.json':common.file_hash(overview)},
                      'verification':{'archive_sha256':sha}}
                 common.write_new(directory/'record.json',row)
                 proof={'analysis_incomplete_runs':1,'protocol_sha256':common.file_hash(root/'protocol.json'),
@@ -288,20 +292,33 @@ class DesignTests(unittest.TestCase):
                     os.utime(archive,ns=(stamp,stamp))
                 if mode=='record_changed':(directory/'record.json').write_text('{}')
                 if mode=='protocol_changed':(root/'protocol.json').write_text('{}')
+                if mode=='overview_changed':overview.write_text('{}')
+                if mode=='observation_modified':observation.write_bytes(b'changed measurement')
+                if mode in ('observation_missing','observation_symlink'):
+                    observation.unlink()
+                    if mode=='observation_symlink':observation.symlink_to(metadata)
                 original=Mock(wraps=common.file_hash);module=SimpleNamespace(file_hash=original)
                 if mode.endswith('_changed'):
                     with self.assertRaisesRegex(ValueError,'changed'):
-                        namespace['install_archive_cache'](module,root,threshold=1)
+                        namespace['install_evidence_cache'](module,root,threshold=1)
                     continue
-                namespace['install_archive_cache'](module,root,threshold=1)
+                namespace['install_evidence_cache'](module,root,threshold=1)
                 self.assertEqual(module.file_hash(archive),common.file_hash(archive))
-                self.assertEqual(original.call_count,0 if mode=='unchanged' else 1)
+                self.assertEqual(original.call_count,0 if mode in ('unchanged','observation_modified','observation_missing','observation_symlink') else 1)
+                before=original.call_count
+                if mode in ('observation_missing','observation_symlink'):
+                    with self.assertRaises((FileNotFoundError,ValueError)):module.file_hash(observation)
+                    continue
+                self.assertEqual(module.file_hash(observation),common.file_hash(observation))
+                self.assertEqual(original.call_count,before+(mode in ('incomplete','observation_modified')))
                 module.file_hash(metadata);self.assertEqual(original.call_args.args[0],metadata)
                 if mode=='unchanged':
                     # Mutation after cache setup must also force a real rehash.
                     archive.write_bytes(b'changed again')
                     self.assertNotEqual(module.file_hash(archive),sha)
                     self.assertEqual(original.call_args.args[0],archive)
+                    previous=module.file_hash(observation);observation.write_bytes(b'changed later')
+                    self.assertNotEqual(module.file_hash(observation),previous)
                 receipt=common.read_json(root/'analysis/archive-audit-resume.json')
                 self.assertEqual(common.read_json(root/'analysis'/receipt['input_file']),proof)
 
