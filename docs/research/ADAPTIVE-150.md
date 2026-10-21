@@ -206,3 +206,41 @@ module, nine permitted run IDs, and a finite expiry. Extra elapsed time must be
 reported separately; completion beyond eight hours cannot satisfy the original
 time aim. The combined 300-SU ceiling and aggregate audit/collection budgets
 continue to apply.
+
+## Final study disposition, October 21, 2026
+
+The maintainer accepted a final exploratory report from the retained evidence
+despite incomplete validation. No further acquisitions are scheduled for this
+study. The report preserves all missing cells and failed first attempts.
+
+All 24 controlled cases completed. There were 27 public acquisition attempts:
+24 protocol-complete and three stopped. Three actual validation downloads remain
+unstarted. Six conditional high-selection slots had no eligible candidate; four
+have explicit no-candidate records and two were not materialized before the stop.
+Aggregate auditing has zero pending checks and metadata collection passed.
+
+Neither v2 controller qualified sustained 150-request activity. Completed Ratio
+and Gradient windows briefly peaked at 185 and 176 active HTTP requests, with
+longest continuous exposure at or above 150 of 0.356 and 0.182 seconds. The sole
+complete same-source matched validation block measured end-to-end goodput of
+9.318 MB/s for Ratio-v2 versus 5.514 for Ratio-v1, and 9.637 for Gradient-v2 versus
+6.065 for Gradient-v1. These are descriptive single-pair observations, with no
+estimable interval or claim of general superiority. Selection and failed attempts
+were not replaced after observing outcomes.
+
+A separate comparison with the earlier Fixed-192 onset run is descriptive only:
+workload size, source version, time and evaluation windows differ. Actual
+time-weighted mean HTTP activity in the reported windows was 89.3 for Fixed,
+61.3 for Ratio-v2 and 60.7 for Gradient-v2. Whole-HTTP-interval throughput was
+27.43, 22.88 and 23.96 MB/s respectively, while verified end-to-end goodput was
+8.96, 9.32 and 9.64 MB/s. Finalization costs and timing boundaries change the
+ranking; the adaptive label or concurrency alone does not establish faster
+delivery. Comparisons of overall job speed require equal work and output duties.
+
+The eight-hour aim was missed. Final cleanup followed about 9.07 hours after
+original activation, including the separately authorized corrective campaign.
+Conservative journal exposure closed at 207.97 SUs, including 45.02 corrective
+SUs within the unchanged 300/80 ceilings. All six registered guests were freshly
+verified offloaded with original networking restored. The supervisor remains
+running; the retained research volume, accounting and raw evidence are preserved.
+The private LaTeX/PDF report and reproduction metadata remain outside Git.
