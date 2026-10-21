@@ -110,6 +110,25 @@ def audit(study, source, seconds=1200):
                     == file_hash(study / "slices" / f"{run['slice']}.parquet", deadline),
                     "input changed",
                 )
+                amendment_path = study / "lifecycle-source-amendment.json"
+                epoch = binding.get("lifecycle_source_amendment_sha256")
+                expected_head = read_json(study / "protocol.json")["source"]["head"]
+                if epoch is not None:
+                    require(
+                        epoch
+                        == file_hash(amendment_path, deadline)
+                        == row.get("lifecycle_source_amendment_sha256"),
+                        "lifecycle binding changed",
+                    )
+                    expected_head = read_json(amendment_path)["source"]["head"]
+                else:
+                    require(row.get("lifecycle_source_amendment_sha256") is None, "masked lifecycle binding")
+                require(
+                    binding.get("execution_source_head", expected_head)
+                    == row.get("execution_source_head", expected_head)
+                    == expected_head,
+                    "execution source changed",
+                )
                 if run["phase"] == "validation":
                     require(
                         binding["selection_sha256"] == file_hash(study / "selection.json", deadline),
@@ -238,7 +257,8 @@ def record_inventory(study):
     """Bind derived audit results to the current raw first-attempt inventory."""
     from .ablation_controlled import cases
 
-    result = {}
+    amendment = Path(study) / "lifecycle-source-amendment.json"
+    result = {"@lifecycle_source_amendment": file_hash(amendment) if amendment.exists() else None}
     for parent, runs in (("runs", ablation.schedule()), ("controlled", cases())):
         for run in runs:
             directory = Path(study) / parent / run["run_id"]
@@ -255,6 +275,8 @@ def results_current(study, value):
         return False
     if "record_inventory" in value:
         return value["record_inventory"] == record_inventory(study)
+    if (Path(study) / "lifecycle-source-amendment.json").exists():
+        return False  # An older audit cannot qualify a newly amended execution context.
     from .ablation_controlled import cases
 
     for parent, runs, key in (("runs", ablation.schedule(), "runs"), ("controlled", cases(), "controlled")):
@@ -354,7 +376,12 @@ def report(study, output=None):
                 if eligible(a):
                     complete_windows += 1
                     successes += bool(a["exposure"]["qualified"])
-                if eligible(a) and eligible(base):
+                same_source = a.get(
+                    "execution_source_head", read_json(study / "protocol.json").get("source", {}).get("head")
+                ) == base.get(
+                    "execution_source_head", read_json(study / "protocol.json").get("source", {}).get("head")
+                )
+                if eligible(a) and eligible(base) and same_source:
                     differences.append(a["goodput_Bps"] - base["goodput_Bps"])
                     if a["exposure"]["window_complete"] and base["exposure"]["window_complete"]:
                         evaluation_differences.append(
@@ -489,7 +516,7 @@ def report(study, output=None):
         r"\bottomrule\end{tabular}\end{center}",
         r"\includegraphics[width=\linewidth]{screening.pdf}",
         r"\section{Validation and uncertainty}",
-        "End-to-end goodput here starts immediately before native subprocess launch and ends after independent verification and payload compaction. It excludes admission scans, metadata sealing, VM staging and local reporting; those costs remain in campaign wall time and operational exposure. Selection uses the separate fixed evaluation-window boundary. Requests are not independent replicates. Intervals below are ordinary exploratory paired t intervals with no multiplicity adjustment; n=3 gives limited precision.",
+        "End-to-end goodput here starts immediately before native subprocess launch and ends after independent verification and payload compaction. It excludes admission scans, metadata sealing, VM staging and local reporting; those costs remain in campaign wall time and operational exposure. Selection uses the separate fixed evaluation-window boundary. Requests are not independent replicates. Intervals below are ordinary exploratory paired t intervals with no multiplicity adjustment. Only complete pairs with matching recorded execution source are included; interrupted or mixed-source pairs remain diagnostic, and small sample sizes give limited precision.",
     ]
     for arm, s in contrasts.items():
         ci = "unavailable" if not s["ci"] else "[" + ", ".join(num(x, 1e6) for x in s["ci"]) + "] MB/s"
@@ -572,7 +599,7 @@ def report(study, output=None):
     if (packet / "complete.json").exists():
         complete = read_json(packet / "complete.json")
         lines.append(
-            f"Recorded campaign wall time: {num(complete.get('wall_seconds'), 3600)} hours. The declared 8-hour study ended with missing validation acquisitions; this is an incomplete efficacy study, not a submission-ready result."
+            f"Recorded campaign wall time: {num(complete.get('wall_seconds'), 3600)} hours. This report retains failed and missing validation acquisitions; submission readiness is a separate gate."
         )
     if closures:
         last = read_json(closures[-1])
@@ -608,7 +635,7 @@ def report(study, output=None):
             + esc(stop.get("run_id", "unknown case"))
             + " because of "
             + esc(stop.get("reason", "a retained execution failure"))
-            + ". This failed first attempt is not a complete-run observation; remaining validation acquisitions are unstarted. A full 180-second timer fired, but native processing exceeded its deadline. No new public requests were issued to replace it."
+            + ". This failed first attempt is not a complete-run observation. A full 180-second timer fired, but native processing exceeded its deadline. No new public requests were issued to replace it."
         )
     if (packet / "stop-diagnosis-pause.json").exists():
         lines.append(
@@ -650,7 +677,7 @@ def report(study, output=None):
         r"\bottomrule\end{longtable}\normalsize",
         r"\section{Stops, limits and provenance}",
         "Three-times baseline is a warning; five-times baseline over three qualified ten-second bins stops an arm. A latency-only stop permits a predefined cooldown and low-load recovery, with at most three cooldowns. Access refusals, 429/503, TLS or integrity failures end public testing. Latency growth alone is not proof of a server rate-limit mechanism.",
-        f"The live envelope is eight hours, at most {max_windows} one-hour VM windows, 300 conservative SUs, 1.2 million public request intents, 200 GiB bodies and 256 GiB artifacts. No favorable retries replace first attempts. Unknown, interrupted, unstarted, aliased and audit-pending slots remain visible.",
+        f"The original live envelope was eight hours, at most {max_windows} one-hour VM windows, 300 conservative SUs, 1.2 million public request intents, 200 GiB bodies and 256 GiB artifacts. No favorable retries replace first attempts. Unknown, interrupted, unstarted, aliased and audit-pending slots remain visible.",
         "Public images are drawn from the frozen TaiBIF moth population at moth.tbn.org.tw/images/. Dataset, license, sampling and URL provenance are retained in protocol.json and the frozen manifests. "
         + (
             "The previously authorized host-specific certificate validity-period exception was used; certificate-chain and hostname verification remained enabled. Certificate, peer and robots observations are retained in host-gate.json."
@@ -658,7 +685,7 @@ def report(study, output=None):
             else "Certificate and robots observations, when acquired, are retained in host-gate.json."
         ),
         esc(value["limitations"]),
-        "Protocol SHA-256: "
+        "Source versions are recorded per attempt. Paired efficacy estimates require matching source versions; failed first attempts remain failed. A separately authorized lifecycle continuation, when present, does not reset the original deadline or history. Protocol SHA-256: "
         + r"\texttt{"
         + value["protocol_sha256"]
         + r"}. Machine-readable results, exact configurations, selection receipts and retained request/control journals accompany this report.",
@@ -686,7 +713,22 @@ def report(study, output=None):
         dict(
             utc=utc(),
             generator_sha256=file_hash(Path(__file__)),
-            measured_source_head=read_json(study / "protocol.json").get("source", {}).get("head"),
+            original_source_head=read_json(study / "protocol.json").get("source", {}).get("head"),
+            measured_source_heads=sorted(
+                {
+                    r.get(
+                        "execution_source_head",
+                        read_json(study / "protocol.json").get("source", {}).get("head"),
+                    )
+                    for r in value["runs"]
+                    if r.get("status") in ("complete", "stopped")
+                }
+            ),
+            lifecycle_source_amendment_sha256=(
+                file_hash(study / "lifecycle-source-amendment.json")
+                if (study / "lifecycle-source-amendment.json").exists()
+                else None
+            ),
             operational_receipts={
                 p.name: file_hash(p)
                 for p in packet.glob("*.json")

@@ -173,6 +173,55 @@ def prepare(study, source, previous):
     return read_json(study / "protocol.json")
 
 
+def execution_source(study):
+    path = Path(study) / "lifecycle-source-amendment.json"
+    return read_json(path)["source"] if path.exists() else read_json(Path(study) / "protocol.json")["source"]
+
+
+def check_lifecycle_source(study, protocol, actual):
+    path = Path(study) / "lifecycle-source-amendment.json"
+    if not path.exists():
+        require(protocol["source"] == actual, "frozen source changed")
+        return
+    amendment = read_json(path)
+    require(
+        amendment["schema"] == "flowdc-lifecycle-source-amendment-v1"
+        and amendment["parent_protocol_sha256"] == file_hash(Path(study) / "protocol.json")
+        and amendment["parent_source"] == protocol["source"]
+        and amendment["source"] == actual,
+        "lifecycle source amendment changed",
+    )
+    allowed = {
+        "bin/download_batch.py",
+        "benchmark/real_server_study/ablation.py",
+        "benchmark/real_server_study/ablation_analysis.py",
+        "benchmark/real_server_study/ablation_collect.py",
+        "benchmark/real_server_study/ablation_run.py",
+        "benchmark/real_server_study/requirements.txt",
+    }
+    before, after = protocol["source"]["files"], actual["files"]
+    require(
+        set(before) == set(after) and all(before[k] == after[k] for k in before if k not in allowed),
+        "lifecycle amendment changed control/measurement safeguards",
+    )
+    permitted = amendment["permitted_run_ids"]
+    require(
+        len(permitted) == 9
+        and len(set(permitted)) == 9
+        and set(permitted) <= {r["run_id"] for r in schedule() if r["phase"] == "validation"},
+        "lifecycle continuation scope changed",
+    )
+    qualification = amendment["native_qualification"]
+    require(
+        qualification["status"] == "qualified"
+        and qualification["public_requests"] == 0
+        and qualification["credited_rows"] >= 20000
+        and qualification["native_seconds"] <= 510
+        and amendment["qualified_native_sha256"] == after["bin/download_batch.py"],
+        "native lifecycle qualification missing or mismatched",
+    )
+
+
 def check(study, source):
     study = Path(study)
     p = read_json(study / "protocol.json")
@@ -180,7 +229,7 @@ def check(study, source):
         p["schema"] == "flowdc-adaptive-ablation-v1" and p["limits"] == LIMITS and p["grid"] == grid(),
         "study contract changed",
     )
-    require(p["source"] == source_identity(source), "frozen source changed")
+    check_lifecycle_source(study, p, source_identity(source))
     for name, digest in p["files"].items():
         path = Path(name)
         require(

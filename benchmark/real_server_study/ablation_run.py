@@ -231,6 +231,13 @@ def budget(study):
 
 
 def execute(study, source, run):
+    amendment = study / "lifecycle-source-amendment.json"
+    if amendment.exists():
+        value = read_json(amendment)
+        require(
+            run["run_id"] in value["permitted_run_ids"] and time.time() < value["expires_at_epoch"],
+            "lifecycle continuation scope/expiry exceeded",
+        )
     directory = study / "runs" / run["run_id"]
     require(not directory.exists(), "first attempt consumed")
     require(remaining(study) >= max(600, run["budget_seconds"]) + 60, "run and cleanup reserve cannot fit")
@@ -251,6 +258,12 @@ def execute(study, source, run):
     write_new(directory / "flowdc-config.json", cfg)
     binding = dict(
         run,
+        execution_source_head=ablation.execution_source(study)["head"],
+        lifecycle_source_amendment_sha256=(
+            file_hash(study / "lifecycle-source-amendment.json")
+            if (study / "lifecycle-source-amendment.json").exists()
+            else None
+        ),
         effective_processing_budget_seconds=max(600, run["budget_seconds"]),
         artifact_usage_upper_bytes=used,
         artifact_usage_strategy="parallel_coreutils_du",
@@ -395,6 +408,12 @@ def execute(study, source, run):
     ended = time.monotonic()
     row = dict(
         run,
+        execution_source_head=ablation.execution_source(study)["head"],
+        lifecycle_source_amendment_sha256=(
+            file_hash(study / "lifecycle-source-amendment.json")
+            if (study / "lifecycle-source-amendment.json").exists()
+            else None
+        ),
         effective_processing_budget_seconds=max(600, run["budget_seconds"]),
         artifact_usage_upper_bytes=used,
         artifact_usage_strategy="parallel_coreutils_du",

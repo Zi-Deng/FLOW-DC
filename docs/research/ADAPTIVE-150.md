@@ -191,3 +191,18 @@ logical bounds remain. At most4096 outer files,8GiB outer logical bytes and4GiB
 compressed transfer need materialization; admission requires56GiB free, including
 the40GiB reserve and4GiB allocation margin. The aggregate900-second collection
 allowance is unchanged. No raw evidence is discarded by this optimization.
+
+### Bounded lifecycle continuation
+
+The original eight-hour clock and first attempts remain immutable. A separately
+authorized, expiring continuation may finish the nine untouched validation
+downloads after a native lifecycle correction passes a large-prefix loopback
+qualification. It does not retry failed cells or change tuning, inputs, controller
+equations, measurement or admission safeguards. Each new attempt records the
+actual source head and amendment digest. Analysis excludes pairs whose source
+heads differ and preserves the original native-deadline failure. The amendment
+binds the parent protocol, restricted changed files, exact qualified native
+module, nine permitted run IDs, and a finite expiry. Extra elapsed time must be
+reported separately; completion beyond eight hours cannot satisfy the original
+time aim. The combined 300-SU ceiling and aggregate audit/collection budgets
+continue to apply.

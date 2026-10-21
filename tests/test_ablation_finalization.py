@@ -59,6 +59,57 @@ class FinalizationTests(unittest.TestCase):
                 (s / "controlled/lab").mkdir(parents=True)
                 self.assertFalse(analysis.results_current(s, value))
 
+    def test_lifecycle_amendment_binds_source_scope_native_qualification_and_audit(self):
+        import copy
+
+        with tempfile.TemporaryDirectory() as t:
+            study = Path(t)
+            parent = {
+                "head": "old",
+                "files": {"bin/download_batch.py": "old-native", "bin/flowdc_methods.py": "controller"},
+            }
+            protocol = {"source": parent}
+            write_new(study / "protocol.json", protocol)
+            actual = {"head": "new", "files": {**parent["files"], "bin/download_batch.py": "new-native"}}
+            with self.assertRaises(ValueError):
+                ablation.check_lifecycle_source(study, protocol, actual)
+            ids = [r["run_id"] for r in ablation.schedule() if r["phase"] == "validation"][:9]
+            value = dict(
+                schema="flowdc-lifecycle-source-amendment-v1",
+                parent_protocol_sha256=file_hash(study / "protocol.json"),
+                parent_source=parent,
+                source=actual,
+                permitted_run_ids=ids,
+                qualified_native_sha256="new-native",
+                native_qualification=dict(
+                    status="qualified", public_requests=0, credited_rows=27166, native_seconds=247
+                ),
+            )
+            path = study / "lifecycle-source-amendment.json"
+            write_new(path, value)
+            ablation.check_lifecycle_source(study, protocol, actual)
+            self.assertEqual(ablation.execution_source(study), actual)
+            self.assertFalse(analysis.results_current(study, {"runs": [], "controlled": []}))
+            for bad in ("controller", "qualification", "scope", "protocol"):
+                changed = copy.deepcopy(value)
+                if bad == "controller":
+                    changed["source"]["files"]["bin/flowdc_methods.py"] = "changed"
+                elif bad == "qualification":
+                    changed["native_qualification"]["public_requests"] = 1
+                elif bad == "scope":
+                    changed["permitted_run_ids"] = ids[:8]
+                else:
+                    changed["parent_protocol_sha256"] = "wrong"
+                path.write_text(json.dumps(changed))
+                with self.assertRaises(ValueError):
+                    ablation.check_lifecycle_source(study, protocol, changed["source"])
+            path.write_text(json.dumps(value))
+            with patch.object(ablation_run.time, "time", return_value=100):
+                value["expires_at_epoch"] = 99
+                path.write_text(json.dumps(value))
+                with self.assertRaisesRegex(ValueError, "scope/expiry"):
+                    ablation_run.execute(study, study, {"run_id": ids[0]})
+
     def test_artifact_upper_bound_includes_hardlinks_sparse_and_symlinks(self):
         with tempfile.TemporaryDirectory() as t:
             r = Path(t)
