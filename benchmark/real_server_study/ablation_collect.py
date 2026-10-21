@@ -1,5 +1,6 @@
 """Bounded lossless metadata collection, using one file per sealed run."""
 
+import hashlib
 import io
 import json
 import shlex
@@ -57,7 +58,7 @@ def pack(study):
     return value
 
 
-def extract(archive, destination, maximum, *, deadline=None):
+def extract(archive, destination, maximum, *, deadline=None, max_members=2000000):
     seen, size = set(), 0
     with tarfile.open(archive, "r|*") as stream:
         for member in stream:
@@ -65,12 +66,14 @@ def extract(archive, destination, maximum, *, deadline=None):
             require(
                 member.isfile()
                 and not Path(member.name).is_absolute()
-                and ".." not in Path(member.name).parts,
+                and ".." not in Path(member.name).parts
+                and len(Path(member.name).parts) <= 32
+                and len(member.name.encode()) <= 4096,
                 "unsafe metadata",
             )
             size += member.size
             require(
-                member.name not in seen and len(seen) < 2000000 and size <= maximum,
+                member.name not in seen and len(seen) < max_members and size <= maximum,
                 "metadata expansion bound",
             )
             seen.add(member.name)
@@ -92,6 +95,56 @@ def extract(archive, destination, maximum, *, deadline=None):
             p.stat().st_size == spec["bytes"] and file_hash(p, deadline) == spec["sha256"],
             "metadata digest mismatch",
         )
+
+
+def inspect_bundle(archive, maximum, *, deadline=None):
+    """Verify every sealed member without materializing millions of tiny files."""
+    actual, manifest, total = {}, None, 0
+
+    def unique_object(pairs):
+        result = {}
+        for key, value in pairs:
+            require(key not in result, "duplicate manifest key")
+            result[key] = value
+        return result
+
+    with tarfile.open(archive, "r|*") as stream:
+        for member in stream:
+            require(deadline is None or time.monotonic() < deadline, "collection deadline")
+            require(
+                member.isfile()
+                and not Path(member.name).is_absolute()
+                and ".." not in Path(member.name).parts,
+                "unsafe metadata",
+            )
+            total += member.size
+            require(total <= maximum and len(actual) < 2000000, "metadata expansion bound")
+            content = stream.extractfile(member)
+            if member.name == "bundle-manifest.json":
+                require(manifest is None, "duplicate bundle manifest")
+                manifest = json.loads(content.read(), object_pairs_hook=unique_object)
+                continue
+            require(member.name not in actual, "duplicate metadata member")
+            digest = hashlib.sha256()
+            size = 0
+            while chunk := content.read(1024 * 1024):
+                require(deadline is None or time.monotonic() < deadline, "collection deadline")
+                size += len(chunk)
+                digest.update(chunk)
+            require(size == member.size, "truncated metadata member")
+            actual[member.name] = dict(bytes=size, sha256=digest.hexdigest())
+    require(isinstance(manifest, dict) and set(actual) == set(manifest), "metadata membership mismatch")
+    for name, value in manifest.items():
+        require(
+            isinstance(value, dict) and type(value.get("bytes")) is int and value == actual[name],
+            "metadata digest mismatch",
+        )
+    return dict(
+        bytes=total,
+        files=len(actual),
+        archive_sha256=file_hash(archive, deadline),
+        journals="retained losslessly in metadata.tar.gz; extract on demand",
+    )
 
 
 def collection_spent(packet):
@@ -123,7 +176,8 @@ def _collect(packet, seconds):
     target = packet / "collected"
     if target.exists():
         return target
-    require(shutil.disk_usage(packet).free >= 80 * 2**30, "collection would consume local reserve")
+    # 40GiB reserve +4GiB compressed +8GiB outer files +4GiB allocation margin.
+    require(shutil.disk_usage(packet).free >= 56 * 2**30, "collection would consume local reserve")
     op = read_json(packet / "operator.json")
     receipt = read_json(packet / "deployment-receipt.json")
     root = op["guest_root"]
@@ -132,7 +186,10 @@ def _collect(packet, seconds):
     require(0 < seconds <= 900, "collection budget")
     path = packet / "collection.json"
     if not path.exists():
-        script = "import json,sys;from benchmark.real_server_study.ablation_collect import pack;print(json.dumps(pack(sys.argv[1])))"
+        script = (
+            "import json,sys;sys.path.insert(0," + repr(root + "/source") + ");"
+            "from benchmark.real_server_study.ablation_collect import pack;print(json.dumps(pack(sys.argv[1])))"
+        )
         raw = cloud.ssh(
             packet, [receipt["python"], "-B", "-c", script, root + "/study"], timeout=min(600, seconds - 30)
         )
@@ -178,14 +235,19 @@ def _collect(packet, seconds):
         shutil.rmtree(partial)  # Derived from the verified local archive above.
     partial.mkdir()
     try:
-        extract(archive, partial, 8 * 2**30, deadline=deadline)
+        extract(archive, partial, 8 * 2**30, deadline=deadline, max_members=4096)
         expanded = 0
         for bundle in sorted(partial.glob("*/**/metadata.tar.gz")):
-            destination = bundle.parent / "metadata"
-            destination.mkdir()
-            extract(bundle, destination, 512 * 2**20, deadline=deadline)
-            expanded += sum(p.stat().st_size for p in destination.rglob("*") if p.is_file())
+            inspection = inspect_bundle(bundle, 512 * 2**20, deadline=deadline)
+            receipt = read_json(bundle.parent / "metadata-bundle.json")
+            require(
+                inspection["archive_sha256"] == receipt["sha256"]
+                and bundle.stat().st_size == receipt["bytes"],
+                "sealed metadata changed",
+            )
+            expanded += inspection["bytes"]
             require(expanded <= 24 * 2**30, "total metadata expansion bound")
+            replace_derived(bundle.parent / "metadata-inspection.json", inspection)
     except BaseException:
         shutil.rmtree(partial)
         raise

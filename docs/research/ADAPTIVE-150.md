@@ -68,16 +68,22 @@ held-out windows must qualify for a replicated150 result. Report ordinary paired
 run-level intervals and missing pairs; no universal superiority/optimum claim.
 
 Frozen TaiBIF URL populations are disjoint across capacity, tuning and validation.
-Arms within a stage use matched manifests; cache state is not guaranteed cold.
+Methods share the manifest within each tuning grid cell; different grid indices
+use disjoint tuning slices. Validation arms share the manifest within each block,
+and blocks are disjoint. Configuration and slice both vary across grid indices,
+so grid trends are descriptive, not clean population-level causal effects. Cache
+state is not guaranteed cold.
 There is no cache busting, success selection, retry or extra scientific attempt.
-Processing reservations are420 seconds per screen and600 per capacity/validation
-run, including the unchanged120/180-second network windows. Retained8192-row
-evidence took about45 seconds of networking,44 of native finalization and50 of
-independent verification. The original300/480-second reservations could truncate
-larger successful prefixes. These prospective ceilings reserve processing time
-within the same eight-hour/global campaign limits; they authorize no extra
-traffic, run or VM window. Admission may leave later slots unstarted if actual
-processing or provider delays consume the finite envelope.
+The frozen schedule records420 seconds per screen and600 per capacity/validation
+run. Execution now records an explicit effective processing ceiling of600 seconds
+for every acquired run. Network windows remain120/180 seconds and evaluation
+boundaries remain20–60/30–90. This corrects a demonstrated420-second independent
+verification timeout; its original failed first attempt is retained and excluded
+from selection/intervals. A separately labeled offline check of that archive is
+diagnostic only and is charged to the existing1200-second aggregate audit budget.
+Neither repair authorizes a new download or favorable replacement attempt.
+Admission rechecks the remaining lease after storage accounting and before
+creating an attempt directory, leaving a run pending if processing cannot fit.
 A3× delay warning tests downward response within2 ticks. Three ten-second bins
 at5× baseline stop an arm. Only latency stops permit a ten-minute cooldown and
 one predefined low-load recovery (>=95% valid, median <=1.5× initial baseline).
@@ -130,3 +136,58 @@ next-window admission after cleanup and sufficient SUs. Collection reserves up
 to900 aggregate seconds across at most eight attempts. An interrupted local
 extraction is rebuilt only from the digest-verified local archive, without a new
 VM activation or image request.
+
+## Runtime corrections and bounded campaign amendments
+
+The isolated guest runtime pins `psutil==7.2.1`, required by the known-truth
+resource helper. Metadata packing inserts the exact staged source path rather
+than depending on the SSH login directory. A clean full controlled case and
+packing from outside the repository qualified these corrections. The initial
+pre-HTTP import failure remains in setup-failure evidence.
+
+Artifact admission uses four bounded GNU `du` processes on disjoint partitions,
+with apparent bytes and hard links counted. Directory/link overhead makes this
+an upper bound on the former regular-file accounting. The same256GiB cap and
+40GiB reserve remain. No payload deletion or sparse-file space assumption is
+used. A completed independent archive digest may seed the existing unchanged-file
+cache only when it matches post-compaction closure, size and pre-closure timestamps;
+failed runs cannot seed it. Aggregate auditing still checks metadata and accounting.
+
+The live campaign explicitly amended8 windows to11 after three retained setup
+windows, then to12 after a provider observation failure before validation.
+Continuation required fresh cleanup and guest proof of zero validation attempts
+and no terminal study stop. These changes did not reset the original eight-hour clock,300SU ceiling, allowance
+history or first attempts. Private operational receipts also record adjusted soft
+scheduling reserves and a finite finalization slice for at most two untouched
+validation runs. These are campaign-specific amendments, not changed scientific
+methods or a general increase to `LIMITS`. Metadata transfer must pass its local
+checksum before guest cleanup can overlap local extraction; collection remains
+within the original900-second aggregate allowance.
+
+Audit results bind the current raw record inventory. Reporting rejects stale
+results after a new or changed attempt; older audit formats must agree with every
+current raw record before receiving numeric credit. An unavailable/currently
+incomplete audit produces an explicit status-only inventory. Figures use only
+audited, protocol-complete observations and do not plot a failed verification as
+zero throughput. Reports count actual acquisitions separately from aliases,
+no-candidate slots, interrupted and unstarted work.
+
+One held-out Gradient run also reached the native-process deadline after its
+network timer fired. That first attempt stays failed; unfinished held-out cells
+remain visible. Requested shutdown previously performed two consecutive full
+journal reconciliations. The downloader now uses the common final reconciliation
+once, preserving all original-row accounting. A32768-row loopback qualification
+with more than13000 credited rows confirmed the reduced pass count and verified
+partial archives. This removes demonstrated redundant work; it does not by itself
+prove resolution of the live research-volume timeout. Cloud lifecycle
+qualification and the unfinished scientific comparisons remain separate gates.
+
+Metadata collection now verifies sealed inner bundles in a stream instead of
+expanding every per-row journal into another filesystem tree. It checks every
+member's SHA-256, size, membership and safe path, retaining the complete original
+bundle for on-demand extraction with `ablation_collect.extract`. A per-bundle
+inspection receipt records the check. The existing512MiB/bundle and24GiB total
+logical bounds remain. At most4096 outer files,8GiB outer logical bytes and4GiB
+compressed transfer need materialization; admission requires56GiB free, including
+the40GiB reserve and4GiB allocation margin. The aggregate900-second collection
+allowance is unchanged. No raw evidence is discarded by this optimization.

@@ -222,6 +222,7 @@ def audit(study, source, seconds=1200):
         value = dict(
             schema="flowdc-adaptive-ablation-results-v1",
             protocol_sha256=file_hash(study / "protocol.json"),
+            record_inventory=record_inventory(study),
             runs=result,
             controlled=lab,
             audit_elapsed_s=time.monotonic() - began,
@@ -233,14 +234,68 @@ def audit(study, source, seconds=1200):
     return value
 
 
+def record_inventory(study):
+    """Bind derived audit results to the current raw first-attempt inventory."""
+    from .ablation_controlled import cases
+
+    result = {}
+    for parent, runs in (("runs", ablation.schedule()), ("controlled", cases())):
+        for run in runs:
+            directory = Path(study) / parent / run["run_id"]
+            path = directory / "record.json"
+            result[f"{parent}/{run['run_id']}"] = (
+                file_hash(path) if path.exists() else ("interrupted" if directory.exists() else "unstarted")
+            )
+    return result
+
+
+def results_current(study, value):
+    """Older audit receipts must also agree with every current raw record."""
+    if value.get("protocol_sha256") != file_hash(Path(study) / "protocol.json"):
+        return False
+    if "record_inventory" in value:
+        return value["record_inventory"] == record_inventory(study)
+    from .ablation_controlled import cases
+
+    for parent, runs, key in (("runs", ablation.schedule(), "runs"), ("controlled", cases(), "controlled")):
+        rows = value.get(key, [])
+        by_id = {r["run_id"]: r for r in rows}
+        if len(rows) != len(runs) or set(by_id) != {r["run_id"] for r in runs}:
+            return False
+        for run in runs:
+            row = by_id[run["run_id"]]
+            directory = Path(study) / parent / run["run_id"]
+            path = directory / "record.json"
+            if not path.exists():
+                if row.get("status") != ("interrupted" if directory.exists() else "unstarted"):
+                    return False
+            elif row.get("status") == "audit_pending" and not row.get("audited"):
+                continue  # No numeric credit is drawn from this entry.
+            else:
+                raw = read_json(path)
+                status = raw.get("status")
+                if parent == "runs" and status not in ("alias", "no_candidate"):
+                    status = "complete" if raw.get("protocol_window_complete") else "stopped"
+                if (
+                    row.get("status") != status
+                    or not row.get("audited")
+                    or any(row.get(k) != v for k, v in raw.items() if k != "status")
+                ):
+                    return False
+    return True
+
+
 def report(study, output=None):
     from .analyze import summary
 
     study = Path(study)
     out = Path(output) if output else study.parent / "final-report"
     out.mkdir(parents=True, exist_ok=True)
-    if (study / "analysis/results.json").exists():
-        value = read_json(study / "analysis/results.json")
+    cached = (
+        read_json(study / "analysis/results.json") if (study / "analysis/results.json").exists() else None
+    )
+    if cached is not None and results_current(study, cached):
+        value = cached
     else:
         from .ablation_controlled import cases
 
@@ -271,7 +326,7 @@ def report(study, output=None):
             runs=runs,
             controlled=lab,
             audit_pending=sum(r["status"] == "audit_pending" for r in runs + lab),
-            limitations="No aggregate audit completed within the finite envelope; numeric outcomes are withheld. Status-only inventory, not efficacy evidence.",
+            limitations="No current aggregate audit is available; numeric outcomes are withheld. Status-only inventory, not efficacy evidence.",
         )
     require(value["protocol_sha256"] == file_hash(study / "protocol.json"), "report protocol mismatch")
     rows = {r["run_id"]: r for r in value["runs"]}
@@ -285,23 +340,40 @@ def report(study, output=None):
         return r.get("audited") and r.get("protocol_window_complete") and r.get("status") == "complete"
 
     contrasts = {}
+    evaluation_contrasts = {}
     qualification = {}
     for method, old in zip(ablation.METHODS, ("ratio-v1", "gradient-candidate-v1")):
         for kind in ("balanced", "high"):
             differences = []
+            evaluation_differences = []
             successes = 0
+            complete_windows = 0
             for b in range(1, 4):
                 a = resolved(rows[f"validation-{b}-{kind}-{method}"])
                 base = rows[f"validation-{b}-{old}"]
                 if eligible(a):
+                    complete_windows += 1
                     successes += bool(a["exposure"]["qualified"])
                 if eligible(a) and eligible(base):
                     differences.append(a["goodput_Bps"] - base["goodput_Bps"])
+                    if a["exposure"]["window_complete"] and base["exposure"]["window_complete"]:
+                        evaluation_differences.append(
+                            a["exposure"]["window_goodput_Bps"] - base["exposure"]["window_goodput_Bps"]
+                        )
             contrasts[f"{kind}-{method}"] = summary(differences)
+            evaluation_contrasts[f"{kind}-{method}"] = summary(evaluation_differences)
             qualification[f"{kind}-{method}"] = dict(
-                qualified_windows=successes, required=3, replicated_150=successes == 3
+                qualified_windows=successes,
+                complete_windows=complete_windows,
+                required=3,
+                replicated_150=successes == 3,
             )
-    value.update(paired_differences_Bps=contrasts, qualification=qualification)
+    value.update(
+        paired_differences_Bps=contrasts,
+        paired_evaluation_differences_Bps=evaluation_contrasts,
+        qualification=qualification,
+    )
+    capacity = [r for r in value["runs"] if r["phase"] == "capacity" and eligible(r)]
     value["selection"] = read_json(study / "selection.json") if (study / "selection.json").exists() else None
     replace_derived(out / "results.json", value)
     replace_derived(
@@ -325,7 +397,7 @@ def report(study, output=None):
     import matplotlib.pyplot as plt
 
     fig, axes = plt.subplots(2, 1, figsize=(7, 6), layout="constrained")
-    screened = [r for r in value["runs"] if r["phase"] == "screen" and r.get("exposure")]
+    screened = [r for r in value["runs"] if r["phase"] == "screen" and eligible(r) and r.get("exposure")]
     for method in ablation.METHODS:
         rr = [r for r in screened if r["method"] == method]
         axes[0].plot(
@@ -361,22 +433,35 @@ def report(study, output=None):
         r"\usepackage[margin=.8in]{geometry}",
         r"\usepackage[T1]{fontenc}\usepackage{newtxtext,newtxmath,booktabs,longtable,graphicx,xcolor,hyperref}",
         r"\definecolor{navy}{HTML}{18394A}\hypersetup{colorlinks=true,urlcolor=navy}",
-        r"\setlength{\parindent}{0pt}\setlength{\parskip}{6pt}\begin{document}",
+        r"\setlength{\emergencystretch}{2em}\setlength{\parindent}{0pt}\setlength{\parskip}{6pt}\begin{document}",
         r"\title{\textcolor{navy}{FLOW-DC adaptive-concurrency ablation}}\author{Private exploratory evidence report}\date{\today}\maketitle",
         r"\section{Outcome}",
-        f"Audited public run records: {sum(bool(r.get('audited')) for r in value['runs'])} of 36 planned slots. Audit pending: {value['audit_pending']}.",
+        f"Public matrix: 36 planned slots, including {sum(bool(r.get('audited')) and r.get('status') == 'complete' for r in value['runs'])} audited complete acquisitions. Alias and no-candidate slots are not downloads. Audit pending: {value['audit_pending']}.",
         "The 150-request target refers to actual requests from headers sent through body completion. It requires at least 90 percent of the evaluation window at or above 150, one continuous 30-second span, and queued demand throughout. A permit cap or isolated peak is insufficient.",
     ]
     for arm, q in qualification.items():
         lines.append(
             esc(arm)
-            + f": {q['qualified_windows']}/3 held-out windows qualified; replicated target {'met' if q['replicated_150'] else 'not established'}."
+            + f": {q['qualified_windows']} qualified among {q['complete_windows']} audited complete held-out windows; three qualified windows required. Replicated target {'met' if q['replicated_150'] else 'not established'}."
+        )
+    from collections import Counter
+
+    counts = Counter(r["status"] for r in value["runs"])
+    lines.append("First-attempt status counts: " + esc(dict(sorted(counts.items()))) + ".")
+    if value["selection"] and not any(k.startswith("high-") for k in value["selection"]["choices"]):
+        lines.append(
+            "No feasible high-concurrency selection was frozen from screening. Its validation slots remain no-candidate or unstarted rather than causing additional downloads."
+        )
+    if len(capacity) == 2 and not any(r["exposure"]["qualified"] for r in capacity):
+        lines.append(
+            "Neither fixed pipeline diagnostic sustained the 150-request criterion in this client/storage configuration. Therefore the target shortfall cannot be attributed to controller tuning alone. This does not establish a server quota or prove that the server cannot sustain150 under another client configuration."
         )
     lines += [
         r"\section{Prospective design}",
         "Two redesigned methods start at four permits, minimum two, with an internal ceiling of 512 and a common HTTP/TCP ceiling of 256. Multiplicative startup, elapsed smoothing, utilization gating, refreshed delay baseline and method feedback are separately exercised in 24 normalized controlled cases. These cases use known image bytes and capacity four--one--four; they do not prove public-host capacity.",
-        "The public matrix contains two pipeline diagnostics, 16 full-factorial screening runs and 18 held-out validation slots. Grid factors are startup multiplier 1.25/1.5, baseline age 10/120 seconds and target delay ratio 2/3. Screening and validation populations are disjoint; matched arms reuse identical frozen URLs within their stage. There is no cache busting. Validation has three independent initializations per arm. Identical balanced and high selections alias one execution and are never extra replicates.",
+        "The public matrix contains two pipeline diagnostics, 16 full-factorial screening runs and 18 held-out validation slots. Grid factors are startup multiplier 1.25/1.5, baseline age 10/120 seconds and target delay ratio 2/3. Screening and validation populations are disjoint; the two methods share the same manifest within each grid cell, while different grid cells use disjoint tuning slices. Validation arms share their block manifest, and blocks use disjoint slices. Grid trends are descriptive because configuration and slice both vary across grid indices. There is no cache busting. Validation has three independent initializations per arm. Identical balanced and high selections alias one execution and are never extra replicates.",
         "Screening evaluation is seconds 20--60 after first dispatch; capacity and validation use seconds 30--90. Network windows are 120/180 seconds, followed by a bounded 30-second drain. Body allowance can terminate a window early. Original manifests contain 32,768 rows; nondispatched rows remain unattempted, and partial or unknown outcomes are not credited.",
+        "The selected 120-second baseline age exceeds both primary evaluation intervals. Those intervals assess cold-start behavior before active age-based refresh; they do not establish long-run post-refresh stability. The short-refresh controlled cases exercise probing separately. A failed processing/verification attempt also reduces the available tuning evidence; selections are conditional on eligible completed cells, not proven optima even over every scheduled grid cell.",
         "Balanced selection requires median first-byte delay no more than three times the initial low-load baseline. Both selection classes require at least 99 percent credited among dispatched terminal rows and no failed warning response. Among settings within five percent of the best verified evaluation-window goodput, select the lowest actual median, then p95 delay, then fixed identifier. This is conditional selection, not a global optimum.",
         r"\section{All first-attempt statuses}\small\begin{longtable}{p{.42\linewidth}lrrrr}\toprule Run & Status & Median & Peak & 150 s & MB/s\\\midrule\endhead",
     ]
@@ -392,9 +477,19 @@ def report(study, output=None):
         )
     lines += [
         r"\bottomrule\end{longtable}\normalsize",
+        r"\section{Screening factor key}",
+        r"\begin{center}\begin{tabular}{rrrr}\toprule Grid & Startup multiplier & Refresh (s) & Delay target\\\midrule",
+    ]
+    for i, factors in enumerate(ablation.grid()):
+        lines.append(
+            f"{i} & {factors['startup_growth_factor']} & {factors['baseline_max_age_s']:.0f} & {factors['target_delay_ratio']:.0f} "
+            + r"\\"
+        )
+    lines += [
+        r"\bottomrule\end{tabular}\end{center}",
         r"\includegraphics[width=\linewidth]{screening.pdf}",
         r"\section{Validation and uncertainty}",
-        "End-to-end goodput includes native acquisition, finalization and independent verification. Selection uses the separate fixed evaluation-window boundary. Requests are not independent replicates. Intervals below are ordinary exploratory paired t intervals with no multiplicity adjustment; n=3 gives limited precision.",
+        "End-to-end goodput here starts immediately before native subprocess launch and ends after independent verification and payload compaction. It excludes admission scans, metadata sealing, VM staging and local reporting; those costs remain in campaign wall time and operational exposure. Selection uses the separate fixed evaluation-window boundary. Requests are not independent replicates. Intervals below are ordinary exploratory paired t intervals with no multiplicity adjustment; n=3 gives limited precision.",
     ]
     for arm, s in contrasts.items():
         ci = "unavailable" if not s["ci"] else "[" + ", ".join(num(x, 1e6) for x in s["ci"]) + "] MB/s"
@@ -402,16 +497,22 @@ def report(study, output=None):
             esc(arm)
             + f": {s['n']} complete matched blocks; mean difference versus its v1 method {num(s['mean'], 1e6)} MB/s; 95\\% interval {ci}."
         )
+    for arm, result in evaluation_contrasts.items():
+        ci = (
+            "unavailable"
+            if not result["ci"]
+            else "[" + ", ".join(num(x, 1e6) for x in result["ci"]) + "] MB/s"
+        )
+        lines.append(
+            esc(arm)
+            + f": evaluation-window difference, {result['n']} complete matched blocks; mean {num(result['mean'], 1e6)} MB/s; ordinary 95\\% interval {ci}."
+        )
     if value["selection"]:
         lines.append(r"\section{Frozen selected configurations}")
         for arm, choice in value["selection"]["choices"].items():
             lines.append(
                 esc(arm)
-                + ": "
-                + esc(choice["options"])
-                + "; selected using "
-                + esc(choice["screen_run"])
-                + "."
+                + f": startup multiplier {choice['options']['startup_growth_factor']}; baseline age {choice['options']['baseline_max_age_s']:.0f} seconds; target delay ratio {choice['options']['target_delay_ratio']}. Selected from grid {choice['screen_run'].rsplit('-', 1)[-1]}; the exact source identifier is retained in results.json."
             )
     lines += [r"\section{Accountability and adverse outcomes}"]
     for r in value["runs"]:
@@ -421,10 +522,29 @@ def report(study, output=None):
         label = esc(r["run_id"].replace("gradient-candidate-", "Gradient-"))
         lines.append(
             label
-            + f": original rows {v['original_rows']}; dispatched {v['dispatched_rows']}; terminal {v['dispatched_terminal_rows']}; administrative censoring {v['administratively_censored_dispatched_rows']}; verified {v['credited_rows']}; dispositions "
+            + f": original rows {v['original_rows']}; dispatched {v['dispatched_rows']}; terminal {v['dispatched_terminal_rows']}; dispatched administrative censoring {v['administratively_censored_dispatched_rows']}; intents without HTTP dispatch {v['attempted_rows'] - v['dispatched_rows']}; independently credited {v['credited_rows']}; undecodable native outputs {v['decode_failures']}; native disposition totals "
             + esc(v["dispositions"])
             + "."
         )
+    lines += [
+        r"\section{Latency and evaluation-window outcomes}",
+        "Times are application first-body delays. Warning labels are pass/fail or not seen; an unobserved warning is not evidence of successful warning response. Only audited protocol-complete acquisitions appear below.",
+        r"\small\begin{longtable}{p{.42\linewidth}rrrl}\toprule Run & p50 ms & p95 ms & Eval MB/s & Warning\\\midrule\endhead",
+    ]
+    for row in value["runs"]:
+        if not eligible(row):
+            continue
+        exposure = row["exposure"]
+        warning = {"passed": "pass", "failed": "fail", "not_exercised": "not seen"}.get(
+            exposure.get("warning_response"), "unknown"
+        )
+        label = row["run_id"].replace("gradient-candidate-", "Gradient-").replace("ratio-", "Ratio-")
+        lines.append(
+            esc(label)
+            + f" & {num(exposure.get('median_ttfb_s'), 0.001)} & {num(exposure.get('p95_ttfb_s'), 0.001)} & {num(exposure.get('window_goodput_Bps'), 1e6)} & {warning} "
+            + r"\\"
+        )
+    lines += [r"\bottomrule\end{longtable}\normalsize"]
     for r in value["runs"]:
         if r.get("stop_reason") or r.get("fatal_reason"):
             lines.append(
@@ -433,22 +553,71 @@ def report(study, output=None):
                 + esc(r.get("stop_reason") or r.get("fatal_reason"))
                 + ". Its partial output is not included as a complete-run efficacy observation."
             )
-    closures = sorted(study.parent.glob("window-[0-9][0-9].json"))
+    packet = study.parent
+    amendment = (
+        read_json(packet / "window-count-amendment.json")
+        if (packet / "window-count-amendment.json").exists()
+        else {}
+    )
+    recovery_path = packet / "provider-window-recovery-amendment.json"
+    provider_recovery = read_json(recovery_path) if recovery_path.exists() else {}
+    max_windows = provider_recovery.get(
+        "amended_max_windows", amendment.get("amended_max_windows", ablation.LIMITS["max_windows"])
+    )
+    closures = sorted(packet.glob("window-[0-9][0-9].json"))
     for name in ("acquisition-ended.json", "recovery-skipped.json"):
         path = study.parent / name
         if path.exists():
             lines.append(esc(name) + ": " + esc(read_json(path).get("reason", "finite campaign stop")) + ".")
+    if (packet / "complete.json").exists():
+        complete = read_json(packet / "complete.json")
+        lines.append(
+            f"Recorded campaign wall time: {num(complete.get('wall_seconds'), 3600)} hours. The declared 8-hour study ended with missing validation acquisitions; this is an incomplete efficacy study, not a submission-ready result."
+        )
     if closures:
         last = read_json(closures[-1])
         lines += [
             r"\section{Operational exposure and cleanup}",
-            f"Closed VM windows: {len(closures)} of eight. New conservative journal exposure: {num(last.get('new_exposure_su'))} SUs; this is not exact provider billing. ",
+            f"Closed VM windows: {len(closures)} of {max_windows}. New conservative journal exposure: {num(last.get('new_exposure_su'))} SUs; this is not exact provider billing. ",
             "Fresh offload and original-network verification: "
             + esc(last.get("fresh_offload_and_network_verified", False))
             + " at "
             + esc(last["utc"])
             + ". Retained payloads remain on the campaign-owned volume.",
         ]
+    if (packet / "worker-environment-observation.json").exists():
+        lines.append(
+            "Execution used one Jetstream2 downloader guest with eight visible CPUs and approximately 29 GiB RAM. The bounded native unit imposed CPUQuota 400 percent, MemoryMax 24 GiB and 4096 file descriptors. The controlled origin ran on that worker; public acquisition was not TaskVine distributed execution. Manager/origin operational roles were present, but this study does not establish multi-worker scaling."
+        )
+    if amendment:
+        lines.append(
+            "Three setup windows were retained; the window-count amendment preserved the original eight-hour deadline and 300-SU ceiling. No controller, input or selection rule changed."
+        )
+    if provider_recovery:
+        lines.append(
+            "A later provider observation error on the manager closed the connection before validation. Recovery required fresh cleanup and guest proof of zero validation attempts and no terminal study stop; one additional operational window was allowed within the same deadline and spending caps. No scientific download was repeated."
+        )
+    if (packet / "processing-amendment.json").exists():
+        lines.append(
+            "One screen exhausted its 420-second processing limit during independent verification. It remains a failed, unselectable first attempt. A separately labeled offline diagnostic checked its retained archive without downloading again; unfinished screens then received a prospective 600-second processing ceiling with unchanged network/evaluation windows. The offline diagnostic consumes the existing aggregate audit allowance."
+        )
+    if (packet / "post-stop-quiescence.json").exists():
+        stop = read_json(packet / "post-stop-quiescence.json").get("ended") or {}
+        lines.append(
+            "The held-out stage stopped at "
+            + esc(stop.get("run_id", "unknown case"))
+            + " because of "
+            + esc(stop.get("reason", "a retained execution failure"))
+            + ". This failed first attempt is not a complete-run observation; remaining validation acquisitions are unstarted. A full 180-second timer fired, but native processing exceeded its deadline. No new public requests were issued to replace it."
+        )
+    if (packet / "stop-diagnosis-pause.json").exists():
+        lines.append(
+            "An inspection pause of the local coordinator overlapped a mounting SSH call and exhausted its timeout. That operational window was retained and freshly cleaned; no new scientific acquisition occurred in it. The final window performs offline audit and metadata collection only."
+        )
+    if (packet / "artifact-admission-amendment.json").exists():
+        lines.append(
+            "Read-only parallel logical-byte accounting replaced repeated whole-tree Python scans. Completed archive digests could seed the existing unchanged-file audit cache. Scheduling reserves were adjusted within the original hard limits. Metadata transfer and local extraction overlap supervised cleanup only after local archive checksum verification."
+        )
     lines += [
         r"\section{Controlled mechanism observations}\small\begin{longtable}{p{.63\linewidth}rr}\toprule Case & Verified rows & Realized\\\midrule\endhead"
     ]
@@ -458,12 +627,30 @@ def report(study, output=None):
             + f" & {r.get('verified_rows', '--')} & {r.get('realized_stimulus', False)} "
             + r"\\"
         )
+    lines += [
+        r"\bottomrule\end{longtable}\normalsize",
+        r"\section{Observed control decisions}",
+        "Counts below describe named trace decisions in one run per cell. Baseline reset may reflect a new minimum or a sample gap; it is not an active baseline probe. Ratio's utilization-hold label can also mean an unchanged rounded proposal. Counts alone do not isolate a causal effect or prove that every mechanism was exercised.",
+        r"\small\begin{longtable}{p{.49\linewidth}rrrrr}\toprule Case & Startup & Probe & Sparse & Hard & Rows\\\midrule\endhead",
+    ]
+    for row in value["controlled"]:
+        reasons = row.get("control_reasons", {}) if row.get("audited") else {}
+        lines.append(
+            esc(row["run_id"].replace("gradient-candidate-", "Gradient-"))
+            + " & "
+            + " & ".join(
+                str(reasons.get(k, 0)) if row.get("audited") else "--"
+                for k in ("startup_increase", "baseline_probe", "sparse_hold", "hard_queue_decrease")
+            )
+            + f" & {row.get('verified_rows', '--')} "
+            + r"\\"
+        )
     gate = read_json(study / "host-gate.json") if (study / "host-gate.json").exists() else {}
     lines += [
         r"\bottomrule\end{longtable}\normalsize",
         r"\section{Stops, limits and provenance}",
         "Three-times baseline is a warning; five-times baseline over three qualified ten-second bins stops an arm. A latency-only stop permits a predefined cooldown and low-load recovery, with at most three cooldowns. Access refusals, 429/503, TLS or integrity failures end public testing. Latency growth alone is not proof of a server rate-limit mechanism.",
-        "The live envelope is eight hours, eight one-hour VM windows, 300 conservative SUs, 1.2 million public request intents, 200 GiB bodies and 256 GiB artifacts. No favorable retries replace first attempts. Unknown, interrupted, unstarted, aliased and audit-pending slots remain visible.",
+        f"The live envelope is eight hours, at most {max_windows} one-hour VM windows, 300 conservative SUs, 1.2 million public request intents, 200 GiB bodies and 256 GiB artifacts. No favorable retries replace first attempts. Unknown, interrupted, unstarted, aliased and audit-pending slots remain visible.",
         "Public images are drawn from the frozen TaiBIF moth population at moth.tbn.org.tw/images/. Dataset, license, sampling and URL provenance are retained in protocol.json and the frozen manifests. "
         + (
             "The previously authorized host-specific certificate validity-period exception was used; certificate-chain and hostname verification remained enabled. Certificate, peer and robots observations are retained in host-gate.json."
@@ -476,6 +663,12 @@ def report(study, output=None):
         + value["protocol_sha256"]
         + r"}. Machine-readable results, exact configurations, selection receipts and retained request/control journals accompany this report.",
         r"\end{document}",
+    ]
+    lines = [
+        line + r"\par"
+        if line and not line.startswith("\\") and " & " not in line and not line.endswith(r"\\")
+        else line
+        for line in lines
     ]
     (out / "report.tex").write_text("\n".join(lines) + "\n")
     with (out / "latex.log").open("wb") as log:
@@ -492,6 +685,22 @@ def report(study, output=None):
         out / "report-manifest.json",
         dict(
             utc=utc(),
+            generator_sha256=file_hash(Path(__file__)),
+            measured_source_head=read_json(study / "protocol.json").get("source", {}).get("head"),
+            operational_receipts={
+                p.name: file_hash(p)
+                for p in packet.glob("*.json")
+                if p.name.startswith(
+                    (
+                        "window-",
+                        "processing-amendment",
+                        "artifact-admission",
+                        "provider-window-recovery",
+                        "offline-recovery",
+                        "worker-environment",
+                    )
+                )
+            },
             files={
                 p.name: file_hash(p)
                 for p in out.iterdir()

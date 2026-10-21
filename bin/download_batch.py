@@ -2584,6 +2584,11 @@ async def run_acquisition(cfg, *, manager_factory=HostControllerManager, report_
                         global_written_paths=written, effective_workers=effective_workers, store=store,
                         shared=shared,
                     )
+                    if shutdown_flag:
+                        # The common final boundary reconciles all rows below.
+                        # Repeating this full archive/journal scan after a planned
+                        # stop adds substantial cost on the research volume.
+                        break
                     snapshot = store.reconcile()
                     keys = store.eligible(snapshot)
                     if keys and not shutdown_flag:

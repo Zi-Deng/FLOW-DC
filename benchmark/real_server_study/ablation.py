@@ -166,7 +166,7 @@ def prepare(study, source, previous):
             rows=ROWS,
             grid=grid(),
             population=original,
-            reuse="Matched frozen URLs within a stage; tuning/validation/capacity populations disjoint. No cache busting.",
+            reuse="Methods share each tuning-grid manifest; different grids use disjoint slices. Validation arms share their block manifest; blocks are disjoint. Capacity, tuning and validation populations are disjoint. No cache busting.",
             files={str(p.relative_to(study)): file_hash(p) for p in files},
         ),
     )

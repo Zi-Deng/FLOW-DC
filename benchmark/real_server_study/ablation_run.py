@@ -19,6 +19,89 @@ from .runner import compact_outputs, terminate
 from .telemetry import Guard
 
 
+class ArtifactAdmissionPending(Exception):
+    pass
+
+
+def artifact_usage(root, *, privileged=True):
+    """GNU du counts all regular-file bytes and conservatively adds directory/link bytes."""
+    import concurrent.futures
+    import subprocess
+    import time
+
+    root = Path(root)
+    parts = []
+    for path in root.iterdir():
+        if path.name != "study" or path.is_symlink() or not path.is_dir():
+            parts.append(path)
+            continue
+        for child in path.iterdir():
+            if child.name in ("controlled", "runs") and child.is_dir() and not child.is_symlink():
+                parts.extend(child.iterdir())
+            else:
+                parts.append(child)
+    require(len(parts) <= 256, "artifact partition bound exceeded")
+    deadline = time.monotonic() + 240
+
+    def count(path):
+        left = deadline - time.monotonic()
+        require(left > 0, "artifact admission deadline")
+        command = (["sudo", "-n"] if privileged else []) + [
+            "/usr/bin/du",
+            "--apparent-size",
+            "--count-links",
+            "--summarize",
+            "--block-size=1",
+            "--",
+            str(path),
+        ]
+        result = subprocess.run(command, check=True, capture_output=True, text=True, timeout=left)
+        value = result.stdout.split("\t", 1)[0]
+        require(value.isdecimal(), "invalid artifact count")
+        return int(value)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
+        return sum(pool.map(count, parts))
+
+
+def seed_archive_digest(study, directory, row, verification):
+    """Carry forward actual completed digest work, never an unsupported success counter."""
+    if not row.get("protocol_window_complete"):
+        return
+    from benchmark.real_server_study.common import replace_derived, utc
+
+    archive = directory / "native.tar"
+    closure = directory / "compaction.json"
+    require(not archive.is_symlink() and archive.is_file(), "invalid closed archive")
+    require(
+        read_json(closure)["archive_sha256"] == verification["archive_sha256"],
+        "post-compaction digest differs",
+    )
+    before = archive.stat()
+    closed = closure.stat()
+    require(
+        before.st_mtime_ns <= closed.st_mtime_ns and before.st_ctime_ns <= closed.st_mtime_ns,
+        "archive changed after digest closure",
+    )
+    require(
+        before.st_size == read_json(directory / "native/.flowdc/final.json")["archive"]["bytes"],
+        "archive size changed",
+    )
+    out = study / "analysis"
+    out.mkdir(exist_ok=True)
+    path = out / "audit-units.json"
+    cache = read_json(path) if path.exists() else {}
+    cache[row["run_id"]] = dict(
+        record_sha256=file_hash(directory / "record.json"),
+        archive_stat=[
+            getattr(before, k) for k in ("st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns")
+        ],
+        utc=utc(),
+        origin="independent verifier and post-compaction digest",
+    )
+    replace_derived(path, cache)
+
+
 class WindowGuard(Guard):
     def __init__(self, *args, seconds, **kwargs):
         super().__init__(*args, **kwargs)
@@ -150,22 +233,27 @@ def budget(study):
 def execute(study, source, run):
     directory = study / "runs" / run["run_id"]
     require(not directory.exists(), "first attempt consumed")
-    require(remaining(study) >= run["budget_seconds"] + 60, "run and cleanup reserve cannot fit")
+    require(remaining(study) >= max(600, run["budget_seconds"]) + 60, "run and cleanup reserve cannot fit")
     allowance = min(
         (4 if run["phase"] == "screen" else 6) * 2**30, ablation.LIMITS["body_bytes"] - budget(study)
     )
     require(allowance >= 64 * 2**20, "body allowance exhausted")
-    used = sum(p.stat().st_size for p in study.parent.rglob("*") if p.is_file() and not p.is_symlink())
+    used = artifact_usage(study.parent)
     require(
         used + 2 * allowance + 2**30 <= ablation.LIMITS["artifact_bytes"]
         and shutil.disk_usage(study).free >= ablation.LIMITS["free_bytes"] + 2 * allowance + 2**30,
         "storage reserve insufficient",
     )
+    if remaining(study) < max(600, run["budget_seconds"]) + 60:
+        raise ArtifactAdmissionPending()
     directory.mkdir(parents=True)
     cfg = ablation.config(study, run)
     write_new(directory / "flowdc-config.json", cfg)
     binding = dict(
         run,
+        effective_processing_budget_seconds=max(600, run["budget_seconds"]),
+        artifact_usage_upper_bytes=used,
+        artifact_usage_strategy="parallel_coreutils_du",
         utc=utc(),
         protocol_sha256=file_hash(study / "protocol.json"),
         slice_sha256=file_hash(cfg["input"]),
@@ -201,7 +289,7 @@ def execute(study, source, run):
         # Network dispatch still ends at its frozen timer. Archive finalization
         # needs its own reservation; retained 8192-row runs took ~44 seconds
         # after network closure, before ~50 seconds of independent verification.
-        deadline = started + run["budget_seconds"] - 90
+        deadline = started + max(600, run["budget_seconds"]) - 90
         try:
             while process.poll() is None:
                 path = directory / "request-audit.jsonl"
@@ -276,7 +364,7 @@ def execute(study, source, run):
                     cwd=source,
                     stdout=out,
                     stderr=err,
-                    timeout=max(1, started + run["budget_seconds"] - time.monotonic()),
+                    timeout=max(1, started + max(600, run["budget_seconds"]) - time.monotonic()),
                 )
                 if v.returncode == 0:
                     verification = read_json(directory / "verification.json")
@@ -307,6 +395,9 @@ def execute(study, source, run):
     ended = time.monotonic()
     row = dict(
         run,
+        effective_processing_budget_seconds=max(600, run["budget_seconds"]),
+        artifact_usage_upper_bytes=used,
+        artifact_usage_strategy="parallel_coreutils_du",
         utc=utc(),
         protocol_window_complete=bool(verification) and not reason and not fatal,
         native_returncode=process.returncode,
@@ -336,6 +427,7 @@ def execute(study, source, run):
     if verification:
         row["evidence"]["native.tar"] = verification["archive_sha256"]
     write_new(directory / "record.json", row)
+    seed_archive_digest(study, directory, row, verification)
     return {**row, "record_sha256": file_hash(directory / "record.json")}
 
 
@@ -434,9 +526,16 @@ def window(study, source):
                         },
                     )
                     continue
-            if remaining(study) < run["budget_seconds"] + 60:
+            if remaining(study) < max(600, run["budget_seconds"]) + 60:
                 return {"status": "pending", "runs": len(records)}
-            row = execute(study, source, run)
+            try:
+                row = execute(study, source, run)
+            except ArtifactAdmissionPending:
+                return {
+                    "status": "pending",
+                    "reason": "processing allowance cannot fit after artifact admission",
+                    "runs": len(records),
+                }
             records.append(row)
             if row["stop_reason"] or row["fatal"] or not row["protocol_window_complete"]:
                 if row["stop_reason"] == "sustained_latency" and not row["fatal"]:

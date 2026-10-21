@@ -168,8 +168,16 @@ class NativeWindowTests(unittest.IsolatedAsyncioTestCase):
                         restore = guard.install()
                         downloader.shutdown_flag = False
                         started = __import__("time").monotonic()
+                        original_reconcile = downloader.integrity.RunStore.reconcile
                         try:
-                            await downloader.run_acquisition(cfg)
+                            with patch.object(
+                                downloader.integrity.RunStore,
+                                "reconcile",
+                                autospec=True,
+                                side_effect=original_reconcile,
+                            ) as reconciliation:
+                                await downloader.run_acquisition(cfg)
+                            self.assertEqual(reconciliation.call_count, 2)
                         finally:
                             restore()
                             for task in (guard.timer, guard.sampler):
