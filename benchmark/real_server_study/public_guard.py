@@ -2,6 +2,7 @@
 
 import json
 import fcntl
+import mmap
 import ssl
 import struct
 import threading
@@ -155,29 +156,51 @@ class SharedBodyBudget:
     flock plus a process-local thread lock covers only short fixed-size updates;
     network I/O never holds this lock. Reservations prevent concurrent overdraft.
     """
+
     def __init__(self, path, limit):
         self.path, self.limit = Path(path), limit
         self.lock = threading.RLock()
+        self.stream = self.path.open("r+b", buffering=0)
+        self.mapping = mmap.mmap(self.stream.fileno(), 256)
+
+    def reason(self):
+        # Stop reasons are write-once ASCII. A concurrent partial read can only
+        # stop conservatively; it cannot authorize bytes or reset a stop.
+        return self.mapping[16:256].split(b"\0", 1)[0].decode("ascii")
+
+    def close(self):
+        self.mapping.close()
+        self.stream.close()
+
+    def __del__(self):
+        if hasattr(self, "mapping"):
+            self.mapping.close()
+        if hasattr(self, "stream"):
+            self.stream.close()
 
     def update(self, reserve=0, release=0, received=0, reason=None):
-        with self.lock, self.path.open("r+b", buffering=0) as stream:
+        with self.lock:
+            stream = self.stream
             fcntl.flock(stream, fcntl.LOCK_EX)
-            raw = stream.read(256)
-            require(len(raw) == 256, "invalid shared body counter")
-            body, held = struct.unpack("!QQ", raw[:16])
-            stop = raw[16:].rstrip(b"\0").decode("ascii")
-            require(0 <= release <= held and min(reserve, received) >= 0, "body accounting underflow")
-            held -= release
-            body += received
-            if reason:
-                stop = stop or reason
-            if reserve and (stop or body + held + reserve > self.limit):
-                stop = stop or "body_budget"
-                reserve = 0
-            held += reserve
-            stream.seek(0)
-            stream.write(struct.pack("!QQ", body, held) + stop.encode("ascii")[:239].ljust(240, b"\0"))
-            return body, held, stop
+            try:
+                raw = self.mapping[:]
+                body, held = struct.unpack("!QQ", raw[:16])
+                stop = raw[16:].rstrip(b"\0").decode("ascii")
+                require(0 <= release <= held and min(reserve, received) >= 0, "body accounting underflow")
+                held -= release
+                body += received
+                if reason:
+                    stop = stop or reason
+                if reserve and (stop or body + held + reserve > self.limit):
+                    stop = stop or "body_budget"
+                    reserve = 0
+                held += reserve
+                self.mapping[:] = struct.pack("!QQ", body, held) + stop.encode("ascii")[:239].ljust(
+                    240, b"\0"
+                )
+                return body, held, stop
+            finally:
+                fcntl.flock(stream, fcntl.LOCK_UN)
 
     @classmethod
     def create(cls, path, limit):
@@ -190,7 +213,15 @@ class ToolGuard:
     """Observe urllib in the pinned tool process, keeping its decision/output code."""
 
     def __init__(
-        self, source, allowed, stream, baseline, *, ignore_time=False, body_limit=2**30, ceiling=192,
+        self,
+        source,
+        allowed,
+        stream,
+        baseline,
+        *,
+        ignore_time=False,
+        body_limit=2**30,
+        ceiling=192,
         shared=None,
     ):
         require(not ignore_time or source == "taibif-moth", "TLS exception is moth-host only")
@@ -216,7 +247,9 @@ class ToolGuard:
 
     def check(self):
         if self.shared:
-            _, _, reason = self.shared.update(reason=self.policy.reason)
+            reason = self.shared.reason()
+            if self.policy.reason and not reason:
+                _, _, reason = self.shared.update(reason=self.policy.reason)
             self.policy.reason = self.policy.reason or reason or None
         if self.policy.reason:
             raise RuntimeError("public dispatch stopped: " + self.policy.reason)
@@ -277,13 +310,32 @@ class ToolGuard:
             def __init__(self, response, url):
                 self.response, self.url, self.received = response, url, 0
                 self.headers, self.code = response.headers, response.code
+                self.leased = self.used = 0
+
+            def settle(self):
+                if self.leased:
+                    guard.shared.update(release=self.leased, received=self.used)
+                    self.leased = self.used = 0
+
+            def lease(self, wanted):
+                if guard.shared and self.leased - self.used < wanted:
+                    self.settle()
+                    size = max(wanted, min(8 * 2**20, guard.body_limit // (guard.ceiling * 8)))
+                    _, _, reason = guard.shared.update(reserve=size)
+                    if reason:
+                        guard.policy.reason = reason
+                        guard.check()
+                    self.leased = size
 
             def __enter__(self):
                 return self
 
             def __exit__(self, typ, value, tb):
-                self.response.close()
-                guard.end(self.url, self.code, str(value) if value else None)
+                try:
+                    self.settle()
+                finally:
+                    self.response.close()
+                    guard.end(self.url, self.code, str(value) if value else None)
 
             def read(self, n=-1):
                 chunks, left = [], n
@@ -302,21 +354,19 @@ class ToolGuard:
                         )
                         require(wanted > 0, "public object budget exhausted")
                         guard.reserved += wanted
-                        if guard.shared:
-                            _, _, reason = guard.shared.update(reserve=wanted)
-                            if reason:
-                                guard.reserved -= wanted
-                                guard.check()
                     raw = None
+                    reading = False
                     try:
+                        # Leases amortize cross-process accounting and keep its
+                        # file lock outside the guard's per-process thread lock.
+                        self.lease(wanted)
+                        reading = True
                         raw = self.response.read(wanted)
                     finally:
+                        if guard.shared and reading:
+                            self.used += len(raw) if raw is not None else wanted
                         with guard.lock:
                             guard.reserved -= wanted
-                            if guard.shared:
-                                # A failed native read may have consumed unknown
-                                # bytes; retain the whole reservation conservatively.
-                                guard.shared.update(release=wanted, received=len(raw) if raw is not None else wanted)
                     with guard.lock:
                         guard.body_bytes += len(raw)
                         if self.received == 0 and raw:

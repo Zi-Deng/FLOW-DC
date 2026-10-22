@@ -26,6 +26,13 @@ with matched fixed work. Do not pad runs or select successful URLs. If the finit
 long profile,2400s whole-job deadline or total budget cannot accommodate the
 design, stop before evaluation and report the feasibility blocker.
 
+Size one-worker calibration only from one-worker engineering observations.
+Require25% headroom against each candidate's native, complete-job and body
+budgets; a body-limited size still needs a predicted600s HTTP period. Persist the
+single three-job correction size before dispatch, and check every final cell's
+individual feasibility before freezing the matrix. Calibration failures are
+retained and never replaced by more favorable attempts.
+
 PAARC initial4/minimum2, growth1.5, target ratio2, baseline120s, source ceiling192.
 No algorithm changes/retuning. Tool candidates(processes,threads/process) are
 (1,32),(1,192),(8,24), selected by verified goodput subject to coverage. Two workers
@@ -37,6 +44,10 @@ HTTP attempt/row, zero tool shard retries, uncompressed original-byte archives,
 the same source guards and manager-side independent decoding/digest verification.
 Tool timeout semantics differ despite the common nominal30s setting. The tool's
 spawned processes share a finite response-body reservation counter and stop flag.
+An mmap counter and per-response leases of at most8MiB amortize shared accounting;
+unused reservations are returned and unknown failed reads remain conservatively
+charged. Local engineering measurements separately quantify guard effects; they
+are not public-source performance evidence or a universal overhead bound.
 Each immutable shard has a separate audit; merging recomputes global concurrency.
 Comparison HTTP timing starts before connection setup and ends at body/failure
 completion, without changing the PAARC application-delay feedback signal.
@@ -64,6 +75,11 @@ SUs,16million image attempts,3TiB response bodies and3.5TiB retained evidence.
 One-hour VM windows reserve600s for cleanup. Up to64 early-closed windows share
 the same24h cumulative allowance and expiry; this is not64 hours of authority.
 New volumes total at most5TiB(4TiB manager;512GiB each acquisition scratch).
+Short engineering jobs have600s deadlines and share windows. Longer jobs use
+matching-condition duration forecasts, capped at2400s. A recurring jobless window
+stops acquisition rather than spending repeated setup windows. Manager return
+processing and independent verification run concurrently with TaskVine progress,
+with a1200s verification ceiling inside the common job deadline.
 Local collection is capped at4GiB so compressed-transfer/extraction duplicates
 fit the12GiB peak allowance while retaining50GiB free. Archives stay on the
 manager volume. Worker duplicates are removed only after verified return.

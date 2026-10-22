@@ -1,6 +1,7 @@
 """Matched TaskVine sharding and manager-side verification for long public jobs."""
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 import json
 import os
 import resource
@@ -203,7 +204,9 @@ def manager(request_path):
     directory = study / "runs" / cell["run_id"]
     directory.mkdir()
     started = time.monotonic()
-    deadline = started + LIMITS["job_seconds"]
+    job_seconds = cell.get("job_seconds", LIMITS["job_seconds"])
+    require(0 < job_seconds <= LIMITS["job_seconds"], "invalid job deadline")
+    deadline = started + job_seconds
     record = dict(
         **cell,
         status="stopped",
@@ -291,27 +294,9 @@ def manager(request_path):
             )
             tasks[manager.submit(task)] = role
         write_new(directory / "ready.json", dict(port=manager.port, tasks=tasks))
-        while tasks:
-            require(time.monotonic() < deadline, "complete-job deadline")
-            task = manager.wait(1)
-            if task is None:
-                continue
-            role = tasks.pop(task.id)
+
+        def verify_return(role):
             node = directory / role
-            result = dict(
-                role=role,
-                id=task.id,
-                successful=task.successful(),
-                exit_code=task.exit_code,
-                result=task.result,
-                hostname=task.hostname,
-                addrport=task.addrport,
-                bytes_received=task.get_metric("bytes_received"),
-                bytes_sent=task.get_metric("bytes_sent"),
-                stdout=task.std_output,
-            )
-            write_new(node / "vine-result.json", result)
-            require(task.successful() and task.exit_code == 0, "native task failed; no replay")
             returned = node / "returned"
             unpack(node / "return.tar", returned, deadline)
             native = read_json(returned / "worker-record.json")
@@ -347,7 +332,7 @@ def manager(request_path):
                     start_new_session=True,
                 )
                 try:
-                    proc.wait(timeout=max(1, deadline - time.monotonic()))
+                    proc.wait(timeout=max(1, min(LIMITS["audit_seconds"], deadline - time.monotonic())))
                 finally:
                     terminate(proc)
             require(proc.returncode == 0, "manager independent verification failed")
@@ -356,7 +341,33 @@ def manager(request_path):
                 node / "retention.json",
                 dict(verified=True, utc=utc(), vm_id=request["vms"][role], archives=verified["archives"]),
             )
-            received.append(dict(role=role, worker=native, verification=verified))
+            return dict(role=role, worker=native, verification=verified)
+
+        with ThreadPoolExecutor(max_workers=cell["workers"]) as executor:
+            futures = []
+            while tasks:
+                require(time.monotonic() < deadline, "complete-job deadline")
+                task = manager.wait(1)
+                if task is None:
+                    continue
+                role = tasks.pop(task.id)
+                node = directory / role
+                result = dict(
+                    role=role,
+                    id=task.id,
+                    successful=task.successful(),
+                    exit_code=task.exit_code,
+                    result=task.result,
+                    hostname=task.hostname,
+                    addrport=task.addrport,
+                    bytes_received=task.get_metric("bytes_received"),
+                    bytes_sent=task.get_metric("bytes_sent"),
+                    stdout=task.std_output,
+                )
+                write_new(node / "vine-result.json", result)
+                require(task.successful() and task.exit_code == 0, "native task failed; no replay")
+                futures.append(executor.submit(verify_return, role))
+            received = [future.result() for future in futures]
         elapsed = time.monotonic() - started
         credited = sum(r["verification"]["credited_bytes"] for r in received)
         credited_rows = sum(r["verification"]["credited_rows"] for r in received)
@@ -371,6 +382,7 @@ def manager(request_path):
             coverage=credited_rows / frame.height,
             goodput_Bps=credited / elapsed,
             body_bytes=sum(r["worker"]["transport"]["body_bytes"] for r in received),
+            native_seconds=max(r["worker"]["ended"] - r["worker"]["started"] for r in received),
             http_span_s=max(r["worker"]["transport"]["http_span_s"] for r in received),
             # Integral is additive across hosts, requires no synchronized clocks.
             mean_job_concurrency=sum(r["worker"]["transport"]["request_seconds"] for r in received) / elapsed,

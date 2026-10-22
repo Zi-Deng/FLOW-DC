@@ -231,7 +231,9 @@ print('{}')""",
     )
     name = "flowdc-min-" + campaign + "-" + cell["run_id"]
     owned, result = [], None
-    deadline = time.monotonic() + LIMITS["job_seconds"] + 30
+    seconds = cell["job_seconds"]
+    require(0 < seconds <= LIMITS["job_seconds"], "invalid admitted job deadline")
+    deadline = time.monotonic() + seconds + 30
     try:
         owned.append(("manager", name + "-m"))
         unit(
@@ -247,7 +249,7 @@ print('{}')""",
                 "--request",
                 root + "/requests/" + cell["run_id"] + ".json",
             ],
-            LIMITS["job_seconds"] + 15,
+            seconds + 15,
             cores=16,
             memory="48G",
         )
@@ -287,7 +289,7 @@ print(json.dumps({'ready':(p/'ready.json').exists(),'record':json.loads((p/'reco
                         campaign + "-" + role,
                         "--single-shot",
                         "--wall-time",
-                        str(LIMITS["job_seconds"]),
+                        str(seconds),
                         "--cores",
                         "8",
                         "--memory",
@@ -299,7 +301,7 @@ print(json.dumps({'ready':(p/'ready.json').exists(),'record':json.loads((p/'reco
                         manager_ip,
                         "9123",
                     ],
-                    LIMITS["job_seconds"],
+                    seconds,
                 )
             while result is None:
                 require(time.monotonic() < deadline, "job completion deadline; preserve partial work")
@@ -429,6 +431,7 @@ with tarfile.open(fileobj=sys.stdout.buffer,mode='w|') as archive:
 def run(packet):
     packet = Path(packet).resolve()
     os.umask(0o077)
+    require(not (packet / "complete.json").exists(), "campaign already closed; no activation replay")
     op, deployment = read_json(packet / "operator.json"), read_json(packet / "deployment.json")
     require(deployment["limits"] == LIMITS, "frozen campaign limits differ")
     with lock(packet / "controller.lock"):
@@ -466,6 +469,7 @@ def run(packet):
                 return min(remaining(local_status(journal)), window_started + 3000 - time.monotonic())
 
             outcome = None
+            jobs_started = 0
             setup_seconds, one_time_install = 0.0, 0.0
             try:
                 controller.call("start", seconds=30, window=3600)
@@ -510,11 +514,7 @@ print('{}')""",
                     json.dumps(gates),
                 )
                 setup_seconds = time.monotonic() - window_started - one_time_install
-                while (
-                    not terminal
-                    and work_left() > LIMITS["job_seconds"] + 90
-                    and time.time() < started + 75600
-                ):
+                while not terminal and work_left() > 180 and time.time() < started + 75600:
                     selection = json_command(
                         packet,
                         "manager",
@@ -532,22 +532,33 @@ print(json.dumps(next_cell(sys.argv[1]+'/study',float(sys.argv[2]),float(sys.arg
                     if selection is None:
                         terminal = True
                         break
+                    if work_left() <= selection["job_seconds"] + 90:
+                        break
                     # Conservative reservations also cover unknown failed bytes.
                     previous = [read_json(p) for p in (packet / "jobs").glob("*/record.json")]
                     require(
-                        sum(r["rows"] for r in previous) + selection["rows"] <= LIMITS["max_requests"],
+                        sum(g["requests"] for g in gates.values())
+                        + sum(r["rows"] for r in previous)
+                        + selection["rows"]
+                        <= LIMITS["max_requests"],
                         "request budget",
                     )
                     require(
-                        sum(r.get("body_bytes", LIMITS["job_body_bytes"]) for r in previous)
+                        sum(g["probe_body_bytes"] for g in gates.values())
+                        + sum(r.get("body_bytes", LIMITS["job_body_bytes"]) for r in previous)
                         + LIMITS["job_body_bytes"]
                         <= LIMITS["body_bytes"],
                         "response-body budget",
                     )
+                    jobs_started += 1
                     outcome = job(packet, selection, number, journal, record)
                     if outcome["status"] != "complete":
                         terminal = True
                         break
+                require(
+                    terminal or jobs_started or one_time_install > 0,
+                    "recurring setup leaves no room for the next job; stop jobless windows",
+                )
                 if terminal or time.time() >= started + 75600:
                     terminal = True
                     if work_left() > 900:

@@ -45,6 +45,126 @@ def native_shard(arguments):
 
 
 class MinimumStudyTests(unittest.TestCase):
+    def test_queue_uses_matching_workers_and_persists_correction_size(self):
+        from benchmark.real_server_study.minimum_queue import next_cell
+
+        with tempfile.TemporaryDirectory() as directory:
+            study = Path(directory)
+            (study / "runs").mkdir()
+            (study / "gates").mkdir()
+            write_new(study / "protocol.json", dict(population_rows={s: 2000000 for s in design.SOURCES}))
+            for source in design.SOURCES:
+                write_new(study / "gates" / (source + ".json"), dict(requests=32, probe_body_bytes=3200))
+            sizes = {}
+            for index in range(46):
+                cell = next_cell(study, 86400, 120)
+                self.assertNotEqual(cell["phase"], "evaluation")
+                rows = cell["rows"]
+                if cell["phase"] == "engineering":
+                    span = rows / (20 if cell["workers"] == 1 else 30)
+                    elapsed = span + 10
+                    self.assertEqual(cell["job_seconds"], 600)
+                elif cell["run_id"].startswith("correction-"):
+                    sizes.setdefault("correction", rows)
+                    self.assertEqual(rows, sizes["correction"])
+                    # Different correction rates must not resize later arms.
+                    span = 610 + 20 * (index % 3)
+                    elapsed = span + 100
+                else:
+                    sizes.setdefault(cell["source"], rows)
+                    self.assertEqual(rows, 15360)  # w1 rate20, never w2 rate30.
+                    span = 768 if cell["workers"] == 1 else 500
+                    elapsed = span + 80
+                run = study / "runs" / cell["run_id"]
+                run.mkdir()
+                write_new(
+                    run / "record.json",
+                    dict(
+                        **cell,
+                        status="complete",
+                        original_rows=rows,
+                        http_span_s=span,
+                        elapsed_s=elapsed,
+                        native_seconds=span,
+                        body_bytes=rows * 1000,
+                        coverage=1,
+                        goodput_Bps=rows * 1000 / elapsed,
+                    ),
+                )
+            cell = next_cell(study, 86400, 120)
+            self.assertEqual(cell["phase"], "evaluation")
+            frozen = json.loads((study / "freeze.json").read_text())
+            self.assertEqual(frozen["source_rows"][design.SOURCES[0]], sizes["correction"])
+            self.assertEqual(len(frozen["cells"]), 36)
+
+    def test_sizing_refuses_native_deadline_body_and_worker_mismatch(self):
+        record = dict(
+            status="complete",
+            workers=1,
+            original_rows=2048,
+            http_span_s=100,
+            elapsed_s=110,
+            native_seconds=105,
+            body_bytes=2048000,
+        )
+        self.assertEqual(design.sizing([record]), 15360)
+        for change in (dict(workers=2), dict(native_seconds=500), dict(body_bytes=20 * 2**30)):
+            with self.assertRaises(ValueError):
+                design.sizing([{**record, **change}])
+
+    def test_measured_analysis_keeps_missing_and_changed_content_visible(self):
+        from benchmark.real_server_study.minimum_analysis import summarize
+
+        with tempfile.TemporaryDirectory() as directory:
+            study = Path(directory)
+            cells = []
+            for block in range(3):
+                for method in design.METHODS:
+                    cell = dict(run_id=f"E1-{block}-{method}", family="E1", block=block, method=method)
+                    cells.append(cell)
+                    if block == 2 and method == design.METHODS[0]:
+                        continue  # The planned first attempt remains unstarted.
+                    run = study / "runs" / cell["run_id"]
+                    (run / "worker").mkdir(parents=True)
+                    (run / "input.parquet").write_bytes(b"same frozen work")
+                    seconds = 10 if method == design.METHODS[2] else 5
+                    write_new(
+                        run / "record.json",
+                        dict(
+                            **cell,
+                            phase="evaluation",
+                            status="complete",
+                            workers=1,
+                            original_rows=1,
+                            credited_bytes=100,
+                            elapsed_s=seconds,
+                            goodput_Bps=100 / seconds,
+                            coverage=1,
+                            mean_job_concurrency=1,
+                        ),
+                    )
+                    digest = "changed" if block == 1 and method == design.METHODS[0] else "original"
+                    write_new(
+                        run / "worker/verification.json",
+                        dict(
+                            original_rows=1,
+                            credited_bytes=100,
+                            payloads={"row": dict(sha256=digest, bytes=100)},
+                        ),
+                    )
+            write_new(study / "freeze.json", dict(cells=cells))
+            result = summarize(study)
+            self.assertEqual((result["planned_jobs"], result["complete_jobs"]), (9, 8))
+            ratio = result["comparisons"]["E1:" + design.METHODS[0]]
+            self.assertEqual(ratio["blocks"], 1)
+            self.assertEqual(ratio["ratio"], 2)
+            self.assertEqual(ratio["changed_content_blocks"], [dict(block=1, rows=1)])
+            self.assertIsNone(ratio["interval95"])
+            grad = result["comparisons"]["E1:" + design.METHODS[1]]
+            self.assertEqual(grad["blocks"], 3)
+            self.assertEqual(grad["interval95"], [2, 2])
+            self.assertIsNone(grad["p_greater"])
+
     def isolated_spawn(self):
         if os.environ.get("FLOWDC_MINIMUM_TEST_CHILD") == "1":
             return False

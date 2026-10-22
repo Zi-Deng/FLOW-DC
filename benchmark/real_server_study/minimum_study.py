@@ -166,15 +166,37 @@ def select_tool(records):
     return best["tool_setting"]
 
 
+def feasible(records, rows):
+    """Reject a workload before dispatch when a measured candidate cannot fit."""
+    require(records and 1 <= rows <= LIMITS["max_rows"], "invalid workload forecast")
+    for r in records:
+        scale = rows / r["original_rows"]
+        require(
+            1.25 * r["body_bytes"] * scale <= LIMITS["job_body_bytes"], "long workload exceeds body budget"
+        )
+        require(
+            1.25 * r.get("native_seconds", r["elapsed_s"]) * scale < LIMITS["native_seconds"],
+            "long workload exceeds native processing deadline",
+        )
+        require(
+            1.25 * r["elapsed_s"] * scale + 60 < LIMITS["job_seconds"],
+            "long workload exceeds complete-job deadline",
+        )
+
+
 def sizing(records, workers=1):
     require(records and all(r["status"] == "complete" for r in records), "sizing observations incomplete")
+    require(all(r["workers"] == workers for r in records), "sizing must use matching worker count")
     rate = max(r["original_rows"] / r["http_span_s"] for r in records)
-    rows = int(math.ceil(rate * LIMITS["target_http_seconds"] * workers / 1024) * 1024)
-    require(rows <= LIMITS["max_rows"], "ten-minute acquisition exceeds finite manifest profile")
-    require(
-        max(r["elapsed_s"] * rows / r["original_rows"] for r in records) < LIMITS["job_seconds"],
-        "long acquisition plus processing cannot fit the per-job deadline",
+    target = int(math.ceil(rate * LIMITS["target_http_seconds"] / 1024) * 1024)
+    body_cap = min(
+        int(0.8 * LIMITS["job_body_bytes"] * r["original_rows"] / r["body_bytes"]) for r in records
     )
+    rows = min(target, body_cap, LIMITS["max_rows"])
+    require(
+        rows / rate >= LIMITS["minimum_http_seconds"], "finite bounds cannot support ten-minute acquisition"
+    )
+    feasible(records, rows)
     return rows
 
 
@@ -225,6 +247,7 @@ def freeze(study, calibration, selected, rows, remaining_seconds, used):
         required_s, body = 0.0, 0.0
         for cell in cells:
             r = by_condition[(cell["source"], cell["workers"], cell["method"])]
+            feasible([r], cell["rows"])
             ratio = cell["rows"] / r["original_rows"]
             required_s += r["elapsed_s"] * ratio
             body += r["body_bytes"] * ratio
