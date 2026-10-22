@@ -45,6 +45,70 @@ def native_shard(arguments):
 
 
 class MinimumStudyTests(unittest.TestCase):
+    def test_exhausted_cloud_envelope_records_blocker_without_activation(self):
+        from types import SimpleNamespace
+        from unittest.mock import Mock
+
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "bin"))
+        import flowdc_ops
+        from benchmark.real_server_study import minimum_cloud
+
+        for exhausted_windows in (False, True):
+            with (
+                self.subTest(exhausted_windows=exhausted_windows),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                packet = Path(directory)
+                write_new(packet / "operator.json", {})
+                write_new(packet / "deployment.json", dict(limits=design.LIMITS))
+                if exhausted_windows:
+                    for number in range(design.LIMITS["max_windows"]):
+                        write_new(packet / f"window-{number:02}.json", dict(cleaned=True))
+                journal = SimpleNamespace(read=lambda: dict(profile_path="test", vms={}))
+                controller = Mock()
+                with (
+                    patch.object(
+                        minimum_cloud.public_cloud,
+                        "authorize",
+                        return_value=(journal, dict(clock=dict(utc=time.time() - 86400))),
+                    ),
+                    patch.object(flowdc_ops, "load_profile", return_value={}),
+                    patch.object(minimum_cloud, "exposure", return_value=0),
+                    patch.object(minimum_cloud.cloud, "controller_for", return_value=controller),
+                ):
+                    result = minimum_cloud.run(packet)
+                self.assertEqual(result["status"], "blocked")
+                self.assertFalse(result["collected"])
+                self.assertTrue((packet / "complete.json").exists())
+                controller.call.assert_not_called()
+
+    def test_affine_planning_separates_sixty_second_startup(self):
+        records = [
+            dict(
+                run_id=str(n),
+                phase="engineering",
+                source=design.SOURCES[0],
+                method=design.METHODS[0],
+                workers=1,
+                rows=n,
+                original_rows=n,
+                status="complete",
+                elapsed_s=60 + n / 150,
+                native_seconds=40 + n / 150,
+                http_span_s=5 + n / 150,
+                body_bytes=n * 1000,
+            )
+            for n in (512, 2048)
+        ]
+        fitted = design.modeled(records)
+        rows = design.sizing([fitted[-1]])
+        self.assertGreaterEqual(design.estimate(fitted[-1], rows, "http_span_s"), 720)
+        self.assertLess(design.estimate(fitted[-1], rows, "elapsed_s"), 800)
+        self.assertAlmostEqual(fitted[-1]["forecast"]["elapsed_s"]["intercept"], 60)
+        # Confirmation outcomes cannot affect future planning models.
+        confirmation = {**records[-1], "phase": "evaluation", "elapsed_s": 99999}
+        self.assertEqual(design.modeled(records + [confirmation])[0]["forecast"], fitted[0]["forecast"])
+
     def test_queue_uses_matching_workers_and_persists_correction_size(self):
         from benchmark.real_server_study.minimum_queue import next_cell
 
@@ -57,6 +121,29 @@ class MinimumStudyTests(unittest.TestCase):
                 write_new(study / "gates" / (source + ".json"), dict(requests=32, probe_body_bytes=3200))
             sizes = {}
             for index in range(46):
+                if index == 30:
+                    self.assertEqual(next_cell(study, 86400, 120, False), dict(phase="observe_cleanup"))
+                    # An insufficient envelope refuses before spending on any
+                    # long calibration, retaining the refusal receipt.
+                    from benchmark.real_server_study.minimum_queue import campaign_forecast
+
+                    records = [json.loads(p.read_text()) for p in (study / "runs").glob("*/record.json")]
+                    with tempfile.TemporaryDirectory() as failed:
+                        failure_study = Path(failed)
+                        (failure_study / "gates").mkdir()
+                        with self.assertRaises(ValueError):
+                            campaign_forecast(
+                                failure_study,
+                                {r["run_id"]: r for r in design.modeled(records)},
+                                {s: 15360 for s in design.SOURCES},
+                                1000,
+                                120,
+                            )
+                        self.assertFalse(
+                            json.loads((failure_study / "gates/campaign-feasibility.json").read_text())[
+                                "accepted"
+                            ]
+                        )
                 cell = next_cell(study, 86400, 120)
                 self.assertNotEqual(cell["phase"], "evaluation")
                 rows = cell["rows"]

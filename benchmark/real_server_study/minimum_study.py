@@ -166,6 +166,42 @@ def select_tool(records):
     return best["tool_setting"]
 
 
+def modeled(records):
+    """Separate setup from per-row cost; evaluation outcomes never fit models."""
+    result = []
+    for record in records:
+        same = [
+            r
+            for r in records
+            if r["source"] == record["source"]
+            and r["workers"] == record["workers"]
+            and r["method"] == record["method"]
+            and (r["method"] != METHODS[2] or list(r["tool_setting"]) == list(record["tool_setting"]))
+        ]
+        engineering = {r["rows"]: r for r in same if r["phase"] == "engineering"}
+        models = {}
+        if 512 in engineering and 2048 in engineering:
+            small, large = engineering[512], engineering[2048]
+            for field in ("elapsed_s", "native_seconds", "http_span_s"):
+                slope = max(0.0, (large[field] - small[field]) / 1536)
+                intercept = max(0.0, small[field] - slope * 512)
+                calibration = [r for r in same if r["phase"] == "calibration"]
+                if calibration:
+                    row_count = max(r["rows"] for r in calibration)
+                    value = max(r[field] for r in calibration if r["rows"] == row_count)
+                    slope = max(0.0, (value - intercept) / row_count)
+                models[field] = dict(intercept=intercept, slope=slope)
+        result.append({**record, "forecast": models})
+    return result
+
+
+def estimate(record, rows, field):
+    model = record.get("forecast", {}).get(field)
+    if model:
+        return model["intercept"] + model["slope"] * rows
+    return record.get(field, record["elapsed_s"]) * rows / record["original_rows"]
+
+
 def feasible(records, rows):
     """Reject a workload before dispatch when a measured candidate cannot fit."""
     require(records and 1 <= rows <= LIMITS["max_rows"], "invalid workload forecast")
@@ -175,11 +211,11 @@ def feasible(records, rows):
             1.25 * r["body_bytes"] * scale <= LIMITS["job_body_bytes"], "long workload exceeds body budget"
         )
         require(
-            1.25 * r.get("native_seconds", r["elapsed_s"]) * scale < LIMITS["native_seconds"],
+            1.25 * estimate(r, rows, "native_seconds") < LIMITS["native_seconds"],
             "long workload exceeds native processing deadline",
         )
         require(
-            1.25 * r["elapsed_s"] * scale + 60 < LIMITS["job_seconds"],
+            1.25 * estimate(r, rows, "elapsed_s") + 60 < LIMITS["job_seconds"],
             "long workload exceeds complete-job deadline",
         )
 
@@ -187,14 +223,20 @@ def feasible(records, rows):
 def sizing(records, workers=1):
     require(records and all(r["status"] == "complete" for r in records), "sizing observations incomplete")
     require(all(r["workers"] == workers for r in records), "sizing must use matching worker count")
-    rate = max(r["original_rows"] / r["http_span_s"] for r in records)
+    slopes = [
+        r.get("forecast", {}).get("http_span_s", {}).get("slope", r["http_span_s"] / r["original_rows"])
+        for r in records
+    ]
+    require(min(slopes) > 0, "short HTTP observations cannot identify a positive per-row cost")
+    rate = 1 / min(slopes)
     target = int(math.ceil(rate * LIMITS["target_http_seconds"] / 1024) * 1024)
     body_cap = min(
         int(0.8 * LIMITS["job_body_bytes"] * r["original_rows"] / r["body_bytes"]) for r in records
     )
     rows = min(target, body_cap, LIMITS["max_rows"])
     require(
-        rows / rate >= LIMITS["minimum_http_seconds"], "finite bounds cannot support ten-minute acquisition"
+        min(estimate(r, rows, "http_span_s") for r in records) >= LIMITS["minimum_http_seconds"],
+        "finite bounds cannot support ten-minute acquisition",
     )
     feasible(records, rows)
     return rows
@@ -249,7 +291,7 @@ def freeze(study, calibration, selected, rows, remaining_seconds, used):
             r = by_condition[(cell["source"], cell["workers"], cell["method"])]
             feasible([r], cell["rows"])
             ratio = cell["rows"] / r["original_rows"]
-            required_s += r["elapsed_s"] * ratio
+            required_s += estimate(r, cell["rows"], "elapsed_s")
             body += r["body_bytes"] * ratio
         # Lifecycle forecast comes from live setup, never hidden in goodput.
         overhead = used["lifecycle_seconds_per_job"] * len(cells)
@@ -271,6 +313,7 @@ def freeze(study, calibration, selected, rows, remaining_seconds, used):
                 forecast_body_bytes=body,
                 basis_runs=[r["run_id"] for r in calibration],
                 margin=1.25,
+                forecast_models={r["run_id"]: r.get("forecast", {}) for r in calibration},
             )
             write_new(study / "freeze.json", record)
             return record

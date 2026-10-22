@@ -425,6 +425,7 @@ with tarfile.open(fileobj=sys.stdout.buffer,mode='w|') as archive:
             "collection digest differs",
         )
     (packet / "metadata.tar").unlink()
+    write_new(packet / "collection-complete.json", dict(utc=utc(), files=len(manifest)))
     return len(manifest)
 
 
@@ -456,23 +457,52 @@ def run(packet):
             intent = packet / f"window-{number:02}-intent.json"
             require(not intent.exists(), "unfinished window; no activation replay")
             controller = cloud.controller_for(packet)
-            require(
+            window_seconds = 3600
+            full_window = (
                 time.time() + 3600 < started + LIMITS["wall_seconds"]
-                and exposure(record, journal) + 32 <= LIMITS["budget_su"],
-                "finite live envelope exhausted",
+                and exposure(record, journal) + 32 <= LIMITS["budget_su"]
             )
-            controller.preflight(3600)
+            if not full_window or number == LIMITS["max_windows"] - 1:
+                terminal = True
+                failure = failure or dict(
+                    utc=utc(), error="finite acquisition envelope exhausted; metadata collection only"
+                )
+                window_seconds = 1800
+                if (
+                    (packet / "collection-complete.json").exists()
+                    or time.time() + window_seconds >= started + LIMITS["wall_seconds"]
+                    or exposure(record, journal) + 16 > LIMITS["budget_su"]
+                    or not (packet / "volumes/manager/installation.json").exists()
+                ):
+                    value = dict(
+                        utc=utc(),
+                        status="blocked",
+                        failure=failure,
+                        windows=number,
+                        collected=(packet / "collection-complete.json").exists(),
+                        cleanup_complete=not any(
+                            v["account"]["obligation"] or v["account"]["uncertain"]
+                            for v in journal.read()["vms"].values()
+                        ),
+                        new_exposure_su=exposure(record, journal),
+                    )
+                    write_new(packet / "complete.json", value)
+                    return value
+            controller.preflight(window_seconds)
             write_new(intent, dict(utc=utc(), window=number))
             window_started = time.monotonic()
 
             def work_left():
-                return min(remaining(local_status(journal)), window_started + 3000 - time.monotonic())
+                return min(
+                    remaining(local_status(journal)),
+                    window_started + window_seconds - LIMITS["cleanup_seconds"] - time.monotonic(),
+                )
 
             outcome = None
             jobs_started = 0
             setup_seconds, one_time_install = 0.0, 0.0
             try:
-                controller.call("start", seconds=30, window=3600)
+                controller.call("start", seconds=30, window=window_seconds)
                 ready(journal)
                 cloud.refresh_ssh(packet, controller)
                 write_new(packet / f"window-{number:02}-containment.json", controller.containment(120))
@@ -485,34 +515,35 @@ def run(packet):
                         one_time_install += time.monotonic() - stage_started
                 root = op["guest_root"]
                 # Bounded sequential real-image probes run once, on a downloader.
-                gates = json_command(
-                    packet,
-                    "worker",
-                    """import json,pathlib,socket,sys
-sys.path.insert(0,sys.argv[1]+'/source')
-from benchmark.real_server_study.common import replace_derived
-from benchmark.real_server_study.public_batch import host_gate
-root=pathlib.Path(sys.argv[1]);study=root/'study'
-replace_derived(study/'execution.json',dict(executor='jetstream2',vm_id=sys.argv[2],campaign_id=sys.argv[3],hostname=socket.gethostname(),deadline_utc=float(sys.argv[4]),source_root=str(root/'source')))
-print(json.dumps({source:host_gate(study,source) for source in ('inaturalist-open','openimages-cvdf')}))""",
-                    root,
-                    deployment["selected"]["worker"],
-                    deployment["campaign_id"],
-                    str(started + 86400),
-                    timeout=300,
-                )
-                json_command(
-                    packet,
-                    "manager",
-                    """import json,pathlib,sys
-root=pathlib.Path(sys.argv[1]);gates=json.loads(sys.argv[2])
-for source,value in gates.items():
- p=root/'study/gates'/(source+'.json')
- if not p.exists():p.write_text(json.dumps(value))
-print('{}')""",
-                    root,
-                    json.dumps(gates),
-                )
+                if not terminal:
+                    gates = json_command(
+                        packet,
+                        "worker",
+                        """import json,pathlib,socket,sys
+    sys.path.insert(0,sys.argv[1]+'/source')
+    from benchmark.real_server_study.common import replace_derived
+    from benchmark.real_server_study.public_batch import host_gate
+    root=pathlib.Path(sys.argv[1]);study=root/'study'
+    replace_derived(study/'execution.json',dict(executor='jetstream2',vm_id=sys.argv[2],campaign_id=sys.argv[3],hostname=socket.gethostname(),deadline_utc=float(sys.argv[4]),source_root=str(root/'source')))
+    print(json.dumps({source:host_gate(study,source) for source in ('inaturalist-open','openimages-cvdf')}))""",
+                        root,
+                        deployment["selected"]["worker"],
+                        deployment["campaign_id"],
+                        str(started + 86400),
+                        timeout=300,
+                    )
+                    json_command(
+                        packet,
+                        "manager",
+                        """import json,pathlib,sys
+    root=pathlib.Path(sys.argv[1]);gates=json.loads(sys.argv[2])
+    for source,value in gates.items():
+     p=root/'study/gates'/(source+'.json')
+     if not p.exists():p.write_text(json.dumps(value))
+    print('{}')""",
+                        root,
+                        json.dumps(gates),
+                    )
                 setup_seconds = time.monotonic() - window_started - one_time_install
                 while not terminal and work_left() > 180 and time.time() < started + 75600:
                     selection = json_command(
@@ -523,12 +554,15 @@ sys.path.insert(0,sys.argv[1]+'/source')
 from benchmark.real_server_study.minimum_queue import next_cell
 disk=shutil.disk_usage(sys.argv[1])
 assert disk.free>192*2**30 and disk.used+192*2**30<3584*2**30,'retention/free-space admission'
-print(json.dumps(next_cell(sys.argv[1]+'/study',float(sys.argv[2]),float(sys.argv[3]))))""",
+print(json.dumps(next_cell(sys.argv[1]+'/study',float(sys.argv[2]),float(sys.argv[3]),sys.argv[4]=='True')))""",
                         root,
                         str(started + 86400 - time.time()),
                         str(max(120, setup_seconds, *overhead_history)),
+                        str(bool(overhead_history)),
                         timeout=120,
                     )
+                    if selection and selection.get("phase") == "observe_cleanup":
+                        break
                     if selection is None:
                         terminal = True
                         break
@@ -591,7 +625,7 @@ print(json.dumps(next_cell(sys.argv[1]+'/study',float(sys.argv[2]),float(sys.arg
                     os.fsync(stream.fileno())
             if terminal:
                 if (
-                    not (packet / "collected").exists()
+                    not (packet / "collection-complete.json").exists()
                     and not (packet / "collection-intent.json").exists()
                     and all((packet / "volumes" / role / "installation.json").exists() for role in ROLES)
                     and not (packet / "separate-collection-window.json").exists()
@@ -612,11 +646,21 @@ print(json.dumps(next_cell(sys.argv[1]+'/study',float(sys.argv[2]),float(sys.arg
                     cleanup_complete=True,
                     new_exposure_su=exposure(record, journal),
                     failure=failure,
-                    collected=(packet / "collected").exists(),
+                    collected=(packet / "collection-complete.json").exists(),
                 )
                 write_new(packet / "complete.json", value)
                 return value
-        raise ValueError("finite campaign window count exhausted; retained artifacts require disposition")
+        value = dict(
+            utc=utc(),
+            status="blocked",
+            failure="finite window count exhausted",
+            collected=(packet / "collection-complete.json").exists(),
+            cleanup_complete=True,
+            windows=LIMITS["max_windows"],
+            new_exposure_su=exposure(record, journal),
+        )
+        write_new(packet / "complete.json", value)
+        return value
 
 
 if __name__ == "__main__":

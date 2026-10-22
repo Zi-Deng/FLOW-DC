@@ -65,16 +65,24 @@ def prepare(study, source, previous, packet, *, limits=LIMITS, new_storage=False
             **old,
             "study": str(study),
             "source": str(source),
-            "guest_root": ("/mnt/flowdc-external-" + campaign if new_storage
-                           else old["guest_root"] + "/public-" + campaign),
+            "guest_root": (
+                "/mnt/flowdc-external-" + campaign
+                if new_storage
+                else old["guest_root"] + "/public-" + campaign
+            ),
             "previous_packet": str(previous),
         },
     )
     write_new(packet / "ssh-identity.json", read_json(previous / "ssh-identity.json"))
     if not new_storage:
-        write_new(packet / "retained-volume.json", dict(
-            volume=read_json(previous / "volume.json"),
-            mount=read_json(previous / "volume-mount.json"), root=old["guest_root"]))
+        write_new(
+            packet / "retained-volume.json",
+            dict(
+                volume=read_json(previous / "volume.json"),
+                mount=read_json(previous / "volume-mount.json"),
+                root=old["guest_root"],
+            ),
+        )
     requirements = source / "benchmark/requirements-tools-linux-py312.lock"
     wheels = packet / "wheels"
     wheels.mkdir()
@@ -160,11 +168,30 @@ def qualification(packet):
             hashlib.sha256(delta).hexdigest() == proof.get("post_review_delta_sha256"),
             "post-review repair delta changed",
         )
-    require(
-        review["status"] == "completed"
-        and not any(f["severity"] in ("P0", "P1", "P2") for f in report["findings"]),
-        "accepted static review and disclosed final repair required",
-    )
+    require(review["status"] == "completed", "completed independent static review required")
+    material = {i for i, f in enumerate(report["findings"]) if f["severity"] in ("P0", "P1", "P2")}
+    if material:
+        # The maintainer permits two reviews/two repairs, not an automatic third
+        # review. Preserve the original findings and disclose the exact final
+        # repair delta above; never relabel it as a reviewed final head.
+        require(
+            reviewed != head and proof.get("post_review_repair") is True,
+            "material findings need an explicit post-review repair",
+        )
+        path = proof["post_review_disposition_file"]
+        require(file_hash(path) == proof["post_review_disposition_sha256"], "repair disposition changed")
+        dispositions = read_json(path)
+        require(
+            dispositions["reviewed_head"] == reviewed and dispositions["final_head"] == head,
+            "repair disposition identity differs",
+        )
+        resolved = dispositions["resolved"]
+        require(
+            {d["finding"] for d in resolved} == material
+            and len(resolved) == len(material)
+            and all(d["status"] == "repaired" and d["validation"] and d["resolution"] for d in resolved),
+            "material findings remain unresolved",
+        )
     names = set()
     for run in proof["ci_run_ids"]:
         remote = json.loads(
@@ -245,7 +272,8 @@ def authorize(packet, limits=LIMITS):
     rates = {row["id"]: row["su_per_hour"] for row in rates_receipt["servers"]}
     chosen = sorted(deployment["selected"].values())
     require(
-        sum(rates.values()) * min(limits["wall_seconds"], limits["max_windows"] * 3600) / 3600 <= limits["budget_su"],
+        sum(rates.values()) * min(limits["wall_seconds"], limits["max_windows"] * 3600) / 3600
+        <= limits["budget_su"],
         "actual selected-VM forecast exceeds study budget",
     )
     baseline = {key: current["vms"][key]["account"]["consumed"] for key in chosen}

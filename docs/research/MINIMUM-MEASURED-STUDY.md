@@ -27,11 +27,19 @@ long profile,2400s whole-job deadline or total budget cannot accommodate the
 design, stop before evaluation and report the feasibility blocker.
 
 Size one-worker calibration only from one-worker engineering observations.
+Fit setup plus per-row time from the512/2048-row pair for each candidate and
+worker count; do not scale fixed startup cost as per-row work. Long calibration
+updates the slopes while confirmation outcomes never alter the planning model.
 Require25% headroom against each candidate's native, complete-job and body
 budgets; a body-limited size still needs a predicted600s HTTP period. Persist the
-single three-job correction size before dispatch, and check every final cell's
+single three-job correction size before dispatch (either source may use this
+finite correction budget), and check every final cell's
 individual feasibility before freezing the matrix. Calibration failures are
-retained and never replaced by more favorable attempts.
+retained and never replaced by more favorable attempts. Observe at least one
+completed cleanup before long calibration. At that point forecast all remaining
+calibration,27 evaluation jobs, the three-job correction reserve and final
+collection; refuse early if they cannot fit. Repeat the feasibility decision
+after calibration before choosing27/36 evaluation jobs.
 
 PAARC initial4/minimum2, growth1.5, target ratio2, baseline120s, source ceiling192.
 No algorithm changes/retuning. Tool candidates(processes,threads/process) are
@@ -80,6 +88,9 @@ matching-condition duration forecasts, capped at2400s. A recurring jobless windo
 stops acquisition rather than spending repeated setup windows. Manager return
 processing and independent verification run concurrently with TaskVine progress,
 with a1200s verification ceiling inside the common job deadline.
+The last window is reserved for metadata if needed. Expired/exhausted authority
+produces an explicit blocked outcome; a shorter offline-only collection window
+is allowed only within the existing remaining time and SU limits.
 Local collection is capped at4GiB so compressed-transfer/extraction duplicates
 fit the12GiB peak allowance while retaining50GiB free. Archives stay on the
 manager volume. Worker duplicates are removed only after verified return.
@@ -102,6 +113,10 @@ Use affected offline tests, one full local check/current CI and at most two
 independent review invocations/two review-driven repairs. Under the maintainer's
 explicit exception, one final PR follows experiments, reporting and cleanup;
 there is no intermediate human-merge prerequisite. No email is authorized.
+After the second review, supported findings can receive the second repair with
+an exact reviewed/final delta, current CI and explicit validated dispositions.
+The original report remains unchanged; this is not a final-head review or a
+waiver of unresolved material findings, and no third call is authorized.
 
 Primary interpretation: show all paired runs. Three blocks are descriptive;
 six permit modest conditional paired-log-ratio inference, Holm-adjusted across

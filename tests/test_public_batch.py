@@ -247,6 +247,39 @@ class PublicBatchTests(unittest.TestCase):
                 self.assertRaises(ValueError),
             ):
                 public_cloud.qualification(packet)
+            # Keep the original findings intact. Every material finding needs a
+            # validated disposition bound to the actual reviewed/final commits.
+            (packet / "report.json").write_text(json.dumps({"findings": [{"severity": "P1"}]}))
+            proof["report_sha256"] = file_hash(packet / "report.json")
+            disposition = dict(reviewed_head="reviewed", final_head="final", resolved=[])
+            write_new(packet / "disposition.json", disposition)
+            proof.update(
+                post_review_disposition_file=str(packet / "disposition.json"),
+                post_review_disposition_sha256=file_hash(packet / "disposition.json"),
+            )
+            (packet / "qualification.json").write_text(json.dumps(proof))
+            with (
+                patch.object(public_cloud.subprocess, "run", return_value=SimpleNamespace(returncode=0)),
+                patch.object(public_cloud.subprocess, "check_output", return_value=delta),
+                self.assertRaises(ValueError),
+            ):
+                public_cloud.qualification(packet)
+            disposition["resolved"] = [
+                dict(
+                    finding=0,
+                    status="repaired",
+                    resolution="bounded fix",
+                    validation="focused regression and current CI",
+                )
+            ]
+            (packet / "disposition.json").write_text(json.dumps(disposition))
+            proof["post_review_disposition_sha256"] = file_hash(packet / "disposition.json")
+            (packet / "qualification.json").write_text(json.dumps(proof))
+            with (
+                patch.object(public_cloud.subprocess, "run", return_value=SimpleNamespace(returncode=0)),
+                patch.object(public_cloud.subprocess, "check_output", side_effect=outcomes),
+            ):
+                public_cloud.qualification(packet)
 
     def test_worker_context_is_inside_bounded_step_and_clock_is_not_reset(self):
         import contextlib
