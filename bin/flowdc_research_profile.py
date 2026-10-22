@@ -39,6 +39,12 @@ EXTERNAL = Workload("bounded-external-v1", 32768, 4 * 2**30, 64 * 2**20,
 ABLATION = Workload("bounded-adaptive-ablation-v1", 32768, 6 * 2**30, 128 * 2**20,
                     16 * 2**30, 24 * 2**30, 300, 1048576, 131072, 2097152, max_attempts=1)
 
+# Public ten-minute studies: explicit selection, no reinterpretation of old runs.
+# Per-job response budgets can be lower (and are partitioned across workers).
+PUBLIC_LONG = Workload("bounded-public-long-v1", 524288, 64 * 2**30, 2 * 2**30,
+                       80 * 2**30, 96 * 2**30, 1800, 8388608, 1048576,
+                       16777216, max_attempts=1)
+
 
 def workload(name=None):
     if name is None or name == LEGACY.name:
@@ -49,6 +55,8 @@ def workload(name=None):
         return ABLATION
     if name == EXTERNAL.name:
         return EXTERNAL
+    if name == PUBLIC_LONG.name:
+        return PUBLIC_LONG
     raise ValueError("unknown finite research workload profile")
 
 

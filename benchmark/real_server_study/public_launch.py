@@ -2,6 +2,9 @@
 
 import argparse
 import asyncio
+import heapq
+import json
+import os
 import sys
 from pathlib import Path
 
@@ -9,33 +12,87 @@ import polars as pl
 
 from .common import read_json, require
 from .prepare import guest_check
-from .public_guard import FlowGuard, ToolGuard
+from .public_guard import FlowGuard, ToolGuard, SharedBodyBudget
 
 
 class GuardedDownloader:
-    """Picklable native shard delegate: one shard/process per bounded job."""
+    """Picklable delegate; each native shard owns a distinct immutable audit."""
 
-    def __init__(self, native, source, urls, audit, gate, ceiling=192):
+    def __init__(self, native, source, urls, audit, gate, ceiling=192, body_limit=2**30,
+                 shard_size=None, shared_path=None):
         self.native, self.source, self.urls, self.audit, self.gate = native, source, urls, audit, gate
         self.ceiling = ceiling
+        self.body_limit, self.shard_size, self.shared_path = body_limit, shard_size, shared_path
 
     def __call__(self, row):
-        with Path(self.audit).open("x", buffering=65536) as stream:
+        path, urls = Path(self.audit), self.urls
+        if self.shard_size is not None:
+            import pyarrow.ipc as ipc
+            index, source = row
+            require(type(index) is int and index >= 0, "invalid native shard identity")
+            with ipc.open_file(source) as reader:
+                urls = reader.read_all()["url"].to_pylist()
+            require(urls == self.urls[index*self.shard_size:(index+1)*self.shard_size],
+                    "native shard differs from frozen rows")
+            path = path.with_name(f"tool-request-{index:06}.jsonl")
+        with path.open("x", buffering=65536) as stream:
             guard = ToolGuard(
                 self.source,
-                self.urls,
+                urls,
                 stream,
                 self.gate["baseline_s"],
                 ignore_time=self.gate["ignore_time"],
                 ceiling=self.ceiling,
+                body_limit=self.body_limit,
+                shared=SharedBodyBudget(self.shared_path, self.body_limit) if self.shared_path else None,
             )
-            guard.emit("start")
+            guard.emit("start", process_id=os.getpid(), shard_id=row[0] if self.shard_size else None)
             restore = guard.install()
             try:
                 return self.native(row)
             finally:
                 restore()
                 guard.close()
+
+
+def merge_audits(paths, output, ceiling):
+    """Merge independent shard clocks, recomputing global inflight counts."""
+    streams = [p.open() for p in paths]
+    active, attempts = set(), set()
+    body, closed, reason = 0, 0, None
+    try:
+        output.write(json.dumps(dict(event="start", monotonic_s=0)) + "\n")
+        merged = heapq.merge(*(map(json.loads, s) for s in streams), key=lambda e: e["monotonic_s"])
+        last = 0
+        for event in merged:
+            last = event["monotonic_s"]
+            kind = event["event"]
+            if kind == "start":
+                continue
+            if kind == "closed":
+                require(event["active"] == 0, "unclosed native shard")
+                closed += 1
+                body += event["body_bytes"]
+                reason = reason or event.get("stop_reason")
+                continue
+            if kind == "attempt":
+                require(event["url"] not in attempts, "duplicate URL across shards")
+                attempts.add(event["url"])
+            if kind == "dispatch":
+                require(event["token"] not in active and len(active) < ceiling, "native global ceiling exceeded")
+                active.add(event["token"])
+            if kind == "network_end":
+                require(event["token"] in active, "native shard end without start")
+                active.remove(event["token"])
+            if "inflight" in event:
+                event["inflight"] = len(active)
+            output.write(json.dumps(event) + "\n")
+        require(closed == len(paths) and not active, "missing shard closure")
+        output.write(json.dumps(dict(event="closed", monotonic_s=last, active=0,
+                                    logical_attempts=len(attempts), body_bytes=body, stop_reason=reason)) + "\n")
+    finally:
+        for stream in streams:
+            stream.close()
 
 
 def main():
@@ -54,6 +111,7 @@ def main():
     cfg = read_json(directory / "config.json")
     gate = read_json(study / "gates" / f"{attempt['source']}.json")
     urls = pl.read_parquet(directory / "input.parquet")["url"].to_list()
+    body_limit = attempt.get("body_limit", 2**30)
     with (directory / "request-audit.jsonl").open("x", buffering=65536) as stream:
         if attempt["method"] == "img2dataset-1.47.0":
             import importlib.metadata
@@ -66,6 +124,8 @@ def main():
 
             native_main = importlib.import_module("img2dataset.main")
             native_class = native_main.Downloader
+            shared_path = directory / "tool-body-budget"
+            SharedBodyBudget.create(shared_path, body_limit)
 
             def wrapped(**kwargs):
                 return GuardedDownloader(
@@ -75,6 +135,9 @@ def main():
                     str(directory / "tool-request-audit.jsonl"),
                     gate,
                     cfg["thread_count"],
+                    body_limit,
+                    cfg["number_sample_per_shard"],
+                    str(shared_path),
                 )
 
             native_main.Downloader = wrapped
@@ -82,14 +145,15 @@ def main():
                 img2dataset.download(**cfg)
             finally:
                 native_main.Downloader = native_class
-            tool = directory / "tool-request-audit.jsonl"
-            require(tool.is_file(), "spawned tool worker produced no audit")
-            stream.write(tool.read_text())
-            tool.unlink()
+            paths = sorted(directory.glob("tool-request-*.jsonl"))
+            require(len(paths) == (len(urls)+cfg["number_sample_per_shard"]-1)//cfg["number_sample_per_shard"],
+                    "spawned tool shard audit missing")
+            merge_audits(paths, stream, cfg["thread_count"] * cfg["processes_count"])
+            # Per-shard logs remain authoritative diagnostic evidence.
         else:
             import download_batch
 
-            guard = FlowGuard(attempt["source"], urls, stream, gate["baseline_s"], gate["ignore_time"])
+            guard = FlowGuard(attempt["source"], urls, stream, gate["baseline_s"], gate["ignore_time"], body_limit)
             guard.emit("start", run_id=a.run_id)
             restore = guard.install()
             try:

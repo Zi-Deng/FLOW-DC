@@ -43,7 +43,7 @@ def volume_call(profile, action, args, *, size_gib=256):
     require(action in ("show","create","attach"),"unsupported volume action")
     if action=="create":
         require(len(args)==1 and str(UUID(args[0]))==args[0],"invalid campaign identity")
-        require(type(size_gib) is int and size_gib in (256,384),"unsupported finite campaign volume size")
+        require(type(size_gib) is int and size_gib in (256,384,512,4096),"unsupported finite campaign volume size")
     else:
         require(all(str(UUID(a))==a for a in args),"invalid volume/VM UUID")
     prefix=r'''set +x +v

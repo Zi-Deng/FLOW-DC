@@ -93,7 +93,8 @@ def observations(run_dir, started=None, ended=None, initial=4, strict=False):
             "fraction_decisions_at_256": sum(after == 256 for _, _, after, _ in limits) / len(limits) if limits else None}
 
 
-def verify(run_dir, slice_path, source, started=None, ended=None, credit_urls=False, planned_window=False):
+def verify(run_dir, slice_path, source, started=None, ended=None, credit_urls=False, planned_window=False,
+           workload_name=None):
     source = Path(source)
     sys.path.insert(0, str(source))
     sys.path.insert(0, str(source / "bin"))
@@ -102,6 +103,9 @@ def verify(run_dir, slice_path, source, started=None, ended=None, credit_urls=Fa
     from flowdc_research_profile import EXTERNAL, workload
     raw_config = read_json(Path(run_dir) / "flowdc-config.json")
     RESEARCH = workload(raw_config.get("research_workload")) if planned_window else EXTERNAL
+    if workload_name is not None:
+        require(raw_config.get("research_workload") == workload_name, "verification workload differs")
+        RESEARCH = workload(workload_name)
     require(not planned_window or RESEARCH.name == "bounded-adaptive-ablation-v1", "planned-window profile required")
 
     from benchmark.core.verifier import archive_members, file_digest, read_file

@@ -1,12 +1,15 @@
 """Public-study transport observation; no proxy, payload replay or controller change."""
 
 import json
+import fcntl
 import ssl
+import struct
 import threading
 import time
 import urllib.error
 import urllib.request
 from urllib.parse import urlsplit
+from pathlib import Path
 
 from . import telemetry
 from .common import require, tls_context
@@ -14,6 +17,7 @@ from .common import require, tls_context
 SOURCES = {
     "taibif-moth": ("moth.tbn.org.tw", "/images/"),
     "openimages-cvdf": ("open-images-dataset.s3.amazonaws.com", "/train/"),
+    "inaturalist-open": ("inaturalist-open-data.s3.amazonaws.com", "/photos/"),
 }
 UA = "FLOW-DC-research/real-world-focused (bounded dataset acquisition)"
 MAX_OBJECT = 64 * 2**20
@@ -94,6 +98,7 @@ class FlowGuard(telemetry.Guard):
             allowed, stream, baseline, ignore_time, policy=PublicPolicy(baseline), body_limit=body_limit
         )
         self.source = source
+        self.common_first = set()
 
     def install(self):
         original = telemetry.checked_url
@@ -108,6 +113,9 @@ class FlowGuard(telemetry.Guard):
             init(obj, *args, **kwargs)
 
         async def inspected(obj, method, url, **kwargs):
+            # The common comparison boundary begins before connection setup,
+            # after native admission. It does not alter the controller signal.
+            self.emit("http_start", token=self.token.get(), url=str(url))
             response = await request(obj, method, url, **kwargs)
             self.policy.inspect(response.headers)
             if self.policy.reason:
@@ -117,6 +125,17 @@ class FlowGuard(telemetry.Guard):
 
         aiohttp.ClientSession.__init__ = identified
         aiohttp.ClientSession._request = inspected
+        body_read = aiohttp.StreamReader.read
+
+        async def first_byte(reader, n=-1):
+            raw = await body_read(reader, n)
+            token = self.token.get()
+            if raw and token in self.readers and token not in self.common_first:
+                self.common_first.add(token)
+                self.emit("http_first_byte", token=token)
+            return raw
+
+        aiohttp.StreamReader.read = first_byte
 
         def undo():
             restore()
@@ -130,18 +149,58 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
+class SharedBodyBudget:
+    """One bounded counter/stop flag across spawned native tool shard processes.
+
+    flock plus a process-local thread lock covers only short fixed-size updates;
+    network I/O never holds this lock. Reservations prevent concurrent overdraft.
+    """
+    def __init__(self, path, limit):
+        self.path, self.limit = Path(path), limit
+        self.lock = threading.RLock()
+
+    def update(self, reserve=0, release=0, received=0, reason=None):
+        with self.lock, self.path.open("r+b", buffering=0) as stream:
+            fcntl.flock(stream, fcntl.LOCK_EX)
+            raw = stream.read(256)
+            require(len(raw) == 256, "invalid shared body counter")
+            body, held = struct.unpack("!QQ", raw[:16])
+            stop = raw[16:].rstrip(b"\0").decode("ascii")
+            require(0 <= release <= held and min(reserve, received) >= 0, "body accounting underflow")
+            held -= release
+            body += received
+            if reason:
+                stop = stop or reason
+            if reserve and (stop or body + held + reserve > self.limit):
+                stop = stop or "body_budget"
+                reserve = 0
+            held += reserve
+            stream.seek(0)
+            stream.write(struct.pack("!QQ", body, held) + stop.encode("ascii")[:239].ljust(240, b"\0"))
+            return body, held, stop
+
+    @classmethod
+    def create(cls, path, limit):
+        with Path(path).open("xb") as stream:
+            stream.write(b"\0" * 256)
+        return cls(path, limit)
+
+
 class ToolGuard:
     """Observe urllib in the pinned tool process, keeping its decision/output code."""
 
     def __init__(
-        self, source, allowed, stream, baseline, *, ignore_time=False, body_limit=2**30, ceiling=192
+        self, source, allowed, stream, baseline, *, ignore_time=False, body_limit=2**30, ceiling=192,
+        shared=None,
     ):
         require(not ignore_time or source == "taibif-moth", "TLS exception is moth-host only")
         self.source, self.allowed, self.stream = source, set(allowed), stream
         self.policy, self.lock = PublicPolicy(baseline), threading.RLock()
         self.started = {}
+        self.first_byte = {}
         self.counts, self.active, self.body_bytes, self.reserved = set(), set(), 0, 0
         self.body_limit, self.ceiling = body_limit, ceiling
+        self.shared = shared
         self.context = tls_context(ignore_time)
         self.opener = urllib.request.build_opener(
             urllib.request.ProxyHandler({}), NoRedirect(), urllib.request.HTTPSHandler(context=self.context)
@@ -156,6 +215,9 @@ class ToolGuard:
                 self.stream.flush()
 
     def check(self):
+        if self.shared:
+            _, _, reason = self.shared.update(reason=self.policy.reason)
+            self.policy.reason = self.policy.reason or reason or None
         if self.policy.reason:
             raise RuntimeError("public dispatch stopped: " + self.policy.reason)
 
@@ -170,6 +232,7 @@ class ToolGuard:
             self.active.add(url)
             self.started[url] = time.monotonic()
             self.emit("attempt", token=url, url=url)
+            self.emit("http_start", token=url, url=url)
             self.emit("dispatch", token=url, url=url, inflight=len(self.active), cap=self.ceiling)
 
     def end(self, url, status, error=None):
@@ -186,7 +249,8 @@ class ToolGuard:
                 dispatched=True,
                 inflight=len(self.active),
                 status=status,
-                ttfb_s=None,
+                ttfb_s=self.first_byte.get(url),
+                http_elapsed_s=time.monotonic() - self.started[url],
                 error=error,
             )
 
@@ -238,14 +302,26 @@ class ToolGuard:
                         )
                         require(wanted > 0, "public object budget exhausted")
                         guard.reserved += wanted
+                        if guard.shared:
+                            _, _, reason = guard.shared.update(reserve=wanted)
+                            if reason:
+                                guard.reserved -= wanted
+                                guard.check()
+                    raw = None
                     try:
                         raw = self.response.read(wanted)
                     finally:
                         with guard.lock:
                             guard.reserved -= wanted
+                            if guard.shared:
+                                # A failed native read may have consumed unknown
+                                # bytes; retain the whole reservation conservatively.
+                                guard.shared.update(release=wanted, received=len(raw) if raw is not None else wanted)
                     with guard.lock:
                         guard.body_bytes += len(raw)
                         if self.received == 0 and raw:
+                            guard.first_byte[self.url] = time.monotonic() - guard.started[self.url]
+                            guard.emit("http_first_byte", token=self.url)
                             guard.policy.complete(
                                 time.monotonic(), time.monotonic() - guard.started[self.url]
                             )

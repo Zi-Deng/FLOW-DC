@@ -104,8 +104,12 @@ def archive_members(path, limits=LEGACY):
                 item.isreg() and not item.issparse() and item.name not in members,
                 "duplicate or nonregular archive member",
             )
+            # Whole-run metadata grows with the finite manifest; image bodies
+            # still have the smaller per-object bound.
+            member_limit = (limits.max_metadata_bytes if item.name.rsplit('/', 1)[-1]
+                            in ('outcome-index.json', 'overview.json') else limits.max_object_bytes)
             require(
-                0 <= item.size <= limits.max_object_bytes and len(members) < 2 * limits.max_rows + 2,
+                0 <= item.size <= member_limit and len(members) < 2 * limits.max_rows + 2,
                 "oversized archive member/count",
             )
             require(item.offset_data + item.size <= info.st_size, "truncated archive member")

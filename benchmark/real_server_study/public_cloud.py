@@ -32,7 +32,7 @@ def enrolled_topology(source, operator):
     return selected
 
 
-def prepare(study, source, previous, packet):
+def prepare(study, source, previous, packet, *, limits=LIMITS, new_storage=False):
     study, source, previous, packet = map(lambda p: Path(p).resolve(), (study, source, previous, packet))
     require(not packet.exists(), "new deployment directory required")
     require(
@@ -51,12 +51,12 @@ def prepare(study, source, previous, packet):
         dict(
             campaign_id=campaign,
             source=protocol["source"],
-            limits=LIMITS,
+            limits=limits,
             selected=enrolled_topology(source, old),
             registered_rate_total_per_hour=32,
             source_archive_sha256=file_hash(packet / "source.tar"),
             protocol_sha256=file_hash(study / "protocol.json"),
-            authority="Maintainer approved real-world batch1 and execution before final PR",
+            authority="Maintainer approved finite public study and execution before final PR",
         ),
     )
     write_new(
@@ -65,19 +65,16 @@ def prepare(study, source, previous, packet):
             **old,
             "study": str(study),
             "source": str(source),
-            "guest_root": old["guest_root"] + "/public-" + campaign,
+            "guest_root": ("/mnt/flowdc-external-" + campaign if new_storage
+                           else old["guest_root"] + "/public-" + campaign),
             "previous_packet": str(previous),
         },
     )
     write_new(packet / "ssh-identity.json", read_json(previous / "ssh-identity.json"))
-    write_new(
-        packet / "retained-volume.json",
-        dict(
+    if not new_storage:
+        write_new(packet / "retained-volume.json", dict(
             volume=read_json(previous / "volume.json"),
-            mount=read_json(previous / "volume-mount.json"),
-            root=old["guest_root"],
-        ),
-    )
+            mount=read_json(previous / "volume-mount.json"), root=old["guest_root"]))
     requirements = source / "benchmark/requirements-tools-linux-py312.lock"
     wheels = packet / "wheels"
     wheels.mkdir()
@@ -196,7 +193,7 @@ def qualification(packet):
     )
 
 
-def authorize(packet):
+def authorize(packet, limits=LIMITS):
     op, deployment = read_json(packet / "operator.json"), read_json(packet / "deployment.json")
     Journal, allowance, binding, account_digest = cloud.imports(op["source"])
     journal = Journal(op["state"])
@@ -224,9 +221,9 @@ def authorize(packet):
     )
     require(
         facts["allocation"] == "CIS240296"
-        and facts["cpu_su"] >= LIMITS["budget_su"]
+        and facts["cpu_su"] >= limits["budget_su"]
         and 0 <= time.time() - observed.timestamp() <= 7 * 86400
-        and time.time() + LIMITS["wall_seconds"]
+        and time.time() + limits["wall_seconds"]
         < dt.datetime.fromisoformat(facts["expiry_date"]).replace(tzinfo=dt.UTC).timestamp(),
         "allocation facts insufficient or older than7days; no portal observation invented",
     )
@@ -238,7 +235,7 @@ def authorize(packet):
         )
         record = read_json(packet / "campaign.json")
         require(
-            set(record["baseline"]) == set(deployment["selected"].values()) and record["limits"] == LIMITS,
+            set(record["baseline"]) == set(deployment["selected"].values()) and record["limits"] == limits,
             "campaign must account for actual selected VMs and current finite limits",
         )
         return journal, record
@@ -248,27 +245,28 @@ def authorize(packet):
     rates = {row["id"]: row["su_per_hour"] for row in rates_receipt["servers"]}
     chosen = sorted(deployment["selected"].values())
     require(
-        sum(rates.values()) * LIMITS["max_windows"] * 3600 / 3600 <= LIMITS["budget_su"],
+        sum(rates.values()) * min(limits["wall_seconds"], limits["max_windows"] * 3600) / 3600 <= limits["budget_su"],
         "actual selected-VM forecast exceeds study budget",
     )
     baseline = {key: current["vms"][key]["account"]["consumed"] for key in chosen}
-    limits = {
+    cumulative = {
         key: max(
             math.ceil(allowance(current["vms"][key]["account"]).effective_limit) + 1,
-            math.ceil(baseline[key]) + LIMITS["max_windows"] * 3600,
+            math.ceil(baseline[key]) + min(limits["wall_seconds"], limits["max_windows"] * 3600),
         )
         for key in chosen
     }
-    preview = sum((limits[key] - baseline[key]) * rates[key] / 3600 for key in chosen)
+    preview = sum((cumulative[key] - baseline[key]) * rates[key] / 3600 for key in chosen)
+    require(preview <= 1000, "preserved cumulative preview exceeds approved1000SU")
     record = dict(
         campaign_id=deployment["campaign_id"],
         clock=vars(clock),
         baseline=baseline,
         rates=rates,
-        limits=LIMITS,
+        limits=limits,
         allocation_basis=facts,
         preserved_cumulative_preview_su=preview,
-        new_admission_limit_su=100,
+        new_admission_limit_su=limits["budget_su"],
     )
     write_new(packet / "campaign.json", record)
     request = dict(
@@ -278,12 +276,12 @@ def authorize(packet):
         expected_binding_sha256=binding(current),
         expected_accounts_sha256=account_digest(current),
         selected_ids=chosen,
-        cumulative_limits_seconds=limits,
-        expires_at=dt.datetime.fromtimestamp(clock.utc + LIMITS["wall_seconds"], dt.UTC).isoformat(),
+        cumulative_limits_seconds=cumulative,
+        expires_at=dt.datetime.fromtimestamp(clock.utc + limits["wall_seconds"], dt.UTC).isoformat(),
         max_window_seconds=3600,
         protocol_sha256=file_hash(packet / "deployment.json"),
         budget_sha256=file_hash(packet / "campaign.json"),
-        budget_su=max(100, math.ceil(preview)),
+        budget_su=max(limits["budget_su"], math.ceil(preview)),
     )
     # Existing unused cumulative authority is preserved. Only this driver's100
     # new SU ceiling counts every selected VM; preserved old ceilings are not new spending authority.

@@ -33,7 +33,10 @@ from .common import (
     utc,
     write_new,
 )
-from .public_guard import MAX_OBJECT, SOURCES, UA, NoRedirect, PublicPolicy, checked_url
+from .public_guard import MAX_OBJECT, SOURCES as SOURCE_CATALOG, UA, NoRedirect, PublicPolicy, checked_url
+
+# Historical pilot scope is fixed even as the guarded source catalog expands.
+SOURCES = {key: SOURCE_CATALOG[key] for key in ("taibif-moth", "openimages-cvdf")}
 
 
 def terminate(proc):
@@ -97,7 +100,7 @@ def prepare(study, source, populations, provenance):
         (study / name).mkdir()
     files = {}
     rng = random.Random(SEED)
-    for source_id in SOURCES:
+    for source_id in ("taibif-moth", "openimages-cvdf"):
         frame = pl.read_parquet(populations[source_id])
         required = {"url", "record_id", "author", "license", "landing_url"}
         require(
@@ -176,7 +179,7 @@ def host_gate(study, source_id):
         "media rights not qualified: " + provenance.get("limitation", "source preparation incomplete"),
     )
     write_new(intent, dict(utc=utc(), source=source_id))
-    host, prefix = SOURCES[source_id]
+    host, prefix = SOURCE_CATALOG[source_id]
     ignore = False
     try:
         with socket.create_connection((host, 443), timeout=15) as raw:

@@ -17,13 +17,19 @@ def verify(directory, source, method, started, ended):
     expected = {r["study_row_id"]: r for r in frame.to_dicts()}
     payloads, archives = {}, {}
     sys.path.insert(0, str(source / "bin"))
-    from flowdc_research_profile import EXTERNAL
+    from flowdc_research_profile import EXTERNAL, workload
+
+    # Historical pilots keep their original limits. Long jobs bind the complete
+    # finite profile in attempt.json, independently of the native output report.
+    attempt = read_json(directory / "attempt.json") if (directory / "attempt.json").exists() else {}
+    limits = workload(attempt["workload"]) if "workload" in attempt else EXTERNAL
 
     if method != "img2dataset-1.47.0":
         from .verify import verify as native_verify
 
         native = native_verify(
-            directory, directory / "input.parquet", source, started, ended, credit_urls=True
+            directory, directory / "input.parquet", source, started, ended, credit_urls=True,
+            workload_name=limits.name,
         )
         index = read_json(directory / "native/outcome-index.json")
         for row in index["rows"]:
@@ -69,9 +75,9 @@ def verify(directory, source, method, started, ended):
             seen.add(item["study_row_id"])
     successful = {r["study_row_id"]: r for r in ledger if r["status"] == "success"}
     for archive in sorted((directory / "native").glob("*.tar")):
-        digest, size = file_digest(archive, EXTERNAL.max_artifact_bytes)
+        digest, size = file_digest(archive, limits.max_artifact_bytes)
         archives[str(archive.relative_to(directory))] = dict(bytes=size, sha256=digest)
-        members = archive_members(archive, EXTERNAL)
+        members = archive_members(archive, limits)
         wanted = set()
         for name in members:
             if not name.endswith(".json"):
@@ -96,7 +102,7 @@ def verify(directory, source, method, started, ended):
             wanted.add(payload_name)
             raw = members[payload_name]
             require(
-                0 < len(raw) <= EXTERNAL.max_object_bytes and item.get("sha256") == sha256(raw),
+                0 < len(raw) <= limits.max_object_bytes and item.get("sha256") == sha256(raw),
                 "tool payload digest mismatch",
             )
             try:
