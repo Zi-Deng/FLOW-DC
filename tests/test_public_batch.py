@@ -298,7 +298,14 @@ class PublicBatchTests(unittest.TestCase):
                     allocation_file=str(packet / "allocation.json"),
                 ),
             )
-            write_new(packet / "deployment.json", {"source": {"head": "fixed"}})
+            write_new(
+                packet / "deployment.json",
+                {
+                    "source": {"head": "fixed"},
+                    "selected": {"worker": "worker", "manager": "manager", "origin": "origin"},
+                    "registered_rate_total_per_hour": 32,
+                },
+            )
             write_new(
                 packet / "allocation.json",
                 dict(
@@ -308,7 +315,10 @@ class PublicBatchTests(unittest.TestCase):
                     expiry_date="2027-04-17",
                 ),
             )
-            current = {"profile_path": "/profile", "spec": {"vms": [{"id": "worker"}]}}
+            current = {
+                "profile_path": "/profile",
+                "spec": {"vms": [{"id": role, "role": role} for role in ("worker", "manager", "origin")]},
+            }
             journal = type("Journal", (), {"read": lambda _: current})()
             with (
                 patch.object(public_cloud, "qualification"),
@@ -377,6 +387,11 @@ class PublicBatchTests(unittest.TestCase):
             packet = root / "packet"
             with (
                 patch.object(public_cloud, "source_identity", return_value={"head": "fixed"}),
+                patch.object(
+                    public_cloud,
+                    "enrolled_topology",
+                    return_value={"manager": "manager", "worker": "worker", "origin": "origin"},
+                ),
                 patch.object(public_cloud.subprocess, "check_output", return_value=""),
                 patch.object(public_cloud.subprocess, "run"),
             ):
@@ -423,6 +438,43 @@ class PublicBatchTests(unittest.TestCase):
             self.assertIn("runs/fixture/native/.flowdc/attempts/row/1/measurement.json", files)
             self.assertNotIn("runs/fixture/native/.flowdc/attempts/row/1/intent.json", files)
             self.assertNotIn("runs/fixture/native/.flowdc/attempts/row/1/result.json", files)
+
+    def test_actual_topology_and_all_vm_spending_are_accounted(self):
+        import sys
+
+        from benchmark.real_server_study import public_cloud
+
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "bin"))
+        # Worker selection is NOT a worker-only topology: manager and origin
+        # are required by the installed supervisor's selection contract.
+        from uuid import UUID
+
+        from flowdc_topology import selected_ids
+
+        ids = {role: str(UUID(int=i + 1)) for i, role in enumerate(("manager", "worker", "origin"))}
+        topology = {
+            "spec": {
+                "schema_version": 2,
+                "vms": [dict(role=role, id=value) for role, value in ids.items()],
+                "topology": {"manager": ids["manager"], "origin": ids["origin"], "workers": [ids["worker"]]},
+            },
+            "selection": {"schema_version": 1, "worker_ids": [ids["worker"]]},
+        }
+        actual = selected_ids(topology)
+        self.assertEqual(set(actual), set(ids.values()))
+        record = {
+            "baseline": dict.fromkeys(actual, 0),
+            "rates": {ids["manager"]: 16, ids["worker"]: 8, ids["origin"]: 8},
+        }
+        public_cloud.admit_window(record, actual, 68, 3600)
+        with self.assertRaises(ValueError):
+            public_cloud.admit_window(record, actual, 68.01, 3600)
+        with self.assertRaises(ValueError):
+            public_cloud.admit_window(
+                {"baseline": {ids["worker"]: 0}, "rates": {ids["worker"]: 8}}, actual, 0, 3600
+            )
+        self.assertEqual(batch.LIMITS["max_windows"], 3)
+        self.assertLessEqual(3 * sum(record["rates"].values()), batch.LIMITS["budget_su"])
 
     def test_real_tool_adapter_offline_shard_and_failure_ledger(self):
         try:

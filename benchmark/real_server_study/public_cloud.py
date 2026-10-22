@@ -1,4 +1,4 @@
-"""Finite worker-only public pilot using existing supervised accounting and trust."""
+"""Finite single-downloader public pilot using existing supervised accounting and trust."""
 
 import argparse
 import datetime as dt
@@ -17,6 +17,19 @@ from . import cloud, storage
 from .common import file_hash, lock, read_json, require, source_identity, utc, write_new
 from .onset_cloud import exposure, local_status, ready
 from .public_batch import LIMITS
+
+
+def enrolled_topology(source, operator):
+    Journal, _, _, _ = cloud.imports(source)
+    current = Journal(operator["state"]).read()
+    selected = {
+        v["role"]: v["id"] for v in current["spec"]["vms"] if v["role"] in ("manager", "worker", "origin")
+    }
+    require(
+        set(selected) == {"manager", "worker", "origin"} and selected["worker"] == operator["worker_id"],
+        "supported three-role topology required",
+    )
+    return selected
 
 
 def prepare(study, source, previous, packet):
@@ -39,7 +52,8 @@ def prepare(study, source, previous, packet):
             campaign_id=campaign,
             source=protocol["source"],
             limits=LIMITS,
-            selected={"worker": old["worker_id"]},
+            selected=enrolled_topology(source, old),
+            registered_rate_total_per_hour=32,
             source_archive_sha256=file_hash(packet / "source.tar"),
             protocol_sha256=file_hash(study / "protocol.json"),
             authority="Maintainer approved real-world batch1 and execution before final PR",
@@ -222,36 +236,35 @@ def authorize(packet):
             and read_json(packet / "grant-application.json")["returncode"] == 0,
             "interrupted grant; reconcile without replay",
         )
-        return journal, read_json(packet / "campaign.json")
-    worker = next(v for v in current["spec"]["vms"] if v["id"] == op["worker_id"])
-    provider = Provider(ops.load_profile(current["profile_path"]))
-    with provider.step("preflight", "worker"):
-        provider.context(current)
-        value = provider.query("server", worker["id"])
+        record = read_json(packet / "campaign.json")
         require(
-            provider.validate_server(current, worker["id"], value) == "SHELVED_OFFLOADED",
-            "worker not offloaded",
+            set(record["baseline"]) == set(deployment["selected"].values()) and record["limits"] == LIMITS,
+            "campaign must account for actual selected VMs and current finite limits",
         )
-        require(
-            worker["rate"]["verified"] and ops.reference_id(value["flavor"]) == worker["rate"]["flavor_id"],
-            "worker rate changed",
-        )
-    key = worker["id"]
-    rate = worker["rate"]["su_per_hour"]
+        return journal, record
+    rates_receipt = cloud.verify_rates(
+        Provider(ops.load_profile(current["profile_path"])), current, deployment
+    )
+    rates = {row["id"]: row["su_per_hour"] for row in rates_receipt["servers"]}
+    chosen = sorted(deployment["selected"].values())
     require(
-        rate * LIMITS["wall_seconds"] / 3600 <= LIMITS["budget_su"], "worker cost forecast exceeds budget"
+        sum(rates.values()) * LIMITS["max_windows"] * 3600 / 3600 <= LIMITS["budget_su"],
+        "actual selected-VM forecast exceeds study budget",
     )
-    baseline = current["vms"][key]["account"]["consumed"]
-    limit = max(
-        math.ceil(allowance(current["vms"][key]["account"]).effective_limit) + 1,
-        math.ceil(baseline) + LIMITS["wall_seconds"],
-    )
-    preview = (limit - baseline) * rate / 3600
+    baseline = {key: current["vms"][key]["account"]["consumed"] for key in chosen}
+    limits = {
+        key: max(
+            math.ceil(allowance(current["vms"][key]["account"]).effective_limit) + 1,
+            math.ceil(baseline[key]) + LIMITS["max_windows"] * 3600,
+        )
+        for key in chosen
+    }
+    preview = sum((limits[key] - baseline[key]) * rates[key] / 3600 for key in chosen)
     record = dict(
         campaign_id=deployment["campaign_id"],
         clock=vars(clock),
-        baseline={key: baseline},
-        rates={key: rate},
+        baseline=baseline,
+        rates=rates,
         limits=LIMITS,
         allocation_basis=facts,
         preserved_cumulative_preview_su=preview,
@@ -264,8 +277,8 @@ def authorize(packet):
         registration_id=current["registration_id"],
         expected_binding_sha256=binding(current),
         expected_accounts_sha256=account_digest(current),
-        selected_ids=[key],
-        cumulative_limits_seconds={key: limit},
+        selected_ids=chosen,
+        cumulative_limits_seconds=limits,
         expires_at=dt.datetime.fromtimestamp(clock.utc + LIMITS["wall_seconds"], dt.UTC).isoformat(),
         max_window_seconds=3600,
         protocol_sha256=file_hash(packet / "deployment.json"),
@@ -273,7 +286,7 @@ def authorize(packet):
         budget_su=max(100, math.ceil(preview)),
     )
     # Existing unused cumulative authority is preserved. Only this driver's100
-    # new SU ceiling admits work; this is not a grant to consume the old balance.
+    # new SU ceiling counts every selected VM; preserved old ceilings are not new spending authority.
     write_new(packet / "grant.json", request)
     path = cloud.operational_grant(packet, op)
     service = current["service"]
@@ -399,6 +412,17 @@ print(json.dumps({'quiescent':True,'units':sys.argv[1:]}))
     return json.loads(cloud.ssh(packet, [op["guest_python"], "-c", script, *units], timeout=90))
 
 
+def admit_window(record, actual_ids, spent, remaining_wall):
+    require(
+        set(actual_ids) == set(record["baseline"]) == set(record["rates"]),
+        "activation selection differs from accounted VMs",
+    )
+    require(
+        remaining_wall >= 3600 and spent + sum(record["rates"].values()) <= LIMITS["budget_su"],
+        "finite time/SU admission exhausted",
+    )
+
+
 def run(packet):
     packet = Path(packet).resolve()
     os.umask(0o077)
@@ -418,11 +442,12 @@ def run(packet):
             if closed.exists():
                 continue
             require(not intent.exists(), "unfinished window; reconcile instead of replacement activation")
-            require(
-                wall_left(record) >= 3600 and exposure(record, journal) + 8 <= 100,
-                "finite time/SU admission exhausted",
-            )
             controller = cloud.controller_for(packet)
+            from flowdc_topology import selected_ids
+
+            admit_window(
+                record, selected_ids(controller.expected), exposure(record, journal), wall_left(record)
+            )
             controller.preflight(3600)
             write_new(intent, dict(utc=utc(), number=number))
             outcome = None

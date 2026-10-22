@@ -39,11 +39,10 @@ This first exploratory batch reports latency but does not claim the later joint
 coverage/latency acceptance test. Later confirmation requires a separate freeze.
 
 Batch limits:100 new journal SUs,150000 image attempts,32GiB received bodies,
-40GiB authoritative archives,50GiB free reserve,240 seconds/job, at most eight
+40GiB authoritative archives,50GiB free reserve,240 seconds/job, at most three
 3600-second VM windows including600 seconds cleanup. No acquisition starts after
 T+5h30; total target is eight hours including reporting/cleanup. The supervisor
-retains responsibility if provider cleanup exceeds that target. One trusted
-worker is selected; manager and origin remain offloaded. Preserved historical
+retains responsibility if provider cleanup exceeds that target. One trusted downloader worker is selected. The installed supervisor also activates its manager and origin roles; no image-origin service is started on them. All three VMs are accounted (32SUs/hour total), so three full windows forecast96SUs within the100-SU admission bound. Preserved historical
 cumulative grants can exceed the new admission budget; neither history nor
 consumption is reset. Allocation receipt age is at most seven days, with its
 actual observation basis disclosed rather than invented.
@@ -66,8 +65,7 @@ has different scientific dependency pins and must not be merged into it.
    private packet's `qualification.json`. The user's explicit exception permits
    branch CI/review before the single final PR, without an intermediate merge. After the two-review ceiling, a bounded final repair must disclose the actual last-reviewed SHA, final SHA and exact Git delta digest alongside current-head CI. This is not labeled a final-head review. The initial preflight clock persists across failed read-only checks; no retry extends the batch deadline.
 5. Run `python -m benchmark.real_server_study.public_cloud run --packet PACKET`.
-   This applies the finite supported campaign grant and supervises bounded worker
-   windows. Keep the controller process alive. Each window stops/offloads through
+   This applies the finite supported campaign grant and supervises bounded three-VM windows with one downloader. Activation membership must exactly match all accounted UUIDs; downloader-worker selection must never be mistaken for a worker-only topology. Keep the controller process alive. Each window stops/offloads through
    the existing supervisor and verifies original networking restoration.
 
 No credentials, private manifests, results or manuscript enter Git/reviewer
