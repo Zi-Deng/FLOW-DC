@@ -521,12 +521,12 @@ def run(packet):
                         packet,
                         "worker",
                         """import json,pathlib,socket,sys
-    sys.path.insert(0,sys.argv[1]+'/source')
-    from benchmark.real_server_study.common import replace_derived
-    from benchmark.real_server_study.public_batch import host_gate
-    root=pathlib.Path(sys.argv[1]);study=root/'study'
-    replace_derived(study/'execution.json',dict(executor='jetstream2',vm_id=sys.argv[2],campaign_id=sys.argv[3],hostname=socket.gethostname(),deadline_utc=float(sys.argv[4]),source_root=str(root/'source')))
-    print(json.dumps({source:host_gate(study,source) for source in ('inaturalist-open','openimages-cvdf')}))""",
+sys.path.insert(0,sys.argv[1]+'/source')
+from benchmark.real_server_study.common import replace_derived
+from benchmark.real_server_study.public_batch import host_gate
+root=pathlib.Path(sys.argv[1]);study=root/'study'
+replace_derived(study/'execution.json',dict(executor='jetstream2',vm_id=sys.argv[2],campaign_id=sys.argv[3],hostname=socket.gethostname(),deadline_utc=float(sys.argv[4]),source_root=str(root/'source')))
+print(json.dumps({source:host_gate(study,source) for source in ('inaturalist-open','openimages-cvdf')}))""",
                         root,
                         deployment["selected"]["worker"],
                         deployment["campaign_id"],
@@ -537,11 +537,11 @@ def run(packet):
                         packet,
                         "manager",
                         """import json,pathlib,sys
-    root=pathlib.Path(sys.argv[1]);gates=json.loads(sys.argv[2])
-    for source,value in gates.items():
-     p=root/'study/gates'/(source+'.json')
-     if not p.exists():p.write_text(json.dumps(value))
-    print('{}')""",
+root=pathlib.Path(sys.argv[1]);gates=json.loads(sys.argv[2])
+for source,value in gates.items():
+ p=root/'study/gates'/(source+'.json')
+ if not p.exists():p.write_text(json.dumps(value))
+print('{}')""",
                         root,
                         json.dumps(gates),
                     )

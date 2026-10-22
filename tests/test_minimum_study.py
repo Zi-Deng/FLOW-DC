@@ -1,5 +1,6 @@
 """Offline regressions for long public studies; never scientific image requests."""
 
+import ast
 import io
 import json
 import multiprocessing
@@ -45,6 +46,23 @@ def native_shard(arguments):
 
 
 class MinimumStudyTests(unittest.TestCase):
+    def test_embedded_cloud_programs_compile(self):
+        path = Path(__file__).resolve().parents[1] / "benchmark/real_server_study/minimum_cloud.py"
+        programs = [
+            node.args[2].value
+            for node in ast.walk(ast.parse(path.read_text()))
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "json_command"
+            and len(node.args) > 2
+            and isinstance(node.args[2], ast.Constant)
+            and isinstance(node.args[2].value, str)
+        ]
+        self.assertTrue(programs)
+        for index, program in enumerate(programs):
+            with self.subTest(program=index):
+                compile(program, f"{path}:embedded-{index}", "exec")
+
     def test_one_explicit_engineering_correction_preserves_failed_attempt(self):
         from benchmark.real_server_study import minimum_queue as queue
         from benchmark.real_server_study.common import file_hash
