@@ -390,7 +390,8 @@ with tarfile.open(fileobj=sys.stdout.buffer,mode='w|') as archive:
  raw=json.dumps(manifest).encode();info=tarfile.TarInfo('transfer-manifest.json');info.size=len(raw);archive.addfile(info,io.BytesIO(raw))
 """
     require(
-        shutil.disk_usage(packet).free > LIMITS["free_bytes"] + LIMITS["metadata_bytes"], "local free reserve"
+        shutil.disk_usage(packet).free > LIMITS["free_bytes"] + 2 * LIMITS["metadata_bytes"],
+        "local free reserve including transfer and extracted copies",
     )
     with (packet / "metadata.tar").open("xb") as output:
         ssh(
