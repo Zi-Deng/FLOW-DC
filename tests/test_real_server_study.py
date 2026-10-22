@@ -186,11 +186,14 @@ class DesignTests(unittest.TestCase):
         listing={'blockdevices':[{'path':'/dev/sdb','serial':volume,'type':'disk'}]}
         for expected,filesystem,contents,error in [('NEW','fs-id',[],None),
                 ('fs-id','fs-id',['retained-data'],None),('wrong','fs-id',[],'UUID changed'),
-                ('NEW',None,[],'filesystem not ready'),('NEW','fs-id',['existing-data'],'unexpected data')]:
+                ('NEW',None,[],'filesystem not ready'),('NEW','delayed',[],None),
+                ('NEW','fs-id',['existing-data'],'unexpected data')]:
             calls=[]
             def command(args,**kwargs):
                 calls.append(args)
-                if args[0]=='blkid':return SimpleNamespace(returncode=0 if filesystem else 2,stdout=filesystem or '')
+                if args[0]=='blkid':
+                    ready=filesystem and (filesystem!='delayed' or len(calls)>1)
+                    return SimpleNamespace(returncode=0 if ready else 2,stdout='fs-id' if ready else '')
                 if args[0]=='findmnt':return SimpleNamespace(returncode=0,stdout='fs-id')
                 raise AssertionError('unexpected mutation')
             target=SimpleNamespace(is_symlink=lambda:False,mkdir=lambda **_:None,
@@ -200,11 +203,14 @@ class DesignTests(unittest.TestCase):
                  patch('pwd.getpwnam',return_value=SimpleNamespace(pw_uid=1000)), \
                  patch.object(sys,'argv',['mount',volume,'/mnt/flowdc-external-'+volume,expected]), \
                  patch('subprocess.check_output',side_effect=lambda args,**_:json.dumps(listing) if args[0]=='lsblk' else str(256*2**30)), \
-                 patch('subprocess.run',side_effect=command),patch.object(sys,'stdout',io.StringIO()):
+                 patch('subprocess.run',side_effect=command),patch.object(sys,'stdout',io.StringIO()), \
+                 patch('time.monotonic',side_effect=[0,121] if filesystem is None else [0,1]), \
+                 patch('time.sleep') as sleep:
                 if error:
                     with self.assertRaisesRegex(AssertionError,error):exec(storage.MOUNT,{})
                 else:exec(storage.MOUNT,{})
             self.assertFalse(any('mkfs' in arg for call in calls for arg in call))
+            self.assertEqual(sleep.call_count,1 if filesystem=='delayed' else 0)
 
     def test_first_attempt_and_order_refusals(self):
         with tempfile.TemporaryDirectory() as d:
@@ -665,6 +671,13 @@ class NetworkTests(unittest.TestCase):
                     self.assertEqual(result['decode_failures'],48)
                     self.assertEqual(result['credited_rows'],0)
                     self.assertTrue((native/'outcome-index.json').exists())
+                    from benchmark.real_server_study.minimum_native import pack,unpack
+                    with tempfile.TemporaryDirectory() as transfer:
+                        destination=Path(transfer)
+                        pack(directory,destination/'return.tar')
+                        unpack(destination/'return.tar',destination/'returned',time.monotonic()+30)
+                        returned=destination/'returned'
+                        self.assertEqual(verify(returned,returned/'input.parquet',Path(__file__).resolve().parents[1],started,ended)['decode_failures'],48)
                     runner.compact_outputs(directory)
                     self.assertTrue((native/'.flowdc/owner.json').exists())
                     self.assertEqual(verify(directory,directory/'input.parquet',Path(__file__).resolve().parents[1],started,ended)['decode_failures'],48)

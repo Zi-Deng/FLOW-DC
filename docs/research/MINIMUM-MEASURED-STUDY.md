@@ -109,6 +109,19 @@ Implementation entrypoints: `public_population` (metadata only), `minimum_study`
 `minimum_analysis` (measured-only summaries). All input populations, deployment
 packets, credentials, raw evidence and manuscript files remain private.
 
+First-attachment setup waits at most120s for the guest's automatic filesystem
+initialization; it never formats a disk. Native returns contain regular files:
+integrity hardlink aliases of the retained archive, archived row bodies and row
+metadata are omitted, while journals remain. This avoids both unsafe hardlink
+members and redundant body transfer. The independent archive verifier is unchanged.
+
+A stopped engineering job may receive one explicit corrective attempt after an
+execution defect is repaired. `gates/engineering-recovery.json` binds its unchanged
+failed record hash, repair source head, reason and a replacement ID ending in
+`-repair-1`. The failed record stays in place and remains charged to campaign
+accounting. This exception cannot replace calibration/evaluation results, cannot
+approve a second failed correction, and does not extend any deadline or allowance.
+
 Use affected offline tests, one full local check/current CI and at most two
 independent review invocations/two review-driven repairs. Under the maintainer's
 explicit exception, one final PR follows experiments, reporting and cleanup;

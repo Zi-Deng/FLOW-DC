@@ -10,7 +10,7 @@ from uuid import UUID
 from .common import file_hash, read_json, require, utc, write_new
 
 MOUNT = r'''
-import json,os,pathlib,pwd,subprocess,sys
+import json,os,pathlib,pwd,subprocess,sys,time
 volume,root,expected=sys.argv[1:]
 assert root.startswith('/mnt/flowdc-external-') and root.rsplit('-',5)[0]=='/mnt/flowdc-external'
 serials={volume,volume[:20]}  # SCSI preserves UUID; virtio may truncate to20.
@@ -19,10 +19,14 @@ disks=list({d['path'] for d in inventory['blockdevices'] if d.get('type')=='disk
 assert len(disks)==1 and disks[0].startswith('/dev/'),'volume serial not uniquely found'
 device=disks[0]
 assert int(subprocess.check_output(['blockdev','--getsize64',device]))>=256*2**30
-value=subprocess.run(['blkid','-o','value','-s','UUID',device],capture_output=True,text=True)
-# Featured guests can autoformat/automount a newly attached volume. Never race
-# that service or reformat a filesystem; adopt only the campaign-owned empty FS.
-assert value.returncode==0 and value.stdout.strip(),'campaign filesystem not ready; no formatting performed'
+# Volume attachment can precede the featured guest's automatic filesystem setup.
+# Wait only for first adoption; never format or retry a changed retained UUID.
+end=time.monotonic()+(120 if expected=='NEW' else 0)
+while True:
+ value=subprocess.run(['blkid','-o','value','-s','UUID',device],capture_output=True,text=True,timeout=10)
+ if value.returncode==0 and value.stdout.strip():break
+ assert time.monotonic()<end,'campaign filesystem not ready; no formatting performed'
+ time.sleep(5)
 if expected!='NEW':assert value.stdout.strip()==expected,'filesystem UUID changed'
 target=pathlib.Path(root);assert not target.is_symlink()
 target.mkdir(mode=0o700,exist_ok=True)

@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from .common import read_json, require, write_new
+from .common import file_hash, read_json, require, write_new
 from .minimum_study import (
     LIMITS,
     METHODS,
@@ -144,6 +144,25 @@ def next_cell(study, remaining_seconds, lifecycle_seconds_per_job, calibration_r
     records = {p.parent.name: read_json(p) for p in (study / "runs").glob("*/record.json")}
     incomplete = [p.name for p in (study / "runs").iterdir() if p.is_dir() and p.name not in records]
     require(not incomplete, "unfinished first attempt; no replacement dispatch")
+    recovery = None
+    disposition = study / "gates/engineering-recovery.json"
+    if disposition.exists():
+        recovery = read_json(disposition)
+        old = recovery["run_id"]
+        require(
+            old in records
+            and records[old]["phase"] == "engineering"
+            and records[old]["status"] == "stopped"
+            and recovery["record_sha256"] == file_hash(study / "runs" / old / "record.json")
+            and recovery["replacement_run_id"] == old + "-repair-1"
+            and recovery["reason"]
+            and recovery["repair_head"] == read_json(study / "protocol.json")["source"]["head"],
+            "invalid engineering-only recovery disposition",
+        )
+        # Preserve the failed first attempt on disk and in campaign accounting.
+        # A single explicitly named engineering correction is never an efficacy
+        # replacement; a failed correction still stops the queue below.
+        records.pop(old)
     require(
         all(r["status"] == "complete" for r in records.values()), "stopped first attempt requires disposition"
     )
@@ -156,6 +175,8 @@ def next_cell(study, remaining_seconds, lifecycle_seconds_per_job, calibration_r
         for workers in (1, 2) if source == SOURCES[0] else (1,):
             for rows in (512, 2048):
                 for cell in candidates(source, "engineering", rows, workers):
+                    if recovery and cell["run_id"] == recovery["run_id"]:
+                        cell["run_id"] = recovery["replacement_run_id"]
                     if cell["run_id"] not in records:
                         return dispatch_cell(cell, records)
     if not calibration_ready:

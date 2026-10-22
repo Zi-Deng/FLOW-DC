@@ -26,17 +26,37 @@ def pack(directory, destination, *, metadata_only=False):
     """Keep native archive and all journals; omit only loose archive duplicates."""
     directory = Path(directory)
     excluded = set()
+    excluded_inodes = set()
+    canonical_inodes = {}
     index_path = directory / "native/outcome-index.json"
     if index_path.exists() and (directory / "native.tar").exists():
         for row in read_json(index_path)["rows"]:
             if row["disposition"] == "verified":
                 for key in ("payload", "metadata"):
                     excluded.add(directory / "native" / row[key])
+        # Integrity publication uses hardlinks. Keep one archive copy, plus all
+        # journals, rather than returning its export-stage alias and loose body
+        # aliases as well. The manager independently verifies the native archive.
+        for path in excluded:
+            require(not path.is_symlink(), "symlink in archived duplicate")
+            info = path.stat()
+            excluded_inodes.add((info.st_dev, info.st_ino))
+        for path in (directory / "native.tar", index_path, directory / "native/overview.json"):
+            if path.exists():
+                require(not path.is_symlink(), "symlink in canonical return")
+                info = path.stat()
+                canonical_inodes[(info.st_dev, info.st_ino)] = path
     total = 0
-    with tarfile.open(destination, "x") as archive:
+    with tarfile.open(destination, "x", dereference=True) as archive:
         for path in sorted(directory.rglob("*")):
             require(not path.is_symlink(), "symlink in owned return")
             if path.is_file() and path not in excluded:
+                info = path.stat()
+                inode = (info.st_dev, info.st_ino)
+                if inode in excluded_inodes or (
+                    inode in canonical_inodes and canonical_inodes[inode] != path
+                ):
+                    continue
                 if metadata_only and (path.parent != directory or path.stat().st_size > 64 * 2**20):
                     continue  # Full partial work remains on its owning guest.
                 total += path.stat().st_size

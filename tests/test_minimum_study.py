@@ -45,6 +45,37 @@ def native_shard(arguments):
 
 
 class MinimumStudyTests(unittest.TestCase):
+    def test_one_explicit_engineering_correction_preserves_failed_attempt(self):
+        from benchmark.real_server_study import minimum_queue as queue
+        from benchmark.real_server_study.common import file_hash
+
+        with tempfile.TemporaryDirectory() as temporary:
+            study = Path(temporary)
+            (study / "gates").mkdir()
+            old = next(queue.candidates(design.SOURCES[0], "engineering", 512))
+            directory = study / "runs" / old["run_id"]
+            directory.mkdir(parents=True)
+            write_new(directory / "record.json", dict(**old, status="stopped"))
+            write_new(study / "protocol.json", dict(source=dict(head="repaired")))
+            with self.assertRaisesRegex(ValueError, "stopped first attempt"):
+                queue.next_cell(study, 86400, 120)
+            original_hash = file_hash(directory / "record.json")
+            write_new(study / "gates/engineering-recovery.json", dict(
+                run_id=old["run_id"], replacement_run_id=old["run_id"] + "-repair-1",
+                record_sha256=original_hash, repair_head="repaired", reason="archive packing defect",
+            ))
+            cell = queue.next_cell(study, 86400, 120)
+            self.assertEqual(cell["run_id"], old["run_id"] + "-repair-1")
+            self.assertEqual(file_hash(directory / "record.json"), original_hash)
+            failed = study / "runs" / cell["run_id"]
+            failed.mkdir()
+            write_new(failed / "record.json", dict(**cell, status="stopped"))
+            with self.assertRaisesRegex(ValueError, "stopped first attempt"):
+                queue.next_cell(study, 86400, 120)
+            (directory / "record.json").write_text(json.dumps(dict(**old, status="complete")))
+            with self.assertRaisesRegex(ValueError, "engineering-only recovery"):
+                queue.next_cell(study, 86400, 120)
+
     def test_exhausted_cloud_envelope_records_blocker_without_activation(self):
         from types import SimpleNamespace
         from unittest.mock import Mock
@@ -359,6 +390,12 @@ class MinimumStudyTests(unittest.TestCase):
             (run / "native/photo").write_bytes(b"loose duplicate")
             (run / "native/photo.json").write_text("{}")
             (run / "native/.flowdc/measurement.json").write_text("{}")
+            (run / "native/.flowdc/exports").mkdir()
+            (run / "native/.flowdc/attempts").mkdir()
+            os.link(run / "native.tar", run / "native/.flowdc/exports/archive")
+            os.link(run / "native/photo", run / "native/.flowdc/attempts/payload")
+            os.link(run / "native/photo.json", run / "native/.flowdc/attempts/metadata")
+            os.link(run / "native/.flowdc/measurement.json", run / "native/.flowdc/measurement-alias.json")
             write_new(
                 run / "native/outcome-index.json",
                 dict(rows=[dict(disposition="verified", payload="photo", metadata="photo.json")]),
@@ -368,6 +405,11 @@ class MinimumStudyTests(unittest.TestCase):
             unpack(archive, root / "returned", time.monotonic() + 10)
             self.assertTrue((root / "returned/native/.flowdc/measurement.json").exists())
             self.assertFalse((root / "returned/native/photo").exists())
+            self.assertFalse((root / "returned/native/.flowdc/exports/archive").exists())
+            self.assertFalse((root / "returned/native/.flowdc/attempts/payload").exists())
+            self.assertTrue((root / "returned/native/.flowdc/measurement-alias.json").exists())
+            with tarfile.open(archive) as stored:
+                self.assertTrue(all(member.isfile() for member in stored))
             self.assertTrue((run / "native/photo").exists())  # no premature deletion
             with tarfile.open(root / "bad.tar", "w") as tar:
                 info = tarfile.TarInfo("../escape")
