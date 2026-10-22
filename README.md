@@ -713,3 +713,5 @@ installation/migration, trust enrollment and bounded live-run requirements. Thes
 tools do not imply scientific protocol approval.
 
 Independent review uses [one current provider-selectable path](docs/agent-workflow/REVIEW.md). The maintainer retired the exhaustive coverage/generation framework on October9,2026. Reports describe inspected scope and limitations without claiming comprehensive coverage. Old source/reports remain historical. Current-head CI, credential separation, finite review limits, human merge and scientific evidence requirements remain.
+
+The bounded four-method public-data pilot is documented in [Public real-world batches](docs/research/PUBLIC-REAL-BATCHES.md). It uses private frozen manifests, independent output verification and the existing supervised worker lifecycle.

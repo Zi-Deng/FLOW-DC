@@ -445,7 +445,7 @@ def bootstrap(packet,allocation=None):
     return outcome
 
 
-def collect(packet,seconds=900,metadata_limit=8*2**30):
+def collect(packet,seconds=900,metadata_limit=8*2**30,public_metadata=False):
     """Retry only a metadata transfer; closed transfers/extractions are reusable."""
     import contextlib
     import os
@@ -463,8 +463,12 @@ def collect(packet,seconds=900,metadata_limit=8*2**30):
         require(shutil.disk_usage(packet).free>=56*2**30,"metadata transfer/extraction would consume local reserve")
         op=read_json(packet/"operator.json")
         script="""import hashlib,io,json,pathlib,sys,tarfile
-root=pathlib.Path(sys.argv[1])
+root=pathlib.Path(sys.argv[1]);public=sys.argv[2]=='public'
 paths=set(root.glob('*'))|set(root.glob('analysis/**/*'))|set(root.glob('runs/*/*'))
+if public:
+ paths.update(root.glob('gates/*'))
+ paths.update(root.glob('runs/*/native/*.parquet'))
+ paths.update(root.glob('runs/*/native/overview.json'))
 for directory in root.glob('runs/*'):
  if not directory.is_dir() or directory.is_symlink():continue
  record=directory/'record.json'
@@ -491,7 +495,7 @@ for directory in root.glob('runs/*'):
 manifest={}
 with tarfile.open(fileobj=sys.stdout.buffer,mode='w|') as archive:
  for p in sorted(paths):
-  if p.is_file() and not p.is_symlink() and p.suffix in ('.json','.jsonl','.log','.tex','.pdf'):
+  if p.is_file() and not p.is_symlink() and p.suffix in (('.json','.jsonl','.log','.tex','.pdf','.parquet') if public else ('.json','.jsonl','.log','.tex','.pdf')):
    name=str(p.relative_to(root));digest=hashlib.sha256()
    with p.open('rb') as stream:
     for chunk in iter(lambda:stream.read(1024*1024),b''):digest.update(chunk)
@@ -501,7 +505,7 @@ with tarfile.open(fileobj=sys.stdout.buffer,mode='w|') as archive:
  info=tarfile.TarInfo('metadata-manifest.json');info.size=len(data);info.mode=0o600
  archive.addfile(info,io.BytesIO(data))
 """
-        command=[op["guest_python"],"-c",script,op["guest_root"]+"/study"]
+        command=[op["guest_python"],"-c",script,op["guest_root"]+"/study",'public' if public_metadata else 'historical']
         partial=packet/"return.partial"
         if partial.exists():
             require(partial.is_file() and not partial.is_symlink(),"unsafe partial transfer")
