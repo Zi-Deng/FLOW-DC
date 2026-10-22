@@ -199,6 +199,134 @@ class PublicBatchTests(unittest.TestCase):
             ):
                 public_cloud.qualification(packet)
 
+    def test_post_review_repair_requires_exact_disclosed_delta(self):
+        import hashlib
+        import json
+        from types import SimpleNamespace
+
+        from benchmark.real_server_study import public_cloud
+        from benchmark.real_server_study.common import file_hash
+
+        with tempfile.TemporaryDirectory() as d:
+            packet = Path(d)
+            write_new(packet / "operator.json", {"source": "/source"})
+            write_new(packet / "deployment.json", {"source": {"head": "final"}})
+            write_new(packet / "review.json", {"head": "reviewed", "status": "completed"})
+            write_new(packet / "report.json", {"findings": []})
+            delta = b"bounded repair delta"
+            proof = dict(
+                head="final",
+                review_file=str(packet / "review.json"),
+                report_file=str(packet / "report.json"),
+                review_sha256=file_hash(packet / "review.json"),
+                report_sha256=file_hash(packet / "report.json"),
+                ci_run_ids=[1, 2],
+            )
+            write_new(packet / "qualification.json", proof)
+            with self.assertRaises(ValueError):
+                public_cloud.qualification(packet)
+            proof.update(
+                reviewed_head="reviewed",
+                final_head="final",
+                post_review_repair=True,
+                post_review_delta_sha256=hashlib.sha256(delta).hexdigest(),
+            )
+            (packet / "qualification.json").write_text(json.dumps(proof))
+            outcomes = [delta] + [
+                json.dumps(dict(headSha="final", conclusion="success", name=name))
+                for name in ("FLOW-DC regression tests", "agentic workflow tests")
+            ]
+            with (
+                patch.object(public_cloud.subprocess, "run", return_value=SimpleNamespace(returncode=0)),
+                patch.object(public_cloud.subprocess, "check_output", side_effect=outcomes),
+            ):
+                public_cloud.qualification(packet)
+            with (
+                patch.object(public_cloud.subprocess, "run", return_value=SimpleNamespace(returncode=0)),
+                patch.object(public_cloud.subprocess, "check_output", return_value=b"changed delta"),
+                self.assertRaises(ValueError),
+            ):
+                public_cloud.qualification(packet)
+
+    def test_worker_context_is_inside_bounded_step_and_clock_is_not_reset(self):
+        import contextlib
+        import datetime as dt
+        import sys
+
+        from benchmark.real_server_study import public_cloud
+        from benchmark.real_server_study.common import read_json
+
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "bin"))
+        import flowdc_ops
+        import flowdc_pilot_provider
+
+        class Observed(Exception):
+            pass
+
+        class Provider:
+            inside = False
+
+            def __init__(self, profile):
+                pass
+
+            def verify_idle(self, current):
+                pass
+
+            @contextlib.contextmanager
+            def step(self, *args):
+                self.inside = True
+                try:
+                    yield
+                finally:
+                    self.inside = False
+
+            def context(self, current):
+                if not self.inside:
+                    raise AssertionError("unbounded provider context")
+
+            def query(self, *args):
+                raise Observed()
+
+        with tempfile.TemporaryDirectory() as d:
+            packet = Path(d)
+            write_new(
+                packet / "operator.json",
+                dict(
+                    source="/source",
+                    state="/state",
+                    worker_id="worker",
+                    allocation_file=str(packet / "allocation.json"),
+                ),
+            )
+            write_new(packet / "deployment.json", {"source": {"head": "fixed"}})
+            write_new(
+                packet / "allocation.json",
+                dict(
+                    allocation="CIS240296",
+                    cpu_su=100,
+                    reported_at=dt.datetime.now(dt.UTC).isoformat(),
+                    expiry_date="2027-04-17",
+                ),
+            )
+            current = {"profile_path": "/profile", "spec": {"vms": [{"id": "worker"}]}}
+            journal = type("Journal", (), {"read": lambda _: current})()
+            with (
+                patch.object(public_cloud, "qualification"),
+                patch.object(public_cloud, "source_identity", return_value={"head": "fixed"}),
+                patch.object(
+                    public_cloud.cloud, "imports", return_value=(lambda _: journal, None, None, None)
+                ),
+                patch.object(flowdc_ops, "load_profile", return_value={}),
+                patch.object(flowdc_pilot_provider, "Provider", Provider),
+            ):
+                with self.assertRaises(Observed):
+                    public_cloud.authorize(packet)
+                clock = read_json(packet / "start-clock.json")
+                with self.assertRaises(Observed):
+                    public_cloud.authorize(packet)
+                self.assertEqual(clock, read_json(packet / "start-clock.json"))
+            self.assertFalse((packet / "campaign.json").exists())
+
     def test_source_rights_gate_precedes_image_probe(self):
         with tempfile.TemporaryDirectory() as d:
             study = Path(d)

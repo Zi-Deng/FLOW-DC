@@ -64,7 +64,7 @@ has different scientific dependency pins and must not be merged into it.
    references. It does not activate a VM.
 4. Put current-head CI run IDs and fixed-head independent review receipts in the
    private packet's `qualification.json`. The user's explicit exception permits
-   branch CI/review before the single final PR, without an intermediate merge.
+   branch CI/review before the single final PR, without an intermediate merge. After the two-review ceiling, a bounded final repair must disclose the actual last-reviewed SHA, final SHA and exact Git delta digest alongside current-head CI. This is not labeled a final-head review. The initial preflight clock persists across failed read-only checks; no retry extends the batch deadline.
 5. Run `python -m benchmark.real_server_study.public_cloud run --packet PACKET`.
    This applies the finite supported campaign grant and supervises bounded worker
    windows. Keep the controller process alive. Each window stops/offloads through

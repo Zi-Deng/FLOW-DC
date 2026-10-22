@@ -2,6 +2,7 @@
 
 import argparse
 import datetime as dt
+import hashlib
 import json
 import math
 import os
@@ -123,11 +124,35 @@ def qualification(packet):
         and file_hash(proof["report_file"]) == proof["report_sha256"],
         "review receipt changed",
     )
+    reviewed = review["head"]
+    if reviewed != head:
+        # The maintainer caps this task at two reviews. A bounded final repair
+        # retains its actual reviewed SHA, exact delta and current-head CI.
+        op = read_json(packet / "operator.json")
+        require(
+            proof.get("reviewed_head") == reviewed
+            and proof.get("final_head") == head
+            and proof.get("post_review_repair") is True,
+            "undisclosed post-review source change",
+        )
+        require(
+            subprocess.run(
+                ["git", "merge-base", "--is-ancestor", reviewed, head], cwd=op["source"]
+            ).returncode
+            == 0,
+            "review is not an ancestor",
+        )
+        delta = subprocess.check_output(
+            ["git", "diff", "--no-ext-diff", "--no-textconv", reviewed, head], cwd=op["source"]
+        )
+        require(
+            hashlib.sha256(delta).hexdigest() == proof.get("post_review_delta_sha256"),
+            "post-review repair delta changed",
+        )
     require(
-        review["head"] == head
-        and review["status"] == "completed"
+        review["status"] == "completed"
         and not any(f["severity"] in ("P0", "P1", "P2") for f in report["findings"]),
-        "current-head accepted static review required",
+        "accepted static review and disclosed final repair required",
     )
     names = set()
     for run in proof["ci_run_ids"]:
@@ -165,7 +190,16 @@ def authorize(packet):
     from flowdc_pilot_provider import Provider
     from flowdc_pilot_supervisor import sample_clock
 
-    clock = sample_clock()  # Before the first live provider observation, not after activation.
+    clock = sample_clock()  # Preserve the first preflight clock across failed read-only checks.
+    clock_path = packet / "start-clock.json"
+    if clock_path.exists():
+        from flowdc_pilot import ClockSample
+
+        earlier = read_json(clock_path)
+        require(earlier["boot_id"] == clock.boot_id, "preflight controller reboot")
+        clock = ClockSample(**earlier)
+    else:
+        write_new(clock_path, vars(clock))
     qualification(packet)
     require(source_identity(op["source"]) == deployment["source"], "deployment source changed")
     current = journal.read()
@@ -191,8 +225,8 @@ def authorize(packet):
         return journal, read_json(packet / "campaign.json")
     worker = next(v for v in current["spec"]["vms"] if v["id"] == op["worker_id"])
     provider = Provider(ops.load_profile(current["profile_path"]))
-    provider.context(current)
     with provider.step("preflight", "worker"):
+        provider.context(current)
         value = provider.query("server", worker["id"])
         require(
             provider.validate_server(current, worker["id"], value) == "SHELVED_OFFLOADED",
