@@ -38,11 +38,12 @@ print(json.dumps({'volume_id':volume,'filesystem_uuid':value.stdout.strip(),'roo
 '''
 
 
-def volume_call(profile, action, args):
+def volume_call(profile, action, args, *, size_gib=256):
     import flowdc_ops as ops
     require(action in ("show","create","attach"),"unsupported volume action")
     if action=="create":
         require(len(args)==1 and str(UUID(args[0]))==args[0],"invalid campaign identity")
+        require(type(size_gib) is int and size_gib in (256,384),"unsupported finite campaign volume size")
     else:
         require(all(str(UUID(a))==a for a in args),"invalid volume/VM UUID")
     prefix=r'''set +x +v
@@ -51,7 +52,7 @@ readonly flowdc_credential=$1 flowdc_client=$2 flowdc_action=$3
 shift 3
 case "$flowdc_action" in
  show) command=(volume show "$1" -f json);;
- create) command=(volume create --size 256 --property "flowdc_campaign=$1" "flowdc-external-$1" -f json);;
+ create) command=(volume create --size "$2" --property "flowdc_campaign=$1" "flowdc-external-$1" -f json);;
  attach) command=(server add volume "$1" "$2" -f json);;
  *) exit 64;;
 esac
@@ -61,26 +62,26 @@ readonly -a command
     ops.validate_client(profile["openstack_client"])
     with ops.private_file(profile["credential_file"]) as fd:
         code,raw=ops.run_bounded(["/bin/bash","-p","-c",script,"flowdc-volume",
-             f"/proc/self/fd/{fd}",profile["openstack_client"],action,*args],timeout=60,pass_fds=(fd,),classify_errors=True)
+             f"/proc/self/fd/{fd}",profile["openstack_client"],action,*args,*([str(size_gib)] if action=="create" else [])],timeout=60,pass_fds=(fd,),classify_errors=True)
     require(code==0,"volume operation failed; preserve intent, no automatic mutation replay")
     return ops.parse_json(raw) if raw.strip() else {}
 
 
-def create_volume(packet, profile, worker_id):
+def create_volume(packet, profile, worker_id, *, size_gib=256):
     deployment=read_json(packet/"deployment.json")
     if (packet/"volume.json").exists():
         receipt=read_json(packet/"volume.json")
     else:
         require(not (packet/"volume-create-intent.json").exists(),"volume creation uncertain; reconcile its retained intent first")
         write_new(packet/"volume-create-intent.json",{"utc":utc(),"campaign_id":deployment["campaign_id"]})
-        result=volume_call(profile,"create",[deployment["campaign_id"]])
+        result=volume_call(profile,"create",[deployment["campaign_id"]],size_gib=size_gib)
         key=result.get("id") or result.get("ID")
         receipt={"volume_id":str(UUID(key)),"campaign_id":deployment["campaign_id"],"created_for_campaign":True}
         write_new(packet/"volume.json",receipt)
     volume=volume_call(profile,"show",[receipt["volume_id"]])
     properties=volume.get("properties",{})
     require(isinstance(properties,dict) and properties.get("flowdc_campaign")==deployment["campaign_id"],"volume ownership metadata mismatch")
-    require(int(volume["size"])==256,"volume size mismatch")
+    require(int(volume["size"])==size_gib,"volume size mismatch")
     attachments=volume.get("attachments") or []
     if not attachments:
         deadline=time.monotonic()+120

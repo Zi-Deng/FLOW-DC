@@ -397,7 +397,8 @@ Hard overload signals still take precedence and enter the inherited `BACKOFF` pa
 | `create_overview` | bool | true | Write internal/external overview reports referencing the final completion record |
 | `force_overwrite` | bool | false | Allow deletion of an existing output folder; CLI equivalent: `--force` / `-f` |
 | `research_profile` | bool | false | Select row-ID naming, WebDataset metadata, uncompressed archive and overview; CLI: `--research_profile` |
-| `control_method` | string/null | null | Explicit `paarc-base-v2`, `gradient-candidate-v1`, `fixed-v1`, `ratio-v1` or `gradient2-application-delay-v1`; null preserves the legacy entrypoint default |
+| `control_method` | string/null | null | Explicit `paarc-base-v2`, `gradient-candidate-v1`, `fixed-v1`, `ratio-v1`, `gradient2-application-delay-v1`, or experimental `gradient-candidate-v2`/`ratio-v2`; null preserves the legacy entrypoint default |
+| `http_connection_limit` | integer/null | null | Optional 1–10000 TCP connector ceiling, separate from task/permit concurrency; null preserves automatic sizing. CLI: `--http_connection_limit` (JSON takes precedence with `--config`). |
 | `research_workload` | string/null | null | Explicit finite `bounded-research-v2` profile; requires research output and an explicit method; see [workload contract](docs/research/WORKLOAD.md) |
 | `method_options` | object | {} | Versioned engineering parameters/ablation for the selected method; see [method contract](docs/research/CONTROL-METHODS.md) |
 | `resume` | bool | false | Reconcile, then continue eligible unresolved rows within their original attempt budgets; CLI: `--resume` |
@@ -637,6 +638,11 @@ retained control trajectories. Use `bin/download_batch.py --control_method METHO
 or [the candidate example](files/config/gradient-candidate-v1.json). These are
 engineering defaults awaiting specific advisor decisions; the legacy gradient
 entrypoint retains its old behavior.
+
+The experimental [`ratio-v2` and `gradient-candidate-v2` ablation study](docs/research/ADAPTIVE-150.md)
+adds utilization-gated startup and explicit delay budgets. Its finite research
+window, actual HTTP exposure and private results are separate from v1 qualification;
+neither method is promoted to the default.
 
 The [pinned Gradient2 adaptation](third_party/netflix-gradient2/README.md) is selected
 with `gradient2-application-delay-v1` in local and shared acquisition. It feeds

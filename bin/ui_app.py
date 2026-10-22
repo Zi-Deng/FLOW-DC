@@ -94,6 +94,7 @@ DEFAULT_CONFIG = {
 
     # Download settings
     "concurrent_downloads": 1000,
+    "http_connection_limit": None,
     "timeout_sec": 30,
 
     # PAARC toggle
@@ -168,7 +169,7 @@ class UIState:
 
             # Direct mappings for PAARC parameters
             direct_keys = [
-                "input_format", "output_format", "concurrent_downloads",
+                "input_format", "output_format", "concurrent_downloads", "http_connection_limit",
                 "enable_paarc", "control_method", "method_options", "shared_control_file",
                 # PAARC concurrency bounds
                 "C_init", "C_min", "C_max",
@@ -210,6 +211,7 @@ class UIState:
 
                 # Download settings
                 "concurrent_downloads": self.config["concurrent_downloads"],
+                "http_connection_limit": self.config["http_connection_limit"],
                 "timeout": self.config["timeout_sec"],
 
                 # PAARC toggle

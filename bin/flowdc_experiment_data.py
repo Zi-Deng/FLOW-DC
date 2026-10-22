@@ -211,6 +211,7 @@ def specification(value):
 # Deliberately exclude path/output/shell/resource controls owned by the runner.
 INTEGER_CONFIG = {
     "concurrent_downloads": (1, 2048),
+    "http_connection_limit": (1, 10000),
     "C_init": (1, 2048),
     "C_min": (1, 2048),
     "C_max": (1, 2048),

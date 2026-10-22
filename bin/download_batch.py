@@ -295,6 +295,7 @@ class Config:
     resume: bool = False
     reconcile: bool = False
     research_profile: bool = False
+    http_connection_limit: int | None = None  # Optional transport cap, separate from permits.
 
     def to_paarc_config(self) -> PAARCConfig:
         """Convert to PAARCConfig with relevant parameters."""
@@ -342,6 +343,7 @@ Examples:
     p.add_argument("--output_format", type=str, default="imagefolder")
     
     # Download settings
+    p.add_argument("--http_connection_limit", type=int, default=None)
     p.add_argument("--concurrent_downloads", type=int, default=0,
                    help="Worker pool size. 0 = auto-detect based on unique hosts (recommended)")
     p.add_argument("--timeout", dest="timeout_sec", type=int, default=30)
@@ -415,6 +417,7 @@ Examples:
             output_format=data.get("output_format", "imagefolder"),
             concurrent_downloads=data.get("concurrent_downloads"),  # None = auto-detect
             timeout_sec=int(data.get("timeout", 30)),
+            http_connection_limit=data.get("http_connection_limit"),
             enable_paarc=bool(data.get("enable_paarc", True)),
             C_init=int(data.get("C_init", 4)),
             C_min=int(data.get("C_min", 2)),
@@ -462,7 +465,7 @@ Examples:
         label_col=args.label_col,
         output_format=args.output_format,
         concurrent_downloads=args.concurrent_downloads if args.concurrent_downloads > 0 else None,
-        timeout_sec=args.timeout_sec,
+        timeout_sec=args.timeout_sec, http_connection_limit=args.http_connection_limit,
         enable_paarc=args.enable_paarc and not args.disable_paarc,
         C_init=args.C_init,
         C_min=args.C_min,
@@ -500,6 +503,8 @@ Examples:
 # =============================================================================
 
 def normalize_config(cfg):
+    if cfg.http_connection_limit is not None and (type(cfg.http_connection_limit) is not int or not 1 <= cfg.http_connection_limit <= 10000):
+        raise ValueError("http_connection_limit must be an integer in1..10000")
     if cfg.research_workload is not None:
         from flowdc_research_profile import workload
         workload(cfg.research_workload)
@@ -2186,6 +2191,10 @@ async def download_batch_bounded(
     async def cancel_on_shutdown():
         while not shutdown_flag:
             await asyncio.sleep(0.1)
+        if cfg.research_workload == "bounded-adaptive-ablation-v1":
+            # The study guard has already stopped new HTTP dispatch. Let owned
+            # requests drain, then cancel anything still outstanding.
+            await asyncio.wait(workers, timeout=30)
         for task in workers:
             task.cancel()
 
@@ -2303,6 +2312,7 @@ def generate_overview_report(
             "url_column": cfg.url_col,
             "label_column": cfg.label_col,
             "concurrent_downloads": cfg.concurrent_downloads,
+            "http_connection_limit": cfg.http_connection_limit,
             "timeout_sec": cfg.timeout_sec,
             "enable_paarc": cfg.enable_paarc,
             "control_method": cfg.control_method,
@@ -2447,7 +2457,10 @@ def finalize_run(cfg, store, snapshot, elapsed, report_factory):
     if cfg.create_overview:
         store.emit("overview.json", integrity.encode(report))
     tar_time, artifact_error = 0.0, None
-    if cfg.create_tar and not shutdown_flag:
+    # This explicitly selected profile publishes a verified prefix after its
+    # finite acquisition window. It never marks an interrupted manifest complete.
+    partial_archive = cfg.research_workload == "bounded-adaptive-ablation-v1"
+    if cfg.create_tar and (not shutdown_flag or partial_archive):
         try:
             started = _monotonic()
             path, size, sha256 = store.make_archive(snapshot, report, compress=cfg.compress_tar)
@@ -2553,7 +2566,7 @@ async def run_acquisition(cfg, *, manager_factory=HostControllerManager, report_
                 else:
                     manager = manager_factory(cfg.to_paarc_config())
                 ctrl_task = asyncio.create_task(controller_loop(manager))
-            connector = aiohttp.TCPConnector(limit=max(50, int(effective_workers * 1.1)), ttl_dns_cache=300)
+            connector = aiohttp.TCPConnector(limit=cfg.http_connection_limit or max(50, int(effective_workers * 1.1)), ttl_dns_cache=300)
             async with aiohttp.ClientSession(
                 connector=connector, timeout=aiohttp.ClientTimeout(total=max(1, cfg.timeout_sec * 2)),
                 headers={"User-Agent": "FLOW-DC/2.0 PAARC/2.0"}, trace_configs=[build_trace_config()],
@@ -2571,6 +2584,11 @@ async def run_acquisition(cfg, *, manager_factory=HostControllerManager, report_
                         global_written_paths=written, effective_workers=effective_workers, store=store,
                         shared=shared,
                     )
+                    if shutdown_flag:
+                        # The common final boundary reconciles all rows below.
+                        # Repeating this full archive/journal scan after a planned
+                        # stop adds substantial cost on the research volume.
+                        break
                     snapshot = store.reconcile()
                     keys = store.eligible(snapshot)
                     if keys and not shutdown_flag:

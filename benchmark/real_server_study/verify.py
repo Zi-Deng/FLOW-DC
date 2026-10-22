@@ -93,13 +93,16 @@ def observations(run_dir, started=None, ended=None, initial=4, strict=False):
             "fraction_decisions_at_256": sum(after == 256 for _, _, after, _ in limits) / len(limits) if limits else None}
 
 
-def verify(run_dir, slice_path, source, started=None, ended=None, credit_urls=False):
+def verify(run_dir, slice_path, source, started=None, ended=None, credit_urls=False, planned_window=False):
     source = Path(source)
     sys.path.insert(0, str(source))
     sys.path.insert(0, str(source / "bin"))
     import download_batch
     import flowdc_integrity
-    from flowdc_research_profile import EXTERNAL as RESEARCH
+    from flowdc_research_profile import EXTERNAL, workload
+    raw_config = read_json(Path(run_dir) / "flowdc-config.json")
+    RESEARCH = workload(raw_config.get("research_workload")) if planned_window else EXTERNAL
+    require(not planned_window or RESEARCH.name == "bounded-adaptive-ablation-v1", "planned-window profile required")
 
     from benchmark.core.verifier import archive_members, file_digest, read_file
 
@@ -146,9 +149,9 @@ def verify(run_dir, slice_path, source, started=None, ended=None, credit_urls=Fa
     for row in index["rows"]:
         position, metadata = expected_ids[row["row_id"]]
         require(row["source_position"] == position and row["source_manifest"] == manifest, "row provenance mismatch")
-        require(row["disposition"] in ("verified", "failed") and not row["attempt_information_uncertain"],
+        require(row["disposition"] in (("verified", "failed", "unattempted") if planned_window else ("verified", "failed")) and not row["attempt_information_uncertain"],
                 "unknown/unattempted row evidence")
-        require(1 <= row["attempt_intents"] <= cfg.max_retry_attempts, "invalid attempt count")
+        require((0 if planned_window and row["disposition"] == "unattempted" else 1) <= row["attempt_intents"] <= cfg.max_retry_attempts, "invalid attempt count")
         if row["disposition"] != "verified":
             continue
         payload_name, metadata_name = "native/" + row["payload"], "native/" + row["metadata"]
@@ -175,13 +178,15 @@ def verify(run_dir, slice_path, source, started=None, ended=None, credit_urls=Fa
     counts = Counter(r["disposition"] for r in index["rows"])
     require(all(index["counts"][k] == counts[k] for k in ("verified", "failed", "skipped", "unattempted")), "disposition count mismatch")
     require(verified_bytes == index["verified_payload_bytes"] == final["useful_final_payload_bytes"], "useful byte mismatch")
-    require(final["run_complete"] == (counts["failed"] == 0), "native completion/count mismatch")
+    marker=read_json(run_dir/"planned-stop.json") if planned_window else None
+    require(final["run_complete"] == (counts["failed"] == 0 and counts["unattempted"] == 0 and (not planned_window or marker["reason"] == "input_exhausted")), "native completion/count mismatch")
     obs = observations(run_dir, started, ended, cfg.C_init, strict=True)
     require(obs["attempts"] == sum(r["attempt_intents"] for r in index["rows"]), "attempt denominator mismatch")
-    require(not obs["failure_kinds"].get("unknown"), "unclassified acquisition failure")
+    if not planned_window:
+        require(not obs["failure_kinds"].get("unknown"), "unclassified acquisition failure")
     audit = [json.loads(line) for line in (run_dir / "request-audit.jsonl").read_text().splitlines()]
     require(audit and audit[0]["event"] == "start" and audit[-1]["event"] == "closed"
-            and audit[-1]["active"] == 0 and not audit[-1]["stop_reason"], "audit not normally closed")
+            and audit[-1]["active"] == 0 and (audit[-1]["stop_reason"] in (None, "planned_window_end", "planned_body_budget") if planned_window else not audit[-1]["stop_reason"]), "audit not normally closed")
     active, dispatched_tokens, ended_tokens = set(), set(), set()
     previous = -1
     for event in audit:
@@ -200,13 +205,35 @@ def verify(run_dir, slice_path, source, started=None, ended=None, credit_urls=Fa
     require(not active and dispatched_tokens <= ended_tokens, "unclosed network requests")
     attempted = Counter(e["url"] for e in audit if e["event"] == "attempt")
     dispatched = Counter(e["url"] for e in audit if e["event"] == "dispatch")
-    require(sum(attempted.values()) == obs["attempts"] and set(attempted) == set(frame["url"]), "request audit denominator mismatch")
+    censored_dispatched = set()
+    require(sum(attempted.values()) == obs["attempts"] and (set(attempted) <= set(frame["url"]) if planned_window else set(attempted) == set(frame["url"])), "request audit denominator mismatch")
+    if planned_window:
+        from .ablation import terminal_fault
+        require(not any(terminal_fault(event) for event in audit),'terminal public fault in credited window')
+        marker=read_json(run_dir/"planned-stop.json")
+        require(marker["reason"] == (audit[-1]["stop_reason"] or "input_exhausted") and marker["protocol_sha256"] == read_json(run_dir/"attempt.json")["protocol_sha256"], "planned-stop binding changed")
+        for record in index["rows"]:
+            error=str(record.get("error") or "")
+            if record["disposition"] == "failed" and "study dispatch stopped:" in error:
+                require(any(reason in error for reason in ("planned_window_end","planned_body_budget")), "unplanned guard rejection")
+                url=expected_ids[record['row_id']][1]['url']
+                if url in dispatched:censored_dispatched.add(url)
+        unknown=[]
+        for spec in overview["http_observations"]["files"]:
+            measurement=read_json(native/spec["path"])
+            if measurement["failure_kind"] == "unknown":unknown.append(measurement)
+        failures={r["row_id"]:str(r.get("error") or "") for r in index["rows"]}
+        require(all(any("study dispatch stopped: "+reason in failures[r["row_id"]] for reason in ("planned_window_end","planned_body_budget")) for r in unknown), "unknown failure is not planned administrative censoring")
     require(all(n <= cfg.max_retry_attempts and dispatched[url] <= n for url, n in attempted.items()), "unexpected request replay")
     result = {"native_run_complete": final["run_complete"], "final_useful_payload_bytes": final["useful_final_payload_bytes"],
             "flowdc_verified_payload_bytes": verified_bytes, "dispositions": dict(counts),
             "row_errors": dict(Counter(str(r.get("error")) for r in index["rows"] if r["disposition"] != "verified")),
             "row_final_status": dict(Counter(str(r.get("status_code")) for r in index["rows"])),
             "credited_bytes": credited, "credited_rows": credited_rows, "decode_failures": decode_failures,
+            **({"attempted_rows":len(attempted), "dispatched_rows":len(dispatched),
+                "administratively_censored_dispatched_rows":len(censored_dispatched),
+                "dispatched_terminal_rows":len(dispatched)-len(censored_dispatched),
+                "original_rows":frame.height, "protocol_window_complete":True} if planned_window else {}),
             "archive_mismatch": 0, "archive_sha256": archive_sha, "observations": obs}
     if credit_urls:
         result['credited_url_bytes'] = credited_urls
@@ -222,8 +249,9 @@ def main():
     parser.add_argument("--ended", type=float, required=True)
     parser.add_argument("--partial", action="store_true")
     parser.add_argument("--credit-urls", action="store_true")
+    parser.add_argument("--planned-window", action="store_true")
     args = parser.parse_args()
-    result = observations(args.run_dir, args.started, args.ended) if args.partial else verify(args.run_dir, args.slice, args.source, args.started, args.ended, args.credit_urls)
+    result = observations(args.run_dir, args.started, args.ended) if args.partial else verify(args.run_dir, args.slice, args.source, args.started, args.ended, args.credit_urls, args.planned_window)
     # stdout is a bounded JSON interface; native artifacts are never changed.
     print(json.dumps(result, allow_nan=False))
 

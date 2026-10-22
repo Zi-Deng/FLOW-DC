@@ -15,7 +15,8 @@ from uuid import uuid4
 from yarl import URL
 
 GRADIENT2_METHOD = "gradient2-application-delay-v1"
-METHODS = ("paarc-base-v2", "gradient-candidate-v1", "fixed-v1", "ratio-v1", GRADIENT2_METHOD)
+EXPERIMENTAL_METHODS = ("gradient-candidate-v2", "ratio-v2")
+METHODS = ("paarc-base-v2", "gradient-candidate-v1", "fixed-v1", "ratio-v1", GRADIENT2_METHOD, *EXPERIMENTAL_METHODS)
 ABLATIONS = (
     "no-gradient-term",
     "no-elapsed-smoothing",
@@ -23,6 +24,8 @@ ABLATIONS = (
     "no-baseline-refresh",
     "no-recovery-grace",
 )
+
+EXPERIMENTAL_ABLATIONS = ABLATIONS + ("no-startup", "no-utilization-gate", "no-method-feedback")
 
 
 def require(value, message):
@@ -120,13 +123,17 @@ class MethodConfig:
     recovery_grace_s: float = 1.0
     ratio_buffer_fraction: float = 0.1
     ratio_headroom: int = 1
+    startup_growth_factor: float = 1.5
+    startup_max_step: int = 64
+    target_delay_ratio: float = 3.0
+    utilization_threshold: float = 0.8
     ablation: str | None = None
 
     def __post_init__(self):
         require(self.method in METHODS and self.method != GRADIENT2_METHOD, "unknown delay-policy method")
-        require(self.ablation is None or self.ablation in ABLATIONS, "unknown mechanism ablation")
+        require(self.ablation is None or self.ablation in (EXPERIMENTAL_ABLATIONS if self.method in EXPERIMENTAL_METHODS else ABLATIONS), "unknown mechanism ablation")
         require(
-            self.ablation is None or self.method == "gradient-candidate-v1",
+            self.ablation is None or self.method == "gradient-candidate-v1" or self.method in EXPERIMENTAL_METHODS,
             "ablations require gradient candidate",
         )
         for name in (
@@ -137,6 +144,7 @@ class MethodConfig:
             "persistence",
             "increase_step",
             "ratio_headroom",
+            "startup_max_step",
         ):
             require(
                 type(getattr(self, name)) is int and getattr(self, name) > 0,
@@ -158,6 +166,10 @@ class MethodConfig:
             self.interval_s < self.stale_after_s <= self.baseline_max_age_s, "invalid freshness intervals"
         )
         require(self.probe_wait_s >= self.interval_s, "probe must span at least one interval")
+        require(1 < self.startup_growth_factor <= 2 and 1 < self.target_delay_ratio < 5, "invalid experimental growth/delay budget")
+        require(self.utilization_threshold <= 1, "invalid utilization threshold")
+        if self.method not in EXPERIMENTAL_METHODS:
+            require(self.ablation not in ("no-startup", "no-utilization-gate", "no-method-feedback"), "experimental ablation requires v2")
         require(self.ratio_buffer_fraction <= 1, "ratio buffer fraction exceeds one")
         require(
             self.sample_window_s is None or self.interval_s <= self.sample_window_s < self.stale_after_s,
@@ -196,10 +208,17 @@ class MethodConfig:
             )
         known = {field.name for field in fields(cls)}
         require(not set(options) - known, "unknown versioned method option")
+        require(config.control_method in EXPERIMENTAL_METHODS or not set(options).intersection(
+            {"startup_growth_factor", "startup_max_step", "target_delay_ratio", "utilization_threshold"}),
+            "experimental options require v2")
         require(
             config.control_method != "paarc-base-v2" or not options,
             "base PAARC uses its existing named parameters, not method_options",
         )
+        if config.control_method in EXPERIMENTAL_METHODS:
+            options = {"interval_s":1.0, "sample_window_s":2.0, "stale_after_s":5.0,
+                       "probe_wait_s":1.0, "baseline_max_age_s":120.0, "hard_queue_ratio":4.0,
+                       "soft_factor":0.85, **options}
         return cls(
             method=config.control_method,
             c_min=config.C_min,
@@ -221,6 +240,8 @@ class DelayPolicy:
         self.probe_started = None
         self.recovery_until = 0.0
         self.overuse = 0
+        self.exploring = True
+        self.falling = 0
 
     def reset_derivative(self):
         self.queue = self.gradient = self.current_delay = self.last_sample = None
@@ -278,6 +299,8 @@ class DelayPolicy:
                 "recovery_until_s": self.recovery_until,
                 "overload": overload,
                 "inflight": inflight,
+                **({"exploring":self.exploring, "falling_ticks":self.falling}
+                   if cfg.method in EXPERIMENTAL_METHODS else {}),
             }
 
         if cfg.method == "fixed-v1":
@@ -291,6 +314,7 @@ class DelayPolicy:
         stale_baseline = self.baseline_at is not None and now - self.baseline_at >= cfg.baseline_max_age_s
         if stale_baseline and cfg.ablation != "no-baseline-refresh" and self.probe_started is None:
             self.probe_started = now
+            self.exploring = True
             self.limit = cfg.c_min
             self.reset_derivative()
             return result("baseline_probe")
@@ -340,6 +364,43 @@ class DelayPolicy:
         if now < self.recovery_until:
             self.overuse = 0
             return result("recovery_hold")
+        if cfg.method in EXPERIMENTAL_METHODS:
+            utilized = inflight >= cfg.utilization_threshold * before or cfg.ablation == "no-utilization-gate"
+            budget = cfg.target_delay_ratio * self.baseline
+            self.falling = self.falling + 1 if self.gradient <= -0.1 else 0
+            if self.falling >= 3 and now >= self.recovery_until:
+                self.exploring = True
+            if self.current_delay >= budget:
+                self.exploring = False
+            if self.exploring and cfg.ablation != "no-startup" and utilized:
+                self.limit = min(before + cfg.startup_max_step, math.ceil(before * cfg.startup_growth_factor))
+                return result("startup_increase")
+            if cfg.method == "ratio-v2":
+                ratio = 1.0 if cfg.ablation == "no-method-feedback" else min(1.10, max(0.85, math.sqrt(budget / self.current_delay)))
+                proposed = math.floor(before * ratio + 1)
+                self.limit = proposed if proposed <= before or utilized else before
+                return result("ratio_update" if self.limit != before else "utilization_hold")
+            if self.current_delay >= budget and cfg.ablation != "no-method-feedback":
+                self.limit = math.floor(before * cfg.soft_factor)
+                self.recovery_until = now + (0 if cfg.ablation == "no-recovery-grace" else cfg.recovery_grace_s)
+                self.reset_derivative()
+                return result("delay_budget_decrease")
+            feedback = cfg.ablation not in ("no-method-feedback", "no-gradient-term")
+            if feedback and self.queue >= cfg.queue_floor_s and self.gradient >= cfg.gradient_decrease_per_s:
+                self.overuse += 1
+                if self.overuse >= cfg.persistence:
+                    self.limit = math.floor(before * cfg.soft_factor)
+                    self.reset_derivative()
+                    self.recovery_until = now + (0 if cfg.ablation == "no-recovery-grace" else cfg.recovery_grace_s)
+                    return result("gradient_decrease")
+                return result("gradient_persistence_hold")
+            self.overuse = 0
+            if feedback and self.queue >= cfg.queue_floor_s and self.gradient >= cfg.gradient_hold_per_s:
+                return result("gradient_hold")
+            if not utilized:
+                return result("utilization_hold")
+            self.limit += min(8, max(1, math.ceil(.02 * before)))
+            return result("eligible_increase")
         if cfg.method == "ratio-v1":
             ratio = min(
                 1.0,

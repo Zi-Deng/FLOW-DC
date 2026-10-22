@@ -6,3 +6,4 @@ scipy==1.18.0
 matplotlib==3.11.2
 yarl==1.24.5
 tqdm==4.67.1
+psutil==7.2.1
