@@ -424,7 +424,9 @@ def execute(study, source_root, cell, frame):
         require(proc.returncode == 0, "native process failed or exceeded deadline")
         transport = audit_transport(directory / "request-audit.jsonl")
         require(
-            transport["attempts"] == frame.height and transport["body_bytes"] <= 2**30,
+            transport["attempts"] == frame.height
+            and transport["body_bytes"] <= 2**30
+            and transport["peak"] <= cfg.get("thread_count", cfg.get("C_max")),
             "transport attempt/body budget differs",
         )
         verify = [
@@ -466,25 +468,33 @@ def execute(study, source_root, cell, frame):
             elapsed_s=ended - started,
             verification_s=ended - acquired,
             goodput_Bps=verification["credited_bytes"] / (ended - started),
+            native_goodput_Bps=verification["credited_bytes"] / (acquired - started),
             coverage=verification["coverage"],
             full_success=verification["full_success"],
         )
         if cell["method"] != "img2dataset-1.47.0":
             # Validated archive is authoritative; preserve all journals, drop loose duplicates.
-            index = read_json(directory / "native/outcome-index.json")
-            removed = 0
-            for r in index["rows"]:
-                require(time.monotonic() - started < LIMITS["job_seconds"] - 2, "job finalization deadline")
-                if r["disposition"] == "verified":
-                    for field in ("payload", "metadata"):
-                        name = r[field]
-                        require(Path(name).name == name, "unsafe compact path")
-                        (directory / "native" / name).unlink()
-                        removed += 1
-            write_new(
-                directory / "compaction.json",
-                dict(removed=removed, archive_sha256=verification["archives"]["native.tar"]["sha256"]),
-            )
+            try:
+                index = read_json(directory / "native/outcome-index.json")
+                removed = 0
+                for r in index["rows"]:
+                    require(
+                        time.monotonic() - started < LIMITS["job_seconds"] - 2, "job finalization deadline"
+                    )
+                    if r["disposition"] == "verified":
+                        for field in ("payload", "metadata"):
+                            name = r[field]
+                            require(Path(name).name == name, "unsafe compact path")
+                            (directory / "native" / name).unlink()
+                            removed += 1
+                write_new(
+                    directory / "compaction.json",
+                    dict(removed=removed, archive_sha256=verification["archives"]["native.tar"]["sha256"]),
+                )
+            except Exception as error:
+                # Compaction is storage housekeeping after the measured boundary.
+                # A retained verified archive still supplies valid scientific credit.
+                result["compaction_error"] = type(error).__name__ + ": " + str(error)
     except Exception as error:
         result.update(
             status="stopped",
@@ -652,7 +662,10 @@ def window(study, source, seconds):
                     host_gate(study, source_id)
                 while True:
                     records, interrupted = inventory(study)
-                    require(not interrupted, "interrupted first attempt; no acquisition replay")
+                    require(
+                        not any(name.startswith(source_id + "-") for name in interrupted),
+                        "interrupted source first attempt; no acquisition replay",
+                    )
                     prior = [r for r in records if r["source"] == source_id]
                     require(
                         all(r["status"] == "complete" for r in prior), "source has incomplete first attempt"

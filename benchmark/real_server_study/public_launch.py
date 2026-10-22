@@ -15,13 +15,19 @@ from .public_guard import FlowGuard, ToolGuard
 class GuardedDownloader:
     """Picklable native shard delegate: one shard/process per bounded job."""
 
-    def __init__(self, native, source, urls, audit, gate):
+    def __init__(self, native, source, urls, audit, gate, ceiling=192):
         self.native, self.source, self.urls, self.audit, self.gate = native, source, urls, audit, gate
+        self.ceiling = ceiling
 
     def __call__(self, row):
         with Path(self.audit).open("x", buffering=65536) as stream:
             guard = ToolGuard(
-                self.source, self.urls, stream, self.gate["baseline_s"], ignore_time=self.gate["ignore_time"]
+                self.source,
+                self.urls,
+                stream,
+                self.gate["baseline_s"],
+                ignore_time=self.gate["ignore_time"],
+                ceiling=self.ceiling,
             )
             guard.emit("start")
             restore = guard.install()
@@ -68,6 +74,7 @@ def main():
                     urls,
                     str(directory / "tool-request-audit.jsonl"),
                     gate,
+                    cfg["thread_count"],
                 )
 
             native_main.Downloader = wrapped

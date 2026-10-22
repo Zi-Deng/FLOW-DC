@@ -219,6 +219,83 @@ class PublicBatchTests(unittest.TestCase):
                 batch.host_gate(study, "taibif-moth")
             connection.assert_not_called()
 
+    def test_public_staging_preserves_empty_dirs_and_collection_is_small(self):
+        import json
+        import shlex
+        import subprocess
+        import sys
+        import tarfile
+        from types import SimpleNamespace
+
+        from benchmark.real_server_study import cloud, public_cloud
+        from benchmark.real_server_study.common import read_json
+
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            study = root / "prepared"
+            study.mkdir()
+            for name in ("pools", "gates", "runs", "analysis"):
+                (study / name).mkdir()
+            write_new(study / "protocol.json", {"source": {"head": "fixed"}})
+            previous = root / "previous"
+            previous.mkdir()
+            for name, value in {
+                "operator": {"worker_id": "worker", "guest_root": "/retained"},
+                "ssh-identity": {},
+                "volume": {},
+                "volume-mount": {},
+            }.items():
+                write_new(previous / (name + ".json"), value)
+            packet = root / "packet"
+            with (
+                patch.object(public_cloud, "source_identity", return_value={"head": "fixed"}),
+                patch.object(public_cloud.subprocess, "check_output", return_value=""),
+                patch.object(public_cloud.subprocess, "run"),
+            ):
+                public_cloud.prepare(study, Path(__file__).resolve().parents[1], previous, packet)
+            guest = root / "guest"
+            guest.mkdir()
+            with tarfile.open(packet / "inputs.tar") as archive:
+                archive.extractall(guest, filter="data")
+            self.assertEqual(batch.inventory(guest / "study"), ([], []))
+            self.assertEqual(batch.usage(guest / "study")["requests"], 0)
+            write_new(guest / "study/gates/deferred.json", {"reason": "source unqualified"})
+            run = guest / "study/runs/fixture"
+            attempt = run / "native/.flowdc/attempts/row/1"
+            attempt.mkdir(parents=True)
+            for name in ("intent", "measurement", "result"):
+                write_new(attempt / (name + ".json"), {})
+            write_new(run / "record.json", {"status": "complete", "evidence": {}})
+            write_new(
+                run / "native/overview.json",
+                {
+                    "http_observations": {"files": [{"path": ".flowdc/attempts/row/1/measurement.json"}]},
+                    "control_trajectories": [],
+                },
+            )
+            pl.DataFrame({"status": ["success"]}).write_parquet(run / "native/ledger.parquet")
+            # Run the actual remote metadata program locally with no SSH/network.
+            (packet / "operator.json").write_text(
+                json.dumps({"guest_root": str(guest), "guest_python": sys.executable})
+            )
+            popen = subprocess.Popen
+
+            def local_command(argv, **kwargs):
+                return popen(shlex.split(argv[-1]), **kwargs)
+
+            with (
+                patch.object(cloud, "ssh_configuration", return_value="unused"),
+                patch.object(cloud.subprocess, "Popen", side_effect=local_command),
+                patch("shutil.disk_usage", return_value=SimpleNamespace(free=100 * 2**30)),
+            ):
+                result = cloud.collect(packet, seconds=10, metadata_limit=2**20, public_metadata=True)
+            files = read_json(result / "metadata-manifest.json")["files"]
+            self.assertIn("runs/fixture/native/ledger.parquet", files)
+            self.assertIn("gates/deferred.json", files)
+            self.assertIn("runs/fixture/native/.flowdc/attempts/row/1/measurement.json", files)
+            self.assertNotIn("runs/fixture/native/.flowdc/attempts/row/1/intent.json", files)
+            self.assertNotIn("runs/fixture/native/.flowdc/attempts/row/1/result.json", files)
+
     def test_real_tool_adapter_offline_shard_and_failure_ledger(self):
         try:
             import importlib

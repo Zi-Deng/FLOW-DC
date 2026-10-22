@@ -473,7 +473,7 @@ for directory in root.glob('runs/*'):
  if not directory.is_dir() or directory.is_symlink():continue
  record=directory/'record.json'
  row=json.loads(record.read_text()) if record.exists() else {'complete':False}
- if not row.get('complete'):
+ if not (row.get('status')=='complete' if public else row.get('complete')):
   for kind in ('intent.json','measurement.json','result.json'):
    paths.update(record.parent.glob('native/.flowdc/attempts/*/*/'+kind))
  for name in row.get('evidence',{}):
@@ -492,20 +492,26 @@ for directory in root.glob('runs/*'):
    p=overview.parent/relative
    if not p.is_file() or p.is_symlink():raise ValueError('required observation missing')
    paths.add(p)
-manifest={}
-with tarfile.open(fileobj=sys.stdout.buffer,mode='w|') as archive:
+manifest={};selected=[]
+with tarfile.open(fileobj=io.BytesIO(),mode='w') as estimator:
  for p in sorted(paths):
   if p.is_file() and not p.is_symlink() and p.suffix in (('.json','.jsonl','.log','.tex','.pdf','.parquet') if public else ('.json','.jsonl','.log','.tex','.pdf')):
    name=str(p.relative_to(root));digest=hashlib.sha256()
    with p.open('rb') as stream:
     for chunk in iter(lambda:stream.read(1024*1024),b''):digest.update(chunk)
-   manifest[name]={'sha256':digest.hexdigest(),'bytes':p.stat().st_size}
-   archive.add(p,arcname=name,recursive=False)
- data=json.dumps({'schema':'flowdc-metadata-collection-v1','files':manifest},sort_keys=True).encode()
- info=tarfile.TarInfo('metadata-manifest.json');info.size=len(data);info.mode=0o600
+   info=estimator.gettarinfo(str(p),arcname=name);info.mtime=int(info.mtime)
+   manifest[name]={'sha256':digest.hexdigest(),'bytes':info.size};selected.append((p,info))
+data=json.dumps({'schema':'flowdc-metadata-collection-v1','files':manifest},sort_keys=True).encode()
+info=tarfile.TarInfo('metadata-manifest.json');info.size=len(data);info.mode=0o600
+size=sum(len(i.tobuf(format=tarfile.PAX_FORMAT))+(i.size+511)//512*512 for _,i in selected)
+size+=len(info.tobuf(format=tarfile.PAX_FORMAT))+(len(data)+511)//512*512+1024
+assert (size+10239)//10240*10240<=int(sys.argv[3]),'metadata dry-run exceeds finite transfer bound'
+with tarfile.open(fileobj=sys.stdout.buffer,mode='w|') as archive:
+ for p,item in selected:
+  with p.open('rb') as stream:archive.addfile(item,stream)
  archive.addfile(info,io.BytesIO(data))
 """
-        command=[op["guest_python"],"-c",script,op["guest_root"]+"/study",'public' if public_metadata else 'historical']
+        command=[op["guest_python"],"-c",script,op["guest_root"]+"/study",'public' if public_metadata else 'historical',str(metadata_limit)]
         partial=packet/"return.partial"
         if partial.exists():
             require(partial.is_file() and not partial.is_symlink(),"unsafe partial transfer")

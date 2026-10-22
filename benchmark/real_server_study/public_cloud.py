@@ -75,6 +75,16 @@ def prepare(study, source, previous, packet):
             "download",
             "--require-hashes",
             "--only-binary=:all:",
+            "--platform",
+            "manylinux_2_28_x86_64",
+            "--platform",
+            "manylinux2014_x86_64",
+            "--python-version",
+            "312",
+            "--implementation",
+            "cp",
+            "--abi",
+            "cp312",
             "-r",
             str(requirements),
             "-d",
@@ -86,7 +96,7 @@ def prepare(study, source, previous, packet):
     with tarfile.open(packet / "inputs.tar", "x") as archive:
         for path in sorted(study.rglob("*")):
             require(not path.is_symlink(), "symlink in private input")
-            if path.is_file():
+            if path.is_file() or path.is_dir():
                 archive.add(path, arcname="study/" + str(path.relative_to(study)), recursive=False)
         for path in wheels.iterdir():
             archive.add(path, arcname="wheels/" + path.name, recursive=False)

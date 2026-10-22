@@ -36,6 +36,12 @@ def report(study):
                     mean_goodput_Bps=statistics.mean(r["goodput_Bps"] for r in complete)
                     if complete
                     else None,
+                    mean_native_goodput_Bps=statistics.mean(r["native_goodput_Bps"] for r in complete)
+                    if complete
+                    else None,
+                    mean_verification_s=statistics.mean(r["verification_s"] for r in complete)
+                    if complete
+                    else None,
                     mean_elapsed_s=statistics.mean(r["elapsed_s"] for r in complete) if complete else None,
                     mean_coverage=statistics.mean(r["coverage"] for r in complete) if complete else None,
                     missing=4 - len(complete),
@@ -120,7 +126,7 @@ def report(study):
         "",
         f"Missing or incomplete evaluation cells: {result['missing_evaluation']}. All first attempts remain in results.json.",
         "",
-        "Primary goodput counts decoded, archive-verified original-row bytes over job launch through verification. It excludes batch-level staging and metadata transfer, which must be reported separately. Archived original bytes remain on the retained worker volume; this local package contains verified metadata and archive digests.",
+        "Primary goodput counts decoded, archive-verified original-row bytes over job launch through verification. It excludes batch-level staging and metadata transfer, which must be reported separately. Method-specific verifier work differs: FLOW-DC validates per-attempt/control journals in addition to payload archives, while img2dataset validates its row ledger/archive. Results JSON also reports native-period goodput and verification cost as sensitivity summaries, without replacing the contracted primary endpoint. Archived original bytes remain on the retained worker volume; this local package contains verified metadata and archive digests.",
     ]
     replace_derived(study / "analysis/REPORT.md", "\n".join(lines) + "\n")
     return dict(status="report_complete", runs=len(records), missing_evaluation=result["missing_evaluation"])
