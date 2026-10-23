@@ -63,36 +63,6 @@ class MinimumStudyTests(unittest.TestCase):
             with self.subTest(program=index):
                 compile(program, f"{path}:embedded-{index}", "exec")
 
-    def test_one_explicit_engineering_correction_preserves_failed_attempt(self):
-        from benchmark.real_server_study import minimum_queue as queue
-        from benchmark.real_server_study.common import file_hash
-
-        with tempfile.TemporaryDirectory() as temporary:
-            study = Path(temporary)
-            (study / "gates").mkdir()
-            old = next(queue.candidates(design.SOURCES[0], "engineering", 512))
-            directory = study / "runs" / old["run_id"]
-            directory.mkdir(parents=True)
-            write_new(directory / "record.json", dict(**old, status="stopped"))
-            write_new(study / "protocol.json", dict(source=dict(head="repaired")))
-            with self.assertRaisesRegex(ValueError, "stopped first attempt"):
-                queue.next_cell(study, 86400, 120)
-            original_hash = file_hash(directory / "record.json")
-            write_new(study / "gates/engineering-recovery.json", dict(
-                run_id=old["run_id"], replacement_run_id=old["run_id"] + "-repair-1",
-                record_sha256=original_hash, repair_head="repaired", reason="archive packing defect",
-            ))
-            cell = queue.next_cell(study, 86400, 120)
-            self.assertEqual(cell["run_id"], old["run_id"] + "-repair-1")
-            self.assertEqual(file_hash(directory / "record.json"), original_hash)
-            failed = study / "runs" / cell["run_id"]
-            failed.mkdir()
-            write_new(failed / "record.json", dict(**cell, status="stopped"))
-            with self.assertRaisesRegex(ValueError, "stopped first attempt"):
-                queue.next_cell(study, 86400, 120)
-            (directory / "record.json").write_text(json.dumps(dict(**old, status="complete")))
-            with self.assertRaisesRegex(ValueError, "engineering-only recovery"):
-                queue.next_cell(study, 86400, 120)
 
     def test_exhausted_cloud_envelope_records_blocker_without_activation(self):
         from types import SimpleNamespace
@@ -119,7 +89,7 @@ class MinimumStudyTests(unittest.TestCase):
                     patch.object(
                         minimum_cloud.public_cloud,
                         "authorize",
-                        return_value=(journal, dict(clock=dict(utc=time.time() - 86400))),
+                        return_value=(journal, dict(clock=dict(utc=time.time() - design.LIMITS["wall_seconds"]))),
                     ),
                     patch.object(flowdc_ops, "load_profile", return_value={}),
                     patch.object(minimum_cloud, "exposure", return_value=0),
@@ -131,175 +101,212 @@ class MinimumStudyTests(unittest.TestCase):
                 self.assertTrue((packet / "complete.json").exists())
                 controller.call.assert_not_called()
 
-    def test_affine_planning_separates_sixty_second_startup(self):
-        records = [
-            dict(
-                run_id=str(n),
-                phase="engineering",
-                source=design.SOURCES[0],
-                method=design.METHODS[0],
-                workers=1,
-                rows=n,
-                original_rows=n,
-                status="complete",
-                elapsed_s=60 + n / 150,
-                native_seconds=40 + n / 150,
-                http_span_s=5 + n / 150,
-                body_bytes=n * 1000,
-            )
-            for n in (512, 2048)
-        ]
-        fitted = design.modeled(records)
-        rows = design.sizing([fitted[-1]])
-        self.assertGreaterEqual(design.estimate(fitted[-1], rows, "http_span_s"), 720)
-        self.assertLess(design.estimate(fitted[-1], rows, "elapsed_s"), 800)
-        self.assertAlmostEqual(fitted[-1]["forecast"]["elapsed_s"]["intercept"], 60)
-        # Confirmation outcomes cannot affect future planning models.
-        confirmation = {**records[-1], "phase": "evaluation", "elapsed_s": 99999}
-        self.assertEqual(design.modeled(records + [confirmation])[0]["forecast"], fitted[0]["forecast"])
 
-    def test_queue_uses_matching_workers_and_persists_correction_size(self):
+
+
+
+
+    def make_protocol(self, study, unqualified=()):
+        (study / "gates").mkdir()
+        (study / "runs").mkdir()
+        write_new(study / "protocol.json", dict(
+            initial_rows={s: 1000 for s in design.SOURCES},
+            partitions={s: dict(capacity=100000) for s in design.SOURCES},
+            provenance={s: dict(media_rights_qualified=s not in unqualified,
+                                access_qualified=True) for s in design.SOURCES}))
+
+    def test_queue_freezes_global_selection_before_targets_and_never_replays(self):
         from benchmark.real_server_study.minimum_queue import next_cell
-
         with tempfile.TemporaryDirectory() as directory:
             study = Path(directory)
-            (study / "runs").mkdir()
-            (study / "gates").mkdir()
-            write_new(study / "protocol.json", dict(population_rows={s: 2000000 for s in design.SOURCES}))
-            for source in design.SOURCES:
-                write_new(study / "gates" / (source + ".json"), dict(requests=32, probe_body_bytes=3200))
-            sizes = {}
-            for index in range(46):
-                if index == 30:
-                    self.assertEqual(next_cell(study, 86400, 120, False), dict(phase="observe_cleanup"))
-                    # An insufficient envelope refuses before spending on any
-                    # long calibration, retaining the refusal receipt.
-                    from benchmark.real_server_study.minimum_queue import campaign_forecast
-
-                    records = [json.loads(p.read_text()) for p in (study / "runs").glob("*/record.json")]
-                    with tempfile.TemporaryDirectory() as failed:
-                        failure_study = Path(failed)
-                        (failure_study / "gates").mkdir()
-                        with self.assertRaises(ValueError):
-                            campaign_forecast(
-                                failure_study,
-                                {r["run_id"]: r for r in design.modeled(records)},
-                                {s: 15360 for s in design.SOURCES},
-                                1000,
-                                120,
-                            )
-                        self.assertFalse(
-                            json.loads((failure_study / "gates/campaign-feasibility.json").read_text())[
-                                "accepted"
-                            ]
-                        )
-                cell = next_cell(study, 86400, 120)
-                self.assertNotEqual(cell["phase"], "evaluation")
+            self.make_protocol(study, [design.SOURCES[2]])
+            count = 0
+            while True:
+                cell = next_cell(study, design.LIMITS["wall_seconds"])
+                if cell["phase"] == "evaluation":
+                    break
+                if cell["source"] != design.SOURCES[0]:
+                    self.assertTrue((study / "gates/development-selection.json").exists())
                 rows = cell["rows"]
-                if cell["phase"] == "engineering":
-                    span = rows / (20 if cell["workers"] == 1 else 30)
-                    elapsed = span + 10
-                    self.assertEqual(cell["job_seconds"], 600)
-                elif cell["run_id"].startswith("correction-"):
-                    sizes.setdefault("correction", rows)
-                    self.assertEqual(rows, sizes["correction"])
-                    # Different correction rates must not resize later arms.
-                    span = 610 + 20 * (index % 3)
-                    elapsed = span + 100
-                else:
-                    sizes.setdefault(cell["source"], rows)
-                    self.assertEqual(rows, 15360)  # w1 rate20, never w2 rate30.
-                    span = 768 if cell["workers"] == 1 else 500
-                    elapsed = span + 80
-                run = study / "runs" / cell["run_id"]
-                run.mkdir()
-                write_new(
-                    run / "record.json",
-                    dict(
-                        **cell,
-                        status="complete",
-                        original_rows=rows,
-                        http_span_s=span,
-                        elapsed_s=elapsed,
-                        native_seconds=span,
-                        body_bytes=rows * 1000,
-                        coverage=1,
-                        goodput_Bps=rows * 1000 / elapsed,
-                    ),
-                )
-            cell = next_cell(study, 86400, 120)
-            self.assertEqual(cell["phase"], "evaluation")
+                path = study / "runs" / cell["run_id"]
+                path.mkdir()
+                write_new(path / "record.json", dict(**cell, status="complete", original_rows=rows,
+                    http_span_s=900, elapsed_s=1000, native_seconds=950,
+                    body_bytes=rows*1000, coverage=1, goodput_Bps=1000,
+                    mean_http_concurrency=cell["candidate"]+10))
+                count += 1
+                self.assertLess(count, 30)
+            self.assertEqual(count, 18)  # 2 sizing + 12 development + 4 target
             frozen = json.loads((study / "freeze.json").read_text())
-            self.assertEqual(frozen["source_rows"][design.SOURCES[0]], sizes["correction"])
-            self.assertEqual(len(frozen["cells"]), 36)
+            self.assertEqual(len(frozen["cells"]), 18)  # identical tool settings deduplicated
+            self.assertEqual(frozen["sources"], [design.SOURCES[1]])
+            path = study / "runs" / cell["run_id"]
+            path.mkdir()
+            with self.assertRaisesRegex(ValueError, "unfinished first attempt"):
+                next_cell(study, design.LIMITS["wall_seconds"])
+            write_new(path / "record.json", dict(**cell, status="stopped"))
+            self.assertIsNone(next_cell(study, design.LIMITS["wall_seconds"]))
+            self.assertEqual(json.loads((study / "gates/inaturalist-open-disposition.json").read_text())["status"], "suspended")
 
-    def test_sizing_refuses_native_deadline_body_and_worker_mismatch(self):
-        record = dict(
-            status="complete",
-            workers=1,
-            original_rows=2048,
-            http_span_s=100,
-            elapsed_s=110,
-            native_seconds=105,
-            body_bytes=2048000,
-        )
-        self.assertEqual(design.sizing([record]), 15360)
-        for change in (dict(workers=2), dict(native_seconds=500), dict(body_bytes=20 * 2**30)):
-            with self.assertRaises(ValueError):
-                design.sizing([{**record, **change}])
+    def test_current_profiles_transfer_mapping_and_matched_resources(self):
+        frame = pl.DataFrame(dict(url=[str(i) for i in range(100)]))
+        for source in design.SOURCES:
+            for method in design.METHODS:
+                for candidate in range(4):
+                    cell = dict(source=source, workers=1, method=method, profile=candidate,
+                                tool_setting=design.tool_settings(source)[candidate])
+                    cfg = design.configuration("/tmp/example", cell, frame)
+                    if method == design.METHODS[2]:
+                        self.assertLessEqual(cfg["processes_count"]*cfg["thread_count"], design.ceiling(source))
+                        self.assertTrue(cfg["disable_all_reencoding"])
+                        self.assertEqual((cfg["retries"],cfg["max_shard_retry"]), (0,0))
+                    else:
+                        self.assertEqual(cfg["C_max"], design.ceiling(source))
+                        self.assertEqual(cfg["method_options"]["target_delay_ratio"], design.PROFILES[candidate][0])
+                        self.assertEqual(cfg["research_workload"], design.PROFILE)
+        with self.assertRaises(ValueError):
+            design.configuration("/tmp/example", dict(source=design.SOURCES[0], workers=2, method=design.METHODS[0]), frame)
 
-    def test_measured_analysis_keeps_missing_and_changed_content_visible(self):
-        from benchmark.real_server_study.minimum_analysis import summarize
+    def test_selection_excludes_short_incomplete_low_coverage_and_breaks_ties(self):
+        rows = [dict(candidate=i, run_id=str(i), method=design.METHODS[0], status="complete",
+                     http_span_s=900, coverage=1, goodput_Bps=100-i, mean_http_concurrency=50-i) for i in range(4)]
+        self.assertEqual(design.select_configuration(rows, design.METHODS[0])["candidate"], 2)
+        rows[2]["http_span_s"] = 599
+        self.assertEqual(design.select_configuration(rows, design.METHODS[0])["candidate"], 1)
+        rows[1]["coverage"] = .98
+        self.assertEqual(design.select_configuration(rows, design.METHODS[0])["candidate"], 0)
+        rows[0]["status"] = "stopped"
+        self.assertEqual(design.select_configuration(rows, design.METHODS[0])["candidate"], 3)
+        with self.assertRaises(ValueError):
+            design.select_configuration(rows[:3], design.METHODS[0])
 
+    def test_balanced_schedule_deduplicates_only_identical_tool_candidates(self):
+        from collections import Counter
+        selected = dict(development={m: dict(candidate=0) for m in design.METHODS})
+        selected.update({s: dict(candidate=1) for s in design.TARGETS})
+        sizes = {s:1000 for s in design.TARGETS}
+        cells = design.schedule(selected, sizes, design.TARGETS)
+        self.assertEqual(len(cells), 48)
+        self.assertEqual(len({c["run_id"] for c in cells}),48)
+        for source in design.TARGETS:
+            for arm in ("ratio", "gradient", "transferred", "target_calibrated"):
+                positions = Counter(c["position"] for c in cells if c["source"] == source and c["arm"] == arm)
+                self.assertLessEqual(max(positions.values())-min(positions.values()),1)
+        selected[design.TARGETS[0]]["candidate"] = 0
+        cells = design.schedule(selected, sizes, design.TARGETS)
+        self.assertEqual(len(cells), 42)
+        aliases = [c for c in cells if c["reference_aliases"]]
+        self.assertEqual(len(aliases),6)
+
+    def test_manifest_partitions_are_disjoint_and_block_inputs_match(self):
         with tempfile.TemporaryDirectory() as directory:
             study = Path(directory)
-            cells = []
-            for block in range(3):
-                for method in design.METHODS:
-                    cell = dict(run_id=f"E1-{block}-{method}", family="E1", block=block, method=method)
-                    cells.append(cell)
-                    if block == 2 and method == design.METHODS[0]:
-                        continue  # The planned first attempt remains unstarted.
-                    run = study / "runs" / cell["run_id"]
-                    (run / "worker").mkdir(parents=True)
-                    (run / "input.parquet").write_bytes(b"same frozen work")
-                    seconds = 10 if method == design.METHODS[2] else 5
-                    write_new(
-                        run / "record.json",
-                        dict(
-                            **cell,
-                            phase="evaluation",
-                            status="complete",
-                            workers=1,
-                            original_rows=1,
-                            credited_bytes=100,
-                            elapsed_s=seconds,
-                            goodput_Bps=100 / seconds,
-                            coverage=1,
-                            mean_job_concurrency=1,
-                        ),
-                    )
-                    digest = "changed" if block == 1 and method == design.METHODS[0] else "original"
-                    write_new(
-                        run / "worker/verification.json",
-                        dict(
-                            original_rows=1,
-                            credited_bytes=100,
-                            payloads={"row": dict(sha256=digest, bytes=100)},
-                        ),
-                    )
-            write_new(study / "freeze.json", dict(cells=cells))
-            result = summarize(study)
-            self.assertEqual((result["planned_jobs"], result["complete_jobs"]), (9, 8))
-            ratio = result["comparisons"]["E1:" + design.METHODS[0]]
-            self.assertEqual(ratio["blocks"], 1)
-            self.assertEqual(ratio["ratio"], 2)
-            self.assertEqual(ratio["changed_content_blocks"], [dict(block=1, rows=1)])
-            self.assertIsNone(ratio["interval95"])
-            grad = result["comparisons"]["E1:" + design.METHODS[1]]
-            self.assertEqual(grad["blocks"], 3)
-            self.assertEqual(grad["interval95"], [2, 2])
-            self.assertIsNone(grad["p_greater"])
+            (study / "pools").mkdir()
+            source=design.SOURCES[0]
+            pl.DataFrame(dict(study_row_id=list(range(300)),url=[str(i) for i in range(300)])).write_parquet(study / "pools" / (source+".parquet"))
+            write_new(study / "protocol.json", dict(partitions={source:dict(sizing=0,calibration=100,evaluation=200,capacity=100)}))
+            parts=[design.manifest(study,source,phase,100) for phase in ("sizing","calibration","evaluation")]
+            self.assertEqual(pl.concat(parts)["study_row_id"].n_unique(),300)
+            self.assertTrue(design.manifest(study,source,"evaluation",100,3).equals(design.manifest(study,source,"evaluation",100,3)))
+            self.assertFalse(parts[2].equals(design.manifest(study,source,"evaluation",100,3)))
+
+    def test_forecasts_preserve_ordered_clocks_and_finite_capacity(self):
+        r=dict(status="complete",phase="sizing",rows=1000,http_span_s=100,native_seconds=400,elapsed_s=600,body_bytes=1000000)
+        prediction=design.forecast(r,9000)
+        self.assertEqual(prediction,dict(http=900,native=3600,total=5400,body=9000000))
+        self.assertEqual(design.sizing(r,10000),9000)
+        with self.assertRaises(ValueError): design.sizing(r,8000)
+        with self.assertRaises(ValueError): design.forecast({**r,"phase":"evaluation"},9000)
+        with self.assertRaises(ValueError): design.sizing({**r,"body_bytes":100*2**30},10000)
+
+    def test_partial_classification_does_not_call_403_rate_limiting(self):
+        from benchmark.real_server_study.public_metrics import partial_transport
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory); p=root/'request-audit.jsonl'
+            p.write_text(json.dumps(dict(event='headers',status=403))+'\n')
+            value=partial_transport(root,1000)
+            self.assertEqual(value['classification'],'access_refusal_cause_unknown')
+            self.assertIsNone(value['mean_http_concurrency'])
+            self.assertEqual(value['body_bytes'],1000)
+            p.write_text(json.dumps(dict(event='headers',status=429))+'\n')
+            self.assertEqual(partial_transport(root,1000)['classification'],'confirmed_rate_limit')
+
+    def test_analysis_retains_missing_changed_and_partial_pairs(self):
+        from benchmark.real_server_study.minimum_analysis import summarize
+        with tempfile.TemporaryDirectory() as directory:
+            study=Path(directory); (study/'gates').mkdir()
+            selected=dict(development={m:dict(candidate=0) for m in design.METHODS})
+            source=design.TARGETS[0]; selected[source]=dict(candidate=0)
+            cells=design.schedule(selected,{source:1},[source])
+            write_new(study/'freeze.json',dict(cells=cells))
+            for cell in cells:
+                if cell['arm']=='ratio' and cell['block']==5: continue
+                run=study/'runs'/cell['run_id']; (run/'worker').mkdir(parents=True)
+                (run/'input.parquet').write_bytes(b'matched')
+                seconds=10 if cell['arm']=='transferred' else 5
+                stopped=cell['arm']=='ratio' and cell['block']==4
+                write_new(run/'record.json',dict(**cell,status='stopped' if stopped else 'complete',
+                    original_rows=1,credited_bytes=100,coverage=1,elapsed_s=seconds,
+                    goodput_Bps=None if stopped else 100/seconds))
+                digest='changed' if cell['arm']=='ratio' and cell['block']==3 else 'original'
+                write_new(run/'worker/verification.json',dict(original_rows=1,credited_rows=1,
+                    credited_bytes=100,payloads={'row':dict(bytes=100,sha256=digest)}))
+            result=summarize(study)
+            self.assertEqual(result['complete_jobs'],16)
+            ratio=result['comparisons'][source+':'+design.METHODS[0]+':transferred']
+            self.assertEqual(ratio['blocks'],3)
+            self.assertFalse(ratio['practical_speed_claim_supported'])
+            grad=result['comparisons'][source+':'+design.METHODS[1]+':transferred']
+            self.assertEqual(grad['blocks'],6)
+            self.assertTrue(grad['practical_speed_claim_supported'])
+            self.assertEqual(grad['p_holm'],0)
+            self.assertEqual(ratio['changed_content_blocks'],[dict(block=3,rows=1)])
+
+    def test_partial_tool_sealed_rows_and_truncated_shards(self):
+        from PIL import Image
+        from benchmark.real_server_study.public_verify import verify_partial
+        from benchmark.real_server_study.common import sha256
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory); (root/'native').mkdir()
+            repo=Path(__file__).resolve().parents[1]
+            frame=pl.DataFrame(dict(study_row_id=['a','b'],url=['https://test/a','https://test/b']))
+            frame.write_parquet(root/'input.parquet')
+            write_new(root/'attempt.json',dict(workload=design.PROFILE))
+            buf=io.BytesIO(); Image.new('RGB',(8,8),'red').save(buf,format='JPEG'); raw=buf.getvalue()
+            row=dict(study_row_id='a',url='https://test/a',key='0000',status='success',sha256=sha256(raw))
+            pl.DataFrame([row]).write_parquet(root/'native/0000.parquet')
+            def archive(payload):
+                with tarfile.open(root/'native/0000.tar','w') as tar:
+                    for name,body in [('0000.json',json.dumps(row).encode()),('0000.jpg',payload)]:
+                        member=tarfile.TarInfo(name); member.size=len(body); tar.addfile(member,io.BytesIO(body))
+            archive(raw)
+            result=verify_partial(root,repo,design.METHODS[2])
+            self.assertEqual((result['credited_rows'],result['original_rows'],result['coverage']),(1,2,.5))
+            self.assertFalse(result['full_success'])
+            # A damaged body in a sealed archive is a failed integrity check.
+            archive(b'bad')
+            with self.assertRaisesRegex(ValueError,'digest mismatch'): verify_partial(root,repo,design.METHODS[2])
+            # A publication interrupted before closure earns no partial credit.
+            (root/'native/0000.tar').write_bytes(b'unfinished')
+            result=verify_partial(root,repo,design.METHODS[2])
+            self.assertEqual(result['credited_rows'],0)
+            self.assertEqual(result['incomplete_artifacts'],['native/0000.tar'])
+
+    def test_progress_uses_verified_urls_and_reports_retry_after(self):
+        from benchmark.real_server_study.public_metrics import progress
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory)
+            events=[dict(event='http_start',monotonic_s=10,token='a'),
+                    dict(event='http_first_byte',monotonic_s=11,token='a'),
+                    dict(event='network_end',monotonic_s=12,token='a'),
+                    dict(event='http_start',monotonic_s=13,token='b'),
+                    dict(event='headers',monotonic_s=14,token='b',status=429,retry_after='60')]
+            (root/'request-audit.jsonl').write_text(''.join(json.dumps(e)+'\n' for e in events))
+            value=progress(root,{'row':dict(url='a',bytes=100)})
+            self.assertEqual(value['points'][-1]['credited_bytes'],100)
+            self.assertEqual(value['points'][-1]['ttfb_p95_s'],1)
+            self.assertTrue(value['complete_credit'])
+            self.assertEqual(value['refusal_events'],[dict(second=4,status='429',retry_after='60')])
 
     def isolated_spawn(self):
         if os.environ.get("FLOWDC_MINIMUM_TEST_CHILD") == "1":
@@ -332,72 +339,8 @@ class MinimumStudyTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 counter.update(release=1)
 
-    def test_static_partition_and_native_tool_shards(self):
-        frame = pl.DataFrame(
-            {"url": [str(i) for i in range(100)], "study_row_id": [str(i) for i in range(100)]}
-        )
-        for workers in (1, 2):
-            for method in design.METHODS:
-                cfg = design.configuration(
-                    "/tmp/example", dict(workers=workers, method=method, tool_setting=[8, 24]), frame
-                )
-                if method == design.METHODS[2]:
-                    self.assertEqual(cfg["thread_count"] * cfg["processes_count"] * workers, 192)
-                    self.assertGreaterEqual(
-                        (100 + cfg["number_sample_per_shard"] - 1) // cfg["number_sample_per_shard"], 8
-                    )
-                    self.assertEqual((cfg["retries"], cfg["max_shard_retry"]), (0, 0))
-                else:
-                    self.assertEqual(cfg["C_max"] * workers, 192)
-                    self.assertEqual(cfg["research_workload"], design.PROFILE)
-                    self.assertEqual(cfg["method_options"], design.OPTIONS)
-            parts = [frame.gather_every(workers, offset=i) for i in range(workers)]
-            self.assertEqual(pl.concat(parts)["study_row_id"].n_unique(), frame.height)
 
-    def test_matched_schedule_balances_order_and_work(self):
-        selected = {s: [8, 24] for s in design.SOURCES}
-        rows = {s: 131072 for s in design.SOURCES}
-        for blocks, total in ((3, 27), (6, 36)):
-            cells = design.schedule(selected, rows, blocks)
-            self.assertEqual(len(cells), total)
-            self.assertEqual(len({c["run_id"] for c in cells}), total)
-            for family in ("E1", "E2", "E3"):
-                chosen = [c for c in cells if c["family"] == family]
-                for block in range(blocks if family == "E1" else 3):
-                    group = [c for c in chosen if c["block"] == block]
-                    self.assertEqual({c["method"] for c in group}, set(design.METHODS))
-                    self.assertEqual(len({c["rows"] for c in group}), 1)
 
-    def test_forecast_refuses_insufficient_budget_and_existing_results(self):
-        with tempfile.TemporaryDirectory() as directory:
-            study = Path(directory)
-            (study / "runs").mkdir()
-            write_new(study / "protocol.json", dict(population_rows={s: 2000000 for s in design.SOURCES}))
-            calibration = []
-            for source, workers in ((design.SOURCES[0], 1), (design.SOURCES[1], 1), (design.SOURCES[0], 2)):
-                for method in design.METHODS:
-                    calibration.append(
-                        dict(
-                            source=source,
-                            workers=workers,
-                            method=method,
-                            status="complete",
-                            original_rows=1000,
-                            elapsed_s=1000,
-                            body_bytes=1000,
-                            run_id=f"{source}-{workers}-{method}",
-                        )
-                    )
-            used = dict(body_bytes=0, retained_bytes=0, requests=0, lifecycle_seconds_per_job=120)
-            selected = {s: [8, 24] for s in design.SOURCES}
-            rows = {s: 1000 for s in design.SOURCES}
-            with self.assertRaises(ValueError):
-                design.freeze(study, calibration, selected, rows, 1000, used)
-            record = design.freeze(study, calibration, selected, rows, 52000, used)
-            self.assertEqual(record["blocks"], 3)
-            (study / "runs/E1-started").mkdir()
-            with self.assertRaises(ValueError):
-                design.freeze(study, calibration, selected, rows, 86400, used)
 
     def test_pack_keeps_journals_and_unpack_rejects_traversal(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -617,6 +560,7 @@ class MinimumStudyTests(unittest.TestCase):
                     method="ratio-v2",
                     source="openimages-cvdf",
                     workload=design.PROFILE,
+                    profile=0,
                 )
                 cfg = design.configuration(run, cell, frame)
                 write_new(run / "config.json", cfg)
@@ -642,6 +586,18 @@ class MinimumStudyTests(unittest.TestCase):
                 self.assertEqual(verified["coverage"], 1)
                 self.assertEqual(verified["credited_bytes"], 16 * len(body))
                 self.assertGreater(observed["common_ttfb_p50_s"], 0)
+                partial = public_verify.verify_partial(run, repo, "ratio-v2")
+                self.assertEqual(partial["credited_rows"],16)
+                commits=sorted((run/'native/.flowdc/commits').glob('*.json'))
+                commits[0].unlink()
+                partial=public_verify.verify_partial(run,repo,"ratio-v2")
+                self.assertEqual(partial['credited_rows'],15)
+                self.assertFalse(partial['full_success'])
+                commit=json.loads(commits[1].read_text())
+                payload=run/'native/.flowdc/attempts'/commit['row_id']/str(commit['attempt'])/'payload'
+                payload.write_bytes(b'tampered')
+                with self.assertRaisesRegex(ValueError,'digest mismatch'):
+                    public_verify.verify_partial(run,repo,'ratio-v2')
         finally:
             server.shutdown()
             server.server_close()

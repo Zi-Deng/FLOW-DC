@@ -5,7 +5,7 @@ import math
 from dataclasses import asdict
 
 import flowdc_ops as ops
-from flowdc_pilot import CLOCK_TOLERANCE_SECONDS, ClockSample
+from flowdc_pilot import CLOCK_TOLERANCE_SECONDS, MAX_CAMPAIGN_WINDOW_SECONDS, ClockSample
 from flowdc_pilot_journal import allowance, allowance_binding_sha256, encode, failure, require_grant_idle
 
 
@@ -236,7 +236,7 @@ def validate_request(request):
             if ops.uuid_value(key) != key: raise ValueError
         if set(request['cumulative_limits_seconds']) != set(ids): raise ValueError
         for value in request['cumulative_limits_seconds'].values(): ops.integer(value,1,604800)
-        ops.integer(request['max_window_seconds'],601,3600)
+        ops.integer(request['max_window_seconds'],601,MAX_CAMPAIGN_WINDOW_SECONDS)
         ops.timestamp(request['expires_at'])
         budget=ops.number(request['budget_su'])
         if not 0 < budget <= 1e9: raise ValueError

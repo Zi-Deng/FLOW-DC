@@ -45,6 +45,11 @@ PUBLIC_LONG = Workload("bounded-public-long-v1", 524288, 64 * 2**30, 2 * 2**30,
                        80 * 2**30, 96 * 2**30, 1800, 8388608, 1048576,
                        16777216, max_attempts=1)
 
+# Current long transfer study. Prior files retain their recorded smaller limits.
+PUBLIC_TRANSFER = Workload("bounded-public-transfer-v1", 524288, 128 * 2**30, 2 * 2**30,
+                           160 * 2**30, 192 * 2**30, 10800, 8388608, 1048576,
+                           16777216, max_attempts=1)
+
 
 def workload(name=None):
     if name is None or name == LEGACY.name:
@@ -57,6 +62,8 @@ def workload(name=None):
         return EXTERNAL
     if name == PUBLIC_LONG.name:
         return PUBLIC_LONG
+    if name == PUBLIC_TRANSFER.name:
+        return PUBLIC_TRANSFER
     raise ValueError("unknown finite research workload profile")
 
 

@@ -11,7 +11,7 @@ import time
 from pathlib import Path
 
 from . import cloud, public_cloud, storage
-from .common import file_hash, lock, read_json, require, utc, write_new
+from .common import file_hash, lock, read_json, require, replace_derived, utc, write_new
 from .minimum_study import LIMITS
 from .onset_cloud import exposure, local_status, ready
 
@@ -53,13 +53,23 @@ def json_command(packet, role, script, *args, timeout=30):
 def prepare(study, source, previous, packet):
     packet = Path(packet)
     result = public_cloud.prepare(study, source, previous, packet, limits=LIMITS, new_storage=True)
+    old = read_json(Path(previous) / "operator.json")
+    retained = Path(previous) / "volumes"
+    require(all((retained / r / "volume-mount.json").exists() for r in ROLES), "retained storage receipts required")
+    op = read_json(packet / "operator.json")
+    op["guest_root"] = old["guest_root"] + "/studies/" + result["campaign_id"]
+    replace_derived(packet / "operator.json", op)
+    write_new(packet / "retained-storage.json", dict(root=old["guest_root"], packet=str(Path(previous).resolve()),
+        volumes={r: dict(volume=read_json(retained / r / "volume.json"),
+                        mount=read_json(retained / r / "volume-mount.json"),
+                        deployment=read_json(retained / r / "deployment.json")) for r in ROLES}))
     for role in ROLES:
         directory = packet / "volumes" / role
         directory.mkdir(parents=True)
         write_new(directory / "deployment.json", dict(campaign_id=result["campaign_id"]))
     write_new(
         packet / "storage-plan.json",
-        dict(gib=VOLUMES, native=NATIVE, owner="new campaign only; no existing volume formatted or erased"),
+        dict(gib=VOLUMES, native=NATIVE, owner="new subdirectory on retained volumes; no allocation, format or historical deletion"),
     )
     write_new(packet / "native-password", os.urandom(32).hex().encode())
     os.chmod(packet / "native-password", 0o600)
@@ -69,27 +79,22 @@ def prepare(study, source, previous, packet):
 def stage(packet, role, profile):
     op, deployment = read_json(packet / "operator.json"), read_json(packet / "deployment.json")
     directory = packet / "volumes" / role
-    receipt = storage.create_volume(directory, profile, deployment["selected"][role], size_gib=VOLUMES[role])
-    mounted = directory / "volume-mount.json"
-    mount = json.loads(
-        ssh(
-            packet,
-            role,
-            [
-                "sudo",
-                "-n",
-                "/usr/bin/python3",
-                "-c",
-                storage.MOUNT,
-                receipt["volume_id"],
-                op["guest_root"],
-                read_json(mounted)["filesystem_uuid"] if mounted.exists() else "NEW",
-            ],
-            180,
-        )
-    )
-    if not mounted.exists():
-        write_new(mounted, mount)
+    retained = read_json(packet / "retained-storage.json")
+    prior = retained["volumes"][role]
+    receipt = prior["volume"]
+    volume = storage.volume_call(profile, "show", [receipt["volume_id"]])
+    require(volume.get("properties", {}).get("flowdc_campaign") == prior["deployment"]["campaign_id"]
+            and int(volume["size"]) == VOLUMES[role]
+            and len(volume.get("attachments") or []) == 1
+            and volume["attachments"][0]["server_id"] == deployment["selected"][role],
+            "retained volume ownership/attachment changed")
+    mount = json.loads(ssh(packet, role, ["sudo", "-n", "/usr/bin/python3", "-c", storage.MOUNT,
+        receipt["volume_id"], retained["root"], prior["mount"]["filesystem_uuid"]], 180))
+    if not (directory / "volume-mount.json").exists():
+        write_new(directory / "volume-mount.json", mount)
+    ssh(packet, role, ["/usr/bin/python3", "-c",
+        "import pathlib,sys; root=pathlib.Path(sys.argv[1]); p=pathlib.Path(sys.argv[2]); assert p.is_relative_to(root) and not p.is_symlink(); p.mkdir(parents=True,exist_ok=True,mode=0o700)",
+        retained["root"], op["guest_root"]])
     installed = directory / "installation.json"
     if installed.exists():
         return read_json(installed)
@@ -215,6 +220,10 @@ def job(packet, cell, number, journal, record):
         roles=roles,
         vms=deployment["selected"],
     )
+    for role in roles:
+        available = json_command(packet, role,
+            "import json,shutil,sys; print(json.dumps({'free':shutil.disk_usage(sys.argv[1]).free}))", root)
+        require(available["free"] > 384 * 2**30, "worker temporary storage reserve insufficient")
     local = packet / "jobs" / cell["run_id"]
     local.mkdir(parents=True)
     write_new(local / "intent.json", dict(utc=utc(), window=number, request=request))
@@ -380,7 +389,7 @@ for p in study.rglob('*'):
  if not p.is_file() or p.is_symlink():continue
  rel=str(p.relative_to(study))
  if rel.startswith(('pools/','runs/')):
-  keep=(p.name in ('record.json','worker-record.json','attempt.json','config.json','flowdc-config.json','retention.json','verification.json','vine-result.json','input.parquet') or '/.flowdc/control/' in rel)
+  keep=(p.name in ('record.json','worker-record.json','attempt.json','config.json','flowdc-config.json','retention.json','verification.json','vine-result.json','input.parquet','progress.json','source-events.json','stdout.log','stderr.log') or '/.flowdc/control/' in rel)
   if not keep:continue
  chosen.append(p)
 assert sum(p.stat().st_size for p in chosen)<4*2**30
@@ -458,10 +467,10 @@ def run(packet):
             intent = packet / f"window-{number:02}-intent.json"
             require(not intent.exists(), "unfinished window; no activation replay")
             controller = cloud.controller_for(packet)
-            window_seconds = 3600
+            window_seconds = LIMITS["window_seconds"]
             full_window = (
-                time.time() + 3600 < started + LIMITS["wall_seconds"]
-                and exposure(record, journal) + 32 <= LIMITS["budget_su"]
+                time.time() + window_seconds < started + LIMITS["wall_seconds"]
+                and exposure(record, journal) + 32 * window_seconds / 3600 <= LIMITS["budget_su"]
             )
             if not full_window or number == LIMITS["max_windows"] - 1:
                 terminal = True
@@ -500,6 +509,7 @@ def run(packet):
                 )
 
             outcome = None
+            deferred_until = None
             jobs_started = 0
             setup_seconds, one_time_install = 0.0, 0.0
             try:
@@ -526,11 +536,22 @@ from benchmark.real_server_study.common import replace_derived
 from benchmark.real_server_study.public_batch import host_gate
 root=pathlib.Path(sys.argv[1]);study=root/'study'
 replace_derived(study/'execution.json',dict(executor='jetstream2',vm_id=sys.argv[2],campaign_id=sys.argv[3],hostname=socket.gethostname(),deadline_utc=float(sys.argv[4]),source_root=str(root/'source')))
-print(json.dumps({source:host_gate(study,source) for source in ('inaturalist-open','openimages-cvdf')}))""",
+protocol=json.loads((study/'protocol.json').read_text())
+from benchmark.real_server_study.minimum_study import SOURCES
+result={}
+for source in SOURCES:
+ if not (protocol['provenance'][source].get('media_rights_qualified') and protocol['provenance'][source].get('access_qualified')): continue
+ failure=study/'gates'/(source+'-probe-failure.json')
+ if failure.exists(): result[source]=json.loads(failure.read_text()); continue
+ try: result[source]=host_gate(study,source)
+ except Exception as error:
+  result[source]=dict(status='probe_failed',error=type(error).__name__+': '+str(error),requests=32,probe_body_bytes=32*64*2**20,body_basis='conservative unclosed probe reservation')
+  failure.write_text(json.dumps(result[source]))
+print(json.dumps(result))""",
                         root,
                         deployment["selected"]["worker"],
                         deployment["campaign_id"],
-                        str(started + 86400),
+                        str(started + LIMITS["wall_seconds"]),
                         timeout=300,
                     )
                     json_command(
@@ -539,14 +560,15 @@ print(json.dumps({source:host_gate(study,source) for source in ('inaturalist-ope
                         """import json,pathlib,sys
 root=pathlib.Path(sys.argv[1]);gates=json.loads(sys.argv[2])
 for source,value in gates.items():
- p=root/'study/gates'/(source+'.json')
+ p=root/'study/gates'/(source+('-probe-failure.json' if value.get('status')=='probe_failed' else '.json'))
  if not p.exists():p.write_text(json.dumps(value))
 print('{}')""",
                         root,
                         json.dumps(gates),
                     )
                 setup_seconds = time.monotonic() - window_started - one_time_install
-                while not terminal and work_left() > 180 and time.time() < started + 75600:
+                deferred_until = None
+                while not terminal and work_left() > 180 and time.time() < started + LIMITS["dispatch_seconds"]:
                     selection = json_command(
                         packet,
                         "manager",
@@ -554,15 +576,17 @@ print('{}')""",
 sys.path.insert(0,sys.argv[1]+'/source')
 from benchmark.real_server_study.minimum_queue import next_cell
 disk=shutil.disk_usage(sys.argv[1])
-assert disk.free>192*2**30 and disk.used+192*2**30<3584*2**30,'retention/free-space admission'
+assert disk.free>384*2**30 and disk.used+192*2**30<3584*2**30,'retention/free-space admission'
 print(json.dumps(next_cell(sys.argv[1]+'/study',float(sys.argv[2]),float(sys.argv[3]),sys.argv[4]=='True')))""",
                         root,
-                        str(started + 86400 - time.time()),
+                        str(started + LIMITS["wall_seconds"] - time.time()),
                         str(max(120, setup_seconds, *overhead_history)),
                         str(bool(overhead_history)),
                         timeout=120,
                     )
-                    if selection and selection.get("phase") == "observe_cleanup":
+                    if selection and selection.get("phase") == "wait":
+                        deferred_until = selection["until_utc"]
+                        write_new(packet / f"window-{number:02}-deferred.json", selection)
                         break
                     if selection is None:
                         terminal = True
@@ -587,14 +611,15 @@ print(json.dumps(next_cell(sys.argv[1]+'/study',float(sys.argv[2]),float(sys.arg
                     )
                     jobs_started += 1
                     outcome = job(packet, selection, number, journal, record)
+                    # A stopped source is suspended by the queue; unrelated
+                    # qualified sources can continue without replacement attempts.
                     if outcome["status"] != "complete":
-                        terminal = True
-                        break
+                        continue
                 require(
-                    terminal or jobs_started or one_time_install > 0,
+                    terminal or jobs_started or one_time_install > 0 or deferred_until is not None,
                     "recurring setup leaves no room for the next job; stop jobless windows",
                 )
-                if terminal or time.time() >= started + 75600:
+                if terminal or time.time() >= started + LIMITS["dispatch_seconds"]:
                     terminal = True
                     if work_left() > 900:
                         collect(packet)
@@ -624,6 +649,12 @@ print(json.dumps(next_cell(sys.argv[1]+'/study',float(sys.argv[2]),float(sys.arg
                     )
                     stream.flush()
                     os.fsync(stream.fileno())
+            if not terminal and deferred_until is not None:
+                # All guests are already freshly offloaded. Idle waiting is local
+                # and billed exposure cannot grow under this ordinary wait.
+                while time.time() < deferred_until:
+                    require(time.time() < started + LIMITS["dispatch_seconds"], "campaign expired while waiting")
+                    time.sleep(min(30, deferred_until - time.time()))
             if terminal:
                 if (
                     not (packet / "collection-complete.json").exists()

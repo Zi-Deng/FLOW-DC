@@ -12,6 +12,7 @@ from dataclasses import dataclass, replace
 ALLOWANCE_SECONDS = 7200
 SHUTDOWN_RESERVE_SECONDS = 600
 INSPECTION_SECONDS = 1800
+MAX_CAMPAIGN_WINDOW_SECONDS = 14400
 CLOCK_TOLERANCE_SECONDS = 5
 
 
@@ -75,7 +76,7 @@ class Allowance:
             if (not canonical_id
                     or self.campaign_limit is None or self.campaign_expires_utc is None
                     or type(self.campaign_window_seconds) is not int
-                    or not 601 <= self.campaign_window_seconds <= 3600):
+                    or not 601 <= self.campaign_window_seconds <= MAX_CAMPAIGN_WINDOW_SECONDS):
                 raise AccountingError("invalid_campaign_account")
             finite_seconds(self.campaign_limit)
             finite_seconds(self.campaign_expires_utc)

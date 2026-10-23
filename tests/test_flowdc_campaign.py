@@ -98,7 +98,7 @@ class CampaignTests(unittest.TestCase):
         self.assertEqual(uncertain.remaining,0)
 
     def test_finite_budget_expiry_and_stale_accounts_refuse_without_mutation(self):
-        for name,value in [('budget_su',1),('max_window_seconds',3601),
+        for name,value in [('budget_su',1),('max_window_seconds',14401),
                 ('expires_at',datetime.fromtimestamp(self.clock().utc+8*86400,UTC).isoformat()),
                 ('expected_accounts_sha256','0'*64)]:
             request = copy.deepcopy(self.request); request[name]=value
@@ -120,6 +120,16 @@ class CampaignTests(unittest.TestCase):
         self.assertEqual(active.shutdown_at_consumed - active.consumed, 3000)
         with self.assertRaises(AccountingError):
             account.activation_intent(self.clock(), window_seconds=3601, inspection=False)
+
+    def test_long_campaign_is_explicit_and_preserves_cleanup_and_consumption(self):
+        request=copy.deepcopy(self.request); request['max_window_seconds']=14400
+        _,_,after=self.apply(request)
+        account=allowance(next(iter(after['vms'].values()))['account'])
+        self.assertEqual(account.consumed,6000)
+        with self.assertRaises(AccountingError): account.activation_intent(self.clock(),window_seconds=14400,inspection=True)
+        active=account.activation_intent(self.clock(),window_seconds=14400,inspection=False)
+        self.assertEqual(active.shutdown_at_consumed-active.consumed,13800)
+        with self.assertRaises(AccountingError): account.activation_intent(self.clock(),window_seconds=14401,inspection=False)
 
     def test_transport_hour_start_uses_explicit_full_window_flag(self):
         import json

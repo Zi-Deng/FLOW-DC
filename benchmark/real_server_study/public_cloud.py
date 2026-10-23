@@ -272,7 +272,7 @@ def authorize(packet, limits=LIMITS):
     rates = {row["id"]: row["su_per_hour"] for row in rates_receipt["servers"]}
     chosen = sorted(deployment["selected"].values())
     require(
-        sum(rates.values()) * min(limits["wall_seconds"], limits["max_windows"] * 3600) / 3600
+        sum(rates.values()) * min(limits["wall_seconds"], limits["max_windows"] * limits["window_seconds"]) / 3600
         <= limits["budget_su"],
         "actual selected-VM forecast exceeds study budget",
     )
@@ -280,12 +280,12 @@ def authorize(packet, limits=LIMITS):
     cumulative = {
         key: max(
             math.ceil(allowance(current["vms"][key]["account"]).effective_limit) + 1,
-            math.ceil(baseline[key]) + min(limits["wall_seconds"], limits["max_windows"] * 3600),
+            math.ceil(baseline[key]) + min(limits["wall_seconds"], limits["max_windows"] * limits["window_seconds"]),
         )
         for key in chosen
     }
     preview = sum((cumulative[key] - baseline[key]) * rates[key] / 3600 for key in chosen)
-    require(preview <= 1000, "preserved cumulative preview exceeds approved1000SU")
+    require(preview <= max(1000, limits["budget_su"]), "preserved cumulative preview exceeds authorization ceiling")
     record = dict(
         campaign_id=deployment["campaign_id"],
         clock=vars(clock),
@@ -306,13 +306,13 @@ def authorize(packet, limits=LIMITS):
         selected_ids=chosen,
         cumulative_limits_seconds=cumulative,
         expires_at=dt.datetime.fromtimestamp(clock.utc + limits["wall_seconds"], dt.UTC).isoformat(),
-        max_window_seconds=3600,
+        max_window_seconds=limits["window_seconds"],
         protocol_sha256=file_hash(packet / "deployment.json"),
         budget_sha256=file_hash(packet / "campaign.json"),
         budget_su=max(limits["budget_su"], math.ceil(preview)),
     )
-    # Existing unused cumulative authority is preserved. Only this driver's100
-    # new SU ceiling counts every selected VM; preserved old ceilings are not new spending authority.
+    # Existing unused cumulative authority is preserved. This driver's finite
+    # new-exposure limit still counts every selected VM.
     write_new(packet / "grant.json", request)
     path = cloud.operational_grant(packet, op)
     service = current["service"]

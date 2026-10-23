@@ -79,3 +79,104 @@ def transport(path, ceiling):
         status_counts=dict(statuses),
         boundary="before connection setup through body/failure completion",
     )
+
+
+def partial_transport(directory, body_limit):
+    """Observed refusal evidence; incomplete clocks never become full-run rates."""
+    directory = Path(directory)
+    files = [directory / "request-audit.jsonl"]
+    if list(directory.glob("tool-request-*.jsonl")):
+        files = sorted(directory.glob("tool-request-*.jsonl"))
+    statuses, reasons, attempts = Counter(), set(), set()
+    invalid = 0
+    for path in files:
+        if not path.exists():
+            continue
+        with path.open() as stream:
+            for line in stream:
+                try:
+                    event = json.loads(line)
+                except (ValueError, UnicodeError):
+                    invalid += 1
+                    continue
+                if event.get("event") == "headers":
+                    statuses[str(event["status"])] += 1
+                if event.get("event") == "attempt":
+                    attempts.add(event["url"])
+                if event.get("reason"):
+                    reasons.add(event["reason"])
+                if event.get("stop_reason"):
+                    reasons.add(event["stop_reason"])
+    category = ("confirmed_rate_limit" if statuses["429"] else
+                "access_refusal_cause_unknown" if statuses["401"] or statuses["403"] else
+                "service_unavailable" if statuses["503"] else
+                "performance_degradation" if "sustained_latency" in reasons else "interrupted_or_failed")
+    return dict(attempts=len(attempts), status_counts=dict(statuses), stop_reasons=sorted(reasons),
+                classification=category, malformed_lines=invalid, incomplete=True,
+                body_bytes=body_limit, body_bytes_basis="conservative reservation; actual count incomplete",
+                http_span_s=None, mean_http_concurrency=None, request_seconds=None)
+
+
+def progress(directory, payloads):
+    """Compact post-verified acquisition curve; not bytes usable at that time.
+
+    Raw journals remain on the manager. Time is relative to the first observed
+    HTTP start. Credit is assigned retrospectively only to verified payload URLs.
+    """
+    import heapq
+    from .common import file_hash
+    directory = Path(directory)
+    paths = sorted(directory.glob('tool-request-*.jsonl')) or [directory / 'request-audit.jsonl']
+    paths = [p for p in paths if p.exists()]
+    invalid = [0]
+
+    def events(path):
+        previous = -math.inf
+        with path.open(errors='replace') as stream:
+            for line in stream:
+                try:
+                    value = json.loads(line)
+                    now = float(value['monotonic_s'])
+                    require(math.isfinite(now) and now >= previous, 'invalid progress clock')
+                    previous = now
+                    yield value
+                except (ValueError, KeyError, TypeError):
+                    invalid[0] += 1
+    eligible = {v['url']: v['bytes'] for v in payloads.values()}
+    active, credited, pending = set(), set(), {}
+    bins, refusals = {}, []
+    start, rows, body = None, 0, 0
+    statuses = Counter()
+    for event in heapq.merge(*(events(p) for p in paths), key=lambda e: e['monotonic_s']):
+        kind, token, now = event['event'], event.get('token'), event['monotonic_s']
+        if kind == 'http_start':
+            if start is None:
+                start = now
+            active.add(token)
+            pending[token] = now
+        if start is None:
+            continue
+        tick = int((now-start)//5)
+        bucket = bins.setdefault(tick, dict(second=5*(tick+1), credited_rows=rows,
+            credited_bytes=body, peak_http_inflight=len(active), completed_http=0, first_byte_delays_s=[]))
+        bucket['peak_http_inflight'] = max(bucket['peak_http_inflight'],len(active))
+        if kind == 'http_first_byte' and token in pending:
+            bucket['first_byte_delays_s'].append(now-pending[token])
+        if kind == 'headers':
+            status = str(event['status']); statuses[status] += 1
+            if status in ('401','403','429','503') and len(refusals) < 256:
+                refusals.append(dict(second=now-start,status=status,retry_after=event.get('retry_after')))
+        if kind == 'network_end':
+            active.discard(token); pending.pop(token,None)
+            bucket['completed_http'] += 1
+            if token in eligible and token not in credited:
+                credited.add(token); body += eligible[token]; rows += 1
+        bucket.update(credited_rows=rows,credited_bytes=body)
+    for bucket in bins.values():
+        latency = sorted(bucket.pop('first_byte_delays_s'))
+        bucket['ttfb_p95_s'] = latency[math.ceil(.95*len(latency))-1] if latency else None
+    return dict(schema='flowdc-acquisition-progress-v1', interval_seconds=5,
+        interpretation='Retrospectively verified bytes at HTTP completion; excludes packaging/return/audit time',
+        points=list(bins.values()), status_counts=dict(statuses), refusal_events=refusals,
+        malformed_events=invalid[0], complete_credit=rows==len(payloads),
+        raw_journals={p.name:file_hash(p) for p in paths})

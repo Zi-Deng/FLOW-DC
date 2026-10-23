@@ -232,6 +232,7 @@ class IntegrationTests(unittest.IsolatedAsyncioTestCase):
         with patch("flowdc_methods.time.monotonic", return_value=1):
             await buffer.record(200, 0.1, latency_eligible=True, dispatch_at=0.9)
         self.assertEqual(buffer.consume(now=2.5, window=1.5, minimum=5)["delays"], [])
+        self.assertEqual(buffer.freshness_rejected, 1)
         with patch("flowdc_methods.time.monotonic", return_value=3):
             await buffer.record(200, 0.1, latency_eligible=True, dispatch_at=2.9)
         self.assertEqual(buffer.consume(since=3, now=3.1, window=1.5, minimum=5)["delays"], [])

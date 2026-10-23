@@ -17,19 +17,19 @@ from pathlib import Path
 import polars as pl
 
 from .common import file_hash, read_json, require, utc, write_new
-from .minimum_study import LIMITS, PROFILE, configuration, manifest
+from .minimum_study import LIMITS, PROFILE, ceiling, configuration, manifest
 from .public_batch import terminate
 from .public_metrics import transport
 
 
-def pack(directory, destination, *, metadata_only=False):
+def pack(directory, destination, *, metadata_only=False, partial=False):
     """Keep native archive and all journals; omit only loose archive duplicates."""
     directory = Path(directory)
     excluded = set()
     excluded_inodes = set()
     canonical_inodes = {}
     index_path = directory / "native/outcome-index.json"
-    if index_path.exists() and (directory / "native.tar").exists():
+    if not partial and index_path.exists() and (directory / "native.tar").exists():
         for row in read_json(index_path)["rows"]:
             if row["disposition"] == "verified":
                 for key in ("payload", "metadata"):
@@ -57,10 +57,19 @@ def pack(directory, destination, *, metadata_only=False):
                     inode in canonical_inodes and canonical_inodes[inode] != path
                 ):
                     continue
+                if partial:
+                    relative = path.relative_to(directory)
+                    # Keep committed PAARC journal payloads and native tool
+                    # shards; omit public hardlink aliases and unfinished tar.
+                    flow_owned = (directory / "native/.flowdc/owner.json").exists()
+                    if flow_owned and relative.parts[0] == "native" and ".flowdc" not in relative.parts:
+                        continue
+                    if flow_owned and (relative == Path("native.tar") or "exports" in relative.parts):
+                        continue
                 if metadata_only and (path.parent != directory or path.stat().st_size > 64 * 2**20):
                     continue  # Full partial work remains on its owning guest.
                 total += path.stat().st_size
-                require(total <= 96 * 2**30, "finite return exceeded")
+                require(total <= 192 * 2**30, "finite return exceeded")
                 archive.add(path, arcname=str(path.relative_to(directory)), recursive=False)
     return total
 
@@ -103,7 +112,7 @@ def unpack(archive_path, destination, deadline):
             count += 1
             total += item.size
             require(
-                count <= 8388608 and total <= 96 * 2**30 and time.monotonic() < deadline,
+                count <= 8388608 and total <= 192 * 2**30 and time.monotonic() < deadline,
                 "return count/bytes/deadline exceeded",
             )
             names.add(item.name)
@@ -183,7 +192,7 @@ def worker(spec_path, input_path, output_path):
             )
             try:
                 until = time.monotonic() + min(
-                    LIMITS["native_seconds"], spec["deadline_utc"] - time.time() - 60
+                    LIMITS["native_seconds"], spec["deadline_utc"] - time.time() - 1800
                 )
                 while proc.poll() is None:
                     reason = guard_stop(run)
@@ -193,11 +202,13 @@ def worker(spec_path, input_path, output_path):
             finally:
                 terminate(proc)
         require(proc.returncode == 0, "native acquisition/processing failed")
-        metrics = transport(run / "request-audit.jsonl", 192 // cell["workers"])
+        metrics = transport(run / "request-audit.jsonl", ceiling(cell["source"]))
         require(metrics["attempts"] == frame.height, "partition attempts incomplete")
         record.update(status="complete", transport=metrics)
     except Exception as error:
         record["error"] = type(error).__name__ + ": " + str(error)
+        from .public_metrics import partial_transport
+        record["transport"] = partial_transport(run, LIMITS["job_body_bytes"])
     record.update(
         ended=time.monotonic(),
         utc=utc(),
@@ -205,7 +216,7 @@ def worker(spec_path, input_path, output_path):
         child_cpu_s=sum(os.times()[2:4]),
     )
     write_new(run / "worker-record.json", record)
-    pack(run, output_path, metadata_only=record["status"] != "complete")
+    pack(run, output_path, partial=record["status"] != "complete")
 
 
 def manager(request_path):
@@ -305,7 +316,7 @@ def manager(request_path):
             # rejects redispatch before any image HTTP (including lost ACKs).
             task.set_retries(1)
             task.set_max_forsaken(0)
-            task.set_time_max(LIMITS["native_seconds"] + 300)
+            task.set_time_max(min(LIMITS["native_seconds"], job_seconds - 1800) + 600)
             task.add_feature(request["campaign_id"] + "-" + role)
             for name in ("input.parquet", "task.json"):
                 task.add_input(manager.declare_file(str(node / name), cache=False, peer_transfer=False), name)
@@ -321,7 +332,7 @@ def manager(request_path):
             unpack(node / "return.tar", returned, deadline)
             native = read_json(returned / "worker-record.json")
             require(
-                native["status"] == "complete"
+                native["status"] in ("complete", "stopped")
                 and native["vm_id"] == request["vms"][role]
                 and native["source_head"] == request["head"]
                 and file_hash(returned / "input.parquet") == file_hash(node / "input.parquet"),
@@ -346,6 +357,7 @@ def manager(request_path):
                         str(native["started"]),
                         "--ended",
                         str(native["ended"]),
+                        *(["--partial"] if native["status"] != "complete" else []),
                     ],
                     stdout=out,
                     stderr=err,
@@ -357,6 +369,8 @@ def manager(request_path):
                     terminate(proc)
             require(proc.returncode == 0, "manager independent verification failed")
             verified = read_json(node / "verification.json")
+            from .public_metrics import progress
+            write_new(returned / "progress.json", progress(returned, verified["payloads"]))
             write_new(
                 node / "retention.json",
                 dict(verified=True, utc=utc(), vm_id=request["vms"][role], archives=verified["archives"]),
@@ -396,16 +410,20 @@ def manager(request_path):
             "original denominator differs",
         )
         record.update(
-            status="complete",
+            status="complete" if all(r["worker"]["status"] == "complete" for r in received) else "stopped",
             elapsed_s=elapsed,
             credited_bytes=credited,
             coverage=credited_rows / frame.height,
-            goodput_Bps=credited / elapsed,
+            goodput_Bps=credited / elapsed if all(r["worker"]["status"] == "complete" for r in received) else None,
             body_bytes=sum(r["worker"]["transport"]["body_bytes"] for r in received),
             native_seconds=max(r["worker"]["ended"] - r["worker"]["started"] for r in received),
-            http_span_s=max(r["worker"]["transport"]["http_span_s"] for r in received),
+            http_span_s=max(r["worker"]["transport"].get("http_span_s") or 0 for r in received),
+            mean_http_concurrency=sum(r["worker"]["transport"].get("mean_http_concurrency") or 0 for r in received)
+                if all(r["worker"]["status"] == "complete" for r in received) else None,
+            stop_evidence=[r["worker"].get("transport", {}) for r in received if r["worker"]["status"] != "complete"],
             # Integral is additive across hosts, requires no synchronized clocks.
-            mean_job_concurrency=sum(r["worker"]["transport"]["request_seconds"] for r in received) / elapsed,
+            mean_job_concurrency=sum((r["worker"]["transport"].get("request_seconds") or 0) for r in received) / elapsed
+                if all(r["worker"]["status"] == "complete" for r in received) else None,
             participants=[
                 dict(
                     role=r["role"],
@@ -429,6 +447,7 @@ def manager(request_path):
             directory / "input.parquet",
             *directory.glob("*/verification.json"),
             *directory.glob("*/returned/worker-record.json"),
+            *directory.glob("*/returned/progress.json"),
         ]
         if p.is_file()
     }

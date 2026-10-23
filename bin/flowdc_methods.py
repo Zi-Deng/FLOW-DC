@@ -379,7 +379,8 @@ class DelayPolicy:
                 ratio = 1.0 if cfg.ablation == "no-method-feedback" else min(1.10, max(0.85, math.sqrt(budget / self.current_delay)))
                 proposed = math.floor(before * ratio + 1)
                 self.limit = proposed if proposed <= before or utilized else before
-                return result("ratio_update" if self.limit != before else "utilization_hold")
+                return result("ratio_update" if self.limit != before else
+                              "rounding_hold" if utilized else "utilization_hold")
             if self.current_delay >= budget and cfg.ablation != "no-method-feedback":
                 self.limit = math.floor(before * cfg.soft_factor)
                 self.recovery_until = now + (0 if cfg.ablation == "no-recovery-grace" else cfg.recovery_grace_s)
@@ -435,6 +436,7 @@ class ObservationBuffer:
         self.samples = []
         self.overload = False
         self.total = 0
+        self.freshness_rejected = 0
 
     async def record(
         self,
@@ -476,6 +478,7 @@ class ObservationBuffer:
             self.samples.append((dispatch_at, time.monotonic(), ttfb))
 
     def consume(self, since=None, *, now=None, window=None, minimum=1):
+        available = len(self.samples)
         self.samples = [
             (dispatched, received, delay)
             for dispatched, received, delay in self.samples
@@ -490,6 +493,7 @@ class ObservationBuffer:
                 )
             )
         ]
+        self.freshness_rejected = available - len(self.samples)
         delays = [delay for _, _, delay in self.samples]
         snap = {"delays": delays, "overload": self.overload, "total": self.total}
         if window is None or len(delays) >= minimum or self.overload:
@@ -525,6 +529,7 @@ class CandidateController:
                 "origin": self.host,
                 "new_observations": snap["total"],
                 "pending_samples": len(self.metrics.samples),
+                "freshness_rejected": self.metrics.freshness_rejected,
                 **record,
             }
         )

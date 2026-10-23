@@ -1,143 +1,197 @@
-# Minimum measured public-source study
+# Adaptive transfer study on public image servers
 
-This is the current successor to the completed short public pilot. Its purpose
-is to replace illustrative manuscript values with measured practical acquisition
-results; it does not guarantee that FLOW-DC will outperform img2dataset.
+This is the current, separately identified amendment to the closed minimum
+measured study. Its purpose is to test practical advantages of PAARC-Ratio
+(`ratio-v2`) and PAARC-Grad (`gradient-candidate-v2`) against img2dataset1.47.0.
+Faster verified delivery, less target-specific configuration effort and naturally
+observed refusal avoidance are hypotheses, not promised outcomes. Retained
+historical comparisons, including cases won by img2dataset, remain evidence.
+No controlled image origin or generated scientific dataset is used.
 
-Compare `ratio-v2` (PAARC-Ratio), `gradient-candidate-v2` (PAARC-Grad) and pinned
-img2dataset1.47.0 on iNaturalist open-data S3 original JPEG renditions and CVDF
-Open Images hosted train JPEGs. Use actual per-photo attribution and explicit
-CC0/CC-BY iNaturalist metadata. The bounded, documented metadata prefix is a
-cohort, not a representative sample of the entire publisher population. CVDF
-and iNaturalist renditions are publisher-resized; both services use AWS.
+## Sources and independent selection
 
-The minimum evaluation is27 jobs: three methods × three independent matched
-blocks × (iNaturalist one-worker, CVDF one-worker, iNaturalist two-worker). The
-two-worker comparison uses the same manifests as the one-worker arm. Optionally
-add three primary iNaturalist blocks for36 jobs, chosen from calibration cost
-before evaluation outcomes. Preserve missing/stopped/changed-content cases.
+Develop settings on CVDF Open Images hosted JPEGs. Transfer the selected PAARC
+profiles and tool configuration to iNaturalist open-data S3 and, independently
+if qualified, the TaiBIF/TBN moth image host. Per-image attribution, license,
+original row identity and official metadata provenance travel with each input.
+The iNaturalist cohort uses a bounded publisher metadata prefix with CC0/CC-BY
+JPEGs; it is not representative of all iNaturalist. Hosted renditions can be
+publisher-resized. Both CVDF and iNaturalist use AWS; they do not establish
+cross-provider generality. A dataset license alone does not establish every
+linked image's rights or permission to stress its host.
 
-Calibrate13 long jobs: two PAARC settings and three img2dataset configurations
-per source, then all three selected methods on two workers. At most three size
-correction jobs. Short512/2048-row engineering cases establish setup/per-row cost
-and actual worker participation; they are never the long scientific evidence.
-Target720s HTTP acquisition for the fastest configuration, intended minimum600s,
-with matched fixed work. Do not pad runs or select successful URLs. If the finite
-long profile,2400s whole-job deadline or total budget cannot accommodate the
-design, stop before evaluation and report the feasibility blocker.
+A source requires explicit `media_rights_qualified` and `access_qualified`
+provenance before any image probe. TaiBIF remains pending until this is supported;
+its absence is a recorded missing case, not a substituted success. No email is
+authorized. Robots, TLS and bounded sequential32-object health checks precede
+acquisition; redirects, publisher opt-outs and unsupported pacing stop it.
 
-Size one-worker calibration only from one-worker engineering observations.
-Fit setup plus per-row time from the512/2048-row pair for each candidate and
-worker count; do not scale fixed startup cost as per-row work. Long calibration
-updates the slopes while confirmation outcomes never alter the planning model.
-Require25% headroom against each candidate's native, complete-job and body
-budgets; a body-limited size still needs a predicted600s HTTP period. Persist the
-single three-job correction size before dispatch (either source may use this
-finite correction budget), and check every final cell's
-individual feasibility before freezing the matrix. Calibration failures are
-retained and never replaced by more favorable attempts. Observe at least one
-completed cleanup before long calibration. At that point forecast all remaining
-calibration,27 evaluation jobs, the three-job correction reserve and final
-collection; refuse early if they cannot fit. Repeat the feasibility decision
-after calibration before choosing27/36 evaluation jobs.
+Metadata is shuffled with seed20261023 before downloads. The first32 records
+serve the health probe. Three disjoint equal-capacity partitions supply sizing,
+calibration and confirmation (each at most524288 rows). Confirmation repeats a
+fixed manifest across six independently initialized temporal blocks. URL order
+is the same across methods within each block and changes by block. Repeated
+URLs/cache effects are disclosed. No post-outcome successful-URL filtering.
 
-PAARC initial4/minimum2, growth1.5, target ratio2, baseline120s, source ceiling192.
-No algorithm changes/retuning. Tool candidates(processes,threads/process) are
-(1,32),(1,192),(8,24), selected by verified goodput subject to coverage. Two workers
-halve the per-worker ceiling/thread count. This is static partitioning between
-independent local controllers, not new shared global adaptive admission.
+## Minimum selection and comparison matrix
 
-Both tools use matched TaskVine sharding, eight cores/24GiB per downloader, one
-HTTP attempt/row, zero tool shard retries, uncompressed original-byte archives,
-the same source guards and manager-side independent decoding/digest verification.
-Tool timeout semantics differ despite the common nominal30s setting. The tool's
-spawned processes share a finite response-body reservation counter and stop flag.
-An mmap counter and per-response leases of at most8MiB amortize shared accounting;
-unused reservations are returned and unknown failed reads remain conservatively
-charged. Local engineering measurements separately quantify guard effects; they
-are not public-source performance evidence or a universal overhead bound.
-Each immutable shard has a separate audit; merging recomputes global concurrency.
-Comparison HTTP timing starts before connection setup and ends at body/failure
-completion, without changing the PAARC application-delay feedback signal.
+| Stage | Work | Maximum long jobs |
+|---|---|---:|
+| CVDF development | Four profiles for each of PAARC-Ratio, PAARC-Grad and img2dataset |12|
+| Target tool calibration | Four tool configurations per target |8|
+| Target confirmation | Four arms × six blocks × two targets |48|
 
-Pinned TaskVine uses native `retries=1` (zero means unlimited in7.17.2),
-`max_forsaken=0`, one owned worker per unique feature and no replacement worker.
-An atomic persistent per-partition directory prevents any native redispatch from
-repeating acquisition, including after lost acknowledgments. Such native failures
-remain incomplete; the coordinator never retries a scientific job.
+The maximum scientific matrix is68 jobs, plus one sizing job and at most two
+sizing corrections per source, and the32-object health checks. Each missing,
+stopped or interrupted first attempt is retained. Identical transferred and
+target-calibrated tool candidates share their six confirmation runs; they are
+reported as aliases, not independent replications.
 
-Primary goodput is verified original-row bytes divided by manager submission
-through verified returned artifacts. Per-job staging, execution, archiving,
-transfer and verification are included. Calibration, installation, VM lifecycle,
-final metadata collection and report generation are separate overhead. Historical
-worker-verified short-pilot rates cannot be pooled with this timing definition.
+PAARC profile grid `(target_delay_ratio, startup_growth_factor)`:
+`(2,1.5), (3,1.5), (3,2), (4.5,2)`. All use minimum2, initial4, baseline age120s
+and existing v2 state transitions, sample gates, overload handling and rounding.
+The acquisition ceiling is256 for AWS sources and192 for TaiBIF. This study
+changes parameter selection, not the PAARC equations. Telemetry distinguishes
+rounding holds from utilization holds and reports rejected stale samples.
 
-`bounded-public-long-v1` explicitly bounds524288 rows,64GiB response payload,
-2GiB metadata,80GiB native archive and96GiB returned artifacts per partition.
-The job-level64GiB body ceiling is divided between workers. Old workload profiles
-retain their exact semantics. Oversized whole-run metadata may use its declared
-metadata limit; image members retain their64MiB object limit. Archive I/O streams.
+Tool grid `(processes, threads/process)`:
+AWS `(1,32), (1,128), (1,256), (8,32)`; TaiBIF `(1,32), (1,128), (1,192), (8,24)`.
+Transfer the selected candidate index, applying this predefined ceiling mapping.
+Select a configuration only after all four candidate dispositions exist. Eligible
+runs complete at least600s of observed HTTP and have original-row coverage within
+one percentage point of the best eligible coverage. Maximize independently
+verified end-to-end goodput; within2% of the maximum prefer lower measured mean
+HTTP concurrency, then candidate order. Freeze global PAARC selection before
+examining target calibration. Target-specific tool calibration is an additional,
+stronger comparator; its extra configuration cost is disclosed. There is no
+claim that one chosen profile is universally optimal.
 
-The authorized campaign is24h, no new downloads after21h, at most1000 new compute
-SUs,16million image attempts,3TiB response bodies and3.5TiB retained evidence.
-One-hour VM windows reserve600s for cleanup. Up to64 early-closed windows share
-the same24h cumulative allowance and expiry; this is not64 hours of authority.
-New volumes total at most5TiB(4TiB manager;512GiB each acquisition scratch).
-Short engineering jobs have600s deadlines and share windows. Longer jobs use
-matching-condition duration forecasts, capped at2400s. A recurring jobless window
-stops acquisition rather than spending repeated setup windows. Manager return
-processing and independent verification run concurrently with TaskVine progress,
-with a1200s verification ceiling inside the common job deadline.
-The last window is reserved for metadata if needed. Expired/exhausted authority
-produces an explicit blocked outcome; a shorter offline-only collection window
-is allowed only within the existing remaining time and SU limits.
-Local collection is capped at4GiB so compressed-transfer/extraction duplicates
-fit the12GiB peak allowance while retaining50GiB free. Archives stay on the
-manager volume. Worker duplicates are removed only after verified return.
+Target900s observed HTTP, intended minimum600s, using fixed real work without
+padding. Size using the predefined eight-process tool candidate. At most two
+corrections may enlarge the disjoint sizing workload. All methods receive the
+same frozen row count. Preserve shorter-than-intended results rather than rerun
+only fast methods. Linear forecasts maintain physical clock ordering and use
+measured full native/verification cost; confirmation cannot tune future work.
+Before freezing, check measured runtime and retained-storage forecasts against
+the finite envelope. A forecast is not a guarantee of completion.
 
-Reuse the already trusted manager, worker and registered origin as the second
-downloader without changing enrollment or accounting. No owned image server is
-started. Existing supervisor, grants and history remain intact. Reuse exact
-qualified patched CCTools7.17.2 bytes; install tool dependencies separately.
-Fresh provider/SSH/network checks precede acquisition. Runtime scopes use owned
-systemd groups; failures stop all owned groups and trigger supervised offload.
-Only freshly observed SHELVED_OFFLOADED and restored networking qualify cleanup.
+Within each target, rotate a seeded method order over six blocks so position
+counts differ by at most one. Blocks3–5 begin no earlier than the UTC date after
+the first confirmation run. VMs are offloaded during that wait. The operational
+context, idle gaps and uncontrolled remote-cache/background-traffic effects are
+retained; six blocks provide modest case-study evidence, not universal proof.
 
-Implementation entrypoints: `public_population` (metadata only), `minimum_study`
-(protocol/configuration), `minimum_queue` (calibration/freeze), `minimum_native`
-(matched TaskVine jobs), `minimum_cloud` (finite supervised execution), and
-`minimum_analysis` (measured-only summaries). All input populations, deployment
-packets, credentials, raw evidence and manuscript files remain private.
+## Matched execution and evidence
 
-First-attachment setup waits at most120s for the guest's automatic filesystem
-initialization; it never formats a disk. Native returns contain regular files:
-integrity hardlink aliases of the retained archive, archived row bodies and row
-metadata are omitted, while journals remain. This avoids both unsafe hardlink
-members and redundant body transfer. The independent archive verifier is unchanged.
+One eight-core/24GiB TaskVine downloader per arm, with a common manager and the
+same return/verification path. The third registered VM remains part of the finite
+operational topology/accounting; no image-origin service runs on it. This study
+does not claim distributed scale-out. Reuse the qualified pinned CCTools7.17.2
+runtime. TaskVine's finite retries=1 and persistent exclusive run directories
+prevent redispatch from repeating image acquisition; failed native tasks remain
+failed and no replacement worker is launched.
 
-A stopped engineering job may receive one explicit corrective attempt after an
-execution defect is repaired. `gates/engineering-recovery.json` binds its unchanged
-failed record hash, repair source head, reason and a replacement ID ending in
-`-repair-1`. The failed record stays in place and remains charged to campaign
-accounting. This exception cannot replace calibration/evaluation results, cannot
-approve a second failed correction, and does not extend any deadline or allowance.
+Both methods preserve hosted bytes in uncompressed archives and carry original
+metadata; img2dataset has resizing/reencoding disabled, zero request/shard
+retries and a common nominal30s timeout. Native timeout semantics still differ.
+Each original URL has at most one attempt. Tool processes share the finite body
+budget. Common HTTP timing starts before connection setup and ends after body
+completion/failure, independently of PAARC's application-delay feedback signal.
 
-Use affected offline tests, one full local check/current CI and at most two
-independent review invocations/two review-driven repairs. Under the maintainer's
-explicit exception, one final PR follows experiments, reporting and cleanup;
-there is no intermediate human-merge prerequisite. No email is authorized.
-After the second review, supported findings can receive the second repair with
-an exact reviewed/final delta, current CI and explicit validated dispositions.
-The original report remains unchanged; this is not a final-head review or a
-waiver of unresolved material findings, and no third call is authorized.
+Primary goodput is independently verified original-row bytes divided by manager
+submission through returned-artifact verification. This includes per-job staging,
+processing, archiving, transfer and verification. Also report HTTP throughput,
+actual mean/peak concurrency, original-row coverage, TTFB, elapsed/native time,
+CPU/memory, HTTP status counts, configuration effort and operational cost.
+Concurrency alone is not a performance endpoint. Retrospectively verified
+acquisition-progress curves are labeled separately from usable-output time.
 
-Primary interpretation: show all paired runs. Three blocks are descriptive;
-six permit modest conditional paired-log-ratio inference, Holm-adjusted across
-the two primary method contrasts. Report coverage, time, concurrency, latency,
-errors, resources and costs, including negative findings. No causal ablation,
-four-worker scaling, optimum-concurrency or guaranteed rate-limit-avoidance claim.
+On interruption, PAARC credit requires matching original metadata, source
+identity, commit/intent/ready records, digest and decode. Tool credit requires
+sealed matching Parquet/tar shards, original metadata, digest and decode.
+Unstarted/unsealed/unverified rows remain in the original denominator. Partial
+records have no complete-run goodput. Unknown transport bytes are conservatively
+charged at the job reservation, never entered as zero. Raw artifacts remain on
+the manager; compact progress/status data and verification receipts are collected.
 
-Primary sources: [iNaturalist](https://github.com/inaturalist/inaturalist-open-data),
+## Natural refusals and source suspension
+
+No rate-limit onset search, IP rotation or repeated failing configuration is
+part of this study. A429 is confirmed HTTP rate limiting;403/401 is access refusal
+with unknown cause,503 is service unavailability, and sustained latency alone
+is performance degradation. The existing TaiBIF onset at requested256 was a
+latency stop, not evidence of blocking or150+ sustained actual inflight work.
+
+A public-source guard stops acquisition promptly on refusal, opt-out, sustained
+latency or excessive failures. Conservatively suspend that source for the rest
+of this finite campaign; qualified unrelated sources can continue. This is
+stricter than the proposed24h cooldown/recheck path and spends no repeat requests
+on the affected source. Reconsideration would require a separately identified
+batch after at least24h and any longer Retry-After, a bounded health check, and
+clarification of access refusal when necessary. Never bypass server restrictions.
+A figure showing img2dataset refused while PAARC succeeded requires actual
+matched observations and disclosed ordering/carryover; otherwise omit that claim.
+
+## Finite operations
+
+The separately identified envelope is72h, no dispatch in the last4h, at most
+2400 new compute SUs,40million image attempts,4TiB response bodies and3.5TiB
+retained artifacts. These are ceilings, not expected consumption. Up to72 windows
+share this single wall deadline and cumulative allowance. A new explicit grant
+may permit a four-hour window; historical one-hour grants and1800s inspection
+limits retain their semantics. Cleanup reserves600s. Each whole job is at most
+12600s, with at most10800s native processing and1800s reserved for return/audit;
+independent verification is separately capped at1200s. Confirmation deadlines
+are common across all arms on a target. No jobless activation loop is allowed.
+
+`bounded-public-transfer-v1` explicitly limits524288 rows,128GiB response payload,
+2GiB metadata,160GiB native artifacts and192GiB returned artifacts per job.
+Older workload records are interpreted by their original finite profiles.
+Physical free-space admission reserves384GiB for temporary duplication. Reuse
+existing4TiB manager and512GiB scratch volumes in a new study subdirectory;
+no new volume allocation, formatting or deletion of historical evidence.
+Worker duplicates are removed only after independent manager verification.
+
+Collect at most4GiB metadata while retaining50GiB local free space. Fresh provider,
+SSH, runtime and network checks precede activation. Preserve registration,
+grants, consumption and history. A necessary guarded supervisor upgrade happens
+only while idle and freshly offloaded; once long-window grants exist, repair
+forward rather than restore a journal or downgrade to an incompatible reader.
+All failures stop owned guest process groups and invoke supervised cleanup.
+Only fresh SHELVED_OFFLOADED and restored networking qualify final cleanup.
+
+## Analysis, figures and workflow
+
+Report all frozen cells and first attempts, including missing/censored cases.
+Use paired log-goodput ratios and ordinary95% t intervals; Holm-adjust one-sided
+primary superiority p values across four contrasts (two PAARC methods × two
+targets versus transferred img2dataset), retaining unavailable hypotheses in the
+family. Report target-calibrated comparisons separately. A practical speed claim
+requires all six matched complete pairs, at least10% point improvement, adjusted
+p<.05 and a coverage-difference interval no worse than one percentage point.
+Remote-content changes invalidate that block's matched-byte comparison and are
+reported explicitly. These small-sample intervals assume independent normal log
+ratios; they do not prove universal superiority or causality.
+
+Generate all figures from retained observations: paired goodput/elapsed time,
+configuration curves, transferred versus locally calibrated performance and cost,
+progress/concurrency, actual refusal evidence if any, and coverage/overhead.
+Use common axes and show all methods and negative findings. Never generate
+favorable values or relabel incomplete acquisition as completed throughput.
+
+Use affected tests, one full local pass and current-head CI. Both automated
+review slots and repair rounds for this task are already consumed. Retain the
+actual reviewed SHA, disclose the final unreviewed delta and resolved findings;
+no third review or claim that the amended head was independently reviewed.
+One final PR follows experiment disposition, report and cleanup, with human
+merge. Credentials, populations, private evidence and manuscripts stay untracked.
+
+Entrypoints: `minimum_study`, `minimum_queue`, `minimum_native`, `minimum_cloud`,
+`minimum_analysis`; `public_population` retrieves official metadata.
+
+Sources checked October23,2026: [iNaturalist open data](https://github.com/inaturalist/inaturalist-open-data),
 [CVDF](https://github.com/cvdfoundation/open-images-dataset),
+[TaiBIF dataset](https://ipt.taibif.tw/resource?r=twmoth-fb),
 [img2dataset1.47.0](https://github.com/rom1504/img2dataset/blob/1.47.0/README.md),
+[HTTP429](https://www.rfc-editor.org/rfc/rfc6585#section-4),
 [Jetstream2 flavors](https://docs.jetstream-cloud.org/general/instance-flavors/).
