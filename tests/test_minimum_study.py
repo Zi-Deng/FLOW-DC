@@ -515,6 +515,7 @@ class MinimumStudyTests(unittest.TestCase):
                 2**20,
                 6,
                 str(root / "budget"),
+                latency_stop=False,
             )
             with multiprocessing.get_context("spawn").Pool(2) as pool:
                 results = pool.map(native_shard, [(wrapped, row) for row in reader])
@@ -523,6 +524,8 @@ class MinimumStudyTests(unittest.TestCase):
                 merge_audits(sorted(root.glob("tool-request-*.jsonl")), out, 4)
             observed = transport(root / "request-audit.jsonl", 4)
             self.assertEqual(observed["attempts"], 24)
+            for path in root.glob('tool-request-*.jsonl'):
+                self.assertIs(json.loads(path.read_text().splitlines()[0])['latency_stop_enabled'], False)
             self.assertEqual(counter.update()[0], observed["body_bytes"])
             verified = verify(root, Path(__file__).resolve().parents[1], "img2dataset-1.47.0", 0, 1)
             self.assertEqual(verified["coverage"], 1)
@@ -583,7 +586,7 @@ class MinimumStudyTests(unittest.TestCase):
                 write_new(run / "config.json", cfg)
                 write_new(run / "flowdc-config.json", cfg)
                 write_new(run / "attempt.json", cell)
-                write_new(study / "protocol.json", {})
+                write_new(study / "protocol.json", {'latency_stop_enabled':False})
                 write_new(study / "execution.json", dict(source_root=str(repo)))
                 write_new(study / "gates/openimages-cvdf.json", dict(baseline_s=10, ignore_time=False))
                 before = time.monotonic()
@@ -598,6 +601,7 @@ class MinimumStudyTests(unittest.TestCase):
                     public_launch.main()
                 after = time.monotonic()
                 observed = transport(run / "request-audit.jsonl", 192)
+                self.assertIs(json.loads((run/'request-audit.jsonl').read_text().splitlines()[0])['latency_stop_enabled'],False)
                 self.assertEqual(observed["attempts"], 16)
                 verified = public_verify.verify(run, repo, "ratio-v2", before, after)
                 self.assertEqual(verified["coverage"], 1)

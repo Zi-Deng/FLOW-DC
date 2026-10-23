@@ -122,8 +122,18 @@ with unknown cause,503 is service unavailability, and sustained latency alone
 is performance degradation. The existing TaiBIF onset at requested256 was a
 latency stop, not evidence of blocking or150+ sustained actual inflight work.
 
-A public-source guard stops acquisition promptly on refusal, opt-out, sustained
-latency or excessive failures. Conservatively suspend that source for the rest
+A public-source guard stops acquisition promptly on refusal, opt-out or excessive
+failures. The current protocol explicitly records `latency_stop_enabled: false`
+for both PAARC and every img2dataset process. Latency remains a diagnostic from
+the common pre-connection-to-first-body-byte events; it no longer terminates a
+run by itself. PAARC's native feedback/adaptation is unchanged. Research timeout,
+body, concurrency and campaign limits still apply. Missing flags in historical
+protocols retain their original latency-stop behavior. The October23 sizing
+attempt stopped under that earlier rule and is preserved separately; it is not
+evidence of a server block or a completed calibration. The corrective campaign
+keeps the same frozen population/partitions and documents repeated sizing URLs.
+
+Conservatively suspend a stopped source for the rest
 of this finite campaign; qualified unrelated sources can continue. This is
 stricter than the proposed24h cooldown/recheck path and spends no repeat requests
 on the affected source. Reconsideration would require a separately identified
@@ -135,9 +145,12 @@ matched observations and disclosed ordering/carryover; otherwise omit that claim
 ## Finite operations
 
 The separately identified envelope is72h, no dispatch in the last4h, at most
-2400 new compute SUs,40million image attempts,4TiB response bodies and3.5TiB
-retained artifacts. These are ceilings, not expected consumption. Up to72 windows
-share this single wall deadline and cumulative allowance. A new explicit grant
+2389 new compute SUs,40million image attempts,4TiB response bodies and3.5TiB
+retained artifacts. These are ceilings, not expected consumption.
+The corrective compute ceiling leaves room for the prior10.902SU attempt within
+the original2400SU envelope. Its clock starts only after the source cooldown;
+the closed campaign's clock, grants, consumed allowance and history are unchanged.
+Up to72 windows share this single wall deadline and cumulative allowance. A new explicit grant
 may permit a four-hour window; historical one-hour grants and1800s inspection
 limits retain their semantics. Cleanup reserves600s. Each whole job is at most
 12600s, with at most10800s native processing and1800s reserved for return/audit;

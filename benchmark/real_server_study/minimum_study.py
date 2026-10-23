@@ -18,7 +18,7 @@ SEED = 20261023
 LIMITS = dict(
     wall_seconds=3 * 86400, dispatch_seconds=3 * 86400 - 14400,
     max_windows=72, window_seconds=14400, cleanup_seconds=600,
-    budget_su=2400, max_requests=40000000, body_bytes=4 * 2**40,
+    budget_su=2389, max_requests=40000000, body_bytes=4 * 2**40,
     archive_bytes=3584 * 2**30, free_bytes=50 * 2**30,
     job_seconds=12600, native_seconds=10800, audit_seconds=1200,
     collection_seconds=900, metadata_bytes=4 * 2**30, local_peak_bytes=12 * 2**30,
@@ -65,7 +65,8 @@ def prepare(study, source, populations, provenance, initial_rows):
         hashes[key], counts[key] = file_hash(path), frame.height
         partitions[key] = dict(sizing=32, calibration=32 + room, evaluation=32 + 2 * room, capacity=room)
     record = dict(
-        schema="flowdc-adaptive-transfer-study-v1", utc=utc(), seed=SEED,
+        schema="flowdc-adaptive-transfer-study-v2", utc=utc(), seed=SEED,
+        latency_stop_enabled=False,
         source=source_identity(source), limits=LIMITS, methods=METHODS,
         profiles=PROFILES, tool_settings={s: tool_settings(s) for s in SOURCES},
         population_sha256=hashes, population_rows=counts, partitions=partitions,

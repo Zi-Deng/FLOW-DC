@@ -114,7 +114,8 @@ class PublicBatchTests(unittest.TestCase):
         self.assertIsNone(guard.NoRedirect().redirect_request(None, None, 302, "", {}, "https://evil.test"))
 
     def test_tool_body_budget_stops_new_work(self):
-        g = guard.ToolGuard("openimages-cvdf", [URL], io.StringIO(), 0.1, body_limit=2)
+        g = guard.ToolGuard("openimages-cvdf", [URL], io.StringIO(), 0.1, body_limit=2,
+                            latency_stop=False)
         g.opener = type("Opener", (), {"open": lambda _, request, timeout: Response(b"abc")})()
         restore = g.install()
         try:
@@ -125,6 +126,41 @@ class PublicBatchTests(unittest.TestCase):
             restore()
         self.assertEqual(g.body_bytes, 2)
         self.assertEqual(g.policy.reason, "body_budget")
+
+    def test_diagnostic_latency_never_stops_but_other_guards_remain(self):
+        for enabled in (True, False):
+            policy = guard.PublicPolicy(.1, latency_stop=enabled)
+            policy.tick(0)
+            for window in range(3):
+                for item in range(20):
+                    policy.complete(window*10 + item/10 + 1, 5)
+                policy.tick((window+1)*10)
+            self.assertEqual(policy.reason, 'sustained_latency' if enabled else None)
+            policy.tick(100)
+            self.assertFalse(policy.completed)  # Diagnostic sampling stays bounded.
+        for factory in (guard.FlowGuard, guard.ToolGuard):
+            for status in (301, 401, 403, 429, 503):
+                g = factory('openimages-cvdf', [URL], io.StringIO(), .1, latency_stop=False)
+                g.policy.header(1, status, '3600')
+                self.assertEqual(g.policy.reason, 'public_access_stop')
+                self.assertTrue(g.policy.fatal)
+                self.assertGreater(g.policy.cooldown_until, time.time()+3500)
+            g = factory('openimages-cvdf', [URL], io.StringIO(), .1, latency_stop=False)
+            g.policy.inspect({'X-Robots-Tag':'noimageai'})
+            self.assertEqual(g.policy.reason,'robots_header')
+            for errors, expected in ((3,'transport_fraction'), (0,None)):
+                g = factory('openimages-cvdf', [URL], io.StringIO(), .1, latency_stop=False)
+                for i in range(100):
+                    g.policy.network_end(i,None,{'failure_kind':'transport' if i<errors else None})
+                self.assertEqual(g.policy.reason,expected)
+
+    def test_latency_protocol_requires_explicit_boolean_opt_out(self):
+        self.assertTrue(guard.latency_stop_enabled({}))
+        self.assertTrue(guard.latency_stop_enabled({'latency_stop_enabled':True}))
+        self.assertFalse(guard.latency_stop_enabled({'latency_stop_enabled':False}))
+        for value in (None, 0, 1, 'false', [], {}):
+            with self.assertRaises(ValueError):
+                guard.latency_stop_enabled({'latency_stop_enabled':value})
 
     def test_tuning_coverage_and_no_favorable_replacement(self):
         rows = [

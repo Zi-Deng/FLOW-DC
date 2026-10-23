@@ -10,6 +10,7 @@ from pathlib import Path
 
 from .common import file_hash, read_json, require, replace_derived, utc
 from .minimum_study import METHODS, SOURCES, TARGETS
+from .public_guard import latency_stop_enabled
 
 
 def contrast(pairs):
@@ -61,6 +62,11 @@ def summarize(study):
     study = Path(study)
     deadline = time.monotonic() + 1200
     records = {p.parent.name: read_json(p) for p in (study / "runs").glob("*/record.json")}
+    protocol = read_json(study / "protocol.json") if (study / "protocol.json").exists() else None
+    latency_stop = latency_stop_enabled(protocol) if protocol is not None else None
+    for record in records.values():
+        if "latency_stop_enabled" in record:
+            require(record["latency_stop_enabled"] is latency_stop, "record latency policy differs from protocol")
     frozen = read_json(study / "freeze.json") if (study / "freeze.json").exists() else None
     cells = frozen["cells"] if frozen else []
     payloads = {}
@@ -143,6 +149,7 @@ def summarize(study):
                 stopped_or_failed=sum(r["status"] != "complete" for r in observed),
                 status="not_started" if not observed else "attempted"))
     result = dict(schema="flowdc-adaptive-transfer-analysis-v1", utc=utc(),
+        latency_stop_enabled=latency_stop,
         evaluation_frozen=frozen is not None, planned_jobs=len(cells),
         scientific_status=("not_frozen" if frozen is None else
             "complete" if cells and all(r["status"] == "complete" for r in inventory) else "incomplete"),

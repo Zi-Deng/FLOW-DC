@@ -10,19 +10,20 @@ from pathlib import Path
 
 import polars as pl
 
-from .common import read_json, require
+from .common import file_hash, read_json, require
 from .prepare import guest_check
-from .public_guard import FlowGuard, ToolGuard, SharedBodyBudget
+from .public_guard import FlowGuard, ToolGuard, SharedBodyBudget, latency_stop_enabled
 
 
 class GuardedDownloader:
     """Picklable delegate; each native shard owns a distinct immutable audit."""
 
     def __init__(self, native, source, urls, audit, gate, ceiling=192, body_limit=2**30,
-                 shard_size=None, shared_path=None):
+                 shard_size=None, shared_path=None, *, latency_stop=True):
         self.native, self.source, self.urls, self.audit, self.gate = native, source, urls, audit, gate
         self.ceiling = ceiling
         self.body_limit, self.shard_size, self.shared_path = body_limit, shard_size, shared_path
+        self.latency_stop = latency_stop
 
     def __call__(self, row):
         path, urls = Path(self.audit), self.urls
@@ -45,8 +46,10 @@ class GuardedDownloader:
                 ceiling=self.ceiling,
                 body_limit=self.body_limit,
                 shared=SharedBodyBudget(self.shared_path, self.body_limit) if self.shared_path else None,
+                latency_stop=self.latency_stop,
             )
-            guard.emit("start", process_id=os.getpid(), shard_id=row[0] if self.shard_size else None)
+            guard.emit("start", process_id=os.getpid(), shard_id=row[0] if self.shard_size else None,
+                       latency_stop_enabled=guard.policy.latency_stop)
             restore = guard.install()
             try:
                 return self.native(row)
@@ -102,12 +105,15 @@ def main():
     a = p.parse_args()
     study = a.study.resolve()
     guest_check(study)
-    read_json(study / "protocol.json")
+    protocol = read_json(study / "protocol.json")
+    latency_stop = latency_stop_enabled(protocol)
     source = Path(read_json(study / "execution.json")["source_root"])
     sys.path[:0] = [str(source / "bin"), str(source)]
     directory = study / "runs" / a.run_id
     attempt = read_json(directory / "attempt.json")
     require(attempt["run_id"] == a.run_id, "attempt identity changed")
+    if "protocol_sha256" in attempt:
+        require(file_hash(study / "protocol.json") == attempt["protocol_sha256"], "attempt protocol changed")
     cfg = read_json(directory / "config.json")
     gate = read_json(study / "gates" / f"{attempt['source']}.json")
     urls = pl.read_parquet(directory / "input.parquet")["url"].to_list()
@@ -138,6 +144,7 @@ def main():
                     body_limit,
                     cfg["number_sample_per_shard"],
                     str(shared_path),
+                    latency_stop=latency_stop,
                 )
 
             native_main.Downloader = wrapped
@@ -153,8 +160,9 @@ def main():
         else:
             import download_batch
 
-            guard = FlowGuard(attempt["source"], urls, stream, gate["baseline_s"], gate["ignore_time"], body_limit)
-            guard.emit("start", run_id=a.run_id)
+            guard = FlowGuard(attempt["source"], urls, stream, gate["baseline_s"], gate["ignore_time"], body_limit,
+                              latency_stop=latency_stop)
+            guard.emit("start", run_id=a.run_id, latency_stop_enabled=guard.policy.latency_stop)
             restore = guard.install()
             try:
                 sys.argv = [

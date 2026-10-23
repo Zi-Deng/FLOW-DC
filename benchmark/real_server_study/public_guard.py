@@ -42,9 +42,18 @@ def checked_url(url, source):
     return url
 
 
+def latency_stop_enabled(protocol):
+    """Absent field preserves historical studies; only an explicit bool opts out."""
+    enabled = protocol.get("latency_stop_enabled", True)
+    require(type(enabled) is bool, "latency_stop_enabled must be boolean")
+    return enabled
+
+
 class PublicPolicy(telemetry.StopPolicy):
-    def __init__(self, baseline):
+    def __init__(self, baseline, *, latency_stop=True):
         super().__init__(baseline)
+        require(type(latency_stop) is bool, "latency_stop must be boolean")
+        self.latency_stop = latency_stop
         self.total_headers = self.dead = self.total_ends = self.transport_errors = 0
 
     def header(self, now, status, retry_after=None):
@@ -69,6 +78,12 @@ class PublicPolicy(telemetry.StopPolicy):
             self.reason, self.fatal = "transport_fraction", True
 
     def tick(self, now):
+        if not self.latency_stop:
+            # Common HTTP events still record latency. Do not let differing
+            # client/per-shard policy signals terminate the diagnostic-only study.
+            while self.completed and self.completed[0][0] < now - 40:
+                self.completed.popleft()
+            return
         if self.origin is None:
             self.origin = now
         bucket = int((now - self.origin) // 10)
@@ -93,10 +108,12 @@ class PublicPolicy(telemetry.StopPolicy):
 
 
 class FlowGuard(telemetry.Guard):
-    def __init__(self, source, allowed, stream, baseline, ignore_time=False, body_limit=2**30):
+    def __init__(self, source, allowed, stream, baseline, ignore_time=False, body_limit=2**30,
+                 *, latency_stop=True):
         require(not ignore_time or source == "taibif-moth", "TLS exception is moth-host only")
         super().__init__(
-            allowed, stream, baseline, ignore_time, policy=PublicPolicy(baseline), body_limit=body_limit
+            allowed, stream, baseline, ignore_time,
+            policy=PublicPolicy(baseline, latency_stop=latency_stop), body_limit=body_limit
         )
         self.source = source
         self.common_first = set()
@@ -223,10 +240,11 @@ class ToolGuard:
         body_limit=2**30,
         ceiling=192,
         shared=None,
+        latency_stop=True,
     ):
         require(not ignore_time or source == "taibif-moth", "TLS exception is moth-host only")
         self.source, self.allowed, self.stream = source, set(allowed), stream
-        self.policy, self.lock = PublicPolicy(baseline), threading.RLock()
+        self.policy, self.lock = PublicPolicy(baseline, latency_stop=latency_stop), threading.RLock()
         self.started = {}
         self.first_byte = {}
         self.counts, self.active, self.body_bytes, self.reserved = set(), set(), 0, 0

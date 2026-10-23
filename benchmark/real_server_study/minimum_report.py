@@ -92,6 +92,7 @@ def build(study):
                 save(fig,source+'-progress')
             else:plt.close(fig)
     lines=['# Measured adaptive transfer study','',f"Scientific status: **{result['scientific_status']}**.",
+           f"Latency-only automatic stop enabled: {result['latency_stop_enabled']}. Latency remains recorded; no latency-only observation establishes server blocking.",
            f"Attempted jobs across all stages: {result['attempted_jobs']}. Frozen confirmation jobs: {result['planned_jobs']}; complete: {result['complete_jobs']}.",
            'A study that stopped before configuration selection has no frozen confirmation cells; this does not mean its planned comparisons were completed.',
            '', '## Declared scope and actual execution', '',
