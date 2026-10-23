@@ -19,7 +19,7 @@ SEED = 20261023
 LIMITS = dict(
     wall_seconds=3 * 86400, dispatch_seconds=3 * 86400 - 14400,
     max_windows=72, window_seconds=14400, cleanup_seconds=600,
-    budget_su=2389, max_requests=40000000, body_bytes=4 * 2**40,
+    budget_su=2380, max_requests=40000000, body_bytes=4 * 2**40,
     archive_bytes=3584 * 2**30, free_bytes=50 * 2**30,
     job_seconds=12600, native_seconds=10800, audit_seconds=1200,
     collection_seconds=900, metadata_bytes=4 * 2**30, local_peak_bytes=12 * 2**30,
@@ -70,6 +70,7 @@ def prepare(study, source, populations, provenance, initial_rows, *, user_cooldo
         schema="flowdc-adaptive-transfer-study-v2", utc=utc(), seed=SEED,
         latency_stop_enabled=False,
         user_cooldown_seconds=cooldown,
+        stop_policy="stop-run-continue-campaign",
         source=source_identity(source), limits=LIMITS, methods=METHODS,
         profiles=PROFILES, tool_settings={s: tool_settings(s) for s in SOURCES},
         population_sha256=hashes, population_rows=counts, partitions=partitions,
@@ -133,7 +134,9 @@ def select_configuration(records, method):
     require(len(records) == 4 and {r["candidate"] for r in records} == set(range(4)), "candidate inventory incomplete")
     complete = [r for r in records if r["status"] == "complete" and r["method"] == method
                 and r.get("http_span_s", 0) >= LIMITS["minimum_http_seconds"]]
-    require(complete, "no duration-qualified calibration candidate")
+    if not complete:
+        return dict(status="unavailable", reason="no duration-qualified calibration candidate",
+                    attempts=[r["run_id"] for r in records])
     coverage = max(r["coverage"] for r in complete)
     eligible = [r for r in complete if r["coverage"] >= coverage - .01]
     best = max(r["goodput_Bps"] for r in eligible)
@@ -146,13 +149,17 @@ def select_configuration(records, method):
 def schedule(selected, sizes, sources):
     cells = []
     for source in sources:
-        roles = [("ratio", METHODS[0], selected["development"][METHODS[0]]["candidate"]),
-                 ("gradient", METHODS[1], selected["development"][METHODS[1]]["candidate"]),
-                 ("transferred", METHODS[2], selected["development"][METHODS[2]]["candidate"]),
-                 ("target_calibrated", METHODS[2], selected[source]["candidate"])]
-        alias = roles[2][2] == roles[3][2]
+        choices = [("ratio", METHODS[0], selected["development"][METHODS[0]]),
+                   ("gradient", METHODS[1], selected["development"][METHODS[1]]),
+                   ("transferred", METHODS[2], selected["development"][METHODS[2]]),
+                   ("target_calibrated", METHODS[2], selected[source])]
+        roles = [(arm, method, choice["candidate"]) for arm, method, choice in choices if "candidate" in choice]
+        if not any(m != METHODS[2] for _, m, _ in roles) or not any(m == METHODS[2] for _, m, _ in roles):
+            continue
+        by_arm = {a: c for a, _, c in roles}
+        alias = "transferred" in by_arm and by_arm.get("target_calibrated") == by_arm["transferred"]
         if alias:
-            roles.pop()
+            roles = [r for r in roles if r[0] != "target_calibrated"]
         random.Random(SEED + SOURCES.index(source)).shuffle(roles)
         for block in range(6):
             ordered = roles[block % len(roles):] + roles[:block % len(roles)]
@@ -195,8 +202,13 @@ def freeze(study, selected, sizes, sources, records, remaining_seconds):
         scaling = 1.0
         if cell["method"] != METHODS[2]:
             own = next(r for r in records if r["run_id"] == selected["development"][cell["method"]]["run_id"])
-            tool = next(r for r in records if r["run_id"] == selected["development"][METHODS[2]]["run_id"])
-            scaling = max(1.0, own["elapsed_s"] / tool["elapsed_s"])
+            tool_choice = selected["development"][METHODS[2]]
+            tools = [r for r in records if r["source"] == SOURCES[0] and r["method"] == METHODS[2]
+                     and r["status"] == "complete" and r.get("phase") != "evaluation"]
+            if "run_id" in tool_choice:
+                tools = [r for r in tools if r["run_id"] == tool_choice["run_id"]]
+            require(tools, "missing measured development timing reference")
+            scaling = max(1.0, own["elapsed_s"] / min(forecast(r, own["rows"])["total"] for r in tools))
         predicted = max(forecast(r, cell["rows"])["total"] for r in candidates) * scaling
         require(predicted < LIMITS["job_seconds"] - 1800,
                 "forecast leaves no return/verification reserve")
@@ -206,17 +218,28 @@ def freeze(study, selected, sizes, sources, records, remaining_seconds):
                                 body=max(forecast(r, cell["rows"])["body"] for r in candidates)))
     # Use the same deadline for all arms on one target.
     for source in sources:
-        seconds = max(c["job_seconds"] for c in cells if c["source"] == source)
-        for c in cells:
-            if c["source"] == source:
+        target_cells = [c for c in cells if c["source"] == source]
+        if target_cells:
+            seconds = max(c["job_seconds"] for c in target_cells)
+            for c in target_cells:
                 c["job_seconds"] = seconds
-    total = 1.5 * sum(p["seconds"] + 300 for p in predictions) + 86400 + 3600
+    total = 1.5 * sum(p["seconds"] + 300 for p in predictions) + (86400 + 3600 if cells else 0)
     body = 1.25 * sum(p["body"] for p in predictions)
-    used = sum(r.get("body_bytes", LIMITS["job_body_bytes"]) for r in records)
+    protocol = read_json(study / "protocol.json")
+    used = sum(r.get("body_bytes", LIMITS["job_body_bytes"]) for r in records) + protocol.get("prior_usage", {}).get("body_bytes", 0)
+    used += sum(read_json(p).get("probe_body_bytes", 0) for p in (study / "gates").glob("*.json"))
+    requests = protocol.get("prior_usage", {}).get("requests", 0) + sum(r["rows"] for r in records)
+    requests += sum(read_json(p).get("requests", 0) for p in (study / "gates").glob("*.json"))
+    require(requests + sum(c["rows"] for c in cells) <= LIMITS["max_requests"],
+            "confirmation forecast exceeds inherited request budget")
     require(total < remaining_seconds and used + body < LIMITS["body_bytes"], "measured confirmation forecast exceeds finite campaign")
     require(used + body < LIMITS["archive_bytes"], "calibration plus confirmation exceeds retained storage")
     value = dict(schema="flowdc-transfer-confirmation-v1", utc=utc(), blocks=6,
                  selected=selected, source_rows=sizes, sources=sources, cells=cells,
+                 unavailable_arms=[dict(source=s, arm=a, blocks=6, status="dependency_blocked",
+                     reason="no qualified configuration or matched comparator")
+                     for s in TARGETS for a in ("ratio", "gradient", "transferred", "target_calibrated")
+                     if not any(c["source"] == s and (c["arm"] == a or a in c["reference_aliases"]) for c in cells)],
                  forecasts=predictions, expected_seconds=total, expected_body_bytes=body,
                  protocol_sha256=file_hash(study / "protocol.json"))
     write_new(study / "freeze.json", value)

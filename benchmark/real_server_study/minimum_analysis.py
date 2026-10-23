@@ -90,7 +90,8 @@ def summarize(study):
                 require(math.isclose(record["goodput_Bps"], record["credited_bytes"] / record["elapsed_s"], rel_tol=1e-12), "primary timing differs")
             else:
                 require(record.get("goodput_Bps") is None, "partial run cannot have complete-run goodput")
-    inventory = [{**cell, **records.get(cell["run_id"], dict(status="not_started"))} for cell in cells]
+    blocked = {r["run_id"]: r for p in (study / "gates").glob("blocked-*.json") for r in [read_json(p)]}
+    inventory = [{**cell, **records.get(cell["run_id"], blocked.get(cell["run_id"], dict(status="not_started")))} for cell in cells]
     comparisons, groups = {}, []
     for source in TARGETS:
         subset = [r for r in inventory if r["source"] == source]
@@ -139,7 +140,8 @@ def summarize(study):
     # "zero planned jobs". These are design maxima, not invented frozen cells.
     scope = []
     for source in SOURCES:
-        for phase, maximum in (("sizing", 3), ("calibration", 12 if source == SOURCES[0] else 4),
+        sizing_max = (5 if source == SOURCES[0] else 6) if protocol and protocol.get("stop_policy") else 3
+        for phase, maximum in (("sizing", sizing_max), ("calibration", 12 if source == SOURCES[0] else 4),
                                ("evaluation", 0 if source == SOURCES[0] else 24)):
             if not maximum:
                 continue
@@ -158,6 +160,10 @@ def summarize(study):
         comparisons=comparisons, inventory=inventory,
         development_and_calibration=[r for r in records.values() if r.get("phase") != "evaluation"],
         source_dispositions=dispositions,
+        unavailable_arms=frozen.get("unavailable_arms", []) if frozen else [],
+        recovery_checks=[read_json(p) for p in (study / "gates").glob("recovery-*.json") if not p.name.endswith(".intent.json")],
+        stopped_runs=[r for r in records.values() if r["status"] != "complete"],
+        execution_closed=bool(frozen is not None and all(r["status"] != "not_started" for r in inventory)),
         limitations=["First attempts retained, stopped/unknown cases absent from complete-run intervals.",
                      "Six temporal blocks on a repeated manifest; remote caches and background traffic are uncontrolled.",
                      "Ordinary95% intervals assume independent normal run-level log ratios; primary p values use Holm across four contrasts.",

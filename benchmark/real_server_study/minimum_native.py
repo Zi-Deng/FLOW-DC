@@ -22,6 +22,7 @@ from .public_batch import terminate
 from .public_metrics import transport
 from .public_guard import latency_stop_enabled
 from .cooldown import user_seconds
+from .minimum_recovery import stop_scope
 
 
 def pack(directory, destination, *, metadata_only=False, partial=False):
@@ -176,6 +177,7 @@ def worker(spec_path, input_path, output_path):
         latency_stop_enabled=latency_stop_enabled(spec["protocol"]),
         user_cooldown_seconds=user_seconds(spec["protocol"]),
     )
+    worker_closed = False
     try:
         with (run / "stdout.log").open("x") as out, (run / "stderr.log").open("x") as err:
             proc = subprocess.Popen(
@@ -205,6 +207,7 @@ def worker(spec_path, input_path, output_path):
                     time.sleep(0.5)
             finally:
                 terminate(proc)
+                worker_closed = True
         require(proc.returncode == 0, "native acquisition/processing failed")
         metrics = transport(run / "request-audit.jsonl", ceiling(cell["source"]))
         require(metrics["attempts"] == frame.height, "partition attempts incomplete")
@@ -215,10 +218,12 @@ def worker(spec_path, input_path, output_path):
         record["transport"] = partial_transport(run, LIMITS["job_body_bytes"])
     record.update(
         ended=time.monotonic(),
+        worker_closed=worker_closed,
         utc=utc(),
         child_max_rss_kib=resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss,
         child_cpu_s=sum(os.times()[2:4]),
     )
+    record["stop_scope"] = stop_scope(record)
     write_new(run / "worker-record.json", record)
     pack(run, output_path, partial=record["status"] != "complete")
 
@@ -417,6 +422,7 @@ def manager(request_path):
         )
         record.update(
             status="complete" if all(r["worker"]["status"] == "complete" for r in received) else "stopped",
+            worker_closed=all(r["worker"].get("worker_closed", False) for r in received),
             elapsed_s=elapsed,
             credited_bytes=credited,
             coverage=credited_rows / frame.height,
@@ -427,6 +433,7 @@ def manager(request_path):
             mean_http_concurrency=sum(r["worker"]["transport"].get("mean_http_concurrency") or 0 for r in received)
                 if all(r["worker"]["status"] == "complete" for r in received) else None,
             stop_evidence=[r["worker"].get("transport", {}) for r in received if r["worker"]["status"] != "complete"],
+            stop_reasons=[r["worker"].get("error") for r in received if r["worker"].get("error")],
             # Integral is additive across hosts, requires no synchronized clocks.
             mean_job_concurrency=sum((r["worker"]["transport"].get("request_seconds") or 0) for r in received) / elapsed
                 if all(r["worker"]["status"] == "complete" for r in received) else None,
@@ -447,6 +454,7 @@ def manager(request_path):
             manager.cancel_all()
             manager.__exit__(None, None, None)
     record["closed_utc"] = utc()
+    record["stop_scope"] = stop_scope(record)
     record["evidence"] = {
         str(p.relative_to(directory)): file_hash(p)
         for p in [

@@ -53,6 +53,8 @@ def json_command(packet, role, script, *args, timeout=30):
 def prepare(study, source, previous, packet):
     packet = Path(packet)
     result = public_cloud.prepare(study, source, previous, packet, limits=LIMITS, new_storage=True)
+    result["prior_usage"] = read_json(Path(study) / "protocol.json").get("prior_usage", {})
+    replace_derived(packet / "deployment.json", result)
     old = read_json(Path(previous) / "operator.json")
     retained = Path(previous) / "volumes"
     require(all((retained / r / "volume-mount.json").exists() for r in ROLES), "retained storage receipts required")
@@ -439,11 +441,41 @@ with tarfile.open(fileobj=sys.stdout.buffer,mode='w|') as archive:
     return len(manifest)
 
 
+def recover_source(packet, selection):
+    """One worker-side check, mirrored to the manager; no acquisition replay."""
+    op = read_json(packet / "operator.json")
+    root = op["guest_root"]
+    destination = packet / "recoveries"
+    destination.mkdir(exist_ok=True)
+    path = destination / (selection["run_id"] + ".json")
+    require(not path.exists(), "recovery already closed; manager state must be reconciled")
+    result = json_command(packet, "worker", """import json,pathlib,sys
+sys.path.insert(0,sys.argv[1]+'/source')
+from benchmark.real_server_study.minimum_recovery import recovery_probe
+print(json.dumps(recovery_probe(pathlib.Path(sys.argv[1])/'study',sys.argv[2],sys.argv[3])))""",
+        root, selection["source"], selection["after_run"], timeout=180)
+    write_new(path, result)
+    json_command(packet, "manager", """import json,pathlib,sys
+sys.path.insert(0,sys.argv[1]+'/source')
+from benchmark.real_server_study.common import write_new,read_json,require
+p=pathlib.Path(sys.argv[1])/'study/gates'/sys.argv[2];value=json.loads(sys.argv[3])
+if p.exists():require(read_json(p)==value,'recovery receipt differs')
+else:write_new(p,value)
+print('{}')""", root, selection["run_id"] + ".json", json.dumps(result))
+    return result
+
+
 def run(packet):
     packet = Path(packet).resolve()
     os.umask(0o077)
     require(not (packet / "complete.json").exists(), "campaign already closed; no activation replay")
     op, deployment = read_json(packet / "operator.json"), read_json(packet / "deployment.json")
+    prior_usage = deployment.get("prior_usage", {})
+    require(all(type(prior_usage.get(k, 0)) is int and prior_usage.get(k, 0) >= 0
+                for k in ("requests", "body_bytes")), "invalid inherited accounting")
+    if "study" in op:
+        require(prior_usage == read_json(Path(op["study"]) / "protocol.json").get("prior_usage", {}),
+                "inherited accounting differs from protocol")
     require(deployment["limits"] == LIMITS, "frozen campaign limits differ")
     with lock(packet / "controller.lock"):
         journal, record = public_cloud.authorize(packet, limits=LIMITS)
@@ -595,24 +627,30 @@ print(json.dumps(next_cell(sys.argv[1]+'/study',float(sys.argv[2]),float(sys.arg
                         break
                     # Conservative reservations also cover unknown failed bytes.
                     previous = [read_json(p) for p in (packet / "jobs").glob("*/record.json")]
+                    recoveries = [read_json(p) for p in (packet / "recoveries").glob("*.json")]
                     require(
-                        sum(g["requests"] for g in gates.values())
+                        prior_usage.get("requests", 0) + sum(g["requests"] for g in gates.values())
+                        + sum(r["requests"] for r in recoveries)
                         + sum(r["rows"] for r in previous)
                         + selection["rows"]
                         <= LIMITS["max_requests"],
                         "request budget",
                     )
                     require(
-                        sum(g["probe_body_bytes"] for g in gates.values())
+                        prior_usage.get("body_bytes", 0) + sum(g["probe_body_bytes"] for g in gates.values())
+                        + sum(r["probe_body_bytes"] for r in recoveries)
                         + sum(r.get("body_bytes", LIMITS["job_body_bytes"]) for r in previous)
-                        + LIMITS["job_body_bytes"]
+                        + (4 * 64 * 2**20 if selection["phase"] == "recovery_probe" else LIMITS["job_body_bytes"])
                         <= LIMITS["body_bytes"],
                         "response-body budget",
                     )
                     jobs_started += 1
+                    if selection["phase"] == "recovery_probe":
+                        recover_source(packet, selection)
+                        continue
                     outcome = job(packet, selection, number, journal, record)
-                    # A stopped source is suspended by the queue; unrelated
-                    # qualified sources can continue without replacement attempts.
+                    # The queue distinguishes run/source/campaign scope; a
+                    # closed run is retained and never selected for replay.
                     if outcome["status"] != "complete":
                         continue
                 require(

@@ -90,6 +90,7 @@ def partial_transport(directory, body_limit):
     statuses, reasons, attempts = Counter(), set(), set()
     invalid = 0
     server_until = 0
+    first_stop = None
     for path in files:
         if not path.exists():
             continue
@@ -107,6 +108,7 @@ def partial_transport(directory, body_limit):
                     attempts.add(event["url"])
                 if event.get("reason"):
                     reasons.add(event["reason"])
+                    first_stop = event.get("monotonic_s") if first_stop is None else first_stop
                 if event.get("stop_reason"):
                     reasons.add(event["stop_reason"])
     category = ("confirmed_rate_limit" if statuses["429"] else
@@ -115,6 +117,7 @@ def partial_transport(directory, body_limit):
                 "performance_degradation" if "sustained_latency" in reasons else "interrupted_or_failed")
     return dict(attempts=len(attempts), status_counts=dict(statuses), stop_reasons=sorted(reasons),
                 server_retry_after_until_utc=server_until,
+                first_stop_monotonic_s=first_stop,
                 classification=category, malformed_lines=invalid, incomplete=True,
                 body_bytes=body_limit, body_bytes_basis="conservative reservation; actual count incomplete",
                 http_span_s=None, mean_http_concurrency=None, request_seconds=None)

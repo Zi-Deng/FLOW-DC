@@ -80,7 +80,7 @@ class CooldownTests(unittest.TestCase):
                 (study / "gates").mkdir()
                 write_new(study / "protocol.json", dict(user_cooldown_seconds=seconds,
                     provenance={"openimages-cvdf": dict(media_rights_qualified=True, access_qualified=True)}))
-                history = {"first": dict(run_id="first", source="openimages-cvdf", status="stopped",
+                history = {"first": dict(run_id="first", source="openimages-cvdf", status="stopped", stop_scope="source",
                                         stop_evidence=[dict(server_retry_after_until_utc=server)])}
                 self.assertFalse(source_available(study, "openimages-cvdf", history))
                 path = study / "gates/openimages-cvdf-disposition.json"

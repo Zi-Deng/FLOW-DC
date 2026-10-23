@@ -25,6 +25,16 @@ def build(study):
         def save(fig,name):
             fig.savefig(output/(name+'.pdf')); fig.savefig(output/(name+'.png'),dpi=160)
             pdf.savefig(fig); plt.close(fig)
+        all_rows = result['development_and_calibration'] + result['inventory']
+        if all_rows:
+            from collections import Counter
+            categories = ['complete', 'stopped', 'dependency_blocked', 'not_started']
+            counts = Counter(r['status'] for r in all_rows)
+            counts['dependency_blocked'] += sum(r['blocks'] for r in result.get('unavailable_arms', []))
+            fig, ax = plt.subplots(figsize=(8,4))
+            ax.bar(categories, [counts[c] for c in categories], color=['#009E73','#D55E00','#CC79A7','#999999'])
+            ax.set(ylabel='Run dispositions', title='All attempted and frozen work; failures retained')
+            save(fig, 'experiment-status')
         if completed:
             fig,axes=plt.subplots(1,len(sources),figsize=(6*len(sources),4),squeeze=False)
             for ax,source in zip(axes[0],sources):
@@ -108,6 +118,15 @@ def build(study):
         coverage='unavailable' if row.get('coverage') is None else f"{100*row['coverage']:.3f}%"
         reasons=sorted({reason for item in row.get('stop_evidence',[]) for reason in item.get('stop_reasons',[])})
         lines.append(f"| {row['run_id']} | {row['status']} | {row.get('original_rows',row['rows'])} | {coverage} | {row.get('credited_bytes','unavailable')} | {', '.join(reasons) or 'none recorded'} |")
+    lines+=['', '## Guard-stopped and failed runs', '',
+        'A server response and the study guard terminating a whole run are separate events. These are not claims about native img2dataset termination or proof of permanent blocking.', '',
+        '| Run | Scope | HTTP statuses | Elapsed (s) | Verified coverage |',
+        '|---|---|---|---:|---:|']
+    for row in result.get('stopped_runs', []):
+        statuses = [e.get('status_counts', {}) for e in row.get('stop_evidence', [])]
+        lines.append(f"| {row['run_id']} | {row.get('stop_scope','historical/unknown')} | {statuses} | {row.get('elapsed_s','unavailable')} | {row.get('coverage','unavailable')} |")
+    for item in result.get('unavailable_arms', []):
+        lines.append(f"\nDependency blocked: {item['source']} / {item['arm']}, {item['blocks']} blocks: {item['reason']}.")
     lines+=['', '## Comparative evidence',
            '', 'Missing and stopped cells remain visible in results.json. Figures include every available observation; no generated performance values.',
            '', '| Target | PAARC method | Comparator | Matched complete blocks | Goodput ratio | Ordinary 95% interval |',

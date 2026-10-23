@@ -144,7 +144,8 @@ class MinimumStudyTests(unittest.TestCase):
             path.mkdir()
             with self.assertRaisesRegex(ValueError, "unfinished first attempt"):
                 next_cell(study, design.LIMITS["wall_seconds"])
-            write_new(path / "record.json", dict(**cell, status="stopped"))
+            write_new(path / "record.json", dict(**cell, status="stopped", stop_scope="source",
+                                                started_utc="2020-01-01T00:00:00Z"))
             self.assertIsNone(next_cell(study, design.LIMITS["wall_seconds"]))
             self.assertEqual(json.loads((study / "gates/inaturalist-open-disposition.json").read_text())["status"], "suspended")
 

@@ -21,8 +21,7 @@ cross-provider generality. A dataset license alone does not establish every
 linked image's rights or permission to stress its host.
 
 A source requires explicit `media_rights_qualified` and `access_qualified`
-provenance before any image probe. TaiBIF remains pending until this is supported;
-its absence is a recorded missing case, not a substituted success. No email is
+provenance before any image probe. TaiBIF is qualified by the maintainer-reported approval through advisor/provider contact; correspondence was not independently inspected. A missing qualification remains a recorded missing case, not a substituted success. No email is
 authorized. Robots, TLS and bounded sequential32-object health checks precede
 acquisition; redirects, publisher opt-outs and unsupported pacing stop it.
 
@@ -41,8 +40,7 @@ URLs/cache effects are disclosed. No post-outcome successful-URL filtering.
 | Target tool calibration | Four tool configurations per target |8|
 | Target confirmation | Four arms × six blocks × two targets |48|
 
-The maximum scientific matrix is68 jobs, plus one sizing job and at most two
-sizing corrections per source, and the32-object health checks. Each missing,
+The maximum scientific matrix is68 jobs, plus at most17 new sizing jobs and the32-object initial health checks. Recovery checks use four fixed health-probe URLs, at most once per503-stopped run. Each missing,
 stopped or interrupted first attempt is retained. Identical transferred and
 target-calibrated tool candidates share their six confirmation runs; they are
 reported as aliases, not independent replications.
@@ -61,14 +59,12 @@ Select a configuration only after all four candidate dispositions exist. Eligibl
 runs complete at least600s of observed HTTP and have original-row coverage within
 one percentage point of the best eligible coverage. Maximize independently
 verified end-to-end goodput; within2% of the maximum prefer lower measured mean
-HTTP concurrency, then candidate order. Freeze global PAARC selection before
-examining target calibration. Target-specific tool calibration is an additional,
+HTTP concurrency, then candidate order. Freeze global PAARC selection before examining target calibration. All four candidate dispositions, including stops, must exist. A method with no eligible candidate is unavailable; it does not abort other methods or independent target tool calibration. Confirmation needs at least one available PAARC arm and one available tool reference. Missing arms receive six explicit dependency-blocked dispositions, never fabricated configurations. Target-specific tool calibration is an additional,
 stronger comparator; its extra configuration cost is disclosed. There is no
 claim that one chosen profile is universally optimal.
 
 Target900s observed HTTP, intended minimum600s, using fixed real work without
-padding. Size using the predefined eight-process tool candidate. At most two
-corrections may enlarge the disjoint sizing workload. All methods receive the
+padding. CVDF starts at210000 rows with tool candidates `(1,256)`, `(1,128)`, `(1,32)` in that order; the identical stopped8×32 sizing invocation is not repeated. iNaturalist starts at75000 and TaiBIF at180000 rows, using candidate indices3,2,1,0 in order. Move to the next candidate only after a stopped run and its recovery check. At most two corrections per source may enlarge a completed sizing workload toward900s. This permits at most5CVDF and6jobs for each target. If no size qualifies, record a dependency blocker and continue independent sources. All methods receive the
 same frozen row count. Preserve shorter-than-intended results rather than rerun
 only fast methods. Linear forecasts maintain physical clock ordering and use
 measured full native/verification cost; confirmation cannot tune future work.
@@ -133,10 +129,17 @@ attempt stopped under that earlier rule and is preserved separately; it is not
 evidence of a server block or a completed calibration. The corrective campaign
 keeps the same frozen population/partitions and documents repeated sizing URLs.
 
-Conservatively suspend a stopped source for the rest of this finite campaign;
-qualified unrelated sources can continue. This preserves the stopped first
-attempt without automatically replaying a failing configuration. If development
-on CVDF stops, dependent calibration and confirmation cannot proceed.
+## Run-scoped continuation
+
+The maintainer explicitly chose to stop the **whole current acquisition run**, not only its failed image, while continuing the campaign. Keep the first503 stop in both clients. A stopped run retains its original denominator, partial verification, statuses, first-stop time, elapsed time and cleanup receipt; it is never retried or replaced.
+
+- Run scope: HTTP503 and closed, bounded native/resource failures. Stop its process group, secure partial evidence and continue eligible work.
+- Source scope:401/403/429, publisher opt-outs, unqualified redirects/TLS, excessive source failures, or failed recovery health checks. Continue other sources.
+- Campaign scope: uncertain process ownership, verification/integrity failure, uncertain accounting, or exhausted finite limits. Collect and clean up.
+
+After a503 run stop, and only if more same-source work remains, perform one sequential four-object recovery check using the fixed first four URLs of the excluded health population. Require all four200 responses and successful image decoding; maximum150s and64MiB/object. Failed or interrupted checks are retained without replay and suspend only that source. The request/body budget includes these checks. A healthy result permits the next predefined configuration or arm; it does not replace the stopped result.
+
+The scheduler considers other eligible sources before waiting for Retry-After or the second confirmation date. A stopped CVDF candidate does not erase completed candidates. Exhausted CVDF prerequisites block dependent PAARC/transfer arms, while independent target sizing and tool calibration can still run. Unknown/unclosed attempts remain execution blockers.
 
 There is **no harness-imposed cooldown by default**. Preparation records
 `user_cooldown_seconds: 0`; set a positive duration only when the user requests
@@ -152,8 +155,7 @@ both are present, use the later deadline. No header means no server-requested
 wait. A later acquisition needs a separately identified batch, a bounded health
 check, and clarification of access refusal when necessary. Historical stop and
 cooldown records remain evidence, not a reason to silently add a new wait.
-Removing the cooldown does not clear a source suspension, replay an attempt or
-remove the separately planned temporal blocks across two UTC dates.
+Removing the cooldown does not clear a source-scoped suspension, replay an attempt or remove the separately planned temporal blocks across two UTC dates. Run-scoped stops do not create source suspensions.
 Never bypass server restrictions.
 A figure showing img2dataset refused while PAARC succeeded requires actual
 matched observations and disclosed ordering/carryover; otherwise omit that claim.
@@ -161,10 +163,9 @@ matched observations and disclosed ordering/carryover; otherwise omit that claim
 ## Finite operations
 
 The separately identified envelope is72h, no dispatch in the last4h, at most
-2389 new compute SUs,40million image attempts,4TiB response bodies and3.5TiB
+2380 new compute SUs,40million image attempts,4TiB response bodies and3.5TiB
 retained artifacts. These are ceilings, not expected consumption.
-The corrective compute ceiling leaves room for the prior10.902SU attempt within
-the original2400SU envelope. Its clock starts at the authorized campaign start;
+The new ceiling plus19.4736SUs spent in the two preceding attempts remains below2400SUs. Carry all predecessor requests and conservatively reserved unknown response bodies into the original40million/4TiB ceilings. Existing records and accounting are unchanged. Its clock starts at the authorized campaign start;
 the closed campaign's clock, grants, consumed allowance and history are unchanged.
 Up to72 windows share this single wall deadline and cumulative allowance. A new explicit grant
 may permit a four-hour window; historical one-hour grants and1800s inspection
@@ -191,7 +192,7 @@ Only fresh SHELVED_OFFLOADED and restored networking qualify final cleanup.
 
 ## Analysis, figures and workflow
 
-Report all frozen cells and first attempts, including missing/censored cases.
+Report all frozen cells and first attempts, including missing/censored cases. Include a prominent status figure and stop table across sizing, calibration and confirmation, with recovery checks and dependency-blocked arms. Distinguish the server response from the study guard terminating a run; the latter is not native img2dataset behavior or proof of permanent blocking. Never impute zero complete-run goodput for a stopped run.
 Use paired log-goodput ratios and ordinary95% t intervals; Holm-adjust one-sided
 primary superiority p values across four contrasts (two PAARC methods × two
 targets versus transferred img2dataset), retaining unavailable hypotheses in the
@@ -224,3 +225,7 @@ Sources checked October23,2026: [iNaturalist open data](https://github.com/inatu
 [img2dataset1.47.0](https://github.com/rom1504/img2dataset/blob/1.47.0/README.md),
 [HTTP429](https://www.rfc-editor.org/rfc/rfc6585#section-4),
 [Jetstream2 flavors](https://docs.jetstream-cloud.org/general/instance-flavors/).
+
+## Immediate execution checkpoint
+
+The two prior campaigns are closed and preserved. Base source328f6d0 has passing CI. Implement and qualify this continuation, then start one new campaign immediately with `user_cooldown_seconds:0`, `latency_stop_enabled:false` and `stop_policy:stop-run-continue-campaign`; no scheduled cooldown or intermediate PR merge. Reuse trusted guests/volumes and the installed supervisor. Preserve the two-review ceiling; disclose the post-review delta. Final report, manuscript integration and fresh offload/network restoration precede the one final PR.
