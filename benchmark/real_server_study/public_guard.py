@@ -50,8 +50,8 @@ def latency_stop_enabled(protocol):
 
 
 class PublicPolicy(telemetry.StopPolicy):
-    def __init__(self, baseline, *, latency_stop=True):
-        super().__init__(baseline)
+    def __init__(self, baseline, *, latency_stop=True, cooldown_seconds=0):
+        super().__init__(baseline, cooldown_seconds=cooldown_seconds)
         require(type(latency_stop) is bool, "latency_stop must be boolean")
         self.latency_stop = latency_stop
         self.total_headers = self.dead = self.total_ends = self.transport_errors = 0
@@ -64,7 +64,7 @@ class PublicPolicy(telemetry.StopPolicy):
             self.reason, self.fatal = "dead_link_fraction", True
         if status in (401, 403, 429, 503) or 300 <= status < 400:
             self.reason, self.fatal = "public_access_stop", True
-            self.cooldown_until = max(self.cooldown_until, time.time() + 1800)
+            self.apply_cooldown()
 
     def inspect(self, headers):
         directives = str(headers.get("X-Robots-Tag", "")).lower()
@@ -102,6 +102,7 @@ class PublicPolicy(telemetry.StopPolicy):
             )
             if self.bad_latency >= 3:
                 self.reason, self.fatal = "sustained_latency", True
+                self.apply_cooldown()
         self.bucket = bucket
         while self.completed and self.completed[0][0] < now - 40:
             self.completed.popleft()
@@ -109,11 +110,11 @@ class PublicPolicy(telemetry.StopPolicy):
 
 class FlowGuard(telemetry.Guard):
     def __init__(self, source, allowed, stream, baseline, ignore_time=False, body_limit=2**30,
-                 *, latency_stop=True):
+                 *, latency_stop=True, cooldown_seconds=0):
         require(not ignore_time or source == "taibif-moth", "TLS exception is moth-host only")
         super().__init__(
             allowed, stream, baseline, ignore_time,
-            policy=PublicPolicy(baseline, latency_stop=latency_stop), body_limit=body_limit
+            policy=PublicPolicy(baseline, latency_stop=latency_stop, cooldown_seconds=cooldown_seconds), body_limit=body_limit
         )
         self.source = source
         self.common_first = set()
@@ -241,10 +242,12 @@ class ToolGuard:
         ceiling=192,
         shared=None,
         latency_stop=True,
+        cooldown_seconds=0,
     ):
         require(not ignore_time or source == "taibif-moth", "TLS exception is moth-host only")
         self.source, self.allowed, self.stream = source, set(allowed), stream
-        self.policy, self.lock = PublicPolicy(baseline, latency_stop=latency_stop), threading.RLock()
+        self.policy, self.lock = PublicPolicy(baseline, latency_stop=latency_stop,
+                                             cooldown_seconds=cooldown_seconds), threading.RLock()
         self.started = {}
         self.first_byte = {}
         self.counts, self.active, self.body_bytes, self.reserved = set(), set(), 0, 0
@@ -315,9 +318,11 @@ class ToolGuard:
                 url=url,
                 status=response.code,
                 retry_after=response.headers.get("Retry-After"),
+                server_retry_after_until_utc=self.policy.server_retry_after_until,
             )
             if self.policy.reason:
-                self.emit("stop", reason=self.policy.reason, inflight=len(self.active))
+                self.emit("stop", reason=self.policy.reason, inflight=len(self.active),
+                          cooldown_until_utc=self.policy.cooldown_until)
             self.check()
 
     def install(self):

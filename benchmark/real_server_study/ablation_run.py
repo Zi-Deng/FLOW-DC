@@ -12,6 +12,7 @@ import time
 from pathlib import Path
 
 from . import ablation
+from .cooldown import deadline, user_seconds
 from .common import file_hash, lock, read_json, remaining, replace_derived, require, utc, write_new
 from .onset_run import audit_events
 from .prepare import guest_check, host_gate, robots_permit
@@ -171,7 +172,8 @@ def launch(study, source, run_id):
     gate = read_json(study / "host-gate.json")
     baseline = read_json(study / "probe-summary.json")
     sys.path.insert(0, str(source / "bin"))
-    policy = ablation.Policy(baseline["ttfb_p50_s"])
+    policy = ablation.Policy(baseline["ttfb_p50_s"],
+                             cooldown_seconds=user_seconds(read_json(study / "protocol.json")))
     # body-collapse baseline must describe backlogged load, not the two-client probe.
     if (study / "body-baseline.json").exists():
         policy.rate = read_json(study / "body-baseline.json")["rate"]
@@ -421,6 +423,8 @@ def execute(study, source, run):
         protocol_window_complete=bool(verification) and not reason and not fatal,
         native_returncode=process.returncode,
         stop_reason=reason,
+        cooldown_until_utc=max([max(e.get("cooldown_until_utc", 0),
+                                    e.get("server_retry_after_until_utc", 0)) for e in events] + [0]),
         fatal=bool(fatal),
         fatal_reason=fatal,
         audit_invalid=invalid,
@@ -560,7 +564,9 @@ def window(study, source):
                 if row["stop_reason"] == "sustained_latency" and not row["fatal"]:
                     n = len(list(study.glob("recovery-*-summary.json")))
                     if n < ablation.LIMITS["max_cooldowns"]:
-                        pause = dict(index=n, run_id=run["run_id"], until_utc=time.time() + 600)
+                        pause = dict(index=n, run_id=run["run_id"],
+                                     until_utc=max(deadline(user_seconds(read_json(study / "protocol.json"))),
+                                                   row.get("cooldown_until_utc", 0)))
                         replace_derived(study / "cooldown.json", pause)
                         return {"status": "cooldown", **pause}
                 write_new(

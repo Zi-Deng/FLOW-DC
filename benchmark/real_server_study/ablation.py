@@ -132,8 +132,10 @@ def schedule():
     return runs
 
 
-def prepare(study, source, previous):
+def prepare(study, source, previous, *, user_cooldown_seconds=0):
     import polars as pl
+    from .cooldown import user_seconds
+    cooldown = user_seconds({"user_cooldown_seconds": user_cooldown_seconds})
 
     study, source, previous = map(Path, (study, source, previous))
     require(not study.exists(), "study exists; preserve attempts")
@@ -161,6 +163,7 @@ def prepare(study, source, previous):
         study / "protocol.json",
         dict(
             schema="flowdc-adaptive-ablation-v1",
+            user_cooldown_seconds=cooldown,
             source=source_identity(source),
             limits=LIMITS,
             rows=ROWS,
@@ -377,8 +380,8 @@ def select(records):
 class Policy(OnsetPolicy):
     """3x warning, 5x rolling hard latency stop; explicit refusal remains immediate."""
 
-    def __init__(self, baseline, rate=None):
-        super().__init__(baseline, rate)
+    def __init__(self, baseline, rate=None, *, cooldown_seconds=0):
+        super().__init__(baseline, rate, cooldown_seconds=cooldown_seconds)
         self.initial_baseline = baseline
         self.warning = False
 

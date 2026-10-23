@@ -49,9 +49,11 @@ def check(study, source):
     return protocol
 
 
-def prepare(study, source, previous, completed):
+def prepare(study, source, previous, completed, *, user_cooldown_seconds=0):
     """Exclude actual dispatches in both completed studies, never success-select."""
     import polars as pl
+    from .cooldown import user_seconds
+    cooldown = user_seconds({"user_cooldown_seconds": user_cooldown_seconds})
     study, source, previous, completed = map(lambda p: Path(p).resolve(), (study, source, previous, completed))
     require(not study.exists(), 'onset study already exists')
     population = read_json(previous/'population-record.json')
@@ -93,6 +95,7 @@ def prepare(study, source, previous, completed):
     write_new(study/'schedule.json', {'runs': runs, 'seed': 20261020})
     files = ['schedule.json', 'probe.parquet', 'recovery.parquet']+[f"slices/{r['slice']}.parquet" for r in runs]
     write_new(study/'protocol.json', dict(schema=SCHEMA, utc=utc(), source=source_identity(source),
+              user_cooldown_seconds=cooldown,
               limits=LIMITS, rows=ROWS, caps=list(CAPS), options=OPTIONS,
               files={name: file_hash(study/name) for name in files}, previous_population=population,
               excluded_dispatch_urls=len(seen), prior_dispatch_evidence=evidence,
@@ -151,8 +154,8 @@ def select_fixed(rows):
 
 class Policy(StopPolicy):
     """First-warning stop; body-rate collapse never requires 100 completions."""
-    def __init__(self, baseline, rate=None):
-        super().__init__(baseline)
+    def __init__(self, baseline, rate=None, *, cooldown_seconds=0):
+        super().__init__(baseline, cooldown_seconds=cooldown_seconds)
         self.rate = rate
         self.ends, self.samples = deque(), deque()
         self.current = (0, False, 0)
@@ -165,8 +168,7 @@ class Policy(StopPolicy):
             self.reason = first or {401:'access_refusal', 403:'access_refusal', 429:'explicit_429', 503:'service_unavailable'}[status]
             self.fatal = self.fatal or status in (401, 403)
             if status in (401, 403): self.fatal_reason = self.fatal_reason or 'access_refusal'
-            import time
-            self.cooldown_until = max(self.cooldown_until, time.time()+600)
+            self.apply_cooldown()
 
     def network_end(self, now, status, measurement):
         self.ends.append((now, status == 200 and measurement.get('body_completed_at') is not None,
@@ -211,5 +213,4 @@ class Policy(StopPolicy):
         if all(collapse[:2]):
             self.reason = self.reason or 'body_completion_collapse'
         if self.reason:
-            import time
-            self.cooldown_until = max(self.cooldown_until, time.time()+600)
+            self.apply_cooldown()

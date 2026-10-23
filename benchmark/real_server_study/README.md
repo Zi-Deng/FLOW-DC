@@ -46,11 +46,18 @@ distinction; a separate enumeration of the20allowed assignments is an additional
 design-consistent sensitivity and has minimum two-sided p=.1.
 
 Stops: five429/503s,1% rolling refusals after200 responses, or three qualifying
-10s latency windows>=3x probe baseline; honor Retry-After and10min cooldown across
+10s latency windows>=3x probe baseline; honor Retry-After across
 processes/windows. Two consecutive refusal stops terminate the host; TLS or401/403
 terminates immediately. Known content anomalies/dead links also retain the
 previous5%/20% campaign-stop thresholds. Interrupted/unknown work is incomplete,
 not silently zero-imputed. No replacement, proxy, IP change or automatic replay.
+
+Harness cooldowns default to zero. Only an explicit user request should set
+`user_cooldown_seconds` in a newly prepared protocol; `prepare` and
+`onset-prepare` accept `--user-cooldown-seconds`. Server `Retry-After` is separate
+and remains binding. Existing stop records are preserved. The current public
+transfer harness and its source-suspension rules are described in
+[the measured-study protocol](../../docs/research/MINIMUM-MEASURED-STUDY.md).
 
 The `bounded-external-v1` profile permits32,768rows,4GiB expected payload,8GiB
 observed bodies/archive,64MiB/object and300s acquisition. Previous profiles retain

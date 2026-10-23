@@ -89,6 +89,7 @@ def partial_transport(directory, body_limit):
         files = sorted(directory.glob("tool-request-*.jsonl"))
     statuses, reasons, attempts = Counter(), set(), set()
     invalid = 0
+    server_until = 0
     for path in files:
         if not path.exists():
             continue
@@ -101,6 +102,7 @@ def partial_transport(directory, body_limit):
                     continue
                 if event.get("event") == "headers":
                     statuses[str(event["status"])] += 1
+                    server_until = max(server_until, event.get("server_retry_after_until_utc", 0))
                 if event.get("event") == "attempt":
                     attempts.add(event["url"])
                 if event.get("reason"):
@@ -112,6 +114,7 @@ def partial_transport(directory, body_limit):
                 "service_unavailable" if statuses["503"] else
                 "performance_degradation" if "sustained_latency" in reasons else "interrupted_or_failed")
     return dict(attempts=len(attempts), status_counts=dict(statuses), stop_reasons=sorted(reasons),
+                server_retry_after_until_utc=server_until,
                 classification=category, malformed_lines=invalid, incomplete=True,
                 body_bytes=body_limit, body_bytes_basis="conservative reservation; actual count incomplete",
                 http_span_s=None, mean_http_concurrency=None, request_seconds=None)

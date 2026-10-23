@@ -18,6 +18,8 @@ def main():
             cmd.add_argument("--source",required=True,type=Path)
         if name=="prepare":
             cmd.add_argument("--previous",required=True,type=Path)
+            cmd.add_argument("--user-cooldown-seconds", type=float, default=0,
+                             help="Optional user-requested pause after a stop; default: 0")
         if name=="guest-window":
             cmd.add_argument("--campaign-id",required=True)
             cmd.add_argument("--vm-id",required=True)
@@ -40,6 +42,8 @@ def main():
         if name=='onset-prepare':
             command.add_argument('--previous',required=True,type=Path)
             command.add_argument('--completed',required=True,type=Path)
+            command.add_argument('--user-cooldown-seconds', type=float, default=0,
+                                 help='Optional user-requested pause after a stop; default: 0')
         if name=='onset-cloud-prepare':command.add_argument('--previous-packet',required=True,type=Path)
         if name in ('onset-cloud-prepare','onset-cloud-run'):command.add_argument('--packet',required=True,type=Path)
         if name=='onset-audit':command.add_argument('--seconds',type=int,default=1200)
@@ -48,7 +52,8 @@ def main():
     if args.command.startswith('onset-'):
         if args.command=='onset-prepare':
             from .onset import prepare
-            result=prepare(args.study,args.source,args.previous,args.completed)
+            result=prepare(args.study,args.source,args.previous,args.completed,
+                           user_cooldown_seconds=args.user_cooldown_seconds)
             print(json.dumps({'schema':result['schema'],'excluded_urls':result['excluded_dispatch_urls']}))
         elif args.command=='onset-cloud-prepare':
             from .onset_cloud import prepare
@@ -66,7 +71,7 @@ def main():
             print(report(args.study))
     elif args.command=="prepare":
         from .prepare import prepare
-        prepare(args.study,args.source,args.previous)
+        prepare(args.study,args.source,args.previous,user_cooldown_seconds=args.user_cooldown_seconds)
     elif args.command=="guest-window":
         for name in ("POLARS_MAX_THREADS","OMP_NUM_THREADS","OPENBLAS_NUM_THREADS"):
             os.environ[name]="4"

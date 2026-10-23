@@ -91,8 +91,10 @@ def order(seed=SEED):
     return [base[n:] + base[:n] for n in offsets]
 
 
-def prepare(study, source, populations, provenance):
+def prepare(study, source, populations, provenance, *, user_cooldown_seconds=0):
     """Offline only; populations have real scalar media metadata, not payloads."""
+    from .cooldown import user_seconds
+    cooldown = user_seconds({"user_cooldown_seconds": user_cooldown_seconds})
     study, source = Path(study).resolve(), Path(source).resolve()
     require(not study.exists(), "new batch directory required")
     study.mkdir(parents=True, mode=0o700)
@@ -130,6 +132,7 @@ def prepare(study, source, populations, provenance):
         study / "protocol.json",
         dict(
             schema="flowdc-public-batch-v1",
+            user_cooldown_seconds=cooldown,
             seed=SEED,
             limits=LIMITS,
             methods=list(METHODS),

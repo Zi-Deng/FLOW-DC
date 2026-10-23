@@ -85,9 +85,13 @@ Neither repair authorizes a new download or favorable replacement attempt.
 Admission rechecks the remaining lease after storage accounting and before
 creating an attempt directory, leaving a run pending if processing cannot fit.
 A3× delay warning tests downward response within2 ticks. Three ten-second bins
-at5× baseline stop an arm. Only latency stops permit a ten-minute cooldown and
-one predefined low-load recovery (>=95% valid, median <=1.5× initial baseline).
-At most three cooldowns. Access refusals,429/503,TLS and integrity failures end
+at5× baseline stop an arm. Only latency stops permit one predefined low-load
+recovery (>=95% valid, median <=1.5× initial baseline), at most three recoveries.
+The original protocol imposed ten minutes before recovery. Following the
+October23 user instruction, newly prepared studies default to no harness wait;
+an explicit `user_cooldown_seconds` opts into a pause and server `Retry-After`
+still applies. Historical attempts/decisions are preserved.
+Access refusals,429/503,TLS and integrity failures end
 public-host testing. Delay alone does not identify a server quota.
 
 ## Execution and accountable window completion

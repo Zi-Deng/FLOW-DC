@@ -6,7 +6,8 @@ from pathlib import Path
 
 from .common import file_hash, protocol_check, read_json, require
 from .design import config
-from .telemetry import Guard
+from .telemetry import Guard, StopPolicy
+from .cooldown import user_seconds
 
 
 def main():
@@ -39,7 +40,9 @@ def main():
     sys.path.insert(0, str(source / "bin"))
     with (directory / "request-audit.jsonl").open("x", buffering=65536) as audit:
         gate = read_json(study / "host-gate.json")
-        guard = Guard(urls, audit, read_json(study / "probe-summary.json")["ttfb_p50_s"], gate["ignore_time"])
+        baseline = read_json(study / "probe-summary.json")["ttfb_p50_s"]
+        policy = StopPolicy(baseline, cooldown_seconds=user_seconds(read_json(study / "protocol.json")))
+        guard = Guard(urls, audit, baseline, gate["ignore_time"], policy=policy)
         guard.emit("start", run_id=run["run_id"], rows=len(urls), definition_sha256=file_hash(study / "protocol.json"))
         restore = guard.install()
         try:

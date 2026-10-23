@@ -164,8 +164,6 @@ def execute(study, source, run, budget):
             fatal = fatal or event.get("fatal",False)
             cooldown = max(cooldown,event.get("cooldown_until_utc",0))
     complete = complete and reason is None
-    if reason in ("refusal_threshold","sustained_latency"):
-        cooldown = max(cooldown,time.time()+600)
     observation = verification.pop("observations",{})
     campaign_stop=None
     if verification.get("decode_failures",0)>=.05*len(urls):

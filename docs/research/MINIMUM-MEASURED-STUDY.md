@@ -133,12 +133,28 @@ attempt stopped under that earlier rule and is preserved separately; it is not
 evidence of a server block or a completed calibration. The corrective campaign
 keeps the same frozen population/partitions and documents repeated sizing URLs.
 
-Conservatively suspend a stopped source for the rest
-of this finite campaign; qualified unrelated sources can continue. This is
-stricter than the proposed24h cooldown/recheck path and spends no repeat requests
-on the affected source. Reconsideration would require a separately identified
-batch after at least24h and any longer Retry-After, a bounded health check, and
-clarification of access refusal when necessary. Never bypass server restrictions.
+Conservatively suspend a stopped source for the rest of this finite campaign;
+qualified unrelated sources can continue. This preserves the stopped first
+attempt without automatically replaying a failing configuration. If development
+on CVDF stops, dependent calibration and confirmation cannot proceed.
+
+There is **no harness-imposed cooldown by default**. Preparation records
+`user_cooldown_seconds: 0`; set a positive duration only when the user requests
+one, via the same keyword on `minimum_study.prepare(...)`. For example,
+`user_cooldown_seconds=600` requests ten minutes. Values must be finite,
+nonnegative numbers. The legacy `prepare` and `onset-prepare` commands also
+expose `--user-cooldown-seconds`. Do not edit an already attempted protocol.
+The October23 user instruction supersedes the former automatic 10-minute,
+30-minute and 24-hour harness waits for future execution.
+
+Server `Retry-After` deadlines are recorded separately and still apply; when
+both are present, use the later deadline. No header means no server-requested
+wait. A later acquisition needs a separately identified batch, a bounded health
+check, and clarification of access refusal when necessary. Historical stop and
+cooldown records remain evidence, not a reason to silently add a new wait.
+Removing the cooldown does not clear a source suspension, replay an attempt or
+remove the separately planned temporal blocks across two UTC dates.
+Never bypass server restrictions.
 A figure showing img2dataset refused while PAARC succeeded requires actual
 matched observations and disclosed ordering/carryover; otherwise omit that claim.
 
@@ -148,7 +164,7 @@ The separately identified envelope is72h, no dispatch in the last4h, at most
 2389 new compute SUs,40million image attempts,4TiB response bodies and3.5TiB
 retained artifacts. These are ceilings, not expected consumption.
 The corrective compute ceiling leaves room for the prior10.902SU attempt within
-the original2400SU envelope. Its clock starts only after the source cooldown;
+the original2400SU envelope. Its clock starts at the authorized campaign start;
 the closed campaign's clock, grants, consumed allowance and history are unchanged.
 Up to72 windows share this single wall deadline and cumulative allowance. A new explicit grant
 may permit a four-hour window; historical one-hour grants and1800s inspection

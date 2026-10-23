@@ -21,6 +21,7 @@ from .minimum_study import LIMITS, PROFILE, ceiling, configuration, manifest
 from .public_batch import terminate
 from .public_metrics import transport
 from .public_guard import latency_stop_enabled
+from .cooldown import user_seconds
 
 
 def pack(directory, destination, *, metadata_only=False, partial=False):
@@ -173,6 +174,7 @@ def worker(spec_path, input_path, output_path):
         hostname=socket.gethostname(),
         source_head=spec["head"],
         latency_stop_enabled=latency_stop_enabled(spec["protocol"]),
+        user_cooldown_seconds=user_seconds(spec["protocol"]),
     )
     try:
         with (run / "stdout.log").open("x") as out, (run / "stderr.log").open("x") as err:
@@ -247,6 +249,7 @@ def manager(request_path):
         started_utc=utc(),
         source_head=request["head"],
         latency_stop_enabled=latency_stop_enabled(read_json(study / "protocol.json")),
+        user_cooldown_seconds=user_seconds(read_json(study / "protocol.json")),
         timing="manager-submit-through-returned-verification-v1",
     )
     write_new(directory / "attempt.json", dict(**record, request=request))

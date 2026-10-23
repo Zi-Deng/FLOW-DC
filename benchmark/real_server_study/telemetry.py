@@ -11,6 +11,7 @@ from collections import deque
 from email.utils import parsedate_to_datetime
 
 from .common import checked_url, finite, require, tls_context
+from .cooldown import deadline, user_seconds
 
 
 def retry_until(value, now):
@@ -27,28 +28,37 @@ def retry_until(value, now):
 
 
 class StopPolicy:
-    def __init__(self, baseline):
+    def __init__(self, baseline, *, cooldown_seconds=0):
         require(finite(baseline) and baseline > 0, "missing positive probe delay")
         self.baseline, self.reason, self.fatal = baseline, None, False
         self.headers, self.completed = deque(), deque()
         self.refusals, self.bad_latency = 0, 0
         self.cooldown_until = 0
+        self.user_cooldown_seconds = user_seconds({"user_cooldown_seconds": cooldown_seconds})
+        self.user_cooldown_until = self.server_retry_after_until = 0
         self.bucket = None
         self.origin = None
+
+    def apply_cooldown(self):
+        if not self.user_cooldown_until:
+            self.user_cooldown_until = deadline(self.user_cooldown_seconds)
+        self.cooldown_until = max(self.server_retry_after_until, self.user_cooldown_until)
 
     def header(self, now, status, retry_after=None):
         self.headers.append((now, status))
         while self.headers and self.headers[0][0] < now - 30:
             self.headers.popleft()
         self.refusals += status in (429, 503)
-        self.cooldown_until = max(self.cooldown_until, retry_until(retry_after, time.time()))
+        if retry_after is not None:
+            self.server_retry_after_until = max(self.server_retry_after_until, retry_until(retry_after, time.time()))
+            self.cooldown_until = max(self.cooldown_until, self.server_retry_after_until)
         if status in (401, 403):
             self.reason, self.fatal = "access_refusal", True
         elif self.refusals >= 5 or (len(self.headers) >= 200 and
                 sum(s in (429, 503) for _, s in self.headers) / len(self.headers) >= .01):
             self.reason = self.reason or "refusal_threshold"
         if self.reason:
-            self.cooldown_until = max(self.cooldown_until, time.time() + 600)
+            self.apply_cooldown()
 
     def complete(self, now, delay):
         if delay is not None:
@@ -66,7 +76,7 @@ class StopPolicy:
             self.bucket = bucket
             if self.bad_latency >= 3:
                 self.reason = self.reason or "sustained_latency"
-                self.cooldown_until = max(self.cooldown_until, time.time() + 600)
+                self.apply_cooldown()
         while self.completed and self.completed[0][0] < now - 40:
             self.completed.popleft()
 
@@ -211,6 +221,7 @@ class Guard:
                 self.policy.header(time.monotonic(), response.status, response.headers.get("Retry-After"))
                 self.emit("headers", token=self.token.get(), url=url, status=response.status,
                           retry_after=response.headers.get("Retry-After"), peer=peer,
+                          server_retry_after_until_utc=self.policy.server_retry_after_until,
                           rate_headers={k: v for k, v in response.headers.items() if k.lower() in
                             ('ratelimit', 'ratelimit-policy', 'ratelimit-limit', 'ratelimit-remaining',
                              'ratelimit-reset', 'x-ratelimit-limit', 'x-ratelimit-remaining', 'x-ratelimit-reset')},

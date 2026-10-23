@@ -7,6 +7,7 @@ from pathlib import Path
 import polars as pl
 
 from .common import file_hash, read_json, require, source_identity, utc, write_new
+from .cooldown import user_seconds
 
 METHODS = ("ratio-v2", "gradient-candidate-v2", "img2dataset-1.47.0")
 SOURCES = ("openimages-cvdf", "inaturalist-open", "taibif-moth")
@@ -37,7 +38,8 @@ def tool_settings(source):
     return [(p, min(t, cap // p)) for p, t in TOOL_SETTINGS]
 
 
-def prepare(study, source, populations, provenance, initial_rows):
+def prepare(study, source, populations, provenance, initial_rows, *, user_cooldown_seconds=0):
+    cooldown = user_seconds({"user_cooldown_seconds": user_cooldown_seconds})
     study = Path(study)
     require(not study.exists(), "new study required; preserve old first attempts")
     require(set(populations) == set(provenance) == set(initial_rows) == set(SOURCES), "source inventory differs")
@@ -67,6 +69,7 @@ def prepare(study, source, populations, provenance, initial_rows):
     record = dict(
         schema="flowdc-adaptive-transfer-study-v2", utc=utc(), seed=SEED,
         latency_stop_enabled=False,
+        user_cooldown_seconds=cooldown,
         source=source_identity(source), limits=LIMITS, methods=METHODS,
         profiles=PROFILES, tool_settings={s: tool_settings(s) for s in SOURCES},
         population_sha256=hashes, population_rows=counts, partitions=partitions,

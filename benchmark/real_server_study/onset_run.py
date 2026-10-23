@@ -14,6 +14,7 @@ import sys
 import time
 
 from . import onset
+from .cooldown import deadline, user_seconds
 from .common import (checked_url, decode_image, file_hash, lock, read_json, remaining,
                      replace_derived, require, tls_context, utc, write_new)
 from .prepare import UA, guest_check, host_gate, read_lines, robots_permit
@@ -170,7 +171,8 @@ def launch(study, source, run_id):
     require(binding.get('fixed_selection_sha256') ==
             (file_hash(study/'fixed-selection.json') if run['phase'] == 'validation' else None), 'selection changed')
     baseline = read_json(study/'baseline-66.json') if (study/'baseline-66.json').exists() else read_json(study/'probe-summary.json')
-    policy = onset.Policy(baseline['ttfb_p50_s'], baseline.get('body_rate'))
+    policy = onset.Policy(baseline['ttfb_p50_s'], baseline.get('body_rate'),
+                          cooldown_seconds=user_seconds(read_json(study/'protocol.json')))
     gate = read_json(study/'host-gate.json')
     sys.path.insert(0, str(source/'bin'))
     with (directory/'request-audit.jsonl').open('x', buffering=65536) as stream:
@@ -319,7 +321,8 @@ def stop(study, reason, row=None, fatal=False):
     if not (study/'STOP.json').exists():
         write_new(study/'STOP.json', dict(reason=reason, utc=utc(), run_id=row['run_id'] if row else None,
                   fatal=fatal or bool(row and row.get('fatal')), fatal_reason=row.get('fatal_reason') if row else None,
-                  cooldown_until_utc=max(time.time()+600, row.get('cooldown_until_utc', 0)) if row else 0))
+                  cooldown_until_utc=max(deadline(user_seconds(read_json(study/'protocol.json'))),
+                                         row.get('cooldown_until_utc', 0)) if row else 0))
 
 
 def window(study, source, final=False):

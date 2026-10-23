@@ -5,6 +5,7 @@ import time
 from pathlib import Path
 
 from .common import file_hash, read_json, require, utc, write_new
+from .cooldown import deadline, user_seconds
 from .minimum_study import (LIMITS, METHODS, SOURCES, TARGETS, calibration_cells,
                             freeze, select_configuration, sizing, tool_settings)
 
@@ -29,13 +30,19 @@ def source_available(study, source, history):
     stops = [r for r in history.values() if r["source"] == source and r["status"] != "complete"]
     if stops:
         # Refusals retire the source in this finite execution. A future separately
-        # scheduled acquisition needs its cooldown and bounded health check;
+        # scheduled acquisition needs a bounded health check;
         # nothing automatically probes/replays a known failing configuration.
         path = study / "gates" / (source + "-disposition.json")
         if not path.exists():
+            seconds = user_seconds(protocol)
+            server_until = max([e.get("server_retry_after_until_utc", 0)
+                                for r in stops for e in r.get("stop_evidence", [])] + [0])
+            user_until = deadline(seconds)
             write_new(path, dict(source=source, status="suspended", utc=utc(),
                 first_attempts=[r["run_id"] for r in stops],
-                earliest_reconsideration_utc=time.time() + 86400,
+                user_cooldown_seconds=seconds, user_cooldown_until_utc=user_until,
+                server_retry_after_until_utc=server_until,
+                earliest_reconsideration_utc=max(time.time(), user_until, server_until),
                 reason="Stopped first attempt; preserve partial evidence, no automatic refusal retry"))
         return False
     return True

@@ -16,6 +16,7 @@ import polars as pl
 from .common import (HOST, MAX_OBJECT, PREFIX, OPTIONS, NoRedirect, bounded_read, checked_url, decode_image,
                      file_hash, opener, read_json, remaining, require, source_identity, terminal, tls_context, utc, write_new)
 from .design import schedule, slice_size
+from .cooldown import user_seconds
 
 UA = "FLOW-DC/2.0 PAARC/2.0"
 
@@ -33,7 +34,8 @@ def robots_permit(text, urls):
     require(all(parser.can_fetch(UA, url) for url in urls), "robots disallows selected paths")
 
 
-def prepare(study, source, previous):
+def prepare(study, source, previous, *, user_cooldown_seconds=0):
+    cooldown = user_seconds({"user_cooldown_seconds": user_cooldown_seconds})
     study, source, previous = Path(study).resolve(), Path(source).resolve(), Path(previous).resolve()
     require(not study.exists(), "study already exists; never replace first attempts")
     original = read_json(previous / "population-record.json")
@@ -66,6 +68,7 @@ def prepare(study, source, previous):
     write_new(study / "schedule.json", {"runs": runs, "seed": 20261019, "order": "all adaptive before all Fixed"})
     names = ["schedule.json", "probe.parquet", "main-population.parquet"] + [f"slices/{r['slice']}.parquet" for r in runs[:4]]
     write_new(study / "protocol.json", {"schema": "flowdc-external-concurrency-v1", "utc": utc(),
+              "user_cooldown_seconds": cooldown,
               "source": source_identity(source), "options": OPTIONS, "previous_population": original,
               "old_request_evidence":old_hashes,
               "excluded_old_request_urls": len(seen), "files": {name: file_hash(study/name) for name in names},
