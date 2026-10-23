@@ -122,6 +122,8 @@ class CampaignTests(unittest.TestCase):
             account.activation_intent(self.clock(), window_seconds=3601, inspection=False)
 
     def test_long_campaign_is_explicit_and_preserves_cleanup_and_consumption(self):
+        from unittest.mock import patch
+        from flowdc_pilot_supervisor import request as supervisor_request
         request=copy.deepcopy(self.request); request['max_window_seconds']=14400
         _,_,after=self.apply(request)
         account=allowance(next(iter(after['vms'].values()))['account'])
@@ -130,6 +132,14 @@ class CampaignTests(unittest.TestCase):
         active=account.activation_intent(self.clock(),window_seconds=14400,inspection=False)
         self.assertEqual(active.shutdown_at_consumed-active.consumed,13800)
         with self.assertRaises(AccountingError): account.activation_intent(self.clock(),window_seconds=14401,inspection=False)
+        self.journal.change(lambda r:r.update(heartbeat=asdict(self.clock())))
+        with patch.object(self.journal, 'supervisor_locked', return_value=True):
+            supervisor_request(self.journal, 'start', window=14400, inspection=False, clock=self.clock)
+        running=self.journal.read()
+        self.assertEqual(running['desired'],'run')
+        self.assertEqual(running['window'],dict(seconds=14400,inspection=False))
+        self.assertEqual(running['events'][-1]['kind'],'start_requested')
+        self.assertEqual([v['account']['consumed'] for v in running['vms'].values()],[6000]*3)
 
     def test_transport_hour_start_uses_explicit_full_window_flag(self):
         import json

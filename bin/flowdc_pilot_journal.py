@@ -17,6 +17,7 @@ import flowdc_ops as ops
 from flowdc_pilot import (
     ALLOWANCE_SECONDS,
     CLOCK_TOLERANCE_SECONDS,
+    MAX_CAMPAIGN_WINDOW_SECONDS,
     AccountingError,
     Allowance,
     ClockSample,
@@ -328,7 +329,7 @@ def validate_record(record):
             raise ValueError
         if record["window"] is not None:
             ops.fields(record["window"], ("seconds", "inspection"))
-            ops.integer(record["window"]["seconds"], 601, 7200)
+            ops.integer(record["window"]["seconds"], 601, MAX_CAMPAIGN_WINDOW_SECONDS)
             if type(record["window"]["inspection"]) is not bool:
                 raise ValueError
         network = record["network"]
