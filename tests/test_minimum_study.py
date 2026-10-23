@@ -262,6 +262,23 @@ class MinimumStudyTests(unittest.TestCase):
             self.assertEqual(grad['p_holm'],0)
             self.assertEqual(ratio['changed_content_blocks'],[dict(block=3,rows=1)])
 
+    def test_preselection_stop_retains_declared_scope(self):
+        from benchmark.real_server_study.minimum_analysis import summarize
+        with tempfile.TemporaryDirectory() as directory:
+            study=Path(directory)
+            self.make_protocol(study)
+            run=study/'runs/sizing-openimages-cvdf-0'
+            run.mkdir()
+            write_new(run/'record.json',dict(source=design.SOURCES[0], phase='sizing',
+                method=design.METHODS[2], status='stopped', run_id=run.name, rows=210000))
+            result=summarize(study)
+            self.assertEqual(result['scientific_status'],'not_frozen')
+            self.assertEqual(result['attempted_jobs'],1)
+            self.assertEqual(result['planned_jobs'],0)
+            self.assertEqual(sum(s['maximum_jobs'] for s in result['declared_scope'] if s['phase']!='sizing'),68)
+            self.assertEqual(sum(s['stopped_or_failed'] for s in result['declared_scope']),1)
+            self.assertFalse(any(c.get('practical_speed_claim_supported') for c in result['comparisons'].values()))
+
     def test_partial_tool_sealed_rows_and_truncated_shards(self):
         from PIL import Image
         from benchmark.real_server_study.public_verify import verify_partial

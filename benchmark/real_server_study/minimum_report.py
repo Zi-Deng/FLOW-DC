@@ -57,6 +57,23 @@ def build(study):
                     ax.plot([r['candidate']+1 for r in rows],[r['goodput_Bps']/1e6 for r in rows],marker='o',label=label,color=color)
                 ax.set(title=source,xlabel='Predefined configuration index',ylabel='Verified goodput (MB/s)',xticks=[1,2,3,4],ylim=(0,None));ax.legend(fontsize=8)
             save(fig,'configuration-curves')
+        # Sizing failures are diagnostics, never comparative efficacy figures.
+        for row in result['development_and_calibration']:
+            if row.get('phase') != 'sizing':
+                continue
+            traces=[read_json(p) for p in (study/'runs'/row['run_id']).glob('*/returned/progress.json')]
+            if not any(t['points'] for t in traces):
+                continue
+            fig,axes=plt.subplots(2,1,figsize=(8,6))
+            for trace in traces:
+                points=trace['points']
+                axes[0].plot([p['second'] for p in points],[p['credited_bytes']/1e9 for p in points],color='#D55E00')
+                axes[1].plot([p['second'] for p in points],[p['ttfb_p95_s'] for p in points],color='#D55E00')
+            axes[0].set(title=f"Sizing diagnostic: {row['source']} — {row['status']}",
+                        ylabel='Post-verified acquired bytes (GB)')
+            axes[1].set(xlabel='Seconds since first HTTP request',ylabel='5s-bin p95 first-byte delay (s)')
+            fig.supxlabel('Single sizing attempt; no PAARC comparison or confirmed blocking inference',fontsize=9)
+            save(fig,row['run_id']+'-diagnostic')
         # Every completed/partial confirmation curve, never a selected best run.
         for source in sources:
             fig,axes=plt.subplots(2,1,figsize=(8,6))
@@ -74,7 +91,23 @@ def build(study):
                 axes[1].set(xlabel='Seconds since first HTTP request',ylabel='5s peak HTTP inflight')
                 save(fig,source+'-progress')
             else:plt.close(fig)
-    lines=['# Measured adaptive transfer study','',f"Frozen confirmation jobs: {result['planned_jobs']}; complete: {result['complete_jobs']}.",
+    lines=['# Measured adaptive transfer study','',f"Scientific status: **{result['scientific_status']}**.",
+           f"Attempted jobs across all stages: {result['attempted_jobs']}. Frozen confirmation jobs: {result['planned_jobs']}; complete: {result['complete_jobs']}.",
+           'A study that stopped before configuration selection has no frozen confirmation cells; this does not mean its planned comparisons were completed.',
+           '', '## Declared scope and actual execution', '',
+           '| Source | Stage | Design maximum | Attempted | Complete | Stopped/failed |',
+           '|---|---|---:|---:|---:|---:|']
+    for row in result['declared_scope']:
+        lines.append(f"| {row['source']} | {row['phase']} | {row['maximum_jobs']} | {row['attempted']} | {row['complete']} | {row['stopped_or_failed']} |")
+    lines+=['', 'Design maxima include optional sizing corrections and tool arms that may be deduplicated after selection; they are not a frozen run count.',
+           '', '## Sizing and calibration attempts', '',
+           '| Run | Status | Original rows | Verified coverage | Verified bytes | Stop evidence |',
+           '|---|---|---:|---:|---:|---|']
+    for row in result['development_and_calibration']:
+        coverage='unavailable' if row.get('coverage') is None else f"{100*row['coverage']:.3f}%"
+        reasons=sorted({reason for item in row.get('stop_evidence',[]) for reason in item.get('stop_reasons',[])})
+        lines.append(f"| {row['run_id']} | {row['status']} | {row.get('original_rows',row['rows'])} | {coverage} | {row.get('credited_bytes','unavailable')} | {', '.join(reasons) or 'none recorded'} |")
+    lines+=['', '## Comparative evidence',
            '', 'Missing and stopped cells remain visible in results.json. Figures include every available observation; no generated performance values.',
            '', '| Target | PAARC method | Comparator | Matched complete blocks | Goodput ratio | Ordinary 95% interval |',
            '|---|---|---|---:|---:|---|']

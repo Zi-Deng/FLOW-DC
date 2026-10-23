@@ -129,8 +129,24 @@ def summarize(study):
         entry["practical_speed_claim_supported"] = bool(entry["all_six_pairs_complete"] and
             entry["ratio"] >= 1.1 and entry["p_holm"] < .05 and ci and ci[0] >= -.01)
     dispositions = {p.stem: read_json(p) for p in (study / "gates").glob("*-disposition.json")}
+    # A stop before selection must not make the unstarted study disappear as
+    # "zero planned jobs". These are design maxima, not invented frozen cells.
+    scope = []
+    for source in SOURCES:
+        for phase, maximum in (("sizing", 3), ("calibration", 12 if source == SOURCES[0] else 4),
+                               ("evaluation", 0 if source == SOURCES[0] else 24)):
+            if not maximum:
+                continue
+            observed = [r for r in records.values() if r["source"] == source and r.get("phase") == phase]
+            scope.append(dict(source=source, phase=phase, maximum_jobs=maximum,
+                attempted=len(observed), complete=sum(r["status"] == "complete" for r in observed),
+                stopped_or_failed=sum(r["status"] != "complete" for r in observed),
+                status="not_started" if not observed else "attempted"))
     result = dict(schema="flowdc-adaptive-transfer-analysis-v1", utc=utc(),
         evaluation_frozen=frozen is not None, planned_jobs=len(cells),
+        scientific_status=("not_frozen" if frozen is None else
+            "complete" if cells and all(r["status"] == "complete" for r in inventory) else "incomplete"),
+        declared_scope=scope, attempted_jobs=len(records),
         complete_jobs=sum(r["status"] == "complete" for r in inventory), groups=groups,
         comparisons=comparisons, inventory=inventory,
         development_and_calibration=[r for r in records.values() if r.get("phase") != "evaluation"],
