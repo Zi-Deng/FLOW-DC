@@ -1,0 +1,107 @@
+\section{Architecture Overview}\label{sec:architecture}
+FLOW-DC organizes data acquisition into three stages: input preparation, coordination, and execution. A dataset manifest defines the requested objects; a manager converts partitions into tasks; workers acquire the objects and return their outputs and accounting records. Figure~\ref{fig:overview} presents this organization. The architecture separates decisions about the scientific dataset from decisions about where and how its bytes are transferred.
+
+\begin{figure*}[t]\centering
+\includegraphics[width=.97\textwidth]{figures/architecture.pdf}
+\caption{Overview of FLOW-DC. Manifest partitions and configuration flow from the manager to workers. Workers apply PAARC to public-host requests and produce verifiable archives and row-level records.}
+\label{fig:overview}\end{figure*}
+
+\subsection{TaskVine}
+TaskVine provides the manager--worker execution layer~\cite{taskvine}. The manager declares a task's command, resource requirements, input files, and output files. Workers connect to the manager, receive runnable tasks and their declared inputs, and return declared outputs. This model avoids requiring a shared filesystem between all participants. It also permits workers to join after task submission, provided that the runtime, credentials, and network connectivity are compatible.
+
+\begin{figure}[t]\centering
+\includegraphics[width=.97\columnwidth]{figures/taskvine.pdf}
+\caption{TaskVine manager--worker organization. The scheduler transfers declared inputs and outputs and assigns available tasks to connected workers.}
+\label{fig:taskvine}\end{figure}
+
+Workflow engines such as Snakemake~\cite{snakemake}, Nextflow~\cite{nextflow}, and Pegasus~\cite{pegasus} address broader reproducible workflow needs. FLOW-DC concentrates on the acquisition stage: partitions have similar execution structure, but their duration depends on remote hosts and their objects. TaskVine supplies scheduling and file movement; FLOW-DC supplies manifest semantics, the HTTP client, request control, and output verification. A scheduler's successful task return is not treated as sufficient evidence of successful acquisition.
+
+\subsection{Policy-Aware Adaptive Request Control}
+PAARC controls a per-host integer admission limit $C_t$. Outstanding requests can temporarily exceed a newly reduced limit because the controller does not cancel otherwise healthy transfers merely to enforce an instantaneous reduction. Further admissions wait until capacity is available. A configured upper bound remains necessary to protect finite client resources; automatic discovery does not imply unlimited concurrency.
+
+\subsubsection{Measurement and baseline}
+Let $x_i$ denote the application delay of an eligible successful HTTP response, measured in seconds from final-hop request-header dispatch to the first response-body byte. The response becomes eligible after body completion. Admission waiting, connection-pool waiting, and preceding redirect hops are excluded from this signal. Consequently, $x_i$ is useful feedback about delivered requests, but does not describe all waiting experienced by a manifest row.
+
+At a control opportunity, at least five eligible observations are required. Both dispatch and observation must fall within a two-second freshness window, and consumed observations are not reused. Let $p_{10,t}$ and $p_{50,t}$ be their interpolated tenth percentile and median. The baseline $b_t$ is initialized from $\max(p_{10,t},\epsilon)$ and updated when a lower eligible percentile appears. The numerical floor is $\epsilon=10^{-6}$ s. A 120-s baseline lifetime triggers a refresh: admission falls to $C_{\min}$, outstanding work drains, and fresh observations dispatched after the probe begins establish the new reference. Refresh can therefore move the baseline upward as well as downward.
+
+For an eligible update separated by $\Delta t$ seconds from the preceding eligible update, define excess delay and elapsed-time smoothing by
+\begin{align}
+q_t^{\rm raw}&=\max(0,p_{50,t}-b_t),\\
+\alpha_q&=1-\exp(-\Delta t/\tau_q),\\
+\bar q_t&=(1-\alpha_q)\bar q_{t-1}+\alpha_q q_t^{\rm raw},\\
+\bar d_t&=(1-\alpha_q)\bar d_{t-1}+\alpha_q p_{50,t}.
+\label{eq:delay}
+\end{align}
+Here $\bar q_t$ and $\bar d_t$ have units of seconds. The normalized gradient is
+\begin{align}
+v_t&=\frac{\bar q_t-\bar q_{t-1}}{\Delta t\max(b_t,\epsilon)},\\
+\alpha_g&=1-\exp(-\Delta t/\tau_g),\\
+\bar g_t&=(1-\alpha_g)\bar g_{t-1}+\alpha_g v_t,
+\label{eq:gradient}
+\end{align}
+with $v_t$ and $\bar g_t$ in s$^{-1}$. Both time constants are 1 s. The first eligible sample set initializes the delay state and holds the limit; the first subsequent derivative initializes the gradient directly. A baseline change or a five-second stale gap clears derivative history. These resets prevent a reference change from being mistaken for a queue trend.
+
+\subsubsection{Exploration and common safeguards}
+Both methods begin at $C_0=4$, with $C_{\min}=2$. Let $I_t$ be the number of outstanding requests. Growth requires utilization $I_t\geq0.8C_t$. During exploration, the update is
+\begin{equation}
+C_{t+1}=\clip\!\left(\min(C_t+64,\ceil{\gamma C_t}),C_{\min},C_{\max}\right).
+\label{eq:startup}
+\end{equation}
+The growth factor $\gamma$ is reported with each evaluation configuration. Exploration ends when smoothed delay reaches the budget $D_t=\rho b_t$, with $\rho=2$ in the reported acquisitions. Three eligible updates with $\bar g_t\leq-0.1$ s$^{-1}$ reenable exploration, subject to the same delay-budget and utilization checks.
+
+Explicit overload feedback takes precedence over growth or ordinary regulation. Connection failures, HTTP 408 or 429, and server errors contribute to this conservative signal; locally identified persistence errors are not interpreted as remote overload. The limit is halved, derivative state is cleared, and a one-second recovery interval is entered. The same hard decrease applies when $\bar q_t\geq\max(0.001\,\mathrm{s},4b_t)$. Positive growth is held during recovery. Sparse observations also cause a hold; lack of evidence is not interpreted as unused server capacity. Valid \texttt{Retry-After} instructions impose admission embargoes independently of the controller's desired limit.
+
+\subsubsection{PAARC-Ratio}
+Outside exploration and priority safeguards, \ratio{} maps the delay budget to a bounded multiplicative factor:
+\begin{align}
+r_t&=\clip\!\left(\sqrt{D_t/\bar d_t},0.85,1.10\right),\\
+\widehat C_{t+1}&=\floor{C_t r_t+1}.
+\label{eq:ratio}
+\end{align}
+The proposal is accepted when it decreases the limit or the current limit is utilized; otherwise admission remains unchanged. Final clipping enforces the configured bounds. The additive unit and integer rounding are part of the rule, so the equilibrium is not obtained by simply setting $\bar d_t=D_t$. Ordinary ratio decreases preserve the filtered state; hard safeguards still reset it. This provides continuous regulation around the selected delay allowance without requiring a transport-bandwidth estimate.
+
+\subsubsection{PAARC-Grad}
+Outside exploration, \grad{} first reduces $C_t$ by a factor of 0.85 when $\bar d_t\geq D_t$. Otherwise, an excess delay of at least 1 ms activates gradient feedback. A gradient at or above 0.25 s$^{-1}$ for two consecutive eligible updates causes the same decrease; the first such update holds the limit. A gradient at or above 0.1 s$^{-1}$ also holds growth. When these conditions are absent and utilization is sufficient, the limit increases by
+\begin{equation}
+\Delta C_t=\min\left(8,\max\left(1,\ceil{0.02C_t}\right)\right).
+\label{eq:grad-growth}
+\end{equation}
+Soft decreases clear derivative state and enter recovery. All decreases use floor rounding and all resulting limits are clipped. The gradient supplies an early indication of increasing excess delay, while the absolute budget prevents a stable but elevated delay from being accepted solely because its derivative is near zero. Neither signal identifies the remote cause uniquely.
+
+These rules form a priority-ordered transition system with exploration, probe, recovery, and observation state variables. The logical phases are illustrated in the supplement. They are not a claim that PAARC implements BBR's transport state machine. The supplement specifies branch order, parameter values, and source mappings needed to reproduce the decisions.
+
+\subsection{Input}
+FLOW-DC accepts a dataset manifest specifying items to download and their associated metadata. Rows correspond to original requested items, and columns describe URLs, labels, identifiers, or attribution. The maintained acquisition path consumes prepared Parquet partitions containing HTTP or HTTPS URLs. Dataset-specific preparation can convert other source metadata into this representation; support for an upstream metadata format does not imply support for another transfer protocol.
+
+For example, an iNaturalist acquisition can derive URLs and taxonomic labels from its open-data metadata~\cite{inat,inat-open}. Preparation must retain the requested population, licenses, source identifiers, and sampling rule. Invalid URLs and duplicate rows retain explicit identities and dispositions. The research path accepts a restricted set of scalar metadata types and rejects unsupported types before acquisition. This contract makes metadata preservation testable without claiming unrestricted handling of every possible dataframe schema.
+
+\subsection{Coordination}
+The workflow prepares manifest partitions, stores them as Parquet files, and submits a download task for each partition. Partition size controls scheduling granularity: smaller partitions expose more parallel tasks, whereas larger partitions amortize startup and output-finalization overhead. It must be selected with object sizes, runtime, memory, and archive cost in mind rather than interpreted as a concurrency setting.
+
+\textbf{Grouping by host.} The preparation utilities support sequential partitions and host-oriented grouping. In the latter, hosts are ordered by their URL counts and assigned to the currently least-loaded partition. If $c_h$ is a host's row count and $S_j$ is the load of partition $j$, the assignment is
+\begin{equation}
+j^*=\arg\min_j S_j,\quad A(h)=j^*,\quad S_{j^*}\leftarrow S_{j^*}+c_h.
+\label{eq:partition}
+\end{equation}
+This retains host locality, but does not guarantee equal bytes or equal execution time: row counts are only a proxy for work. A very large host can also dominate a partition. Where work for one host spans concurrent tasks, independent local controllers do not constitute a global host limit. FLOW-DC's shared-admission path can coordinate a common authority when explicitly configured. Its leases and request accounting must cover the selected workers; merely adding workers does not establish that property.
+
+\textbf{Task declaration.} Each task declares its partition, configuration, downloader, required Python modules, and outputs. The staging closure includes the HTTP, method-selection, and integrity modules used by the selected path. Workers return summaries and declared data artifacts according to the configured workflow. Configuration and source identities accompany experiment records, so a result can be associated with the code and settings that produced it. The scheduler and the scientific accounting layer retain separate responsibilities.
+
+\subsection{Execution}
+A worker receives declared inputs and executes the batch downloader in its task environment. It validates the partition, initializes the HTTP session and observation buffers, and runs asynchronous acquisition under per-host admission. DNS caching and connection reuse reduce repeated setup where supported by the session. Request outcomes feed the controller, while row dispositions and saved artifacts feed the integrity ledger.
+
+\begin{figure}[t]\centering
+\includegraphics[width=.96\columnwidth]{figures/worker.pdf}
+\caption{Worker acquisition and output pipeline. Admission decisions use HTTP observations; credited output additionally requires persistence and independent verification.}
+\label{fig:worker}\end{figure}
+
+A successful transfer is persisted through the integrity path before it is credited as delivered output. The journal supports reconciliation after interrupted writes and preserves the distinction between original rows, acquisition attempts, and eligible artifacts. Archive verification checks membership and content against retained records. A task that stops during acquisition or finalization remains incomplete until its retained artifacts establish otherwise. This is particularly important when substantial time is spent packaging or checking data after HTTP activity has ended.
+
+\subsection{Features}
+\textbf{Elastic execution.} Task-based scheduling allows resources to participate without synchronized startup. Practical deployment still depends on runtime compatibility, reachable endpoints, and available storage. Distributed execution is a capability of the architecture; its benefit depends on whether the source, manager, and storage path have sufficient capacity.
+
+\textbf{Output flexibility.} Acquisition and training representation remain separate. Image directories facilitate inspection, while sharded archives reduce the burden of managing large numbers of files. Retaining original hosted bytes allows downstream researchers to select their own decoding and transformation policies.
+
+\textbf{Accountable recovery.} Resume and reconciliation use the existing journal and artifacts to distinguish completed work from work that must be attempted again. Repetition is recorded, rather than silently replacing an unfavorable first attempt. These mechanisms improve operational reliability without making incomplete output appear complete.
+
+\textbf{Extensibility.} Dataset preparation, scheduling, HTTP acquisition, control decisions, and verification have distinct interfaces. A new dataset usually changes manifest construction rather than controller logic. A new transfer mechanism would require its own measurement and integrity qualification; it cannot inherit HTTP-specific claims solely by sharing the scheduler.

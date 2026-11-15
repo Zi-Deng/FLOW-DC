@@ -1,0 +1,57 @@
+{
+  "schema": "flowdc-author-reported-concurrency-v1",
+  "reported_date": "2026-10-23",
+  "source": "Open Images / CVDF, identified by the Table 2 context and author confirmation",
+  "provenance": "Author-reported measurements; original raw records are not included in the reproducibility package.",
+  "machine_relation": "Different machine from the original retained Table 2 comparison; hardware details not supplied",
+  "raw_results_included": false,
+  "timing_boundary": "Verified end-to-end goodput, author-confirmed in response to the Table 2 timing question",
+  "matching": "Same four 512-URL blocks and timing boundary confirmed in bundled reply; input hashes not independently checked",
+  "conditions": [
+    {
+      "configuration_id": "img2dataset-c96",
+      "label": "img2dataset",
+      "concurrency_limit": 96,
+      "evidence_kind": "author-reported-measured",
+      "status": "reported_completed",
+      "reported_run_count": 4,
+      "goodput_MBps": [
+        6.12,
+        6.33,
+        6.74,
+        6.26
+      ],
+      "verified_by_author": true,
+      "elapsed_s": null,
+      "coverage": null,
+      "mean_active": null,
+      "input_sha256": null,
+      "limitations": [
+        "Different machine prevents attributing cross-group differences solely to concurrency.",
+        "Raw timing/coverage/attempt records not supplied."
+      ]
+    },
+    {
+      "configuration_id": "img2dataset-c384",
+      "label": "img2dataset",
+      "concurrency_limit": 384,
+      "evidence_kind": "author-reported-measured",
+      "status": "operator_stopped",
+      "reported_run_count": 5,
+      "goodput_MBps": null,
+      "elapsed_s": null,
+      "coverage": null,
+      "mean_active": null,
+      "observed_simultaneous_requests_approx": 2,
+      "observed_activity_basis": "Qualitative author observation; not a trace-integrated mean or requests/second",
+      "http_errors_reported": false,
+      "stop_reason": "All five runs stopped for time reasons after severe slowdown, interpreted by the author as heavy throttling",
+      "server_rate_limit_confirmed": false,
+      "limitations": [
+        "No HTTP error responses reported; slowdown does not identify its server-side cause.",
+        "Operator-stopped outcomes do not establish that completion was impossible.",
+        "No completed-run metrics, elapsed-to-stop values, or raw traces supplied."
+      ]
+    }
+  ]
+}

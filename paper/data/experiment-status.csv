@@ -1,0 +1,72 @@
+kind,cell_id,status,source,workers,rows,method,tool_setting,freeze,evidence
+executed-engineering,engineering-inaturalist-open-w1-n2048-c0,complete,inaturalist-open,1,2048,ratio-v2,"[1, 192]",engineering,deployment/collected/runs/engineering-inaturalist-open-w1-n2048-c0/record.json
+executed-engineering,engineering-inaturalist-open-w1-n2048-c1,complete,inaturalist-open,1,2048,gradient-candidate-v2,"[1, 192]",engineering,deployment/collected/runs/engineering-inaturalist-open-w1-n2048-c1/record.json
+executed-engineering,engineering-inaturalist-open-w1-n2048-c2,complete,inaturalist-open,1,2048,img2dataset-1.47.0,"[1, 32]",engineering,deployment/collected/runs/engineering-inaturalist-open-w1-n2048-c2/record.json
+executed-engineering,engineering-inaturalist-open-w1-n2048-c3,complete,inaturalist-open,1,2048,img2dataset-1.47.0,"[1, 192]",engineering,deployment/collected/runs/engineering-inaturalist-open-w1-n2048-c3/record.json
+executed-engineering,engineering-inaturalist-open-w1-n2048-c4,complete,inaturalist-open,1,2048,img2dataset-1.47.0,"[8, 24]",engineering,deployment/collected/runs/engineering-inaturalist-open-w1-n2048-c4/record.json
+executed-engineering,engineering-inaturalist-open-w1-n512-c0,stopped,inaturalist-open,1,512,ratio-v2,"[1, 192]",engineering,deployment/collected/runs/engineering-inaturalist-open-w1-n512-c0/record.json
+executed-engineering,engineering-inaturalist-open-w1-n512-c0-repair-1,complete,inaturalist-open,1,512,ratio-v2,"[1, 192]",engineering,deployment/collected/runs/engineering-inaturalist-open-w1-n512-c0-repair-1/record.json
+executed-engineering,engineering-inaturalist-open-w1-n512-c1,complete,inaturalist-open,1,512,gradient-candidate-v2,"[1, 192]",engineering,deployment/collected/runs/engineering-inaturalist-open-w1-n512-c1/record.json
+executed-engineering,engineering-inaturalist-open-w1-n512-c2,complete,inaturalist-open,1,512,img2dataset-1.47.0,"[1, 32]",engineering,deployment/collected/runs/engineering-inaturalist-open-w1-n512-c2/record.json
+executed-engineering,engineering-inaturalist-open-w1-n512-c3,complete,inaturalist-open,1,512,img2dataset-1.47.0,"[1, 192]",engineering,deployment/collected/runs/engineering-inaturalist-open-w1-n512-c3/record.json
+executed-engineering,engineering-inaturalist-open-w1-n512-c4,complete,inaturalist-open,1,512,img2dataset-1.47.0,"[8, 24]",engineering,deployment/collected/runs/engineering-inaturalist-open-w1-n512-c4/record.json
+executed-engineering,engineering-inaturalist-open-w2-n2048-c0,complete,inaturalist-open,2,2048,ratio-v2,"[1, 192]",engineering,deployment/collected/runs/engineering-inaturalist-open-w2-n2048-c0/record.json
+executed-engineering,engineering-inaturalist-open-w2-n2048-c1,complete,inaturalist-open,2,2048,gradient-candidate-v2,"[1, 192]",engineering,deployment/collected/runs/engineering-inaturalist-open-w2-n2048-c1/record.json
+executed-engineering,engineering-inaturalist-open-w2-n2048-c2,complete,inaturalist-open,2,2048,img2dataset-1.47.0,"[1, 32]",engineering,deployment/collected/runs/engineering-inaturalist-open-w2-n2048-c2/record.json
+executed-engineering,engineering-inaturalist-open-w2-n2048-c3,complete,inaturalist-open,2,2048,img2dataset-1.47.0,"[1, 192]",engineering,deployment/collected/runs/engineering-inaturalist-open-w2-n2048-c3/record.json
+executed-engineering,engineering-inaturalist-open-w2-n2048-c4,complete,inaturalist-open,2,2048,img2dataset-1.47.0,"[8, 24]",engineering,deployment/collected/runs/engineering-inaturalist-open-w2-n2048-c4/record.json
+executed-engineering,engineering-inaturalist-open-w2-n512-c0,complete,inaturalist-open,2,512,ratio-v2,"[1, 192]",engineering,deployment/collected/runs/engineering-inaturalist-open-w2-n512-c0/record.json
+executed-engineering,engineering-inaturalist-open-w2-n512-c1,complete,inaturalist-open,2,512,gradient-candidate-v2,"[1, 192]",engineering,deployment/collected/runs/engineering-inaturalist-open-w2-n512-c1/record.json
+executed-engineering,engineering-inaturalist-open-w2-n512-c2,complete,inaturalist-open,2,512,img2dataset-1.47.0,"[1, 32]",engineering,deployment/collected/runs/engineering-inaturalist-open-w2-n512-c2/record.json
+executed-engineering,engineering-inaturalist-open-w2-n512-c3,complete,inaturalist-open,2,512,img2dataset-1.47.0,"[1, 192]",engineering,deployment/collected/runs/engineering-inaturalist-open-w2-n512-c3/record.json
+executed-engineering,engineering-inaturalist-open-w2-n512-c4,complete,inaturalist-open,2,512,img2dataset-1.47.0,"[8, 24]",engineering,deployment/collected/runs/engineering-inaturalist-open-w2-n512-c4/record.json
+executed-engineering,engineering-openimages-cvdf-w1-n2048-c0,complete,openimages-cvdf,1,2048,ratio-v2,"[1, 192]",engineering,deployment/collected/runs/engineering-openimages-cvdf-w1-n2048-c0/record.json
+executed-engineering,engineering-openimages-cvdf-w1-n2048-c1,complete,openimages-cvdf,1,2048,gradient-candidate-v2,"[1, 192]",engineering,deployment/collected/runs/engineering-openimages-cvdf-w1-n2048-c1/record.json
+executed-engineering,engineering-openimages-cvdf-w1-n2048-c2,complete,openimages-cvdf,1,2048,img2dataset-1.47.0,"[1, 32]",engineering,deployment/collected/runs/engineering-openimages-cvdf-w1-n2048-c2/record.json
+executed-engineering,engineering-openimages-cvdf-w1-n2048-c3,complete,openimages-cvdf,1,2048,img2dataset-1.47.0,"[1, 192]",engineering,deployment/collected/runs/engineering-openimages-cvdf-w1-n2048-c3/record.json
+executed-engineering,engineering-openimages-cvdf-w1-n2048-c4,complete,openimages-cvdf,1,2048,img2dataset-1.47.0,"[8, 24]",engineering,deployment/collected/runs/engineering-openimages-cvdf-w1-n2048-c4/record.json
+executed-engineering,engineering-openimages-cvdf-w1-n512-c0,complete,openimages-cvdf,1,512,ratio-v2,"[1, 192]",engineering,deployment/collected/runs/engineering-openimages-cvdf-w1-n512-c0/record.json
+executed-engineering,engineering-openimages-cvdf-w1-n512-c1,complete,openimages-cvdf,1,512,gradient-candidate-v2,"[1, 192]",engineering,deployment/collected/runs/engineering-openimages-cvdf-w1-n512-c1/record.json
+executed-engineering,engineering-openimages-cvdf-w1-n512-c2,complete,openimages-cvdf,1,512,img2dataset-1.47.0,"[1, 32]",engineering,deployment/collected/runs/engineering-openimages-cvdf-w1-n512-c2/record.json
+executed-engineering,engineering-openimages-cvdf-w1-n512-c3,complete,openimages-cvdf,1,512,img2dataset-1.47.0,"[1, 192]",engineering,deployment/collected/runs/engineering-openimages-cvdf-w1-n512-c3/record.json
+executed-engineering,engineering-openimages-cvdf-w1-n512-c4,complete,openimages-cvdf,1,512,img2dataset-1.47.0,"[8, 24]",engineering,deployment/collected/runs/engineering-openimages-cvdf-w1-n512-c4/record.json
+proposed-calibration,C-inaturalist-open-w1-0,not_started,inaturalist-open,1,,ratio-v2,,size_not_frozen,Native-processing forecast refused
+proposed-calibration,C-inaturalist-open-w1-1,not_started,inaturalist-open,1,,gradient-candidate-v2,,size_not_frozen,Native-processing forecast refused
+proposed-calibration,C-inaturalist-open-w1-2,not_started,inaturalist-open,1,,img2dataset-1.47.0,"1,32",size_not_frozen,Native-processing forecast refused
+proposed-calibration,C-inaturalist-open-w1-3,not_started,inaturalist-open,1,,img2dataset-1.47.0,"1,192",size_not_frozen,Native-processing forecast refused
+proposed-calibration,C-inaturalist-open-w1-4,not_started,inaturalist-open,1,,img2dataset-1.47.0,"8,24",size_not_frozen,Native-processing forecast refused
+proposed-calibration,C-openimages-cvdf-w1-0,not_started,openimages-cvdf,1,,ratio-v2,,size_not_frozen,Native-processing forecast refused
+proposed-calibration,C-openimages-cvdf-w1-1,not_started,openimages-cvdf,1,,gradient-candidate-v2,,size_not_frozen,Native-processing forecast refused
+proposed-calibration,C-openimages-cvdf-w1-2,not_started,openimages-cvdf,1,,img2dataset-1.47.0,"1,32",size_not_frozen,Native-processing forecast refused
+proposed-calibration,C-openimages-cvdf-w1-3,not_started,openimages-cvdf,1,,img2dataset-1.47.0,"1,192",size_not_frozen,Native-processing forecast refused
+proposed-calibration,C-openimages-cvdf-w1-4,not_started,openimages-cvdf,1,,img2dataset-1.47.0,"8,24",size_not_frozen,Native-processing forecast refused
+proposed-calibration,C-inaturalist-open-w2-ratio-v2,not_started,inaturalist-open,2,,ratio-v2,,size_not_frozen,Native-processing forecast refused
+proposed-calibration,C-inaturalist-open-w2-gradient-candidate-v2,not_started,inaturalist-open,2,,gradient-candidate-v2,,size_not_frozen,Native-processing forecast refused
+proposed-calibration,C-inaturalist-open-w2-img2dataset-1.47.0,not_started,inaturalist-open,2,,img2dataset-1.47.0,not_selected,size_not_frozen,Native-processing forecast refused
+proposed-evaluation,E1-b1-ratio-v2,not_started,inaturalist-open,1,,ratio-v2,,not_frozen,Long calibration not admitted
+proposed-evaluation,E1-b1-gradient-candidate-v2,not_started,inaturalist-open,1,,gradient-candidate-v2,,not_frozen,Long calibration not admitted
+proposed-evaluation,E1-b1-img2dataset-1.47.0,not_started,inaturalist-open,1,,img2dataset-1.47.0,not_selected,not_frozen,Long calibration not admitted
+proposed-evaluation,E1-b2-ratio-v2,not_started,inaturalist-open,1,,ratio-v2,,not_frozen,Long calibration not admitted
+proposed-evaluation,E1-b2-gradient-candidate-v2,not_started,inaturalist-open,1,,gradient-candidate-v2,,not_frozen,Long calibration not admitted
+proposed-evaluation,E1-b2-img2dataset-1.47.0,not_started,inaturalist-open,1,,img2dataset-1.47.0,not_selected,not_frozen,Long calibration not admitted
+proposed-evaluation,E1-b3-ratio-v2,not_started,inaturalist-open,1,,ratio-v2,,not_frozen,Long calibration not admitted
+proposed-evaluation,E1-b3-gradient-candidate-v2,not_started,inaturalist-open,1,,gradient-candidate-v2,,not_frozen,Long calibration not admitted
+proposed-evaluation,E1-b3-img2dataset-1.47.0,not_started,inaturalist-open,1,,img2dataset-1.47.0,not_selected,not_frozen,Long calibration not admitted
+proposed-evaluation,E2-b1-ratio-v2,not_started,openimages-cvdf,1,,ratio-v2,,not_frozen,Long calibration not admitted
+proposed-evaluation,E2-b1-gradient-candidate-v2,not_started,openimages-cvdf,1,,gradient-candidate-v2,,not_frozen,Long calibration not admitted
+proposed-evaluation,E2-b1-img2dataset-1.47.0,not_started,openimages-cvdf,1,,img2dataset-1.47.0,not_selected,not_frozen,Long calibration not admitted
+proposed-evaluation,E2-b2-ratio-v2,not_started,openimages-cvdf,1,,ratio-v2,,not_frozen,Long calibration not admitted
+proposed-evaluation,E2-b2-gradient-candidate-v2,not_started,openimages-cvdf,1,,gradient-candidate-v2,,not_frozen,Long calibration not admitted
+proposed-evaluation,E2-b2-img2dataset-1.47.0,not_started,openimages-cvdf,1,,img2dataset-1.47.0,not_selected,not_frozen,Long calibration not admitted
+proposed-evaluation,E2-b3-ratio-v2,not_started,openimages-cvdf,1,,ratio-v2,,not_frozen,Long calibration not admitted
+proposed-evaluation,E2-b3-gradient-candidate-v2,not_started,openimages-cvdf,1,,gradient-candidate-v2,,not_frozen,Long calibration not admitted
+proposed-evaluation,E2-b3-img2dataset-1.47.0,not_started,openimages-cvdf,1,,img2dataset-1.47.0,not_selected,not_frozen,Long calibration not admitted
+proposed-evaluation,E3-b1-ratio-v2,not_started,inaturalist-open,2,,ratio-v2,,not_frozen,Long calibration not admitted
+proposed-evaluation,E3-b1-gradient-candidate-v2,not_started,inaturalist-open,2,,gradient-candidate-v2,,not_frozen,Long calibration not admitted
+proposed-evaluation,E3-b1-img2dataset-1.47.0,not_started,inaturalist-open,2,,img2dataset-1.47.0,not_selected,not_frozen,Long calibration not admitted
+proposed-evaluation,E3-b2-ratio-v2,not_started,inaturalist-open,2,,ratio-v2,,not_frozen,Long calibration not admitted
+proposed-evaluation,E3-b2-gradient-candidate-v2,not_started,inaturalist-open,2,,gradient-candidate-v2,,not_frozen,Long calibration not admitted
+proposed-evaluation,E3-b2-img2dataset-1.47.0,not_started,inaturalist-open,2,,img2dataset-1.47.0,not_selected,not_frozen,Long calibration not admitted
+proposed-evaluation,E3-b3-ratio-v2,not_started,inaturalist-open,2,,ratio-v2,,not_frozen,Long calibration not admitted
+proposed-evaluation,E3-b3-gradient-candidate-v2,not_started,inaturalist-open,2,,gradient-candidate-v2,,not_frozen,Long calibration not admitted
+proposed-evaluation,E3-b3-img2dataset-1.47.0,not_started,inaturalist-open,2,,img2dataset-1.47.0,not_selected,not_frozen,Long calibration not admitted

@@ -1,0 +1,1856 @@
+{
+  "schema": "flowdc-manuscript-engineering-v1",
+  "collected_analysis_verified": true,
+  "analysis_sha256": "4ba02e28fc9180332fd982572693046126c1cdc6fc7f8a5374b28765bcd4e3b4",
+  "transfer_manifest_sha256": "564ddc57c2de139396997f7986f5721b0dadaf1a5231724c115ad3921017b833",
+  "scientific_source": [
+    "9a400a6f4dd363fdc601f7ae60992862dd2c1b8b",
+    "d1c7d5f3c3b3a58e71a5d985986740d4ab6c6a21"
+  ],
+  "evidence_kind": "measured-engineering",
+  "interim": false,
+  "records": [
+    {
+      "body_bytes": 2322695041,
+      "closed_utc": "2026-10-22T19:37:01Z",
+      "coverage": 1.0,
+      "credited_bytes": 2322695041,
+      "elapsed_s": 192.30807580699997,
+      "evidence": {
+        "input.parquet": "b892ff30a5cae2b1b71239cd0ef49d210d66eaff4c7f4e50b78ab9ebedc274ad",
+        "worker/returned/worker-record.json": "fa8ad0170fa478c8441a4a6c064f9f52b9cf477b909b30c78cd541345c5037f9",
+        "worker/verification.json": "af4d49f2e3de2dd1eb283073ea3adda3ff2a854c0eab7f44fc41aa1a3a2ec7a7"
+      },
+      "goodput_Bps": 12077990.127315572,
+      "http_span_s": 101.25147576900002,
+      "job_seconds": 600,
+      "mean_job_concurrency": 2.037897419426705,
+      "method": "ratio-v2",
+      "native_seconds": 132.780324629,
+      "original_rows": 2048,
+      "participants": [
+        {
+          "role": "worker",
+          "transport": {
+            "attempts": 2048,
+            "body_bytes": 2322695041,
+            "boundary": "before connection setup through body/failure completion",
+            "common_peak": 4,
+            "common_ttfb_p50_s": 0.13513191699996696,
+            "common_ttfb_p95_s": 0.19800073500005055,
+            "http_span_s": 101.25147576900002,
+            "mean_http_concurrency": 3.870601672178184,
+            "native_peak": 4,
+            "request_seconds": 391.9041314220004,
+            "status_counts": {
+              "200": 2048
+            }
+          }
+        }
+      ],
+      "phase": "engineering",
+      "rows": 2048,
+      "run_id": "engineering-inaturalist-open-w1-n2048-c0",
+      "source": "inaturalist-open",
+      "source_head": "9a400a6f4dd363fdc601f7ae60992862dd2c1b8b",
+      "started_utc": "2026-10-22T19:33:49Z",
+      "status": "complete",
+      "timing": "manager-submit-through-returned-verification-v1",
+      "tool_setting": [
+        1,
+        192
+      ],
+      "workers": 1
+    },
+    {
+      "body_bytes": 2322695041,
+      "closed_utc": "2026-10-22T19:41:29Z",
+      "coverage": 1.0,
+      "credited_bytes": 2322695041,
+      "elapsed_s": 239.30387755900006,
+      "evidence": {
+        "input.parquet": "b892ff30a5cae2b1b71239cd0ef49d210d66eaff4c7f4e50b78ab9ebedc274ad",
+        "worker/returned/worker-record.json": "e7022a3671f25d6f112c8675f6bdbeb0ca24323ab40869a694d2ffbabb36e4d8",
+        "worker/verification.json": "63be85b37b662ce93aff5e9eb49924a14be9760ce1b8ba1bf0c57138d16cedc5"
+      },
+      "goodput_Bps": 9706048.496549508,
+      "http_span_s": 143.42942857999992,
+      "job_seconds": 600,
+      "mean_job_concurrency": 1.7984499368961944,
+      "method": "gradient-candidate-v2",
+      "native_seconds": 175.313474865,
+      "original_rows": 2048,
+      "participants": [
+        {
+          "role": "worker",
+          "transport": {
+            "attempts": 2048,
+            "body_bytes": 2322695041,
+            "boundary": "before connection setup through body/failure completion",
+            "common_peak": 27,
+            "common_ttfb_p50_s": 0.13579229399999804,
+            "common_ttfb_p95_s": 0.21558452299996134,
+            "http_span_s": 143.42942857999992,
+            "mean_http_concurrency": 3.0006118532010295,
+            "native_peak": 27,
+            "request_seconds": 430.37604349499827,
+            "status_counts": {
+              "200": 2048
+            }
+          }
+        }
+      ],
+      "phase": "engineering",
+      "rows": 2048,
+      "run_id": "engineering-inaturalist-open-w1-n2048-c1",
+      "source": "inaturalist-open",
+      "source_head": "9a400a6f4dd363fdc601f7ae60992862dd2c1b8b",
+      "started_utc": "2026-10-22T19:37:30Z",
+      "status": "complete",
+      "timing": "manager-submit-through-returned-verification-v1",
+      "tool_setting": [
+        1,
+        192
+      ],
+      "workers": 1
+    },
+    {
+      "body_bytes": 2322695041,
+      "closed_utc": "2026-10-22T19:43:25Z",
+      "coverage": 1.0,
+      "credited_bytes": 2322695041,
+      "elapsed_s": 97.34670828000003,
+      "evidence": {
+        "input.parquet": "b892ff30a5cae2b1b71239cd0ef49d210d66eaff4c7f4e50b78ab9ebedc274ad",
+        "worker/returned/worker-record.json": "9535dcbcf86f594d31596ea70931dbb967982175829de4f94ef095ee3d245173",
+        "worker/verification.json": "51058d8a4d824c126bc088669af95e5a0adc84aed43a86d8004be01f29154a36"
+      },
+      "goodput_Bps": 23860026.51799167,
+      "http_span_s": 31.73425540200003,
+      "job_seconds": 600,
+      "mean_job_concurrency": 10.270691162943132,
+      "method": "img2dataset-1.47.0",
+      "native_seconds": 39.10102029899997,
+      "original_rows": 2048,
+      "participants": [
+        {
+          "role": "worker",
+          "transport": {
+            "attempts": 2048,
+            "body_bytes": 2322695041,
+            "boundary": "before connection setup through body/failure completion",
+            "common_peak": 32,
+            "common_ttfb_p50_s": 0.20520515999999134,
+            "common_ttfb_p95_s": 0.2744062560000202,
+            "http_span_s": 31.73425540200003,
+            "mean_http_concurrency": 31.505953544761176,
+            "native_peak": 32,
+            "request_seconds": 999.8179764729994,
+            "status_counts": {
+              "200": 2048
+            }
+          }
+        }
+      ],
+      "phase": "engineering",
+      "rows": 2048,
+      "run_id": "engineering-inaturalist-open-w1-n2048-c2",
+      "source": "inaturalist-open",
+      "source_head": "9a400a6f4dd363fdc601f7ae60992862dd2c1b8b",
+      "started_utc": "2026-10-22T19:41:47Z",
+      "status": "complete",
+      "timing": "manager-submit-through-returned-verification-v1",
+      "tool_setting": [
+        1,
+        32
+      ],
+      "workers": 1
+    },
+    {
+      "body_bytes": 2322695041,
+      "closed_utc": "2026-10-22T19:45:22Z",
+      "coverage": 1.0,
+      "credited_bytes": 2322695041,
+      "elapsed_s": 89.80749550400014,
+      "evidence": {
+        "input.parquet": "b892ff30a5cae2b1b71239cd0ef49d210d66eaff4c7f4e50b78ab9ebedc274ad",
+        "worker/returned/worker-record.json": "6323b3e9beea423475f34a7e91ac745d7f57d13666c1f4275e7d2ab38adb9a11",
+        "worker/verification.json": "8f2428fd24048239cd24750b5a7b95cfe69bec6ee296dea8b470199778b9dc24"
+      },
+      "goodput_Bps": 25863042.143253446,
+      "http_span_s": 25.78664407899987,
+      "job_seconds": 600,
+      "mean_job_concurrency": 37.41205690025445,
+      "method": "img2dataset-1.47.0",
+      "native_seconds": 34.09492253999997,
+      "original_rows": 2048,
+      "participants": [
+        {
+          "role": "worker",
+          "transport": {
+            "attempts": 2048,
+            "body_bytes": 2322695041,
+            "boundary": "before connection setup through body/failure completion",
+            "common_peak": 192,
+            "common_ttfb_p50_s": 0.27056223599993245,
+            "common_ttfb_p95_s": 4.985795740999947,
+            "http_span_s": 25.78664407899987,
+            "mean_http_concurrency": 130.29547860402747,
+            "native_peak": 192,
+            "request_seconds": 3359.883131864999,
+            "status_counts": {
+              "200": 2048
+            }
+          }
+        }
+      ],
+      "phase": "engineering",
+      "rows": 2048,
+      "run_id": "engineering-inaturalist-open-w1-n2048-c3",
+      "source": "inaturalist-open",
+      "source_head": "9a400a6f4dd363fdc601f7ae60992862dd2c1b8b",
+      "started_utc": "2026-10-22T19:43:52Z",
+      "status": "complete",
+      "timing": "manager-submit-through-returned-verification-v1",
+      "tool_setting": [
+        1,
+        192
+      ],
+      "workers": 1
+    },
+    {
+      "body_bytes": 2322695041,
+      "closed_utc": "2026-10-22T19:47:39Z",
+      "coverage": 1.0,
+      "credited_bytes": 2322695041,
+      "elapsed_s": 105.49880558199993,
+      "evidence": {
+        "input.parquet": "b892ff30a5cae2b1b71239cd0ef49d210d66eaff4c7f4e50b78ab9ebedc274ad",
+        "worker/returned/worker-record.json": "e7dad2f474ccbaa71ada31f6be191bf0b765bdc4840f6772fedc283daafdfcdc",
+        "worker/verification.json": "3fb9e3bb746e34f6e50bc97fd19cbec8c8ce7bbb3f8d083ed17efa5bb3b4cf1a"
+      },
+      "goodput_Bps": 22016315.997005895,
+      "http_span_s": 37.55735697299997,
+      "job_seconds": 600,
+      "mean_job_concurrency": 60.061390785651874,
+      "method": "img2dataset-1.47.0",
+      "native_seconds": 45.76361741300002,
+      "original_rows": 2048,
+      "participants": [
+        {
+          "role": "worker",
+          "transport": {
+            "attempts": 2048,
+            "body_bytes": 2322695041,
+            "boundary": "before connection setup through body/failure completion",
+            "common_peak": 192,
+            "common_ttfb_p50_s": 3.0535448549999273,
+            "common_ttfb_p95_s": 5.089421222000055,
+            "http_span_s": 37.55735697299997,
+            "mean_http_concurrency": 168.71275031507832,
+            "native_peak": 192,
+            "request_seconds": 6336.404989480009,
+            "status_counts": {
+              "200": 2048
+            }
+          }
+        }
+      ],
+      "phase": "engineering",
+      "rows": 2048,
+      "run_id": "engineering-inaturalist-open-w1-n2048-c4",
+      "source": "inaturalist-open",
+      "source_head": "9a400a6f4dd363fdc601f7ae60992862dd2c1b8b",
+      "started_utc": "2026-10-22T19:45:53Z",
+      "status": "complete",
+      "timing": "manager-submit-through-returned-verification-v1",
+      "tool_setting": [
+        8,
+        24
+      ],
+      "workers": 1
+    },
+    {
+      "closed_utc": "2026-10-22T19:02:46Z",
+      "elapsed_s": 36.23707968400001,
+      "error": "ValueError: unsafe return member",
+      "evidence": {
+        "input.parquet": "c7c60a15f4c68dad44a734d6cdfb8e7e5dfb9deea5a1581d8241b0b3ccdd0f84"
+      },
+      "job_seconds": 600,
+      "method": "ratio-v2",
+      "original_rows": 512,
+      "phase": "engineering",
+      "rows": 512,
+      "run_id": "engineering-inaturalist-open-w1-n512-c0",
+      "source": "inaturalist-open",
+      "source_head": "d1c7d5f3c3b3a58e71a5d985986740d4ab6c6a21",
+      "started_utc": "2026-10-22T19:02:09Z",
+      "status": "stopped",
+      "timing": "manager-submit-through-returned-verification-v1",
+      "tool_setting": [
+        1,
+        192
+      ],
+      "workers": 1
+    },
+    {
+      "body_bytes": 605033244,
+      "closed_utc": "2026-10-22T19:28:53Z",
+      "coverage": 1.0,
+      "credited_bytes": 605033244,
+      "elapsed_s": 45.994611146,
+      "evidence": {
+        "input.parquet": "c7c60a15f4c68dad44a734d6cdfb8e7e5dfb9deea5a1581d8241b0b3ccdd0f84",
+        "worker/returned/worker-record.json": "040bfb66a2b3841696d3592b903a84392afdf73a7757e29b8d434575f1089794",
+        "worker/verification.json": "e6e74a78ffc328b91da67ed7662ca5bd3cef8c82d63861ff1c46ce16c84c68f4"
+      },
+      "goodput_Bps": 13154437.637910496,
+      "http_span_s": 9.504771014000013,
+      "job_seconds": 600,
+      "mean_job_concurrency": 3.0438238198297114,
+      "method": "ratio-v2",
+      "native_seconds": 20.045434823999997,
+      "original_rows": 512,
+      "participants": [
+        {
+          "role": "worker",
+          "transport": {
+            "attempts": 512,
+            "body_bytes": 605033244,
+            "boundary": "before connection setup through body/failure completion",
+            "common_peak": 48,
+            "common_ttfb_p50_s": 0.15872739499999966,
+            "common_ttfb_p95_s": 0.27617502699999363,
+            "http_span_s": 9.504771014000013,
+            "mean_http_concurrency": 14.729391458646216,
+            "native_peak": 48,
+            "request_seconds": 139.99949298999994,
+            "status_counts": {
+              "200": 512
+            }
+          }
+        }
+      ],
+      "phase": "engineering",
+      "rows": 512,
+      "run_id": "engineering-inaturalist-open-w1-n512-c0-repair-1",
+      "source": "inaturalist-open",
+      "source_head": "9a400a6f4dd363fdc601f7ae60992862dd2c1b8b",
+      "started_utc": "2026-10-22T19:28:07Z",
+      "status": "complete",
+      "timing": "manager-submit-through-returned-verification-v1",
+      "tool_setting": [
+        1,
+        192
+      ],
+      "workers": 1
+    },
+    {
+      "body_bytes": 605033244,
+      "closed_utc": "2026-10-22T19:30:19Z",
+      "coverage": 1.0,
+      "credited_bytes": 605033244,
+      "elapsed_s": 56.455576748,
+      "evidence": {
+        "input.parquet": "c7c60a15f4c68dad44a734d6cdfb8e7e5dfb9deea5a1581d8241b0b3ccdd0f84",
+        "worker/returned/worker-record.json": "539c30659ebaf773f0b9f151cb7af322549b3118d880e5d7e0d5571cba411985",
+        "worker/verification.json": "fbe8dad0655d2f1a393091fa1281270178bccea0ff5fad2b1737c27ab782f846"
+      },
+      "goodput_Bps": 10716979.240167517,
+      "http_span_s": 20.738476089000017,
+      "job_seconds": 600,
+      "mean_job_concurrency": 1.8403517063826906,
+      "method": "gradient-candidate-v2",
+      "native_seconds": 30.565060181000007,
+      "original_rows": 512,
+      "participants": [
+        {
+          "role": "worker",
+          "transport": {
+            "attempts": 512,
+            "body_bytes": 605033244,
+            "boundary": "before connection setup through body/failure completion",
+            "common_peak": 9,
+            "common_ttfb_p50_s": 0.12938433499999746,
+            "common_ttfb_p95_s": 0.18703814099998795,
+            "http_span_s": 20.738476089000017,
+            "mean_http_concurrency": 5.009920524397152,
+            "native_peak": 9,
+            "request_seconds": 103.89811700300075,
+            "status_counts": {
+              "200": 512
+            }
+          }
+        }
+      ],
+      "phase": "engineering",
+      "rows": 512,
+      "run_id": "engineering-inaturalist-open-w1-n512-c1",
+      "source": "inaturalist-open",
+      "source_head": "9a400a6f4dd363fdc601f7ae60992862dd2c1b8b",
+      "started_utc": "2026-10-22T19:29:23Z",
+      "status": "complete",
+      "timing": "manager-submit-through-returned-verification-v1",
+      "tool_setting": [
+        1,
+        192
+      ],
+      "workers": 1
+    },
+    {
+      "body_bytes": 605033244,
+      "closed_utc": "2026-10-22T19:31:21Z",
+      "coverage": 1.0,
+      "credited_bytes": 605033244,
+      "elapsed_s": 43.14287588399998,
+      "evidence": {
+        "input.parquet": "c7c60a15f4c68dad44a734d6cdfb8e7e5dfb9deea5a1581d8241b0b3ccdd0f84",
+        "worker/returned/worker-record.json": "2709821d41bc3133d4cc68f7911b506a0c3d4b87b80e9c065dbd451e6a38d66d",
+        "worker/verification.json": "9d3b6275e97df16507f0cfda7480f468e0a920540efcd629e085523ecdf71e1b"
+      },
+      "goodput_Bps": 14023943.27227461,
+      "http_span_s": 7.6960301670000035,
+      "job_seconds": 600,
+      "mean_job_concurrency": 5.02164015942078,
+      "method": "img2dataset-1.47.0",
+      "native_seconds": 19.534984079000026,
+      "original_rows": 512,
+      "participants": [
+        {
+          "role": "worker",
+          "transport": {
+            "attempts": 512,
+            "body_bytes": 605033244,
+            "boundary": "before connection setup through body/failure completion",
+            "common_peak": 32,
+            "common_ttfb_p50_s": 0.20260322000001452,
+            "common_ttfb_p95_s": 0.2637476860000447,
+            "http_span_s": 7.6960301670000035,
+            "mean_http_concurrency": 28.150617062413662,
+            "native_peak": 32,
+            "request_seconds": 216.64799813200057,
+            "status_counts": {
+              "200": 512
+            }
+          }
+        }
+      ],
+      "phase": "engineering",
+      "rows": 512,
+      "run_id": "engineering-inaturalist-open-w1-n512-c2",
+      "source": "inaturalist-open",
+      "source_head": "9a400a6f4dd363fdc601f7ae60992862dd2c1b8b",
+      "started_utc": "2026-10-22T19:30:37Z",
+      "status": "complete",
+      "timing": "manager-submit-through-returned-verification-v1",
+      "tool_setting": [
+        1,
+        32
+      ],
+      "workers": 1
+    },
+    {
+      "body_bytes": 605033244,
+      "closed_utc": "2026-10-22T19:32:15Z",
+      "coverage": 1.0,
+      "credited_bytes": 605033244,
+      "elapsed_s": 39.303707814000006,
+      "evidence": {
+        "input.parquet": "c7c60a15f4c68dad44a734d6cdfb8e7e5dfb9deea5a1581d8241b0b3ccdd0f84",
+        "worker/returned/worker-record.json": "65996d1fe87b5d3222a3bbdc3f26a466c206f7e1546b0cd8eed5a066e3ad3a89",
+        "worker/verification.json": "e6b05ec70c296bb58d7a12467073903c2512a00274b26726665d322621dcd623"
+      },
+      "goodput_Bps": 15393795.58954707,
+      "http_span_s": 6.032121571999994,
+      "job_seconds": 600,
+      "mean_job_concurrency": 25.4333122526912,
+      "method": "img2dataset-1.47.0",
+      "native_seconds": 15.53133623900004,
+      "original_rows": 512,
+      "participants": [
+        {
+          "role": "worker",
+          "transport": {
+            "attempts": 512,
+            "body_bytes": 605033244,
+            "boundary": "before connection setup through body/failure completion",
+            "common_peak": 192,
+            "common_ttfb_p50_s": 0.3604448500000217,
+            "common_ttfb_p95_s": 0.5905748079999853,
+            "http_span_s": 6.032121571999994,
+            "mean_http_concurrency": 165.71673193094625,
+            "native_peak": 192,
+            "request_seconds": 999.6234735220012,
+            "status_counts": {
+              "200": 512
+            }
+          }
+        }
+      ],
+      "phase": "engineering",
+      "rows": 512,
+      "run_id": "engineering-inaturalist-open-w1-n512-c3",
+      "source": "inaturalist-open",
+      "source_head": "9a400a6f4dd363fdc601f7ae60992862dd2c1b8b",
+      "started_utc": "2026-10-22T19:31:36Z",
+      "status": "complete",
+      "timing": "manager-submit-through-returned-verification-v1",
+      "tool_setting": [
+        1,
+        192
+      ],
+      "workers": 1
+    },
+    {
+      "body_bytes": 605033244,
+      "closed_utc": "2026-10-22T19:33:18Z",
+      "coverage": 1.0,
+      "credited_bytes": 605033244,
+      "elapsed_s": 44.48211632499999,
+      "evidence": {
+        "input.parquet": "c7c60a15f4c68dad44a734d6cdfb8e7e5dfb9deea5a1581d8241b0b3ccdd0f84",
+        "worker/returned/worker-record.json": "526fbb38d29ba05cd35a98a7d220ff6f20371f87d8608e2e620d2e84f1836efb",
+        "worker/verification.json": "b69455219b37b372b88c41e68f195e19d044193ff16065df7746505bc5159212"
+      },
+      "goodput_Bps": 13601718.937548777,
+      "http_span_s": 11.917134123999972,
+      "job_seconds": 600,
+      "mean_job_concurrency": 36.449845734492506,
+      "method": "img2dataset-1.47.0",
+      "native_seconds": 20.571493652999948,
+      "original_rows": 512,
+      "participants": [
+        {
+          "role": "worker",
+          "transport": {
+            "attempts": 512,
+            "body_bytes": 605033244,
+            "boundary": "before connection setup through body/failure completion",
+            "common_peak": 192,
+            "common_ttfb_p50_s": 3.8274149160000093,
+            "common_ttfb_p95_s": 5.1839717739999855,
+            "http_span_s": 11.917134123999972,
+            "mean_http_concurrency": 136.0533716512197,
+            "native_peak": 192,
+            "request_seconds": 1621.3662779900005,
+            "status_counts": {
+              "200": 512
+            }
+          }
+        }
+      ],
+      "phase": "engineering",
+      "rows": 512,
+      "run_id": "engineering-inaturalist-open-w1-n512-c4",
+      "source": "inaturalist-open",
+      "source_head": "9a400a6f4dd363fdc601f7ae60992862dd2c1b8b",
+      "started_utc": "2026-10-22T19:32:34Z",
+      "status": "complete",
+      "timing": "manager-submit-through-returned-verification-v1",
+      "tool_setting": [
+        8,
+        24
+      ],
+      "workers": 1
+    },
+    {
+      "body_bytes": 2322695041,
+      "closed_utc": "2026-10-22T19:55:39Z",
+      "coverage": 1.0,
+      "credited_bytes": 2322695041,
+      "elapsed_s": 108.36189435200004,
+      "evidence": {
+        "input.parquet": "b892ff30a5cae2b1b71239cd0ef49d210d66eaff4c7f4e50b78ab9ebedc274ad",
+        "origin/returned/worker-record.json": "4cb0be555f9f3311160e4d241538c8efcd938704d5917008fc0f85eae9a31be3",
+        "origin/verification.json": "3519c4089746f4fd5aea1237cf37696cb88d9d68ac7c7e8f8a25d63ad2e61b06",
+        "worker/returned/worker-record.json": "bb4b5cc1d68717c4dad8f1c93fd24df31d997ce4b72d77825f34f6d024bedcb4",
+        "worker/verification.json": "b17516f24376db3fc3603f4f5bc07f06741935dd107a50290a0ad25597eabd0b"
+      },
+      "goodput_Bps": 21434610.892414045,
+      "http_span_s": 49.64140792799981,
+      "job_seconds": 600,
+      "mean_job_concurrency": 3.4826991361843103,
+      "method": "ratio-v2",
+      "native_seconds": 66.12178347400004,
+      "original_rows": 2048,
+      "participants": [
+        {
+          "role": "worker",
+          "transport": {
+            "attempts": 1024,
+            "body_bytes": 1176400525,
+            "boundary": "before connection setup through body/failure completion",
+            "common_peak": 4,
+            "common_ttfb_p50_s": 0.12141281599997455,
+            "common_ttfb_p95_s": 0.1737502080000013,
+            "http_span_s": 49.64140792799981,
+            "mean_http_concurrency": 3.867122037482091,
+            "native_peak": 4,
+            "request_seconds": 191.96938257000625,
+            "status_counts": {
+              "200": 1024
+            }
+          }
+        },
+        {
+          "role": "origin",
+          "transport": {
+            "attempts": 1024,
+            "body_bytes": 1146294516,
+            "boundary": "before connection setup through body/failure completion",
+            "common_peak": 4,
+            "common_ttfb_p50_s": 0.11914294999996855,
+            "common_ttfb_p95_s": 0.17775228100003915,
+            "http_span_s": 48.17906664099996,
+            "mean_http_concurrency": 3.848611154438738,
+            "native_peak": 4,
+            "request_seconds": 185.42249328499975,
+            "status_counts": {
+              "200": 1024
+            }
+          }
+        }
+      ],
+      "phase": "engineering",
+      "rows": 2048,
+      "run_id": "engineering-inaturalist-open-w2-n2048-c0",
+      "source": "inaturalist-open",
+      "source_head": "9a400a6f4dd363fdc601f7ae60992862dd2c1b8b",
+      "started_utc": "2026-10-22T19:53:51Z",
+      "status": "complete",
+      "timing": "manager-submit-through-returned-verification-v1",
+      "tool_setting": [
+        1,
+        192
+      ],
+      "workers": 2
+    },
+    {
+      "body_bytes": 2322695041,
+      "closed_utc": "2026-10-22T19:58:39Z",
+      "coverage": 1.0,
+      "credited_bytes": 2322695041,
+      "elapsed_s": 150.89399328800005,
+      "evidence": {
+        "input.parquet": "b892ff30a5cae2b1b71239cd0ef49d210d66eaff4c7f4e50b78ab9ebedc274ad",
+        "origin/returned/worker-record.json": "408d8dd396aff27cd603dcacd3e36b10607f2730b1b6c71afaec13dd38c755d6",
+        "origin/verification.json": "6d0b9429549261a8b0c0c1ca72d4db6da692d37dd660a6385e00ba7b341dcc9f",
+        "worker/returned/worker-record.json": "652809ef271a0df83c6ffff21ceecb11efbe9f9ad5365aea6a21321c4864160f",
+        "worker/verification.json": "397ccf7187a28f9dba70be7589099f506b1ed29f8cf1d87fdae31a0636f4db2d"
+      },
+      "goodput_Bps": 15392892.655222174,
+      "http_span_s": 91.41509211100015,
+      "job_seconds": 600,
+      "mean_job_concurrency": 2.365361852023989,
+      "method": "gradient-candidate-v2",
+      "native_seconds": 107.68426629600003,
+      "original_rows": 2048,
+      "participants": [
+        {
+          "role": "worker",
+          "transport": {
+            "attempts": 1024,
+            "body_bytes": 1176400525,
+            "boundary": "before connection setup through body/failure completion",
+            "common_peak": 9,
+            "common_ttfb_p50_s": 0.11399128199991537,
+            "common_ttfb_p95_s": 0.1680398480000349,
+            "http_span_s": 64.3889915279999,
+            "mean_http_concurrency": 2.6382207805371416,
+            "native_peak": 9,
+            "request_seconds": 169.87237548699932,
+            "status_counts": {
+              "200": 1024
+            }
+          }
+        },
+        {
+          "role": "origin",
+          "transport": {
+            "attempts": 1024,
+            "body_bytes": 1146294516,
+            "boundary": "before connection setup through body/failure completion",
+            "common_peak": 4,
+            "common_ttfb_p50_s": 0.11748471500004598,
+            "common_ttfb_p95_s": 0.17058459600002607,
+            "http_span_s": 91.41509211100015,
+            "mean_http_concurrency": 2.046122971783258,
+            "native_peak": 4,
+            "request_seconds": 187.04651993599987,
+            "status_counts": {
+              "200": 1024
+            }
+          }
+        }
+      ],
+      "phase": "engineering",
+      "rows": 2048,
+      "run_id": "engineering-inaturalist-open-w2-n2048-c1",
+      "source": "inaturalist-open",
+      "source_head": "9a400a6f4dd363fdc601f7ae60992862dd2c1b8b",
+      "started_utc": "2026-10-22T19:56:08Z",
+      "status": "complete",
+      "timing": "manager-submit-through-returned-verification-v1",
+      "tool_setting": [
+        1,
+        192
+      ],
+      "workers": 2
+    },
+    {
+      "body_bytes": 2322695041,
+      "closed_utc": "2026-10-22T20:28:35Z",
+      "coverage": 1.0,
+      "credited_bytes": 2322695041,
+      "elapsed_s": 81.489689495,
+      "evidence": {
+        "input.parquet": "b892ff30a5cae2b1b71239cd0ef49d210d66eaff4c7f4e50b78ab9ebedc274ad",
+        "origin/returned/worker-record.json": "360b478f72953782e620931b102abbf7fb1cbb7ad59c948d7c48561405a21a47",
+        "origin/verification.json": "67a89f9b035342657a1f82cdd2e8b89fcb7f032e1ceea0efc6a6b2616a4f1bf2",
+        "worker/returned/worker-record.json": "1a53679fad922be257fe1745e12e5d6acacb5fc9821be268cc6b86f7b9e20627",
+        "worker/verification.json": "e97b4d1a1ae32905c17bfc5e9176fd93fdb9560ffea569986b09009d81b1ddb6"
+      },
+      "goodput_Bps": 28502931.54132726,
+      "http_span_s": 25.849970569999996,
+      "job_seconds": 600,
+      "mean_job_concurrency": 9.94038400792656,
+      "method": "img2dataset-1.47.0",
+      "native_seconds": 37.57951510999999,
+      "original_rows": 2048,
+      "participants": [
+        {
+          "role": "worker",
+          "transport": {
+            "attempts": 1024,
+            "body_bytes": 1176400525,
+            "boundary": "before connection setup through body/failure completion",
+            "common_peak": 16,
+            "common_ttfb_p50_s": 0.1936701549999924,
+            "common_ttfb_p95_s": 0.25616425900000195,
+            "http_span_s": 25.849970569999996,
+            "mean_http_concurrency": 15.814400705911488,
+            "native_peak": 16,
+            "request_seconds": 408.80179282999916,
+            "status_counts": {
+              "200": 1024
+            }
+          }
+        },
+        {
+          "role": "origin",
+          "transport": {
+            "attempts": 1024,
+            "body_bytes": 1146294516,
+            "boundary": "before connection setup through body/failure completion",
+            "common_peak": 16,
+            "common_ttfb_p50_s": 0.19534685799999352,
+            "common_ttfb_p95_s": 0.2617490190000069,
+            "http_span_s": 25.380100822000003,
+            "mean_http_concurrency": 15.80911818479457,
+            "native_peak": 16,
+            "request_seconds": 401.23701343699986,
+            "status_counts": {
+              "200": 1024
+            }
+          }
+        }
+      ],
+      "phase": "engineering",
+      "rows": 2048,
+      "run_id": "engineering-inaturalist-open-w2-n2048-c2",
+      "source": "inaturalist-open",
+      "source_head": "9a400a6f4dd363fdc601f7ae60992862dd2c1b8b",
+      "started_utc": "2026-10-22T20:27:14Z",
+      "status": "complete",
+      "timing": "manager-submit-through-returned-verification-v1",
+      "tool_setting": [
+        1,
+        32
+      ],
+      "workers": 2
+    },
+    {
+      "body_bytes": 2322695041,
+      "closed_utc": "2026-10-22T20:30:06Z",
+      "coverage": 1.0,
+      "credited_bytes": 2322695041,
+      "elapsed_s": 52.496698288999994,
+      "evidence": {
+        "input.parquet": "b892ff30a5cae2b1b71239cd0ef49d210d66eaff4c7f4e50b78ab9ebedc274ad",
+        "origin/returned/worker-record.json": "e4c559b5722242ac742e7f1054bb595c7dc5f777a9801333bde31c084b2ead95",
+        "origin/verification.json": "e295ea72d043436c7feacddab62affb42b7a1bb80b91cbdee35c1cd84a07d965",
+        "worker/returned/worker-record.json": "f0c883cac7b5bc2c418cf30c954a4daeae91bab7fd53eb49decc4f26c86a346b",
+        "worker/verification.json": "5ef533f8a4fb8bfc69222a19c33c88dabf6e91cf326210170daa0177b49cb536"
+      },
+      "goodput_Bps": 44244592.83540677,
+      "http_span_s": 10.651933205000006,
+      "job_seconds": 600,
+      "mean_job_concurrency": 20.157560166307324,
+      "method": "img2dataset-1.47.0",
+      "native_seconds": 18.56402475599998,
+      "original_rows": 2048,
+      "participants": [
+        {
+          "role": "worker",
+          "transport": {
+            "attempts": 1024,
+            "body_bytes": 1176400525,
+            "boundary": "before connection setup through body/failure completion",
+            "common_peak": 96,
+            "common_ttfb_p50_s": 0.2027892859999838,
+            "common_ttfb_p95_s": 0.2833846830000084,
+            "http_span_s": 10.651933205000006,
+            "mean_http_concurrency": 50.2609980846195,
+            "native_peak": 96,
+            "request_seconds": 535.3767944140002,
+            "status_counts": {
+              "200": 1024
+            }
+          }
+        },
+        {
+          "role": "origin",
+          "transport": {
+            "attempts": 1024,
+            "body_bytes": 1146294516,
+            "boundary": "before connection setup through body/failure completion",
+            "common_peak": 96,
+            "common_ttfb_p50_s": 0.2030172820000189,
+            "common_ttfb_p95_s": 0.29329866700001617,
+            "http_span_s": 9.196343674000019,
+            "mean_http_concurrency": 56.85178571100438,
+            "native_peak": 96,
+            "request_seconds": 522.8285598789998,
+            "status_counts": {
+              "200": 1024
+            }
+          }
+        }
+      ],
+      "phase": "engineering",
+      "rows": 2048,
+      "run_id": "engineering-inaturalist-open-w2-n2048-c3",
+      "source": "inaturalist-open",
+      "source_head": "9a400a6f4dd363fdc601f7ae60992862dd2c1b8b",
+      "started_utc": "2026-10-22T20:29:14Z",
+      "status": "complete",
+      "timing": "manager-submit-through-returned-verification-v1",
+      "tool_setting": [
+        1,
+        192
+      ],
+      "workers": 2
+    },
+    {
+      "body_bytes": 2322695041,
+      "closed_utc": "2026-10-22T20:31:35Z",
+      "coverage": 1.0,
+      "credited_bytes": 2322695041,
+      "elapsed_s": 57.733700752000004,
+      "evidence": {
+        "input.parquet": "b892ff30a5cae2b1b71239cd0ef49d210d66eaff4c7f4e50b78ab9ebedc274ad",
+        "origin/returned/worker-record.json": "bcb9bbd3f2279a7ceb074bb9d6109c5dd1b5729d958c3a051fc034abdc7771de",
+        "origin/verification.json": "09be5b59cb1a7e7e6a2864a59deb69f469443e1065261bb5dac19b4e1635a468",
+        "worker/returned/worker-record.json": "3aa23a9a3db702d44088c2c8c27dcd5c4d1d71518b89ccefcfece51004e7115a",
+        "worker/verification.json": "73e06431df81d9099895de79c7abbaaf7484ea761a8aa7c0015ff9748b3de752"
+      },
+      "goodput_Bps": 40231182.32065762,
+      "http_span_s": 10.097821646,
+      "job_seconds": 600,
+      "mean_job_concurrency": 16.42952431889862,
+      "method": "img2dataset-1.47.0",
+      "native_seconds": 18.587364675999993,
+      "original_rows": 2048,
+      "participants": [
+        {
+          "role": "worker",
+          "transport": {
+            "attempts": 1024,
+            "body_bytes": 1176400525,
+            "boundary": "before connection setup through body/failure completion",
+            "common_peak": 96,
+            "common_ttfb_p50_s": 0.20003622599995197,
+            "common_ttfb_p95_s": 0.2825001070000326,
+            "http_span_s": 10.097821646,
+            "mean_http_concurrency": 51.17470101590655,
+            "native_peak": 96,
+            "request_seconds": 516.7530036459993,
+            "status_counts": {
+              "200": 1024
+            }
+          }
+        },
+        {
+          "role": "origin",
+          "transport": {
+            "attempts": 1024,
+            "body_bytes": 1146294516,
+            "boundary": "before connection setup through body/failure completion",
+            "common_peak": 96,
+            "common_ttfb_p50_s": 0.19002222899996468,
+            "common_ttfb_p95_s": 0.2508005160000266,
+            "http_span_s": 6.461097108000047,
+            "mean_http_concurrency": 66.8283156345647,
+            "native_peak": 96,
+            "request_seconds": 431.7842368790003,
+            "status_counts": {
+              "200": 1024
+            }
+          }
+        }
+      ],
+      "phase": "engineering",
+      "rows": 2048,
+      "run_id": "engineering-inaturalist-open-w2-n2048-c4",
+      "source": "inaturalist-open",
+      "source_head": "9a400a6f4dd363fdc601f7ae60992862dd2c1b8b",
+      "started_utc": "2026-10-22T20:30:37Z",
+      "status": "complete",
+      "timing": "manager-submit-through-returned-verification-v1",
+      "tool_setting": [
+        8,
+        24
+      ],
+      "workers": 2
+    },
+    {
+      "body_bytes": 605033244,
+      "closed_utc": "2026-10-22T19:48:36Z",
+      "coverage": 1.0,
+      "credited_bytes": 605033244,
+      "elapsed_s": 38.46464727900002,
+      "evidence": {
+        "input.parquet": "c7c60a15f4c68dad44a734d6cdfb8e7e5dfb9deea5a1581d8241b0b3ccdd0f84",
+        "origin/returned/worker-record.json": "647b965f2344e3b26f701be8b6e2a08f290e0ef3f081be2e4cefd41233ba76c0",
+        "origin/verification.json": "d3f519d59957391fa800b3ad75a700f6434ebf3aec78a35853fe70001b620fd3",
+        "worker/returned/worker-record.json": "91ec7ec8ba743a53240cae4894a723974ddfa28b0da068791efcd5ac97d0d81f",
+        "worker/verification.json": "a29388551ab098d899591dfa183f29234cec37f2b69e876be38d99cfd6823eaf"
+      },
+      "goodput_Bps": 15729592.932737516,
+      "http_span_s": 8.187394325000014,
+      "job_seconds": 600,
+      "mean_job_concurrency": 2.4198630617839267,
+      "method": "ratio-v2",
+      "native_seconds": 14.530512849999923,
+      "original_rows": 512,
+      "participants": [
+        {
+          "role": "worker",
+          "transport": {
+            "attempts": 256,
+            "body_bytes": 299874120,
+            "boundary": "before connection setup through body/failure completion",
+            "common_peak": 10,
+            "common_ttfb_p50_s": 0.1191410530000212,
+            "common_ttfb_p95_s": 0.1773308320000524,
+            "http_span_s": 7.60626424599991,
+            "mean_http_concurrency": 6.676407854710756,
+            "native_peak": 9,
+            "request_seconds": 50.78252235699938,
+            "status_counts": {
+              "200": 256
+            }
+          }
+        },
+        {
+          "role": "origin",
+          "transport": {
+            "attempts": 256,
+            "body_bytes": 305159124,
+            "boundary": "before connection setup through body/failure completion",
+            "common_peak": 6,
+            "common_ttfb_p50_s": 0.12027654899998197,
+            "common_ttfb_p95_s": 0.17170459299995855,
+            "http_span_s": 8.187394325000014,
+            "mean_http_concurrency": 5.166070559084782,
+            "native_peak": 6,
+            "request_seconds": 42.2966567780004,
+            "status_counts": {
+              "200": 256
+            }
+          }
+        }
+      ],
+      "phase": "engineering",
+      "rows": 512,
+      "run_id": "engineering-inaturalist-open-w2-n512-c0",
+      "source": "inaturalist-open",
+      "source_head": "9a400a6f4dd363fdc601f7ae60992862dd2c1b8b",
+      "started_utc": "2026-10-22T19:47:58Z",
+      "status": "complete",
+      "timing": "manager-submit-through-returned-verification-v1",
+      "tool_setting": [
+        1,
+        192
+      ],
+      "workers": 2
+    },
+    {
+      "body_bytes": 605033244,
+      "closed_utc": "2026-10-22T19:49:53Z",
+      "coverage": 1.0,
+      "credited_bytes": 605033244,
+      "elapsed_s": 45.343159517000004,
+      "evidence": {
+        "input.parquet": "c7c60a15f4c68dad44a734d6cdfb8e7e5dfb9deea5a1581d8241b0b3ccdd0f84",
+        "origin/returned/worker-record.json": "83f61dceb4a1a868cb4d410580518f60360ee2c6e4f7ec8eda64431b6f141349",
+        "origin/verification.json": "84f610d7271dc19f28bb7dbf6b72a3b7a2902aadca75cb3270fddcbcbcf567f9",
+        "worker/returned/worker-record.json": "25a07c7e23a7779289d6ac0c57d91fb93ef80b9f3cf2e9216b1c257d8b087328",
+        "worker/verification.json": "037765f68308eb3602a6b310a37df64b09b6ec3dce0de04bd226b75a71de47f9"
+      },
+      "goodput_Bps": 13343429.316458674,
+      "http_span_s": 19.00361262399997,
+      "job_seconds": 600,
+      "mean_job_concurrency": 1.9099503423119901,
+      "method": "gradient-candidate-v2",
+      "native_seconds": 25.041017792000048,
+      "original_rows": 512,
+      "participants": [
+        {
+          "role": "worker",
+          "transport": {
+            "attempts": 256,
+            "body_bytes": 299874120,
+            "boundary": "before connection setup through body/failure completion",
+            "common_peak": 4,
+            "common_ttfb_p50_s": 0.1120322470001156,
+            "common_ttfb_p95_s": 0.1693757440000354,
+            "http_span_s": 19.00361262399997,
+            "mean_http_concurrency": 2.2850867949791067,
+            "native_peak": 4,
+            "request_seconds": 43.42490426400059,
+            "status_counts": {
+              "200": 256
+            }
+          }
+        },
+        {
+          "role": "origin",
+          "transport": {
+            "attempts": 256,
+            "body_bytes": 305159124,
+            "boundary": "before connection setup through body/failure completion",
+            "common_peak": 4,
+            "common_ttfb_p50_s": 0.11431416999994326,
+            "common_ttfb_p95_s": 0.1739731299999221,
+            "http_span_s": 15.639403952999828,
+            "mean_http_concurrency": 2.760864730315929,
+            "native_peak": 4,
+            "request_seconds": 43.17827877700074,
+            "status_counts": {
+              "200": 256
+            }
+          }
+        }
+      ],
+      "phase": "engineering",
+      "rows": 512,
+      "run_id": "engineering-inaturalist-open-w2-n512-c1",
+      "source": "inaturalist-open",
+      "source_head": "9a400a6f4dd363fdc601f7ae60992862dd2c1b8b",
+      "started_utc": "2026-10-22T19:49:08Z",
+      "status": "complete",
+      "timing": "manager-submit-through-returned-verification-v1",
+      "tool_setting": [
+        1,
+        192
+      ],
+      "workers": 2
+    },
+    {
+      "body_bytes": 605033244,
+      "closed_utc": "2026-10-22T19:51:00Z",
+      "coverage": 1.0,
+      "credited_bytes": 605033244,
+      "elapsed_s": 41.869057756000075,
+      "evidence": {
+        "input.parquet": "c7c60a15f4c68dad44a734d6cdfb8e7e5dfb9deea5a1581d8241b0b3ccdd0f84",
+        "origin/returned/worker-record.json": "552a32bb47d1464fd95eec4b73142402b75add2d22dcc6b0447983f272778d0d",
+        "origin/verification.json": "f03b4476727548b2d2a4c19b9e84397bde6eb064fc7d20e5dc62d2e53a905e18",
+        "worker/returned/worker-record.json": "127c7c9be74bebf89142911a76f5d78d856ce605419bd7e1833df224de5a5974",
+        "worker/verification.json": "b2c54b0b6349351cba19c1e6d55e720e2d19c0b29fe170efb216c19eb428c701"
+      },
+      "goodput_Bps": 14450605.684177244,
+      "http_span_s": 7.076945209999849,
+      "job_seconds": 600,
+      "mean_job_concurrency": 4.903794216376312,
+      "method": "img2dataset-1.47.0",
+      "native_seconds": 19.525713820999954,
+      "original_rows": 512,
+      "participants": [
+        {
+          "role": "worker",
+          "transport": {
+            "attempts": 256,
+            "body_bytes": 299874120,
+            "boundary": "before connection setup through body/failure completion",
+            "common_peak": 16,
+            "common_ttfb_p50_s": 0.18659454199996617,
+            "common_ttfb_p95_s": 0.25870128000019577,
+            "http_span_s": 6.482625518000077,
+            "mean_http_concurrency": 15.104773484001665,
+            "native_peak": 16,
+            "request_seconds": 97.91859003100012,
+            "status_counts": {
+              "200": 256
+            }
+          }
+        },
+        {
+          "role": "origin",
+          "transport": {
+            "attempts": 256,
+            "body_bytes": 305159124,
+            "boundary": "before connection setup through body/failure completion",
+            "common_peak": 16,
+            "common_ttfb_p50_s": 0.18964720400003898,
+            "common_ttfb_p95_s": 0.2471552919998885,
+            "http_span_s": 7.076945209999849,
+            "mean_http_concurrency": 15.175849190727465,
+            "native_peak": 16,
+            "request_seconds": 107.39865323799881,
+            "status_counts": {
+              "200": 256
+            }
+          }
+        }
+      ],
+      "phase": "engineering",
+      "rows": 512,
+      "run_id": "engineering-inaturalist-open-w2-n512-c2",
+      "source": "inaturalist-open",
+      "source_head": "9a400a6f4dd363fdc601f7ae60992862dd2c1b8b",
+      "started_utc": "2026-10-22T19:50:18Z",
+      "status": "complete",
+      "timing": "manager-submit-through-returned-verification-v1",
+      "tool_setting": [
+        1,
+        32
+      ],
+      "workers": 2
+    },
+    {
+      "body_bytes": 605033244,
+      "closed_utc": "2026-10-22T19:52:01Z",
+      "coverage": 1.0,
+      "credited_bytes": 605033244,
+      "elapsed_s": 33.77157570899999,
+      "evidence": {
+        "input.parquet": "c7c60a15f4c68dad44a734d6cdfb8e7e5dfb9deea5a1581d8241b0b3ccdd0f84",
+        "origin/returned/worker-record.json": "e68a83104fb06ee0a55340cf24d7ee69a6f4ad60c022a500a7e5448672b0f4c9",
+        "origin/verification.json": "7c1872478decae9f70d06ca1fc63b3dc05aa032a860e0dc2864886cfcf080d5b",
+        "worker/returned/worker-record.json": "6a8e7b0f6c3bcdb8351a7b6ff5d34aad3cbc8a13ab6100aac32755575aa5b3ce",
+        "worker/verification.json": "ccfbe9f4f786aa6a534c4b095f374a4efad24f1c29c49b6a389eebd3370d9436"
+      },
+      "goodput_Bps": 17915457.934607446,
+      "http_span_s": 7.762259005000033,
+      "job_seconds": 600,
+      "mean_job_concurrency": 23.191425416442012,
+      "method": "img2dataset-1.47.0",
+      "native_seconds": 15.029487938999864,
+      "original_rows": 512,
+      "participants": [
+        {
+          "role": "worker",
+          "transport": {
+            "attempts": 256,
+            "body_bytes": 299874120,
+            "boundary": "before connection setup through body/failure completion",
+            "common_peak": 96,
+            "common_ttfb_p50_s": 0.2518935829998554,
+            "common_ttfb_p95_s": 5.088220658999944,
+            "http_span_s": 7.762259005000033,
+            "mean_http_concurrency": 78.5037999786502,
+            "native_peak": 96,
+            "request_seconds": 609.3668283109989,
+            "status_counts": {
+              "200": 256
+            }
+          }
+        },
+        {
+          "role": "origin",
+          "transport": {
+            "attempts": 256,
+            "body_bytes": 305159124,
+            "boundary": "before connection setup through body/failure completion",
+            "common_peak": 96,
+            "common_ttfb_p50_s": 0.22351700700005495,
+            "common_ttfb_p95_s": 0.30817571500006125,
+            "http_span_s": 2.864399779999985,
+            "mean_http_concurrency": 60.69130159617592,
+            "native_peak": 96,
+            "request_seconds": 173.84415093999905,
+            "status_counts": {
+              "200": 256
+            }
+          }
+        }
+      ],
+      "phase": "engineering",
+      "rows": 512,
+      "run_id": "engineering-inaturalist-open-w2-n512-c3",
+      "source": "inaturalist-open",
+      "source_head": "9a400a6f4dd363fdc601f7ae60992862dd2c1b8b",
+      "started_utc": "2026-10-22T19:51:27Z",
+      "status": "complete",
+      "timing": "manager-submit-through-returned-verification-v1",
+      "tool_setting": [
+        1,
+        192
+      ],
+      "workers": 2
+    },
+    {
+      "body_bytes": 605033244,
+      "closed_utc": "2026-10-22T19:53:14Z",
+      "coverage": 1.0,
+      "credited_bytes": 605033244,
+      "elapsed_s": 36.57317453900009,
+      "evidence": {
+        "input.parquet": "c7c60a15f4c68dad44a734d6cdfb8e7e5dfb9deea5a1581d8241b0b3ccdd0f84",
+        "origin/returned/worker-record.json": "f7b1ef08bb8902221ce9afd238a840745f37c5c32d83c5d40e92968175855a49",
+        "origin/verification.json": "71311d3fa5b623b19b1b93e6b76f218e74b28eb07c6c8a7713a76399a0a4610a",
+        "worker/returned/worker-record.json": "d979605c971a9f078af3c1c1e44564d5a56b163e1fd6f359f3c86374b6624fff",
+        "worker/verification.json": "2ad56ca9900e4ee5659645ef342015d1b9b71ad8b1fb1b56671a45d58b496415"
+      },
+      "goodput_Bps": 16543087.977085993,
+      "http_span_s": 2.259111058999906,
+      "job_seconds": 600,
+      "mean_job_concurrency": 6.325073485057268,
+      "method": "img2dataset-1.47.0",
+      "native_seconds": 10.531025419999878,
+      "original_rows": 512,
+      "participants": [
+        {
+          "role": "worker",
+          "transport": {
+            "attempts": 256,
+            "body_bytes": 299874120,
+            "boundary": "before connection setup through body/failure completion",
+            "common_peak": 96,
+            "common_ttfb_p50_s": 0.1967225180001151,
+            "common_ttfb_p95_s": 0.25620401200012566,
+            "http_span_s": 2.138881986999877,
+            "mean_http_concurrency": 54.05002196832501,
+            "native_peak": 96,
+            "request_seconds": 115.606618384998,
+            "status_counts": {
+              "200": 256
+            }
+          }
+        },
+        {
+          "role": "origin",
+          "transport": {
+            "attempts": 256,
+            "body_bytes": 305159124,
+            "boundary": "before connection setup through body/failure completion",
+            "common_peak": 96,
+            "common_ttfb_p50_s": 0.18564735899985862,
+            "common_ttfb_p95_s": 0.24747242100011135,
+            "http_span_s": 2.259111058999906,
+            "mean_http_concurrency": 51.22430687725115,
+            "native_peak": 96,
+            "request_seconds": 115.72139815600303,
+            "status_counts": {
+              "200": 256
+            }
+          }
+        }
+      ],
+      "phase": "engineering",
+      "rows": 512,
+      "run_id": "engineering-inaturalist-open-w2-n512-c4",
+      "source": "inaturalist-open",
+      "source_head": "9a400a6f4dd363fdc601f7ae60992862dd2c1b8b",
+      "started_utc": "2026-10-22T19:52:37Z",
+      "status": "complete",
+      "timing": "manager-submit-through-returned-verification-v1",
+      "tool_setting": [
+        8,
+        24
+      ],
+      "workers": 2
+    },
+    {
+      "body_bytes": 648352053,
+      "closed_utc": "2026-10-22T20:37:26Z",
+      "coverage": 1.0,
+      "credited_bytes": 648352053,
+      "elapsed_s": 87.84439395999993,
+      "evidence": {
+        "input.parquet": "43b6afe7b960c0cd38fb797cb7b030d97484641d6b8ceb93f36e2d06d3f91563",
+        "worker/returned/worker-record.json": "eaba3109397d1ef620d4f8aee7960626d50ebf0ca74133b5277ade522746c752",
+        "worker/verification.json": "b46045b9bc1178e76f8db8b0c09ec595dbae73f0597189b232511d8a2be241a7"
+      },
+      "goodput_Bps": 7380687.870591127,
+      "http_span_s": 41.55607464100001,
+      "job_seconds": 600,
+      "mean_job_concurrency": 2.780720408945236,
+      "method": "ratio-v2",
+      "native_seconds": 56.64377642900001,
+      "original_rows": 2048,
+      "participants": [
+        {
+          "role": "worker",
+          "transport": {
+            "attempts": 2048,
+            "body_bytes": 648352053,
+            "boundary": "before connection setup through body/failure completion",
+            "common_peak": 9,
+            "common_ttfb_p50_s": 0.10626008999997794,
+            "common_ttfb_p95_s": 0.1537075559999721,
+            "http_span_s": 41.55607464100001,
+            "mean_http_concurrency": 5.878098477929755,
+            "native_peak": 9,
+            "request_seconds": 244.27069909599743,
+            "status_counts": {
+              "200": 2048
+            }
+          }
+        }
+      ],
+      "phase": "engineering",
+      "rows": 2048,
+      "run_id": "engineering-openimages-cvdf-w1-n2048-c0",
+      "source": "openimages-cvdf",
+      "source_head": "9a400a6f4dd363fdc601f7ae60992862dd2c1b8b",
+      "started_utc": "2026-10-22T20:35:58Z",
+      "status": "complete",
+      "timing": "manager-submit-through-returned-verification-v1",
+      "tool_setting": [
+        1,
+        192
+      ],
+      "workers": 1
+    },
+    {
+      "body_bytes": 648352053,
+      "closed_utc": "2026-10-22T20:39:11Z",
+      "coverage": 1.0,
+      "credited_bytes": 648352053,
+      "elapsed_s": 83.26258769099991,
+      "evidence": {
+        "input.parquet": "43b6afe7b960c0cd38fb797cb7b030d97484641d6b8ceb93f36e2d06d3f91563",
+        "worker/returned/worker-record.json": "7f1eee570565a24aa1e685e999f26b2b29848d95efe057307323b21639df3bd2",
+        "worker/verification.json": "e45974f3c8479bb2020328f36522cc1f3c30c3bc9e6d581d2acf6bfed7d77295"
+      },
+      "goodput_Bps": 7786835.251939717,
+      "http_span_s": 36.550725991000036,
+      "job_seconds": 600,
+      "mean_job_concurrency": 2.807258406566017,
+      "method": "gradient-candidate-v2",
+      "native_seconds": 51.63425716099994,
+      "original_rows": 2048,
+      "participants": [
+        {
+          "role": "worker",
+          "transport": {
+            "attempts": 2048,
+            "body_bytes": 648352053,
+            "boundary": "before connection setup through body/failure completion",
+            "common_peak": 21,
+            "common_ttfb_p50_s": 0.09431195799993475,
+            "common_ttfb_p95_s": 0.14289486899997428,
+            "http_span_s": 36.550725991000036,
+            "mean_http_concurrency": 6.394937252561108,
+            "native_peak": 21,
+            "request_seconds": 233.73959924799965,
+            "status_counts": {
+              "200": 2048
+            }
+          }
+        }
+      ],
+      "phase": "engineering",
+      "rows": 2048,
+      "run_id": "engineering-openimages-cvdf-w1-n2048-c1",
+      "source": "openimages-cvdf",
+      "source_head": "9a400a6f4dd363fdc601f7ae60992862dd2c1b8b",
+      "started_utc": "2026-10-22T20:37:47Z",
+      "status": "complete",
+      "timing": "manager-submit-through-returned-verification-v1",
+      "tool_setting": [
+        1,
+        192
+      ],
+      "workers": 1
+    },
+    {
+      "body_bytes": 648352053,
+      "closed_utc": "2026-10-22T20:40:25Z",
+      "coverage": 1.0,
+      "credited_bytes": 648352053,
+      "elapsed_s": 49.387599777000105,
+      "evidence": {
+        "input.parquet": "43b6afe7b960c0cd38fb797cb7b030d97484641d6b8ceb93f36e2d06d3f91563",
+        "worker/returned/worker-record.json": "f473ff51f36bb1b9ddfaa33ae3fe32e39812413725043a3bd73ccb49d08c5d04",
+        "worker/verification.json": "30653f9ef7f51bf835f0c82fe1084dda857cf8950c51970d6b6e65d14395f3a2"
+      },
+      "goodput_Bps": 13127830.790066836,
+      "http_span_s": 16.87004481300005,
+      "job_seconds": 600,
+      "mean_job_concurrency": 10.827088935024975,
+      "method": "img2dataset-1.47.0",
+      "native_seconds": 24.073025113000085,
+      "original_rows": 2048,
+      "participants": [
+        {
+          "role": "worker",
+          "transport": {
+            "attempts": 2048,
+            "body_bytes": 648352053,
+            "boundary": "before connection setup through body/failure completion",
+            "common_peak": 32,
+            "common_ttfb_p50_s": 0.15871789100003753,
+            "common_ttfb_p95_s": 0.2161622380000381,
+            "http_span_s": 16.87004481300005,
+            "mean_http_concurrency": 31.69665172797536,
+            "native_peak": 32,
+            "request_seconds": 534.7239350729998,
+            "status_counts": {
+              "200": 2048
+            }
+          }
+        }
+      ],
+      "phase": "engineering",
+      "rows": 2048,
+      "run_id": "engineering-openimages-cvdf-w1-n2048-c2",
+      "source": "openimages-cvdf",
+      "source_head": "9a400a6f4dd363fdc601f7ae60992862dd2c1b8b",
+      "started_utc": "2026-10-22T20:39:36Z",
+      "status": "complete",
+      "timing": "manager-submit-through-returned-verification-v1",
+      "tool_setting": [
+        1,
+        32
+      ],
+      "workers": 1
+    },
+    {
+      "body_bytes": 648352053,
+      "closed_utc": "2026-10-22T20:41:29Z",
+      "coverage": 1.0,
+      "credited_bytes": 648352053,
+      "elapsed_s": 38.82727507000004,
+      "evidence": {
+        "input.parquet": "43b6afe7b960c0cd38fb797cb7b030d97484641d6b8ceb93f36e2d06d3f91563",
+        "worker/returned/worker-record.json": "6f84e037e326f72cf0c067a1344effa27e041e7f3d1b7832638a52fed7b61ee1",
+        "worker/verification.json": "94aae44c5a1b3ab925cf245fff2291ff17dbcfea0b5ed4eac9a5830dc39a07a8"
+      },
+      "goodput_Bps": 16698366.079801215,
+      "http_span_s": 9.003834353000002,
+      "job_seconds": 600,
+      "mean_job_concurrency": 20.93203052781207,
+      "method": "img2dataset-1.47.0",
+      "native_seconds": 16.56397295299996,
+      "original_rows": 2048,
+      "participants": [
+        {
+          "role": "worker",
+          "transport": {
+            "attempts": 2048,
+            "body_bytes": 648352053,
+            "boundary": "before connection setup through body/failure completion",
+            "common_peak": 192,
+            "common_ttfb_p50_s": 0.16863034499999685,
+            "common_ttfb_p95_s": 0.32820223499993517,
+            "http_span_s": 9.003834353000002,
+            "mean_http_concurrency": 90.26528867739569,
+            "native_peak": 192,
+            "request_seconds": 812.7337070769975,
+            "status_counts": {
+              "200": 2048
+            }
+          }
+        }
+      ],
+      "phase": "engineering",
+      "rows": 2048,
+      "run_id": "engineering-openimages-cvdf-w1-n2048-c3",
+      "source": "openimages-cvdf",
+      "source_head": "9a400a6f4dd363fdc601f7ae60992862dd2c1b8b",
+      "started_utc": "2026-10-22T20:40:50Z",
+      "status": "complete",
+      "timing": "manager-submit-through-returned-verification-v1",
+      "tool_setting": [
+        1,
+        192
+      ],
+      "workers": 1
+    },
+    {
+      "body_bytes": 648352053,
+      "closed_utc": "2026-10-22T20:42:30Z",
+      "coverage": 1.0,
+      "credited_bytes": 648352053,
+      "elapsed_s": 45.684938003999946,
+      "evidence": {
+        "input.parquet": "43b6afe7b960c0cd38fb797cb7b030d97484641d6b8ceb93f36e2d06d3f91563",
+        "worker/returned/worker-record.json": "572e34dd96bb3ad3d5650cdd8d64e2ebdd6e2014f2863a067f98a8a004dd04b5",
+        "worker/verification.json": "4a2f6fad669ad7632896fc36399449d655f2c8fa13411822bebc9a40a61562a3"
+      },
+      "goodput_Bps": 14191812.035363462,
+      "http_span_s": 11.85376565799993,
+      "job_seconds": 600,
+      "mean_job_concurrency": 33.01636202082481,
+      "method": "img2dataset-1.47.0",
+      "native_seconds": 19.61869769900011,
+      "original_rows": 2048,
+      "participants": [
+        {
+          "role": "worker",
+          "transport": {
+            "attempts": 2048,
+            "body_bytes": 648352053,
+            "boundary": "before connection setup through body/failure completion",
+            "common_peak": 192,
+            "common_ttfb_p50_s": 0.14353012999993098,
+            "common_ttfb_p95_s": 4.996858625000073,
+            "http_span_s": 11.85376565799993,
+            "mean_http_concurrency": 127.24652195406247,
+            "native_peak": 192,
+            "request_seconds": 1508.3504520389997,
+            "status_counts": {
+              "200": 2048
+            }
+          }
+        }
+      ],
+      "phase": "engineering",
+      "rows": 2048,
+      "run_id": "engineering-openimages-cvdf-w1-n2048-c4",
+      "source": "openimages-cvdf",
+      "source_head": "9a400a6f4dd363fdc601f7ae60992862dd2c1b8b",
+      "started_utc": "2026-10-22T20:41:45Z",
+      "status": "complete",
+      "timing": "manager-submit-through-returned-verification-v1",
+      "tool_setting": [
+        8,
+        24
+      ],
+      "workers": 1
+    },
+    {
+      "body_bytes": 154931796,
+      "closed_utc": "2026-10-22T20:32:31Z",
+      "coverage": 1.0,
+      "credited_bytes": 154931796,
+      "elapsed_s": 26.02236646399996,
+      "evidence": {
+        "input.parquet": "a4f9d2e8df72fd56833e6da7a70691f0f71444833e6db04ec08c8ea1a0466f7b",
+        "worker/returned/worker-record.json": "b911fe142d61cd50b5aeedb93861f567d917515d9a90773babe0f1be453782b0",
+        "worker/verification.json": "20255ee21de04e782733b31d285bfdc29905e46184aa78ae5729a30a90ea806f"
+      },
+      "goodput_Bps": 5953793.48816476,
+      "http_span_s": 7.902584156999978,
+      "job_seconds": 600,
+      "mean_job_concurrency": 2.97067098236221,
+      "method": "ratio-v2",
+      "native_seconds": 13.031040496999992,
+      "original_rows": 512,
+      "participants": [
+        {
+          "role": "worker",
+          "transport": {
+            "attempts": 512,
+            "body_bytes": 154931796,
+            "boundary": "before connection setup through body/failure completion",
+            "common_peak": 21,
+            "common_ttfb_p50_s": 0.12154947599998422,
+            "common_ttfb_p95_s": 0.1809115800000427,
+            "http_span_s": 7.902584156999978,
+            "mean_http_concurrency": 9.782102589635276,
+            "native_peak": 21,
+            "request_seconds": 77.30388894700019,
+            "status_counts": {
+              "200": 512
+            }
+          }
+        }
+      ],
+      "phase": "engineering",
+      "rows": 512,
+      "run_id": "engineering-openimages-cvdf-w1-n512-c0",
+      "source": "openimages-cvdf",
+      "source_head": "9a400a6f4dd363fdc601f7ae60992862dd2c1b8b",
+      "started_utc": "2026-10-22T20:32:05Z",
+      "status": "complete",
+      "timing": "manager-submit-through-returned-verification-v1",
+      "tool_setting": [
+        1,
+        192
+      ],
+      "workers": 1
+    },
+    {
+      "body_bytes": 154931796,
+      "closed_utc": "2026-10-22T20:33:26Z",
+      "coverage": 1.0,
+      "credited_bytes": 154931796,
+      "elapsed_s": 25.704110232999994,
+      "evidence": {
+        "input.parquet": "a4f9d2e8df72fd56833e6da7a70691f0f71444833e6db04ec08c8ea1a0466f7b",
+        "worker/returned/worker-record.json": "01e6435fd12dbe1f085ec7eaed5471167663ea360ae48bf497651baceb11aa33",
+        "worker/verification.json": "ecde1261ec5df39816db46e076987abda95a9c7fdd7807ba26aed733dd2b7d72"
+      },
+      "goodput_Bps": 6027510.565259411,
+      "http_span_s": 7.708549029000039,
+      "job_seconds": 600,
+      "mean_job_concurrency": 2.2182991243865717,
+      "method": "gradient-candidate-v2",
+      "native_seconds": 13.03035577899999,
+      "original_rows": 512,
+      "participants": [
+        {
+          "role": "worker",
+          "transport": {
+            "attempts": 512,
+            "body_bytes": 154931796,
+            "boundary": "before connection setup through body/failure completion",
+            "common_peak": 21,
+            "common_ttfb_p50_s": 0.0883544250000341,
+            "common_ttfb_p95_s": 0.1470263980000368,
+            "http_span_s": 7.708549029000039,
+            "mean_http_concurrency": 7.396905047693058,
+            "native_peak": 21,
+            "request_seconds": 57.01940522299981,
+            "status_counts": {
+              "200": 512
+            }
+          }
+        }
+      ],
+      "phase": "engineering",
+      "rows": 512,
+      "run_id": "engineering-openimages-cvdf-w1-n512-c1",
+      "source": "openimages-cvdf",
+      "source_head": "9a400a6f4dd363fdc601f7ae60992862dd2c1b8b",
+      "started_utc": "2026-10-22T20:33:00Z",
+      "status": "complete",
+      "timing": "manager-submit-through-returned-verification-v1",
+      "tool_setting": [
+        1,
+        192
+      ],
+      "workers": 1
+    },
+    {
+      "body_bytes": 154931796,
+      "closed_utc": "2026-10-22T20:34:21Z",
+      "coverage": 1.0,
+      "credited_bytes": 154931796,
+      "elapsed_s": 26.65540220799994,
+      "evidence": {
+        "input.parquet": "a4f9d2e8df72fd56833e6da7a70691f0f71444833e6db04ec08c8ea1a0466f7b",
+        "worker/returned/worker-record.json": "da5395b9f04661bc96b0ab7bd5f4e73efb2115670d29aedff51a3473b03aa01c",
+        "worker/verification.json": "fd594c6968833e34b8a6a24417f0396bffa02e34ebee23a0da317144e724cb69"
+      },
+      "goodput_Bps": 5812397.606722332,
+      "http_span_s": 4.320881152999959,
+      "job_seconds": 600,
+      "mean_job_concurrency": 4.9264464022827275,
+      "method": "img2dataset-1.47.0",
+      "native_seconds": 11.52634262700002,
+      "original_rows": 512,
+      "participants": [
+        {
+          "role": "worker",
+          "transport": {
+            "attempts": 512,
+            "body_bytes": 154931796,
+            "boundary": "before connection setup through body/failure completion",
+            "common_peak": 32,
+            "common_ttfb_p50_s": 0.14536074400001553,
+            "common_ttfb_p95_s": 0.22050062199997456,
+            "http_span_s": 4.320881152999959,
+            "mean_http_concurrency": 30.391118306465863,
+            "native_peak": 32,
+            "request_seconds": 131.3164103090004,
+            "status_counts": {
+              "200": 512
+            }
+          }
+        }
+      ],
+      "phase": "engineering",
+      "rows": 512,
+      "run_id": "engineering-openimages-cvdf-w1-n512-c2",
+      "source": "openimages-cvdf",
+      "source_head": "9a400a6f4dd363fdc601f7ae60992862dd2c1b8b",
+      "started_utc": "2026-10-22T20:33:54Z",
+      "status": "complete",
+      "timing": "manager-submit-through-returned-verification-v1",
+      "tool_setting": [
+        1,
+        32
+      ],
+      "workers": 1
+    },
+    {
+      "body_bytes": 154931796,
+      "closed_utc": "2026-10-22T20:35:00Z",
+      "coverage": 1.0,
+      "credited_bytes": 154931796,
+      "elapsed_s": 24.235146449000013,
+      "evidence": {
+        "input.parquet": "a4f9d2e8df72fd56833e6da7a70691f0f71444833e6db04ec08c8ea1a0466f7b",
+        "worker/returned/worker-record.json": "3bafb93429ffbe3c67d5d2537e237a97a07b613384f0096e4fbe55704c61fc28",
+        "worker/verification.json": "36ff84e99179d606ba64f5470c57e860ce769fd1fa4e1fdc89d33ad6ad1beb05"
+      },
+      "goodput_Bps": 6392855.777704317,
+      "http_span_s": 2.1753050479999274,
+      "job_seconds": 600,
+      "mean_job_concurrency": 14.503085353771517,
+      "method": "img2dataset-1.47.0",
+      "native_seconds": 9.52253444900009,
+      "original_rows": 512,
+      "participants": [
+        {
+          "role": "worker",
+          "transport": {
+            "attempts": 512,
+            "body_bytes": 154931796,
+            "boundary": "before connection setup through body/failure completion",
+            "common_peak": 192,
+            "common_ttfb_p50_s": 0.2601804360000415,
+            "common_ttfb_p95_s": 0.43497276300001886,
+            "http_span_s": 2.1753050479999274,
+            "mean_http_concurrency": 161.57936002317024,
+            "native_peak": 192,
+            "request_seconds": 351.4843975109999,
+            "status_counts": {
+              "200": 512
+            }
+          }
+        }
+      ],
+      "phase": "engineering",
+      "rows": 512,
+      "run_id": "engineering-openimages-cvdf-w1-n512-c3",
+      "source": "openimages-cvdf",
+      "source_head": "9a400a6f4dd363fdc601f7ae60992862dd2c1b8b",
+      "started_utc": "2026-10-22T20:34:36Z",
+      "status": "complete",
+      "timing": "manager-submit-through-returned-verification-v1",
+      "tool_setting": [
+        1,
+        192
+      ],
+      "workers": 1
+    },
+    {
+      "body_bytes": 154931796,
+      "closed_utc": "2026-10-22T20:35:43Z",
+      "coverage": 1.0,
+      "credited_bytes": 154931796,
+      "elapsed_s": 25.445736823999937,
+      "evidence": {
+        "input.parquet": "a4f9d2e8df72fd56833e6da7a70691f0f71444833e6db04ec08c8ea1a0466f7b",
+        "worker/returned/worker-record.json": "7a2bb6cf145c8df51d563cd3fe33796dd74ca42321a3f7085a0173cd0dcd3991",
+        "worker/verification.json": "262dbc2346bfbb4c0a65b50bae3414e847cf65af4f30f3ff7769383185c8d424"
+      },
+      "goodput_Bps": 6088713.291016642,
+      "http_span_s": 2.0185658030000013,
+      "job_seconds": 600,
+      "mean_job_concurrency": 4.862483478933911,
+      "method": "img2dataset-1.47.0",
+      "native_seconds": 10.037212123000018,
+      "original_rows": 512,
+      "participants": [
+        {
+          "role": "worker",
+          "transport": {
+            "attempts": 512,
+            "body_bytes": 154931796,
+            "boundary": "before connection setup through body/failure completion",
+            "common_peak": 165,
+            "common_ttfb_p50_s": 0.12445005500001116,
+            "common_ttfb_p95_s": 0.18388624299996081,
+            "http_span_s": 2.0185658030000013,
+            "mean_http_concurrency": 61.295735185899154,
+            "native_peak": 165,
+            "request_seconds": 123.72947491599996,
+            "status_counts": {
+              "200": 512
+            }
+          }
+        }
+      ],
+      "phase": "engineering",
+      "rows": 512,
+      "run_id": "engineering-openimages-cvdf-w1-n512-c4",
+      "source": "openimages-cvdf",
+      "source_head": "9a400a6f4dd363fdc601f7ae60992862dd2c1b8b",
+      "started_utc": "2026-10-22T20:35:17Z",
+      "status": "complete",
+      "timing": "manager-submit-through-returned-verification-v1",
+      "tool_setting": [
+        8,
+        24
+      ],
+      "workers": 1
+    }
+  ],
+  "long_evaluation_jobs": 0,
+  "admission_interval": {
+    "minimum_common_rows": 46653,
+    "maximum_common_rows": 15280,
+    "bounds": [
+      {
+        "method": "img2dataset-1.47.0",
+        "tool": [
+          1,
+          192
+        ],
+        "minimum_rows": 46653,
+        "maximum_rows": 48473,
+        "limiting": "body"
+      },
+      {
+        "method": "img2dataset-1.47.0",
+        "tool": [
+          8,
+          24
+        ],
+        "minimum_rows": 35742,
+        "maximum_rows": 46516,
+        "limiting": "manager"
+      },
+      {
+        "method": "img2dataset-1.47.0",
+        "tool": [
+          1,
+          32
+        ],
+        "minimum_rows": 38339,
+        "maximum_rows": 48473,
+        "limiting": "body"
+      },
+      {
+        "method": "ratio-v2",
+        "tool": [
+          1,
+          192
+        ],
+        "minimum_rows": 10046,
+        "maximum_rows": 19619,
+        "limiting": "native"
+      },
+      {
+        "method": "gradient-candidate-v2",
+        "tool": [
+          1,
+          192
+        ],
+        "minimum_rows": 7512,
+        "maximum_rows": 15280,
+        "limiting": "native"
+      }
+    ],
+    "interpretation": "Short-engineering model; proves an empty admission interval under the frozen rule, not impossibility of long execution."
+  }
+}

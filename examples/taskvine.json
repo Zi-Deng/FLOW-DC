@@ -1,0 +1,9 @@
+{
+  "manager_python": "/absolute/qualified-taskvine/bin/python",
+  "worker_binary": "/absolute/qualified-taskvine/bin/vine_worker",
+  "python_executable": "/absolute/flowdc-environment/bin/python",
+  "start_local_workers": true,
+  "workers": 2,
+  "timeout_s": 1800,
+  "runtime_receipt": "/absolute/qualified-runtime/flowdc-runtime-build.json"
+}

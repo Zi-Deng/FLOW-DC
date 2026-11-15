@@ -1,0 +1,59 @@
+{
+  "name": "CVDF single-worker engineering",
+  "source": "openimages-cvdf",
+  "blocks": 1,
+  "conditions": [
+    {
+      "rows": 512,
+      "workers": 1
+    },
+    {
+      "rows": 2048,
+      "workers": 1
+    }
+  ],
+  "methods": [
+    {
+      "method": "paarc-ratio",
+      "c_max": 192,
+      "method_options": {
+        "startup_growth_factor": 1.5,
+        "target_delay_ratio": 2,
+        "baseline_max_age_s": 120
+      }
+    },
+    {
+      "method": "paarc-grad",
+      "c_max": 192,
+      "method_options": {
+        "startup_growth_factor": 1.5,
+        "target_delay_ratio": 2,
+        "baseline_max_age_s": 120
+      }
+    },
+    {
+      "method": "img2dataset",
+      "processes": 1,
+      "threads": 32
+    },
+    {
+      "method": "img2dataset",
+      "processes": 1,
+      "threads": 192
+    },
+    {
+      "method": "img2dataset",
+      "processes": 8,
+      "threads": 24
+    }
+  ],
+  "phase": "engineering",
+  "seed": 54,
+  "timeout_s": 1800,
+  "body_limit_bytes": 206158430208,
+  "access_qualified": false,
+  "media_rights_qualified": false,
+  "baseline_s": 0.1,
+  "ignore_time": false,
+  "user_cooldown_seconds": 0
+}

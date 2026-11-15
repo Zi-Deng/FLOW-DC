@@ -1,715 +1,126 @@
 # FLOW-DC
 
-**Flexible Large-scale Orchestrated Workflow for Data Collection**
+FLOW-DC turns URL manifests into verifiable image datasets. It combines asynchronous
+HTTP transfer, per-host adaptive concurrency, original-row accounting and optional
+TaskVine distribution. It is designed for dataset construction on workstations,
+research clusters and heterogeneous academic resources.
 
-A pipeline for dataset acquisition with per-host concurrency control, verified outputs and TaskVine orchestration.
+Two controllers share the same acquisition pipeline: **PAARC-Grad** responds to
+persistent growth in excess application delay; **PAARC-Ratio** regulates concurrency
+against a baseline-relative delay budget. PAARC-Grad is the default. Their signals
+are application-level response delays, not transport RTT or measured server queues.
 
-The [higher-concurrency real-host study](benchmark/real_server_study/README.md) compares Ratio and Gradient with a 256-request safety ceiling, then evaluates two data-selected Fixed settings. It uses the existing supervised Jetstream lifecycle; preparation alone never activates VMs. Its `bounded-external-v1` profile adds finite external-study capacity without changing earlier workload profiles. Later Fixed comparisons are descriptive because they run after the adaptive phase.
+## Start locally
 
-The separate [bounded TaiBIF onset study](docs/research/TAIBIF-ONSET.md) searches Fixed settings from66 through256, measures actual request concurrency and sparse throughput collapse, and conditionally evaluates automatic Ratio/Gradient selection against an independently tuned Fixed setting. It stops public-host escalation at the first adverse signal and uses at most two60-minute Jetstream2 windows with an80-SU new-exposure admission limit.
+Requires Linux and Python 3.12+. Install the core package:
 
-For closed studies, `python -m benchmark.real_server_study cloud-offline --packet PATH --continuation PATH` finishes only evidence auditing and metadata collection. Its separate finite authorization permits at most two 60-minute VM windows in four hours, with a 1,200-second audit ceiling and a 500-SU continuation exposure limit. It never repeats image downloads. Ambiguous activation requires provider-confirmed disposition and supported cleanup before continuation; see the study and lifecycle documentation.
-
-## Overview
-
-FLOW-DC uses a manager-worker architecture built on TaskVine, where a central manager partitions datasets, assigns download tasks to workers, and consolidates results. Performance and distributed-validity claims require the controlled evidence described in the research contract below.
-
-The default controller is **PAARC (Policy-Aware Adaptive Request Controller)**. It adjusts concurrency for each target host using application-observed delay and overload feedback. Explicit research methods also select the gradient candidate, fixed concurrency, ratio controller or pinned Gradient2 application-delay adaptation. Common admission, Retry-After and output safeguards remain active across methods.
-
-## Agentic development
-
-Future development uses the repository's eight [agentic workflow skills](docs/agent-workflow/SKILLS.md): a concise authorized task, an issue worktree, direct implementation, proportionate checks, at most two bounded independent reviews and two review-driven repairs, followed by a human merge decision. Start with the [workflow guide](docs/agent-workflow/README.md) and [setup instructions](docs/agent-workflow/SETUP.md). The [verification record](docs/agent-workflow/VERIFICATION.md) distinguishes tested behavior from remaining rollout steps.
-
-Developer validation uses a separate Python 3.12+ environment and `make check`; it runs the focused FLOW-DC and workflow suites without a dataset or cluster campaign. Private task context belongs in Git-ignored `memory/`, and workflow state lives in Git-ignored `.agentic-local/`.
-
-The [manuscript research contract](docs/research/MANUSCRIPT-READINESS.md) identifies
-gradient PAARC as the proposed primary method, the required comparisons and the
-open evidence gates. Functional smoke tests do not establish publication claims.
-
-## Local Jetstream2 operations
-
-An explicitly failed experiment whose guests are freshly verified offloaded can
-use [`flowdc_experiment.py retire-offloaded`](docs/jetstream2/EXPERIMENTS.md#artifact-layout-and-recovery)
-to release operational ownership while retaining its failed state and missing
-guest evidence. This never grants allowance, activates VMs or retries a workload.
-
-The [local operations guide](docs/jetstream2/README.md) documents `python3 bin/flowdc_ops.py` for private workspace initialization, local readiness inspection, scoped read-only OpenStack inventory, and offline three-VM pilot validation. It uses Python 3.12+ without new project dependencies. Enrollment remains manual. The [bounded pilot lifecycle](docs/jetstream2/LIFECYCLE.md) adds private cumulative accounting and an independent user-systemd shutdown supervisor for three existing VMs. An explicit idle `pilot upgrade-supervisor` command preserves registration and accounting through guarded, recoverable release changes. A separately authorized `pilot extend-allowance --grant PATH` can add 1–1,800 seconds equally to the three accounts, with a durable retry-safe receipt and the unchanged 7,200-second lifetime ceiling; it never activates resources. The additive [experiment runner](docs/jetstream2/EXPERIMENTS.md) prepares committed source, configurations and Parquet inputs offline, then explicitly deploys, executes, collects and verifies a bounded three-VM run through that installed pilot. After authorized guest setup, explicit `flowdc_experiment.py run --use-active-window` can use the same ready selection/window while retaining its deadline; the default run still requires idle. Live activation requires a separate authorized operational checkpoint; local/fake checks do not establish live-cloud or scientific results.
-
-The pilot adds an offline `pilot runtime-check --profile PATH` prerequisite for
-its fixed SDK offload route, plus bounded sanitized `cleanup_diagnostics` in status.
-See the [cleanup reliability evidence](docs/jetstream2/CLEANUP-RELIABILITY-EVIDENCE.md)
-and [runtime requirements](docs/jetstream2/README.md#explicit-offload-runtime-prerequisite)
-before a separately authorized deployment or activation.
-
-The [finite campaign extension](docs/jetstream2/CAMPAIGN.md) provides offline
-`pilot campaign-preview --grant PATH` and explicitly authorized
-`pilot campaign-apply --grant PATH`. It preserves pilot limits and all consumption,
-with a separate finite campaign ceiling, expiry, selected UUIDs, budget and receipt.
-After confirmed activity outside supervision, the explicit
-`pilot account-recovery-preview/apply --request PATH` commands conservatively
-charge the whole uncertain interval after fresh cleanup verification. They retain
-the old uncertainty in an audit receipt and grant no time or activation; see
-[account recovery](docs/jetstream2/LIFECYCLE.md#account-recovery-after-confirmed-external-activity).
-It does not activate VMs or establish scientific validity.
-
-## Installation
-
-### Prerequisites
-
-- Conda (Miniconda or Anaconda)
-- Python 3.10+
-
-### Setup
-
-```bash
-# Clone the repository
-git clone https://github.com/Zi-Deng/FLOW-DC
-cd FLOW-DC
-
-# Create and activate the conda environment
-conda env create -f environment.yml
-conda activate FLOW-DC
+```sh
+python3.12 -m venv .venv
+. .venv/bin/activate
+python -m pip install .
+flowdc --help
+python examples/local_demo.py
 ```
 
-The environment includes all necessary dependencies: polars, aiohttp, pyarrow, ndcctools (TaskVine), tqdm, and NiceGUI.
+The demo uses a local HTTP server and writes a small verified dataset under
+`build/demo-download`. It makes no public-host requests.
 
-## Quick Start
+For a real manifest, provide a Parquet or CSV file containing a URL column:
 
-### Single-Machine Download
-
-The simplest way to download a dataset is with a JSON configuration file:
-
-```bash
-python bin/download_batch.py --config files/config/my_config.json
+```sh
+flowdc download --input-path images.parquet --output-dir runs/images \
+  --url-column url --label-column species --method paarc-grad
+flowdc verify --output-dir runs/images
 ```
 
-### Example Configuration
+Excel and XML readers are optional: `python -m pip install '.[formats]'`.
+Inputs must fit in memory together with row metadata and acquisition buffers;
+the current index is not an out-of-core datastore.
 
-Create a configuration file (e.g., `my_config.json`):
+## Configuration and output
 
-```json
-{
-    "input": "files/input/dataset.parquet",
-    "output": "files/output/images",
-    "url": "photo_url",
-    "label": "species",
+Use `flowdc download --config examples/download.json` after replacing the example
+manifest’s placeholder URL with your own inputs. The local demo above supplies a
+working loopback example. Explicit CLI options override JSON values. Unknown fields are rejected. Both controllers start at four requests,
+with a minimum of two and a default per-host ceiling of 192. Change the ceiling with
+`--c-max`; use `--method paarc-ratio` for the ratio controller.
 
-    "concurrent_downloads": 1000,
-    "timeout": 30,
+Outputs include payloads and row metadata, an `outcome-index.json`, an overview,
+an integrity journal under `.flowdc/`, and a verified uncompressed archive by default.
+Duplicate URLs retain separate original-row identities. Invalid rows are recorded;
+failed or interrupted work is never silently credited as successful output.
 
-    "enable_paarc": true,
-    "C_init": 8,
-    "C_min": 2,
-    "C_max": 2000,
-
-    "output_format": "imagefolder",
-    "create_tar": true,
-    "create_overview": true
-}
+```sh
+flowdc resume --output-dir runs/images
+flowdc reconcile --output-dir runs/images
+flowdc partition --input-path images.parquet --output-dir runs/partitions --groups 8
 ```
 
-### Command-Line Usage
+Resume verifies source/configuration identity and remaining attempt budgets before
+sending requests. Reconciliation is offline. Existing output requires confirmation
+before replacement; `--force` explicitly authorizes replacement. Pre-refactor runs
+require their original runtime for recovery; no automatic ownership migration occurs.
+See [configuration](docs/configuration.md), [integrity](docs/integrity.md) and the
+[interface migration guide](docs/migration.md).
 
-All configuration options are also available as command-line arguments:
+## Distributed execution
 
-```bash
-python bin/download_batch.py \
-    --input files/input/dataset.parquet \
-    --output files/output/images \
-    --url photo_url \
-    --label species \
-    --concurrent_downloads 1000 \
-    --enable_paarc
+The TaskVine backend runs the same packaged downloader on independent workers,
+splits an explicit aggregate request budget, returns archives and verifies their
+original-row accounting on the manager. It stages one source artifact per revision.
+
+```sh
+flowdc download --config examples/download.json --backend taskvine \
+  --taskvine-config examples/taskvine.json
 ```
 
-## Scripts Reference
+The example requires paths to a qualified runtime. Native TaskVine is installed
+separately; it is not a dependency of a local download. See the
+[TaskVine guide](docs/distributed.md) for local workers, portable environments,
+trusted remote workers and failure/cleanup semantics. Optional
+[Jetstream2 operations](docs/jetstream2/README.md) use `flowdc ops` and retain
+explicit resource enrollment and cumulative accounting.
 
-### download_batch.py
+## Experiments and paper
 
-The main batch downloader with PAARC rate control. Handles concurrent downloads, automatic retries, and per-host adaptive concurrency.
+The [experiment guide](experiments/README.md) defines frozen input blocks, explicit
+method configurations, first-attempt retention and independent verification.
+img2dataset 1.47.0 runs in a separate pinned environment. Analytical and comparator
+dependencies are deliberately isolated.
 
-```bash
-python bin/download_batch.py --config config.json
+The [manuscript](paper/README.md) rebuilds from versioned sources and compact measured
+inputs without private workspace files or image acquisition:
+
+```sh
+python -m pip install '.[research]'
+make paper
 ```
 
-**Key Features:**
-- Bounded concurrency with adaptive semaphores
-- Per-host rate limiting via PAARC
-- Automatic retry for transient failures (429, 5xx, timeouts)
-- Application-observed first-body-byte latency monitoring
-- Supports imagefolder and webdataset output formats
-
-The asynchronous base and gradient paths share [HTTP measurement and Retry-After
-semantics](docs/research/HTTP-MEASUREMENT.md), including authority admission when
-PAARC is disabled. Overview reports label corrected timing/accounting with
-`http_measurement.version = "3-output-independent-latency"` and report input URLs without a
-final outcome as `summary.unattempted_or_cancelled_urls`. Legacy TTFB measurements
-are not directly comparable to this signal.
-Interval `n_unknown_failures` separately counts unexpected acquisition exceptions;
-their cause and any server overload are not inferred. Overview metadata describes
-this category alongside the other corrected accounting semantics.
-Version 3 retains a valid completed-body latency sample when a later local save or
-size lookup fails. That row fails with zero useful-byte credit and no added overload
-feedback. Version 2 excluded these samples; the dispatch/first-byte clock definition
-is unchanged. This is an accounting correction, not a transactional-output or
-recovery guarantee.
-
-### download_batch_gradient.py
-
-Experimental single-machine downloader variant that swaps the threshold-based PAARC degradation logic for a TIMELY-style queue-delay gradient detector built from `p50_raw - RTprop`.
-
-```bash
-python bin/download_batch_gradient.py --config files/config/spider_test_gradient.json
-```
-
-**Key Features:**
-- Keeps the current FLOW-DC download pipeline, retries, tar creation, and overview reporting
-- Uses a time-normalized, `RTprop`-normalized queue-delay slope as the early-warning congestion signal
-- Splits control roles between proactive gradient shaping and authoritative hard-overload backoff
-- Preserves explicit overload handling for 429/408/5xx/connection errors
-- Emits gradient-specific overview counters (`gradient_hold_events`, `gradient_soft_backoffs`, `gradient_plateau_events`, `post_backoff_grace_events`)
-
-This historical `gradient-legacy-v1` entrypoint remains a single-machine variant.
-The explicit `gradient-candidate-v1` method uses the maintained base acquisition
-path and the shared-origin TaskVine profile; see [the versioned contract](docs/research/CONTROL-METHODS.md).
-`ui_app.py` remains a simulation prototype, not a distributed execution frontend.
-
-### SplitParquet.py
-
-Partitions a dataset manifest into multiple files for distributed downloading. Supports three grouping strategies:
-
-```bash
-# Host-based grouping (recommended for distributed downloads)
-python bin/SplitParquet.py \
-    --parquet dataset.parquet \
-    --url_col url \
-    --groups 10 \
-    --output_folder partitions \
-    --method host
-
-# Using a configuration file
-python bin/SplitParquet.py --config partition_config.json
-```
-
-Partition host-column migration: `--add_host_column` now emits the derived value as
-`__flowdc_partition_host__`, preserving any original `host` column as row metadata.
-Consumers of the former derived `host` field must read the reserved name instead.
-Empty inputs emit one empty partition and print its path with the zero-row count.
-
-**Partitioning Methods:**
-
-| Method | Description |
-|--------|-------------|
-| `host` | Groups URLs by domain, ensuring each partition deals with fewer unique hosts |
-| `simple` | Equal-sized random partitions |
-| `greedy` | Balances partitions by a grouping column (e.g., class labels) |
-
-Host-based partitioning is recommended for distributed downloads because each worker can maximize throughput by focusing on fewer hosts, and the PAARC controller operates more effectively with consistent per-host traffic.
-
-### CalcDatasetSize.py
-
-Estimates total download size by querying URLs for Content-Length headers. Useful for planning storage requirements before starting a large download.
-
-```bash
-# Estimate size for a single file
-python bin/CalcDatasetSize.py \
-    --input dataset.parquet \
-    --url_column url
-
-# Estimate size for partitioned datasets
-python bin/CalcDatasetSize.py \
-    --directory partitions/ \
-    --url_column url
-
-# Sample 5000 URLs for faster estimation
-python bin/CalcDatasetSize.py \
-    --input dataset.parquet \
-    --url_column url \
-    --sample 5000
-```
-
-### TaskvineFLOWDC.py
-
-Orchestrates distributed downloading across multiple worker machines using TaskVine. Creates a download task for each partition and collects the results.
-
-```bash
-# Start the manager
-python bin/TaskvineFLOWDC.py --config taskvine_config.json
-
-# Preview tasks without executing
-python bin/TaskvineFLOWDC.py --config taskvine_config.json --dry_run
-```
-
-**TaskVine Configuration Example:**
-
-```json
-{
-    "port_number": 9123,
-    "parquets_directory": "files/input/partitions",
-    "output_directory": "files/output/images",
-
-    "url_col": "url",
-    "label_col": "species",
-
-    "concurrent_downloads": 1000,
-    "enable_paarc": true,
-    "C_init": 8,
-    "C_max": 2000,
-
-    "task_cores": 4,
-    "task_memory_mb": 8000,
-    "timeout_minutes": 60
-}
-```
-
-Workers connect to the manager using standard TaskVine commands. See the [TaskVine documentation](https://cctools.readthedocs.io/en/latest/taskvine/) for details.
-
-### TaskvineFLOWDCCloud.py
-
-Extended version of the TaskVine orchestrator that uploads results directly to cloud storage. Supports iRODS/CyVerse (via gocmd), AWS S3, Google Cloud Storage, and rclone.
-
-```bash
-python bin/TaskvineFLOWDCCloud.py --config taskvine_cloud_config.json
-```
-
-**Cloud Configuration Example:**
-
-```json
-{
-    "port_number": 9123,
-    "parquets_directory": "files/input/partitions",
-    "cloud_destination": "AIIRA_Dataset",
-    "cloud_tool": "gocmd",
-
-    "url_col": "url",
-    "concurrent_downloads": 1000,
-    "enable_paarc": true
-}
-```
-
-Supported cloud tools: `gocmd` (iRODS), `aws` (S3), `gsutil` (GCS), `rclone`, `scp`.
-
-### ui_app.py
-
-A web-based interface for configuring downloads and monitoring progress. Built with NiceGUI.
-
-```bash
-python bin/ui_app.py
-```
-
-The UI at `http://localhost:8080` is a prototype: job execution and progress are simulated. Use the downloader CLI for real downloads. Its controls demonstrate how to:
-- Configure all download parameters
-- Load and save configuration files
-- Start and monitor download jobs
-- View real-time progress and PAARC state
-
-### single_download.py / single_download_gbif.py
-
-Low-level modules providing the core download functions. These are used internally by `download_batch.py` and can be imported for custom integrations.
-
-```python
-from single_download import download_single, load_input_file
-
-# Load a dataset
-df = load_input_file("dataset.parquet")
-
-# Download a single URL
-result = await download_single(
-    url="https://example.com/image.jpg",
-    key="row_001",
-    class_name="species_a",
-    output_folder="output",
-    output_format="imagefolder",
-    session=session,
-    timeout=30
-)
-```
-
-## Configuration Reference
-
-### Input/Output Settings
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `input` | string | required | Path to input file (parquet, csv, excel, xml) |
-| `input_format` | string | auto | Input format: `parquet`, `csv`, `excel`, `xml` |
-| `output` | string | required | Output directory path |
-| `output_format` | string | `imagefolder` | Output format: `imagefolder` or `webdataset` |
-| `url` | string | `url` | Column name containing URLs |
-| `label` | string | null | Column name for class labels (optional) |
-
-### Download Settings
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `concurrent_downloads` | int/null | auto | Main downloader: omitted/null/0 sizes workers from host count × C_max, capped at 10,000; a positive value overrides this |
-| `timeout` | int | 30 | Request timeout in seconds |
-| `max_retry_attempts` | int | 3 | Maximum retries for failed downloads |
-| `retry_backoff_sec` | float | 2.0 | Delay between retry attempts |
-
-### PAARC Rate Control
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `enable_paarc` | bool | true | Enable adaptive per-host rate control |
-| `C_init` | int | 4 | Initial concurrency per host |
-| `C_min` | int | 2 | Minimum concurrency floor |
-| `C_max` | int | 10000 | Maximum concurrency ceiling |
-| `mu` | float | 0.85 | Utilization factor (0.0-1.0) |
-| `beta` | float | 0.5 | Backoff multiplier on overload |
-| `theta_50` | float | 1.5 | P50 latency threshold (× RTprop) |
-| `theta_95` | float | 2.0 | P95 latency threshold (× RTprop) |
-| `probe_rtt_period` | float | 10.0 | Seconds between RTprop refresh |
-| `alpha_ema` | float | 0.3 | Latency smoothing factor |
-
-### Gradient PAARC Parameters
-
-These parameters apply only to `download_batch_gradient.py`. The gradient variant retains its experimental defaults of 256 workers, `mu=0.75`, and `rtprop_window=15.0`; the main downloader uses automatic workers, `mu=0.85`, and `rtprop_window=35.0`. Both accept `concurrent_downloads=0` (or JSON null) for automatic sizing. Explicit configurations override defaults.
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `gradient_alpha` | float | 0.3 | EMA factor for queue-delay and gradient smoothing |
-| `gradient_threshold` | float | 0.10 | Time-normalized overuse threshold for `gradient_ema` |
-| `gradient_severe_threshold` | float | 0.30 | Severe overuse threshold that triggers the maximum soft multiplicative backoff |
-| `startup_gradient_threshold` | float | 0.15 | STARTUP plateau threshold for the time-normalized `gradient_ema` |
-| `gradient_required_intervals` | int | 2 | Consecutive overuse intervals required before acting in `PROBE_BW` |
-| `startup_gradient_required_intervals` | int | 2 | Consecutive plateau intervals required before exiting `STARTUP` |
-| `gradient_queue_floor_mult` | float | 0.25 | Minimum queue-delay floor relative to `RTprop` before gradient signals are trusted |
-| `gradient_backoff_beta` | float | 0.85 | Soft multiplicative reduction applied on severe gradient overuse |
-| `post_backoff_grace_intervals` | int | 2 | Clean `PROBE_BW` intervals to observe after `BACKOFF` before gradient shaping and additive probe-up resume |
-
-The gradient detector uses interval `p50_raw` as its latency sample, computes `queue_delay = max(0, p50_raw - RTprop)`, smooths that queue-like delay, then computes a time-normalized, `RTprop`-normalized slope from successive queue-delay EMA values. In `PROBE_BW`, the controller uses four regions:
-
-- below queue floor: normal full PAARC probing
-- above queue floor with `gradient_ema <= 0`: cautious probe-up
-- above queue floor with small positive gradient: hold
-- above queue floor with larger positive gradient: proportional or maximum soft backoff
-
-Hard overload signals still take precedence and enter the inherited `BACKOFF` path immediately.
-
-### Output Options
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `naming_mode` | string | `sequential` | Filename strategy: `sequential`, `url_based`, or immutable `row_id`; conflicting legacy destinations fail affected rows |
-| `create_tar` | bool | true | Create an archive from verified committed rows |
-| `compress_tar` | bool | true | Gzip the archive; false produces an uncompressed `.tar` |
-| `create_overview` | bool | true | Write internal/external overview reports referencing the final completion record |
-| `force_overwrite` | bool | false | Allow deletion of an existing output folder; CLI equivalent: `--force` / `-f` |
-| `research_profile` | bool | false | Select row-ID naming, WebDataset metadata, uncompressed archive and overview; CLI: `--research_profile` |
-| `control_method` | string/null | null | Explicit `paarc-base-v2`, `gradient-candidate-v1`, `fixed-v1`, `ratio-v1`, `gradient2-application-delay-v1`, or experimental `gradient-candidate-v2`/`ratio-v2`; null preserves the legacy entrypoint default |
-| `http_connection_limit` | integer/null | null | Optional 1–10000 TCP connector ceiling, separate from task/permit concurrency; null preserves automatic sizing. CLI: `--http_connection_limit` (JSON takes precedence with `--config`). |
-| `research_workload` | string/null | null | Explicit finite `bounded-research-v2` profile; requires research output and an explicit method; see [workload contract](docs/research/WORKLOAD.md) |
-| `method_options` | object | {} | Versioned engineering parameters/ablation for the selected method; see [method contract](docs/research/CONTROL-METHODS.md) |
-| `resume` | bool | false | Reconcile, then continue eligible unresolved rows within their original attempt budgets; CLI: `--resume` |
-| `reconcile` | bool | false | Inspect/recover owned output offline, with no HTTP calls; CLI: `--reconcile` |
-
-### Output integrity and recovery
-
-Both maintained downloaders preserve every original input row, including invalid URLs
-and duplicate URL/content requests. Identity combines the original manifest SHA-256
-and source position; `SplitParquet.py` preserves parent identities. Each row receives
-one disposition: verified, failed, skipped (invalid URL), or demonstrably unattempted.
-Interrupted attempts remain failed with uncertain attempt information until recovered.
-
-For research runs, use [the example configuration](files/config/research-output-integrity.json)
-or the preset flag:
-
-```bash
-python bin/download_batch.py --input input.parquet --output output --research_profile
-python bin/download_batch.py --output output --reconcile
-python bin/download_batch.py --input input.parquet --output output --research_profile --resume
-```
-
-The gradient entrypoint accepts the same operations. Resume requires the same input
-bytes, effective configuration and runtime source hashes; use the original configuration
-with `--resume`. Offline reconciliation also requires the original base or gradient
-entrypoint; a variant mismatch fails before changing reports. Recovery and overwrite
-are mutually exclusive. Existing outputs still
-require interactive consent or `--force` for replacement, after input and ownership
-validation. Conflicting unowned files and symlinks are preserved and cause failures.
-The entire output path, including its ancestors (home, scratch and mount aliases),
-must contain no symlinks. Use the real directory path instead of a symlink alias;
-the filesystem error names the rejected component. Missing ancestors created by the
-integrity layer use `0700` subject to umask; existing ancestor modes are unchanged.
-
-Recorded destination rejections and local/unknown attempt failures are terminal for
-that run, even after a conflicting file is removed or storage is repaired. `--resume`
-does not clear them or consume more attempts for them. Keep the old directory and its
-verified partial outputs as evidence. To reacquire those rows, use the same input and
-configuration with a new, absent output directory (without `--resume` or `--force`).
-This is a separate run that requests the input rows again, not an in-place repair or
-adoption of old artifacts. Do not edit `.flowdc/` to reset dispositions or budgets.
-
-Schema-2 acquisition and `SplitParquet.py` currently require the whole manifest and
-its Python row metadata, ownership journal and outcome index to fit in process memory,
-alongside Polars frames and a downloaded payload. They are not streaming manifest
-processors. There is no validated 40M-row capacity claim for this integrity increment;
-row count alone cannot bound memory when metadata sizes vary. Use only manifests that
-fit the available memory with headroom; partitioning itself has the same whole-input
-requirement. Existing large-scale results describe earlier implementations.
-
-Retain the output directory, including `.flowdc/`: it holds ownership, attempt intent,
-verified staging and completion records. These records support process-interruption
-recovery. They do not promise host-power-loss durability or atomic publication of two
-files. Research completion requires a closed verified uncompressed archive and outcome
-index. ImageFolder and `--no_tar` select a separately labeled local-files boundary.
-
-Schema-2 reports expose integer `verified_payload_bytes`, `unique_content_bytes`,
-`artifact_file_bytes` and measured `observed_response_body_bytes`. Body counts are
-decoded application bytes, not network wire bytes. Repeated rows receive separate
-payload credit; identical content counts once in unique-content bytes. Compatibility
-MB fields remain decimal displays. Resumed/offline elapsed time and throughput are
-null because the implementation does not reconstruct elapsed time across interruptions.
-Gradient resume also sets `gradient_summary` to null with
-`gradient_summary_scope="unavailable_across_resume"`; controller counters are not
-persisted across invocations. Offline reconciliation retains the previous summary and
-its scope. The benchmark adapter rejects schema-2 reports with unavailable elapsed
-time rather than treating them as measured zero-duration benchmark runs.
-For measured schema-2 benchmark records, the legacy `throughput_mbps` field means
-MiB/s: exact verified payload bytes / 1,048,576 / elapsed seconds. Its extra metrics
-record that unit and divisor, matching historical benchmark and img2dataset units;
-decimal display MB is not used to compute it. Historical result files are unchanged.
-
-Integrity-created class, staging and ancestor directories use `0700`; payloads,
-sidecars and exports use `0600` (subject to umask). The maintained entrypoint's
-output root itself retains ordinary umask-derived mode. Archive members use `0600`.
-The owner-only artifacts change the former umask-derived shared access;
-group readers or workers running as a different user need a separately arranged export
-and access policy. The downloader does not broaden existing permissions.
-
-The authoritative run result is `.flowdc/final.json`, written last. Final overview
-reports carry its expected SHA-256 and leave `run_complete` and
-`useful_final_payload_bytes` null until that record is checked. The overview inside
-the archive describes the earlier local-files stage. `successful_downloads` counts
-verified local rows, so it alone does not establish archive/run completion. See the
-[protocol and compatibility specification](docs/research/OUTPUT-INTEGRITY.md) and
-[validation record](docs/research/OUTPUT-INTEGRITY-VALIDATION.md).
-
-The `create_tar()` helper rejects already finalized managed directories without
-changing their evidence. Use `--reconcile` to rebuild and verify the archive, reports
-and final record together. Attempt-journal storage failures abort before HTTP rather
-than retrying without a recorded attempt; repair storage before explicit resume.
-
-## Input File Format
-
-FLOW-DC accepts input files in multiple formats. The file must contain a column with URLs to download.
-
-**Supported Formats:**
-- Parquet (recommended for large datasets)
-- CSV
-- Excel (.xlsx, .xls)
-- XML
-
-**Example Input Structure:**
-
-| url | species |
-|-----|---------|
-| https://example.com/img1.jpg | Species_A |
-| https://example.com/img2.jpg | Species_B |
-| https://example.com/img3.jpg | Species_A |
-
-## Output Formats
-
-### ImageFolder
-
-Organizes images into class-specific subdirectories, with per-row JSON sidecars and
-an outcome index. Consumers should select payloads by extension or the outcome index:
-
-```
-output/
-├── Species_A/
-│   ├── 00000001.jpg
-│   └── 00000003.jpg
-└── Species_B/
-    └── 00000002.jpg
-```
-
-The run root also contains `.flowdc/` recovery state. Class-directory discovery must
-exclude it; loaders that treat every subdirectory as a class need that filter.
-
-### WebDataset
-
-Flat structure with JSON metadata files, suitable for creating WebDataset tar archives:
-
-```
-output/
-├── 00000001.jpg
-├── 00000001.json
-├── 00000002.jpg
-├── 00000002.json
-└── ...
-```
-
-Each maintained-run JSON sidecar includes the original row metadata, immutable identity,
-payload path, byte length and SHA-256. The legacy helper's small metadata tuple/API remains
-available; standalone helper calls do not create a recoverable run. A schema-2 sidecar
-has this shape (hashes abbreviated):
-
-```json
-{
-    "schema_version": 2,
-    "key": "row-sha256",
-    "row_id": "row-sha256",
-    "url": "https://example.com/img1.jpg",
-    "source_manifest": "manifest-sha256",
-    "source_position": 0,
-    "source_rows": 3,
-    "row": {"url": "https://example.com/img1.jpg", "species": "Species_A"},
-    "payload": "00000001.jpg",
-    "payload_bytes": 1000000,
-    "payload_sha256": "content-sha256"
-}
-```
-
-## Distributed Workflow
-
-For large-scale downloads, FLOW-DC supports distributed execution across multiple machines:
-
-1. **Partition the dataset** by host to optimize per-worker performance:
-   ```bash
-   python bin/SplitParquet.py --parquet dataset.parquet --url_col url --groups 20 --output_folder partitions --method host
-   ```
-
-2. **Start the TaskVine manager**:
-   ```bash
-   python bin/TaskvineFLOWDC.py --config taskvine_config.json
-   ```
-
-3. **Connect workers** from other machines:
-   ```bash
-   vine_worker manager_hostname 9123
-   ```
-
-The manager automatically distributes partitions to available workers and collects results. Workers can be added or removed dynamically during execution.
-
-## Performance
-
-FLOW-DC has been used to download large-scale datasets in production:
-
-- **Biotrove-Train Dataset**: 13 TiB, 38.7 million images downloaded in approximately 42 hours using 10 Jetstream cloud workers.
-
-Throughput scales approximately linearly with the number of workers until network or server bandwidth becomes the limiting factor.
-
-## Project Structure
-
-```
-FLOW-DC/
-├── bin/
-│   ├── download_batch.py         # Main batch downloader with PAARC
-│   ├── download_batch_gradient.py # Experimental gradient PAARC
-│   ├── single_download.py        # Core download module
-│   ├── single_download_gbif.py   # GBIF-specific download module
-│   ├── SplitParquet.py           # Dataset partitioning
-│   ├── CalcDatasetSize.py        # Size estimation
-│   ├── TaskvineFLOWDC.py         # TaskVine orchestrator
-│   ├── TaskvineFLOWDCCloud.py    # TaskVine with cloud storage
-│   ├── ui_app.py                 # Web interface
-│   └── FLOWDC.ipynb              # Jupyter notebook example
-├── files/
-│   ├── config/                   # Configuration examples
-│   ├── input/                    # Input datasets
-│   └── output/                   # Downloaded results
-├── benchmark/                    # Maintained benchmark code and manifests
-├── tests/                        # Offline consolidation regression checks
-├── archives/                     # Superseded files and local recovery snapshots
-├── docs/                         # Additional documentation
-├── environment.yml               # Conda environment
-└── README.md
-```
-
-## Consolidated Local Development
-
-The September 14, 2026 consolidation incorporates GitHub commit `efdadb2` and preserves the local gradient research and sample-aware controller scheduler. See [the consolidation record](docs/CONSOLIDATION_2026-09-14.md) and [archive index](archives/README.md) for provenance and recovery files.
-
-Benchmark source code, configurations, and manifests are versioned. Generated `benchmark/results/`, download payloads, and local recovery bundles remain Git-ignored. Existing April results remain historical measurements of the pre-consolidation implementation.
-
-The new [known-truth benchmark contract](docs/research/benchmark-contract.md) provides
-a bounded localhost smoke command for original-byte and archive verification. Its
-real-executable primary fixture passed at the first issue #26 checkpoint; the
-expanded cases still require final-head validation.
-Historical benchmark reports retain a separate schema and cannot establish the new
-timing/output boundary. See [benchmark setup](benchmark/README.md) for the isolated
-research environment, retained artifacts, and outstanding manuscript milestones.
-
-The [versioned method contract](docs/research/CONTROL-METHODS.md) specifies the
-candidate/comparator equations, sample gates, baseline freshness, ablations and
-retained control trajectories. Use `bin/download_batch.py --control_method METHOD`
-or [the candidate example](files/config/gradient-candidate-v1.json). These are
-engineering defaults awaiting specific advisor decisions; the legacy gradient
-entrypoint retains its old behavior.
-
-The experimental [`ratio-v2` and `gradient-candidate-v2` ablation study](docs/research/ADAPTIVE-150.md)
-adds utilization-gated startup and explicit delay budgets. Its finite research
-window, actual HTTP exposure and private results are separate from v1 qualification;
-neither method is promoted to the default.
-
-The [pinned Gradient2 adaptation](third_party/netflix-gradient2/README.md) is selected
-with `gradient2-application-delay-v1` in local and shared acquisition. It feeds
-complete eligible requests and pre-retirement aggregate inflight to the source-verified
-decision engine. First-body delay is the default; body-completion delay is an explicit
-sensitivity option. Common acquisition safeguards still apply. See the
-[example configuration](files/config/gradient2-application-delay-v1.json).
-
-The [study harness](docs/research/STUDY-HARNESS.md) provides controlled-origin
-scenarios, retained engineering cells, calibration and provisional run-level
-precision tools. Machine-readable plans keep tuning and evaluation separate;
-scientific campaigns require an explicit frozen protocol with recorded decision
-provenance. Maintainer-approved provisional defaults remain distinct from advisor
-approval. The issue #26 acceptance map links distributed admission, native execution
-and offline topology evidence. The explicit
-[shared-origin admission path](docs/research/SHARED-ADMISSION.md) adds authenticated
-manager permits through `--shared_control_file`; its private descriptor is generated
-by the manager and its contents must not be copied into public configs.
-Shared runs require a finite positive `--timeout` (default 30 seconds), covering
-admission waits as well as HTTP. Transient manager backpressure has bounded retries;
-lost acknowledgements and uncertain origin work remain conservatively accounted.
-
-Run the focused regression checks with the project environment:
-
-```bash
-python -m unittest discover -s tests -v
-```
-
-These checks exercise both downloaders against a local HTTP server, retries, output preservation, archives/reports, benchmark integration, and controller scheduling. They do not contact dataset servers or submit TaskVine/cloud jobs. The separate legacy cloud submitter is unsupported by the research profile; these tests do not validate its staging or upload path.
-
-## Citation
-
-If you use FLOW-DC in your research, please cite:
-
-```bibtex
-@software{flowdc2025,
-    author = {Deng, Zi and Merchant, Nirav and Rodriguez, Jeffrey J.},
-    title = {FLOW-DC: Flexible Large-scale Orchestrated Workflow for Data Collection},
-    year = {2025},
-    url = {https://github.com/Zi-Deng/FLOW-DC}
-}
-```
-
-## Contact
-
-- **Author**: Zi Deng (zkdeng@arizona.edu)
-- **Affiliation**: Electrical and Computer Engineering, University of Arizona
-- **Repository**: https://github.com/Zi-Deng/FLOW-DC
-
-## Acknowledgments
-
-FLOW-DC is built using:
-- [TaskVine](https://cctools.readthedocs.io/en/latest/taskvine/) for distributed workflow management
-- [aiohttp](https://docs.aiohttp.org/) for asynchronous HTTP
-- [Polars](https://pola.rs/) for high-performance data processing
-- [NiceGUI](https://nicegui.io/) for the web interface
-
-The explicit `shared-origin-v1` TaskVine engineering profile, pinned runtime, returned
-artifact contract and current limitations are documented in
-[Distributed workflow](docs/research/DISTRIBUTED-WORKFLOW.md). Offline versioned
-3/4/6-VM preparation and accounting migration are documented in
-[Bounded topology](docs/BOUNDED-TOPOLOGY.md). A versioned registry can select 1/2/4
-workers per run using explicit enrolled UUIDs while preserving every account.
-Generate synthetic offline examples with `python -B benchmark/topology_plan.py examples
---output benchmark/results/topology-examples-001`. See the
-[production checkpoint packet](docs/PRODUCTION-CHECKPOINT.md) for exact later
-installation/migration, trust enrollment and bounded live-run requirements. These
-tools do not imply scientific protocol approval.
-
-Independent review uses [one current provider-selectable path](docs/agent-workflow/REVIEW.md). The maintainer retired the exhaustive coverage/generation framework on October9,2026. Reports describe inspected scope and limitations without claiming comprehensive coverage. Old source/reports remain historical. Current-head CI, credential separation, finite review limits, human merge and scientific evidence requirements remain.
+TeX Live and Poppler are required. PDFs, standalone LaTeX, source ZIP and validation
+receipts appear under `build/paper/`.
+
+The retained results establish complete short-job CVDF output coverage and useful
+TaiBIF acquisition with explicit byte and timing accounting. One matched TaiBIF block
+reports 9.32/9.64 MB/s for PAARC-Ratio/Grad. On the short CVDF comparison, img2dataset
+is faster: 12.45 MB/s versus 10.91/10.70 MB/s. These observations support practical
+acquisition and expose adaptation's startup cost; they do not establish universal
+superiority, sustained high concurrency or general scaling. The
+[packaged measurements](paper/data/measured.json) and supplement retain incomplete
+outcomes and the limits of these conclusions.
+
+## Find the implementation
+
+| Location | Purpose |
+|---|---|
+| `src/flowdc` | Downloader, controllers, integrity, distributed execution and experiments |
+| `src/flowdc/ops` | Optional operations and immutable service-release modules |
+| `examples` | Small manifests, configurations and the local demo |
+| `experiments` | Protocols and comparator environment |
+| `paper` | Current manuscript and reproducibility inputs |
+| `tests` | Acquisition, controller, experiment, native and fake-provider regressions |
+| `docs` | Architecture and operating contracts |
+
+Start with the [architecture](docs/architecture.md) and
+[contributor guide](CONTRIBUTING.md). The existing [development workflow](docs/agent-workflow/OPERATING-GUIDE.md)
+remains available. License: [Apache-2.0](LICENSE); third-party runtime material and
+scientific datasets retain their own terms, described in [NOTICE](NOTICE).

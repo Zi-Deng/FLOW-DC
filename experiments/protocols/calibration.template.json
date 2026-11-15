@@ -1,0 +1,119 @@
+{
+  "name": "CVDF configuration development",
+  "source": "openimages-cvdf",
+  "blocks": 1,
+  "conditions": [
+    {
+      "rows": null,
+      "workers": 1
+    }
+  ],
+  "methods": [
+    {
+      "method": "paarc-ratio",
+      "c_max": 256,
+      "method_options": {
+        "target_delay_ratio": 2,
+        "startup_growth_factor": 1.5,
+        "baseline_max_age_s": 120
+      }
+    },
+    {
+      "method": "paarc-ratio",
+      "c_max": 256,
+      "method_options": {
+        "target_delay_ratio": 3,
+        "startup_growth_factor": 1.5,
+        "baseline_max_age_s": 120
+      }
+    },
+    {
+      "method": "paarc-ratio",
+      "c_max": 256,
+      "method_options": {
+        "target_delay_ratio": 3,
+        "startup_growth_factor": 2,
+        "baseline_max_age_s": 120
+      }
+    },
+    {
+      "method": "paarc-ratio",
+      "c_max": 256,
+      "method_options": {
+        "target_delay_ratio": 4.5,
+        "startup_growth_factor": 2,
+        "baseline_max_age_s": 120
+      }
+    },
+    {
+      "method": "paarc-grad",
+      "c_max": 256,
+      "method_options": {
+        "target_delay_ratio": 2,
+        "startup_growth_factor": 1.5,
+        "baseline_max_age_s": 120
+      }
+    },
+    {
+      "method": "paarc-grad",
+      "c_max": 256,
+      "method_options": {
+        "target_delay_ratio": 3,
+        "startup_growth_factor": 1.5,
+        "baseline_max_age_s": 120
+      }
+    },
+    {
+      "method": "paarc-grad",
+      "c_max": 256,
+      "method_options": {
+        "target_delay_ratio": 3,
+        "startup_growth_factor": 2,
+        "baseline_max_age_s": 120
+      }
+    },
+    {
+      "method": "paarc-grad",
+      "c_max": 256,
+      "method_options": {
+        "target_delay_ratio": 4.5,
+        "startup_growth_factor": 2,
+        "baseline_max_age_s": 120
+      }
+    },
+    {
+      "method": "img2dataset",
+      "processes": 1,
+      "threads": 32
+    },
+    {
+      "method": "img2dataset",
+      "processes": 1,
+      "threads": 128
+    },
+    {
+      "method": "img2dataset",
+      "processes": 1,
+      "threads": 256
+    },
+    {
+      "method": "img2dataset",
+      "processes": 8,
+      "threads": 32
+    }
+  ],
+  "phase": "calibration",
+  "seed": 54,
+  "timeout_s": 1800,
+  "body_limit_bytes": 206158430208,
+  "access_qualified": false,
+  "media_rights_qualified": false,
+  "baseline_s": 0.1,
+  "ignore_time": false,
+  "user_cooldown_seconds": 0,
+  "selection": {
+    "minimum_http_s": 600,
+    "coverage_tolerance": 0.01,
+    "goodput_tie_fraction": 0.02
+  }
+}

@@ -1,0 +1,40 @@
+{
+  "name": "TaiBIF historical validation protocol",
+  "source": "taibif-moth",
+  "blocks": 3,
+  "conditions": [
+    {
+      "rows": 32768,
+      "workers": 1
+    }
+  ],
+  "methods": [
+    {
+      "method": "paarc-ratio",
+      "c_max": 192,
+      "method_options": {
+        "startup_growth_factor": 1.5,
+        "target_delay_ratio": 2,
+        "baseline_max_age_s": 120
+      }
+    },
+    {
+      "method": "paarc-grad",
+      "c_max": 192,
+      "method_options": {
+        "startup_growth_factor": 1.5,
+        "target_delay_ratio": 2,
+        "baseline_max_age_s": 120
+      }
+    }
+  ],
+  "phase": "evaluation",
+  "seed": 54,
+  "timeout_s": 1800,
+  "body_limit_bytes": 206158430208,
+  "access_qualified": false,
+  "media_rights_qualified": false,
+  "baseline_s": 0.1,
+  "ignore_time": true,
+  "user_cooldown_seconds": 0
+}

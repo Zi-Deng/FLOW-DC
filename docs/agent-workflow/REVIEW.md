@@ -1,6 +1,6 @@
 # Independent static review
 
-Use `workflow.py review PR --issue N --plan-comment CURRENT --publish` from the trusted workflow installation. The coordinator fetches immutable Git blobs and the current task contract; no private memory, credentials or executor conversation enters the snapshot. Historical process comments are not automatically added. Omitted binary, historical, oversized or unsupported material is listed.
+Use `workflow.py review PR --issue N --plan-comment CURRENT --publish` from the trusted workflow installation. The coordinator fetches immutable Git blobs and the current task contract; no private memory, credentials or executor conversation enters the snapshot. Historical process comments are not automatically added. Omitted binary, historical, oversized or unsupported material is listed. Pure deletions under the tracked historical `archives/` tree are listed without transmitting their former contents; private-memory additions, edits and renames remain refused.
 
 Claude Code is the default; Copilot is explicit. The provider receives a fresh snapshot with only read/search/list tools, no test execution, edits, shell or delegation. Tests run separately. Record requested provider/model/effort, actual CLI version, head/base, invocation count, elapsed time, available usage, findings and limitations. No fallback or automatic model replay.
 

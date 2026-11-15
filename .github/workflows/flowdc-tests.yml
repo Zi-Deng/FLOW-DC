@@ -20,9 +20,11 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: '3.12'
-      - run: python -m pip install -r requirements-test.txt
+      - run: python -m pip install -e '.[research,dev]'
       - id: tests
         run: make test-flowdc PYTHON=python
+      - name: Install and exercise the built wheel outside the checkout
+        run: python scripts/check_package.py
       - id: clean
         if: always()
         run: make check-clean PYTHON=python

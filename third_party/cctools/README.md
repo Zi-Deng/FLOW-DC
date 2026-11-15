@@ -1,6 +1,6 @@
 # Disclosed TaskVine research patch
 
-The runtime pin is CCTools **7.17.2**, source revision `ce1360061996e547ea14e22a00bc6042a42a13ce`. `zero-completion-debug.patch` applies only the zero-completion division guard from upstream commit `73ead49d394416eb9ff80a2371e7263474135eef`. Other changes in that commit are excluded. `provenance.json` identifies source, patched source and patch hashes. The patch and CCTools retain GPL-2.0; see `COPYING`.
+The runtime pin is CCTools **7.17.2**, source revision `ce1360061996e547ea14e22a00bc6042a42a13ce`. `zero-completion-debug.patch` applies only the zero-completion division guard from upstream commit `73ead49d394416eb9ff80a2371e7263474135eef`. Other changes in that commit are excluded. [The package runtime pin](../../src/flowdc/distributed/cctools.json) identifies source, patched source and patch hashes. The patch and CCTools retain GPL-2.0; see `COPYING`.
 
 Use a separate build/runtime environment. The unpatched conda release and patched source build must be compared on the same FORSAKEN fixture, with actual binaries and build logs retained. Build and ordinary/failure/cleanup qualification are distinct gates. A successful patch build or synthetic test does not establish distributed execution, provider cleanup or scientific efficacy.
 

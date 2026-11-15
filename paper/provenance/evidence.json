@@ -1,0 +1,24 @@
+{
+  "schema": "flowdc-paper-evidence-v1",
+  "cvdf_source_revision": "239cdacb0091e93692ae7d6770e83789880a2a6d",
+  "methods": {
+    "paarc-grad": "gradient-candidate-v2",
+    "paarc-ratio": "ratio-v2"
+  },
+  "transition_fixture_sha256": "a6bda11229e48dae2032f1858d9c01d4ca31568d7292de4e0c73d87f5f03f728",
+  "inputs": {
+    "measured.json": {
+      "original_sha256": "786b08a1290a0e2e244385042706c33a1ecd1e397701f44d9ef17de675e24fdf",
+      "packaged_sha256": "786b08a1290a0e2e244385042706c33a1ecd1e397701f44d9ef17de675e24fdf"
+    },
+    "engineering-campaign.json": {
+      "original_sha256": "6992f7b300c731d7ddeedf735597a2ac1a72ed1ab49cadb3876f918248e8f153",
+      "packaged_sha256": "db09f10eb55c64e1d88a08abdadbb92ef8ec87e108398c925996fee77e66722d"
+    },
+    "author-concurrency.json": {
+      "original_sha256": "fd6688a924791d71ce51546ec6ff89f443eb9189318c2466fd82154d5ec6248f",
+      "packaged_sha256": "e89f59429b5b9ee09f348f264cc990f5e37be33a83857ebeb2cc64b55a095675"
+    }
+  },
+  "sanitization": "Operational participant identities and private preparation references are omitted. Numerical values and first-attempt dispositions are retained."
+}

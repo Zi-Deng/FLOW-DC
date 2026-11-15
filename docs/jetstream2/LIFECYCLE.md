@@ -4,9 +4,9 @@ The additive `pilot` commands manage exactly the manager, worker and origin in o
 registered specification. Preparation is local and non-activating. `start` asks an
 independent user-systemd service to prepare selected networking and unshelve the
 three existing VMs. No command creates, deletes, resizes or rebuilds a VM, deploys
-guests or downloads data. The separate [experiment CLI](EXPERIMENTS.md) adds those
-operations and calls the verified installed pilot for lifecycle requests. It does
-not change this controller release or allowance. The original `js2` wrapper remains
+guests or downloads data. The separate [experiment runner](EXPERIMENTS.md) acquires data after resources
+are available. Provisioning and activation remain explicit operational actions.
+The experiment runner does not change this controller release or allowance. The original `js2` wrapper remains
 read-only.
 
 **Implementation/review authorizes zero live cloud mutations.** The commands below
@@ -27,7 +27,7 @@ Check the configured administration environment's explicit-offload prerequisite
 offline before any separately authorized activation:
 
 ```bash
-python3 bin/flowdc_ops.py pilot runtime-check \
+flowdc ops pilot runtime-check \
   --profile "$HOME/.config/flowdc/profile.json"
 ```
 
@@ -60,13 +60,13 @@ networks or new VM interfaces. `operator_route_verified: true` is the operator's
 explicit access attestation, not a connectivity test performed by the tool.
 
 ```bash
-python3 bin/flowdc_ops.py pilot prepare \
+flowdc ops pilot prepare \
   --profile "$HOME/.config/flowdc/profile.json" \
   --spec "$HOME/.config/flowdc/pilot.json" \
   --inventory "$HOME/.local/share/flowdc-ops/inventory/pilot-observation.json" \
   --access "$HOME/.config/flowdc/access.json" \
   --install-supervisor
-python3 bin/flowdc_ops.py pilot status
+flowdc ops pilot status
 ```
 
 Omit `--install-supervisor` to register without arming. This leaves readiness
@@ -267,7 +267,7 @@ A committed grant is never undone by reducing limits or consumption. A later
 compatible guarded rollback takes a new snapshot of current history and retains
 all grants and subsequent consumption; it does not restore the pre-grant account.
 
-For fake-only service evidence, run `/usr/bin/python3.12 -B tests/pilot_allowance_smoke.py`.
+For fake-only service evidence, run `/usr/bin/python3.12 -B tests/ops/pilot_allowance_smoke.py`.
 It reuses the disposable upgrade harness with a unique fake unit and private
 `/tmp` state, exercises refusal/application/replay through the installed CLI, then
 checks preservation through interrupted upgrade recovery. It needs the local user
@@ -292,12 +292,12 @@ fixed order, using that same reviewed checkout:
 
 ```bash
 python3 -B -c 'import hashlib, pathlib, sys; sys.path.insert(0,"bin"); from flowdc_pilot_cli import MODULES; print(hashlib.sha256(b"".join((pathlib.Path("bin") / n).read_bytes() for n in MODULES)).hexdigest())'
-python3 -B bin/flowdc_ops.py pilot upgrade-supervisor \
+flowdc ops pilot upgrade-supervisor \
   --state-root "$HOME/.local/share/flowdc-ops" \
   --expected-current-digest "$PILOT_OLD_DIGEST" \
   --expected-candidate-digest "$PILOT_NEW_DIGEST"
-python3 -B bin/flowdc_ops.py pilot status
-python3 -B bin/flowdc_ops.py pilot reconcile
+flowdc ops pilot status
+flowdc ops pilot reconcile
 ```
 
 Set `PILOT_OLD_DIGEST` and `PILOT_NEW_DIGEST` to the verified values before invoking
@@ -391,10 +391,10 @@ is available again only after verified recovery/publication.
 
 ```bash
 # Default inspection: total window <=1800 seconds, cleanup threshold <=1200.
-python3 bin/flowdc_ops.py pilot start --window-seconds 1800
-python3 bin/flowdc_ops.py pilot status
-python3 bin/flowdc_ops.py pilot stop
-python3 bin/flowdc_ops.py pilot reconcile
+flowdc ops pilot start --window-seconds 1800
+flowdc ops pilot status
+flowdc ops pilot stop
+flowdc ops pilot reconcile
 ```
 
 Every command also accepts the same absolute `--state-root` used for preparation.
@@ -603,7 +603,7 @@ compatibility record does not validate these new mutations or network response s
 
 OpenStackClient **10.3.0** skips an initially `SHELVED` server in
 `server shelve --offload`: it can return normally without calling the offload API.
-The [offline reproduction](CLEANUP-RELIABILITY-EVIDENCE.md) uses a fake compute
+The [fake-provider regression suite](../../tests/ops) uses a fake compute
 service; this latent defect is not an established cause of the September 25 delay.
 Only explicit offload now uses a fixed SDK child program, within the existing
 immutable provider module. Ordinary reads, unshelve and shelve keep their CLI route.
@@ -652,13 +652,13 @@ describes asynchronous completion; software checks cannot grant provider permiss
 ## Validation without cloud mutation
 
 ```bash
-python3 -m unittest discover -s tests -p 'test_flowdc_pilot*.py' -v
-python3 tests/pilot_systemd_smoke.py
+python3 -m unittest discover -s tests/ops -t . -p 'test_flowdc_pilot*.py' -v
+python3 tests/ops/pilot_systemd_smoke.py
 python -m unittest discover -s tests -v
 make check
 git diff --check
-ruff check bin/flowdc_ops.py bin/flowdc_pilot*.py tests/test_flowdc_pilot*.py tests/pilot_systemd_smoke.py
-ruff format --check bin/flowdc_ops.py bin/flowdc_pilot*.py tests/test_flowdc_pilot*.py tests/pilot_systemd_smoke.py
+make check
+git diff --check
 ```
 
 The explicit systemd smoke uses a uniquely named transient **fake-only** unit,
@@ -712,8 +712,8 @@ modules. An unavailable `pilot` command returns versioned `pilot_unavailable` (e
 install the complete reviewed release before using it. Internal import defects are
 not hidden as optional-module absence.
 
-For coordinator integration checks, run both `python3 tests/pilot_systemd_smoke.py`
-and `python3 tests/pilot_systemd_smoke.py --sigterm`. Both use a unique transient
+For coordinator integration checks, run both `python3 tests/ops/pilot_systemd_smoke.py`
+and `python3 tests/ops/pilot_systemd_smoke.py --sigterm`. Both use a unique transient
 fake unit and the copied production `supervise`/`verify_service` implementation,
 with real systemd identity checks and synthetic provider/clock injection confined to
 the test harness. The second signals the service while three fake obligations exist.
@@ -780,8 +780,8 @@ and require the emergency procedure. The 180-second lead schedules initial
 cleanup work; it does not guarantee that retries or provider offload finish.
 The 600-second reserve and conservative accounting remain in effect.
 
-For upgrade/recovery integration, run `python3 -B tests/pilot_upgrade_smoke.py`
-and `python3 -B tests/pilot_upgrade_smoke.py --rollback`. These create uniquely
+For upgrade/recovery integration, run `python3 -B tests/ops/pilot_upgrade_smoke.py`
+and `python3 -B tests/ops/pilot_upgrade_smoke.py --rollback`. These create uniquely
 named regular files in the real `~/.config/systemd/user` directory pointing to
 temporary fake-only releases, interrupt after
 the binding transition, then complete or roll back through the production

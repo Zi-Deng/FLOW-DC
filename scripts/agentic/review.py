@@ -62,10 +62,20 @@ def snapshot(repo, head, output, config):
 
 def safe_diff(repo, base, head, config, source_bytes=0):
     revision = f"{base}...{head}"
-    names = repo.git("diff", "--name-only", "--no-renames", "-z", revision).split("\0")
-    if any(name.startswith(EXCLUDED) for name in names):
+    changes = [
+        line.split("\t", 1)
+        for line in repo.git("diff", "--name-status", "--no-renames", revision).splitlines()
+    ]
+    if any(
+        name.startswith(EXCLUDED) and not (status == "D" and name.startswith("archives/"))
+        for status, name in changes
+    ):
         raise WorkflowError("Diff touches excluded private/data paths; refuse transmission")
-    diff = repo.git("diff", "--no-ext-diff", "--no-textconv", "--no-renames", revision)
+    # Retired tracked archives may be deleted, but their old contents stay out of
+    # the packet. Private-memory edits and renames remain refused above.
+    diff = repo.git(
+        "diff", "--no-ext-diff", "--no-textconv", "--no-renames", revision, "--", ".", ":(exclude)archives/**"
+    )
     if not diff.strip() or source_bytes + len(diff.encode()) > config["max_snapshot_bytes"]:
         raise WorkflowError("Empty diff or source-plus-diff budget exceeded")
     return diff
@@ -139,6 +149,21 @@ def prepare(repo, pr, config, *, issue=None, plan=None, context_key=None, **over
         "body": remote.get("body") or "",
         "head": head,
         "base": base,
+        "review_omissions": {
+            "source": source["omitted"],
+            "deleted_archive_contents": [
+                name
+                for name in repo.git(
+                    "diff",
+                    "--name-only",
+                    "--diff-filter=D",
+                    "--no-renames",
+                    f"{base}...{head}",
+                    "--",
+                    "archives/",
+                ).splitlines()
+            ],
+        },
     }
     if issue:
         context["issue"] = repo.api(f"issues/{issue}")

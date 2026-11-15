@@ -3,6 +3,7 @@
 
 import json
 import re
+import subprocess
 import sys
 from pathlib import Path
 from urllib.parse import unquote
@@ -46,18 +47,53 @@ def main():
                     if step["uses"].startswith("actions/checkout@"):
                         assert step["with"]["persist-credentials"] == "false"
     assert sorted(jobs) == sorted(config["required_checks"])
-    paths = [
-        ROOT / "README.md",
-        ROOT / "AGENTS.md",
-        *(ROOT / "docs/agent-workflow").glob("*.md"),
-        *(ROOT / ".agents/skills").glob("*/SKILL.md"),
-    ]
+    names = (
+        subprocess.check_output(
+            ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"], cwd=ROOT
+        )
+        .decode()
+        .split("\0")
+    )
+    files = sorted({ROOT / n for n in names if n and (ROOT / n).is_file()})
+    paths = [p for p in files if p.suffix == ".md" and p.name != "TASK_SUMMARY.md"]
     for p in paths:
         for link in re.findall(r"\[[^\]]*\]\(([^)]+)\)", p.read_text()):
             if re.match(r"[a-z]+://|mailto:|#", link):
                 continue
             target = unquote(link.split("#", 1)[0].strip("<>"))
             assert not target or (p.parent / target).exists(), f"{p}: missing {target}"
+    for path in files:
+        name = path.relative_to(ROOT).as_posix()
+        assert not name.startswith(
+            ("memory/", "build/", "dist/", "runs/", "extra-files/", ".agentic-local/")
+        ), name
+        assert path.suffix not in (".pdf", ".zip", ".whl", ".pyc", ".tar", ".gz"), f"generated output: {name}"
+        if path.name == "TASK_SUMMARY.md":
+            continue  # Exact original prompt and exhaustive path inventory are intentional.
+        try:
+            text = path.read_text()
+        except UnicodeError:
+            continue
+        assert not re.search(r"/(?:home/zi|mnt/storage/github|mnt/storage/flowdc-memory-data)/", text), (
+            f"private path: {name}"
+        )
+        assert not re.search(
+            r"(?:gh[pousr]_[A-Za-z0-9]{30,}|sk-ant-[A-Za-z0-9_-]{20,}|-----BEGIN (?:OPENSSH|RSA|EC) PRIVATE KEY-----)",
+            text,
+        ), f"credential pattern: {name}"
+        if name.startswith(("src/", "examples/", "docs/", "paper/")):
+            assert not re.search(
+                r"(?:bin/(?:download_batch|TaskvineFLOWDC|flowdc_experiment)|requirements-dev\.txt)", text
+            ), f"stale interface: {name}"
+    for directory in ("bin", "benchmark", "playground", "files", "jupyter", "archives"):
+        assert not (ROOT / directory).exists(), f"retired tree remains: {directory}"
+    from importlib.util import module_from_spec, spec_from_file_location
+
+    spec = spec_from_file_location("paper_build_inputs", ROOT / "paper/scripts/build.py")
+    paper = module_from_spec(spec)
+    spec.loader.exec_module(paper)
+    assert all((ROOT / "paper" / name).is_file() for name in paper.INPUTS), "missing paper input"
+    assert not (ROOT / "AGENT.md").exists(), "use the existing AGENTS.md"
     runtime = sum(len(p.read_text().splitlines()) for p in (ROOT / "scripts/agentic").glob("*.py"))
     tests = sum(len(p.read_text().splitlines()) for p in (ROOT / "tests/agentic").glob("*.py"))
     assert runtime <= 2500 and tests <= 1200, "Workflow growth exceeded the maintainer budget"
