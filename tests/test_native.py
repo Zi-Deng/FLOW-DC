@@ -140,6 +140,45 @@ class NativeTests(unittest.TestCase):
                 process.kill()
                 process.wait()
 
+    def test_aggregate_request_ceiling_covers_multiple_origins(self):
+        class CountedHandler(ImageHandler):
+            lock = threading.Lock()
+            active = peak = 0
+
+            def do_GET(self):
+                with type(self).lock:
+                    type(self).active += 1
+                    type(self).peak = max(type(self).peak, type(self).active)
+                try:
+                    time.sleep(0.1)
+                    super().do_GET()
+                finally:
+                    with type(self).lock:
+                        type(self).active -= 1
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), CountedHandler)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        import polars as pl
+
+        source = self.root / "multiple-origins.parquet"
+        pl.DataFrame(
+            {
+                "url": [
+                    f"http://{('127.0.0.1' if i % 4 < 2 else 'localhost')}:{server.server_port}/{i}.jpg"
+                    for i in range(16)
+                ]
+            }
+        ).write_parquet(source)
+        result = run_distributed(
+            DownloadConfig(input_path=str(source), output_dir=str(self.root / "budget"), c_max=4),
+            self.settings(2),
+        )
+        self.assertTrue(result["run_complete"], result)
+        self.assertGreater(CountedHandler.peak, 1)
+        self.assertLessEqual(CountedHandler.peak, 4)
+
     @unittest.skipUnless(os.environ.get("FLOWDC_COMPARATOR_PYTHON"), "isolated comparator runtime required")
     def test_two_worker_comparator_has_matched_verified_return(self):
         comparator = os.environ["FLOWDC_COMPARATOR_PYTHON"]

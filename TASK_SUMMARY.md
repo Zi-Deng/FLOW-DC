@@ -46,6 +46,8 @@ manuscript reproduction job added. Branch protection is unchanged.
   publication, resume, reconciliation, corruption and archive checks passed.
 - A built wheel installed in a fresh environment outside the checkout acquired
   and verified the core-only local example.
+- After the complete pass, four affected native tests also passed (23.777 s),
+  including the aggregate request ceiling across multiple origins.
 - Actual one/two-worker TaskVine acquisitions, worker loss/descendant cleanup and
   a two-worker img2dataset acquisition passed against the disclosed patched
   CCTools 7.17.2 build, with its binding and worker hashes verified.

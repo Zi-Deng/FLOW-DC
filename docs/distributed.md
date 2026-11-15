@@ -20,6 +20,8 @@ attempts; distributed execution does not overwrite or resume them automatically.
 
 `workers`, `cores`, `memory_mb`, `disk_mb`, `timeout_s` and `port` configure execution.
 The aggregate request ceiling must support each worker's minimum concurrency.
+Each worker's coroutine pool is capped at its allocation, so multiple origins
+within a partition cannot exceed the total budget across workers.
 Application files are staged as one deterministic package ZIP; source and partition
 hashes are checked by each task. The manager independently verifies returned archive
 contents, row identity, metadata and byte credit.

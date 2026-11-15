@@ -195,6 +195,7 @@ def run_distributed(config, settings, *, tool=None, experiment=None):
             output_dir="native",
             c_max=maximum,
             c_init=min(config.c_init, maximum),
+            workers=min(config.workers or maximum, maximum),
             force=False,
             create_tar=True,
             compress_archive=False,
