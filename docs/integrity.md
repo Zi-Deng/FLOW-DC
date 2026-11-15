@@ -18,7 +18,11 @@ rejects reserved names, aliases and directory-prefix collisions before HTTP.
 changing completion records. `flowdc reconcile` can recover eligible ready records
 and republishes the row index/reports. `flowdc resume` reconciles first and sends
 only eligible unresolved requests with remaining attempts. Local storage failures
-are not congestion observations. Verified rows are not redownloaded.
+are not congestion observations. Verified rows are not redownloaded. Recovery does
+not require an overview file. New journals record the absolute source path;
+`resume --input-path PATH` can supply its current location, with the original
+manifest hash still required. Offline reconciliation needs neither source nor
+overview.
 
 Whole-output replacement requires confirmation or explicit `--force`; an active or
 malformed managed journal is never an invitation to erase it. Do not move or copy a

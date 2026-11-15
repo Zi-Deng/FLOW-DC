@@ -48,8 +48,13 @@ def parser():
     for command in ("resume", "reconcile", "verify"):
         item = sub.add_parser(command, allow_abbrev=False)
         item.add_argument("--output-dir", required=True)
+        if command == "resume":
+            item.add_argument(
+                "--input-path", help="Override the recorded source path; its content identity must match"
+            )
     part = sub.add_parser("partition", allow_abbrev=False)
     part.add_argument("--input-path", required=True)
+    part.add_argument("--input-format", choices=["parquet", "csv", "excel", "xml"])
     part.add_argument("--output-dir", required=True)
     part.add_argument("--groups", type=int, default=1)
     part.add_argument("--url-column", default="url")
@@ -61,17 +66,24 @@ def parser():
     return root
 
 
-def recovery_config(output_dir, command):
-    owner = parse((Path(output_dir) / ".flowdc/owner.json").read_bytes())
+def recovery_config(output_dir, command, input_path=None):
+    from .integrity import RunStore
+
+    with RunStore(output_dir) as store:
+        owner = store.owner
     record = owner["config"]
     if record.get("implementation") != "flowdc-package-v1":
         raise ValueError(
             "Historical runs require their original runtime for recovery; no automatic migration is performed"
         )
     values = record["values"]
-    # The source manifest path is stored separately in the public overview.
-    overview = parse((Path(output_dir) / "overview.json").read_bytes())
-    source = overview["configuration"]["input_path"]
+    source = input_path or owner.get("input_path")
+    if command == "resume" and not source:
+        raise ValueError(
+            "No source path was recorded; supply --input-path to resume with the original manifest"
+        )
+    # Offline reconciliation needs only the journal, even before report publication.
+    source = str(Path(source).resolve()) if source else "unavailable-for-offline-reconciliation"
     return DownloadConfig.from_dict({**values, "input_path": source, "output_dir": output_dir, command: True})
 
 
@@ -97,6 +109,7 @@ def main(argv=None):
                     groups=args.groups,
                     url_column=args.url_column,
                     method=args.method,
+                    input_format=args.input_format,
                 )
             ]
         elif args.command == "verify":
@@ -115,7 +128,7 @@ def main(argv=None):
                     else DownloadConfig.from_dict(overrides)
                 )
             else:
-                config = recovery_config(args.output_dir, args.command)
+                config = recovery_config(args.output_dir, args.command, getattr(args, "input_path", None))
             downloader._setup_signal_handlers()
             if getattr(args, "backend", "local") == "taskvine":
                 from .distributed import run_distributed

@@ -9,11 +9,39 @@ from importlib.resources import files
 from pathlib import Path
 from types import SimpleNamespace
 
-from flowdc.distributed import bundle_package
+from flowdc.config import DownloadConfig
+from flowdc.distributed import bundle_package, run_distributed
 from flowdc.distributed.runtime import verify_runtime
+from flowdc.partition import partition_manifest
 
 
 class StagingTests(unittest.TestCase):
+    def test_explicit_manifest_format_and_preflight_before_destination_creation(self):
+        import sys
+
+        import polars as pl
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "manifest.without_csv_extension"
+            pl.DataFrame({"url": ["http://fixture.invalid/a"]}).write_csv(source)
+            parts = partition_manifest(source, root / "parts", input_format="csv")
+            self.assertEqual(pl.read_parquet(parts[0])["url"].to_list(), ["http://fixture.invalid/a"])
+            pl.DataFrame({"wrong": [1]}).write_csv(source)
+            receipt = root / "runtime.json"
+            receipt.write_text("{}")
+            with self.assertRaises(ValueError):
+                run_distributed(
+                    DownloadConfig(input_path=str(source), input_format="csv", output_dir=str(root / "run")),
+                    {
+                        "manager_python": sys.executable,
+                        "worker_binary": sys.executable,
+                        "runtime_receipt": str(receipt),
+                        "start_local_workers": True,
+                    },
+                )
+            self.assertFalse((root / "run").exists())
+
     def test_bundle_is_complete_deterministic_and_excludes_operations(self):
         with tempfile.TemporaryDirectory() as temporary:
             a, b = [Path(temporary) / n for n in ("a.zip", "b.zip")]

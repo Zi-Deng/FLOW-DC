@@ -236,6 +236,74 @@ class AcquisitionTests(unittest.TestCase):
         self.assertEqual(p.returncode, 0, p.stderr)
         self.assertEqual(len(Handler.requests), requests)
 
+    def test_cli_recovers_before_overview_publication_from_another_directory(self):
+        cfg = self.config([self.url + "/ok"], create_overview=False)
+        frame, manifest = load_manifest(cfg)
+        validate_and_load(cfg, prepared=(frame, manifest))
+        rows = integrity.plan_rows(frame, cfg, render_filename)
+
+        class Crash(BaseException):
+            pass
+
+        def fault(step):
+            if step == "ready":
+                raise Crash()
+
+        with integrity.RunStore(
+            cfg.output_dir,
+            manifest=manifest,
+            config=integrity.effective_config(cfg),
+            rows=rows,
+            fault=fault,
+            input_path=cfg.input_path,
+        ) as store:
+            key = rows[0]["row_id"]
+            with self.assertRaises(Crash):
+                store.publish(store.begin(key), key, b"complete fixture body")
+        self.assertFalse((Path(cfg.output_dir) / "overview.json").exists())
+        elsewhere = self.root / "elsewhere"
+        elsewhere.mkdir()
+        for command in ("resume", "reconcile"):
+            if command == "reconcile":
+                Path(cfg.input_path).unlink()
+            result = subprocess.run(
+                [sys.executable, "-m", "flowdc", command, "--output-dir", cfg.output_dir],
+                cwd=elsewhere,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(json.loads(result.stdout)["output_integrity"]["counts"]["verified"], 1)
+        self.assertFalse(Handler.requests)
+
+    def test_resume_accepts_explicit_source_when_no_path_was_recorded(self):
+        cfg = self.config([self.url + "/ok"])
+        self.run_config(cfg)
+        owner_path = Path(cfg.output_dir) / ".flowdc/owner.json"
+        owner = integrity.parse(owner_path.read_bytes())
+        owner.pop("input_path")
+        owner_path.write_bytes(integrity.encode(owner))
+        args = [sys.executable, "-m", "flowdc", "resume", "--output-dir", cfg.output_dir]
+        missing = subprocess.run(args, capture_output=True, text=True)
+        self.assertEqual(missing.returncode, 2)
+        self.assertIn("--input-path", missing.stderr)
+        recovered = subprocess.run([*args, "--input-path", cfg.input_path], capture_output=True, text=True)
+        self.assertEqual(recovered.returncode, 0, recovered.stderr)
+        self.assertTrue(json.loads(recovered.stdout)["output_integrity"]["run_complete"])
+
+    def test_overwrite_cannot_delete_working_directory_ancestor(self):
+        from contextlib import chdir
+
+        cfg = self.config([self.url + "/ok"])
+        ancestor = self.root / "ancestor"
+        cwd = ancestor / "project"
+        cwd.mkdir(parents=True)
+        sentinel = ancestor / "keep"
+        sentinel.write_text("preserve")
+        with chdir(cwd), self.assertRaises(ValueError):
+            validate_and_load(replace(cfg, output_dir=str(ancestor), force=True))
+        self.assertEqual(sentinel.read_text(), "preserve")
+
 
 class ConfigurationTests(unittest.TestCase):
     def test_strict_fields_and_single_defaults(self):

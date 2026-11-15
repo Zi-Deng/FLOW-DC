@@ -6,6 +6,7 @@ import asyncio
 import contextlib
 import os
 import signal
+import sys
 import tarfile
 import time
 from dataclasses import dataclass
@@ -31,7 +32,7 @@ shutdown_flag = False
 
 def _signal_handler(sig, frame):
     global shutdown_flag
-    print("\n[Shutdown] Interrupt received. Attempting graceful shutdown...")
+    print("\n[Shutdown] Interrupt received. Attempting graceful shutdown...", file=sys.stderr)
     shutdown_flag = True
 
 
@@ -105,7 +106,7 @@ async def controller_loop(manager: ControllerManager) -> None:
                     if hasattr(manager, "failure"):
                         manager.failure = e
                         return  # New methods fail closed at subsequent HTTP dispatch.
-                    print(f"[PAARC] Error for {host}: {e}")
+                    print(f"[PAARC] Error for {host}: {e}", file=sys.stderr)
                     host_next_step[host] = now + 0.2  # Fallback
 
         # Sleep until next host needs attention (or minimum check interval)
@@ -288,7 +289,7 @@ async def download_one(
         if err is None and file_path:
             prev = global_written_paths.get(file_path)
             if prev is not None and prev != key:
-                print(f"[Warning] Filename collision: {file_path}")
+                print(f"[Warning] Filename collision: {file_path}", file=sys.stderr)
             else:
                 global_written_paths[file_path] = key
 
@@ -509,11 +510,11 @@ def finalize_run(cfg, store, snapshot, elapsed, report_factory):
         store.emit(store.root.name + "_overview.json", integrity.encode(report), external=True)
     store.fs.atomic(".flowdc/final.json", final_record, replace=True)
     report["output_integrity"] = final_record
-    print(f"Download time:         {elapsed:.2f}s")
-    print(f"Tar creation time:     {tar_time:.2f}s")
-    print(f"Total time:            {elapsed + tar_time:.2f}s")
-    print(f"Reconciled rows:        {snapshot['counts']}")
-    print(f"Completion record:     {store.root / '.flowdc/final.json'}")
+    print(f"Download time:         {elapsed:.2f}s", file=sys.stderr)
+    print(f"Tar creation time:     {tar_time:.2f}s", file=sys.stderr)
+    print(f"Total time:            {elapsed + tar_time:.2f}s", file=sys.stderr)
+    print(f"Reconciled rows:        {snapshot['counts']}", file=sys.stderr)
+    print(f"Completion record:     {store.root / '.flowdc/final.json'}", file=sys.stderr)
     if artifact_error:
         raise integrity.IntegrityError("Archive/report finalization failed: " + artifact_error)
     return report
@@ -570,7 +571,11 @@ async def run_acquisition(cfg, *, report_factory=None):
     validate_and_load(cfg, prepared=prepared)
     config = integrity.effective_config(cfg)
     store = integrity.RunStore(
-        cfg.output_dir, manifest=manifest, config=config, rows=None if cfg.resume else rows
+        cfg.output_dir,
+        manifest=manifest,
+        config=config,
+        rows=None if cfg.resume else rows,
+        input_path=cfg.input_path,
     )
     manager, ctrl_task, trajectory = None, None, None
     started = _monotonic()
@@ -600,7 +605,7 @@ async def run_acquisition(cfg, *, report_factory=None):
                         max(row["attempt_intents"] for row in snapshot["rows"] if row["row_id"] in selected)
                         + 1
                     )
-                    print(f"[Attempt {attempt}] Processing {len(keys)} URLs...")
+                    print(f"[Attempt {attempt}] Processing {len(keys)} URLs...", file=sys.stderr)
                     await download_batch_bounded(
                         cfg=cfg,
                         session=session,

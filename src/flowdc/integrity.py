@@ -431,7 +431,17 @@ def plan_rows(frame, cfg, render):
 
 
 class RunStore:
-    def __init__(self, root, *, manifest=None, config=None, rows=None, fault=None, allow_historical=False):
+    def __init__(
+        self,
+        root,
+        *,
+        manifest=None,
+        config=None,
+        rows=None,
+        fault=None,
+        allow_historical=False,
+        input_path=None,
+    ):
         self.allow_historical = allow_historical
         self.historical = False
         self.fs = Files(root)
@@ -453,6 +463,7 @@ class RunStore:
                     "root": [root_stat.st_dev, root_stat.st_ino],
                     "root_path": str(self.root),
                     "manifest": manifest,
+                    "input_path": str(Path(input_path).resolve()) if input_path is not None else None,
                     "config": config,
                     "rows": rows,
                 }
@@ -487,6 +498,11 @@ class RunStore:
         require(
             isinstance(owner.get("config"), dict) and isinstance(owner["config"].get("values"), dict),
             "invalid configuration evidence",
+        )
+        source = owner.get("input_path")
+        require(
+            source is None or isinstance(source, str) and Path(source).is_absolute(),
+            "invalid recorded input path",
         )
         implementation = owner["config"].get("implementation")
         self.historical = implementation in ("base", "gradient")

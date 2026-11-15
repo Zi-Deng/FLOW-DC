@@ -74,7 +74,14 @@ The external retention manifest, policy, cleanup inventory, recovery backup and 
 
 ## Review and CI
 
-Independent review and current-head hosted checks are pending publication of the implementation commit. No merge, deployment or paper submission is performed.
+The first independent static review covered revision `a33679b1c74a0e1e91066ccd8fc8413da17a962d` using Claude Code / `claude-opus-5-5` at medium effort. Its [published report](https://github.com/Zi-Deng/FLOW-DC/pull/55#pullrequestreview-5912145819) disclosed partial scope and found one P1 recovery defect and three P3 issues. All four supported findings were addressed in the first repair round:
+
+- Recovery now reads durable journal state, records an absolute input path, supports explicit source relocation with unchanged content identity, and works before overview publication.
+- Distributed partitioning honors explicit formats and validates a single input snapshot before creating the destination.
+- Overwrite refuses ancestors of the working directory.
+- Diagnostics and consent prompts use stderr; acquisition stdout contains result JSON.
+
+The affected package/native suite passed 56 tests in 36.663 s after these repairs, and a newly built wheel passed installation/acquisition/verification outside the checkout. The initial three hosted jobs passed on the reviewed revision. Current-head CI and the second bounded review are pending. Review scope is professional static judgment, not exhaustive inspection. No merge, deployment or paper submission is performed.
 
 ## Exact original prompt
 

@@ -52,9 +52,16 @@ class NativeTests(unittest.TestCase):
 
     def test_one_and_two_worker_verified_return_and_archive_corruption(self):
         for workers, method in [(1, "paarc-grad"), (2, "paarc-ratio")]:
+            source = self.root / "input.parquet"
+            if workers == 1:
+                import polars as pl
+
+                source = self.root / "input.explicit-format"
+                pl.read_parquet(self.root / "input.parquet").write_csv(source)
             result = run_distributed(
                 DownloadConfig(
-                    input_path=str(self.root / "input.parquet"),
+                    input_path=str(source),
+                    input_format="csv" if workers == 1 else None,
                     output_dir=str(self.root / f"run-{workers}"),
                     method=method,
                     c_max=8,

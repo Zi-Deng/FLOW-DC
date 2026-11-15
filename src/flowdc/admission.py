@@ -1,6 +1,7 @@
 """Adaptive request permits; shrinking limits never cancels healthy requests."""
 
 import asyncio
+import sys
 
 
 class AdaptiveSemaphore:
@@ -48,7 +49,7 @@ class AdaptiveSemaphore:
             old = self._limit
             self._limit = new_limit
             reason_str = f" ({reason})" if reason else ""
-            print(f"[PAARC] Concurrency: {old} → {new_limit}{reason_str}")
+            print(f"[PAARC] Concurrency: {old} → {new_limit}{reason_str}", file=sys.stderr)
             # Notify waiters if limit increased (fixes stalled limit increases)
             if new_limit > old:
                 asyncio.create_task(self._notify_waiters(new_limit - old))

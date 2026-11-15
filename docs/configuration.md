@@ -31,7 +31,12 @@ threshold 0.8. The complete typed model is the authoritative option list.
 
 `resume` and `reconcile` are recovery state supplied by their CLI commands. They
 cannot be combined with overwrite. Source, configuration and output ownership must
-match. Reconciliation needs no input file and creates no HTTP session.
+match. Reconciliation needs no input file or overview and creates no HTTP session.
+Resume uses the durable absolute source path, or `--input-path` when explicitly
+supplied; changing the path does not bypass the manifest hash check.
+
+Acquisition commands write the result JSON to stdout and diagnostics/progress to
+stderr. Existing-output confirmation also appears on stderr.
 
 Manifests retain flat string/boolean/integer/float/null metadata. Unsupported types,
 nonfinite research metadata and unsafe output names are rejected explicitly. XML

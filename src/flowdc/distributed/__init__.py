@@ -15,7 +15,7 @@ from pathlib import Path
 
 from .. import integrity
 from ..config import normalize_config
-from ..partition import partition_manifest
+from ..partition import partition_frame
 from .protocol import require
 
 
@@ -171,6 +171,10 @@ def run_distributed(config, settings, *, tool=None, experiment=None):
     require(
         config.c_max // options.workers >= config.c_min, "aggregate ceiling is too small for the worker count"
     )
+    from ..manifests import load_manifest
+
+    # Validate mappings, provenance and format before consuming the destination.
+    frame, _ = load_manifest(config)
     root = Path(config.output_dir).absolute()
     require(not root.exists(), "distributed destination already exists; preserve the prior attempt")
     with integrity.Files(root.parent, create=True):
@@ -178,8 +182,8 @@ def run_distributed(config, settings, *, tool=None, experiment=None):
     root.mkdir(parents=True, mode=0o700)
     package = root / "application.zip"
     package_sha = bundle_package(package)
-    partitions = partition_manifest(
-        config.input_path,
+    partitions = partition_frame(
+        frame,
         root / "inputs",
         groups=options.workers,
         url_column=config.url_column,

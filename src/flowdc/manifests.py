@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import sys
 from pathlib import Path
 
 import polars as pl
@@ -46,8 +47,14 @@ def validate_and_load(cfg: Config, prepared=None) -> pl.DataFrame:
     cfg = normalize_config(cfg)
     df, _manifest = prepared if prepared is not None else load_manifest(cfg)
     out = Path(os.path.abspath(cfg.output_dir))
-    if out == Path(out.anchor) or out == Path.cwd() or out in Path(cfg.input_path).resolve().parents:
-        raise ValueError("Output cannot contain the input or be the working/root directory")
+    cwd = Path.cwd().resolve()
+    if (
+        out == Path(out.anchor)
+        or out == cwd
+        or out in cwd.parents
+        or out in Path(cfg.input_path).resolve().parents
+    ):
+        raise ValueError("Output cannot contain the input or working directory, or be the root directory")
     integrity.component(out.name)
     # Opening every existing ancestor rejects symlinks, including the root itself.
     with integrity.Files(out.parent, create=True):
@@ -62,14 +69,15 @@ def validate_and_load(cfg: Config, prepared=None) -> pl.DataFrame:
         if cfg.resume or cfg.reconcile:
             return df
         if not cfg.force:
-            response = (
-                input(f"[I/O] Output folder exists: {out}\n      Delete and continue? [y/N]: ")
-                .strip()
-                .lower()
+            print(
+                f"[I/O] Output folder exists: {out}\n      Delete and continue? [y/N]: ",
+                end="",
+                file=sys.stderr,
             )
+            response = input().strip().lower()
             if response not in ("y", "yes"):
                 raise SystemExit("Aborted: output folder exists. Use --force to overwrite.")
-        print(f"[I/O] Deleting existing output with consent: {out}")
+        print(f"[I/O] Deleting existing output with consent: {out}", file=sys.stderr)
         if (out / integrity.INTERNAL).exists():
             with integrity.RunStore(out) as previous:
                 previous.remove_owned_exports()
@@ -115,11 +123,14 @@ def count_unique_hosts(df: pl.DataFrame, url_column: str) -> int:
 def resolve_worker_count(cfg: Config, df: pl.DataFrame) -> int:
     """Resolve explicit or host-based concurrency for either downloader."""
     num_hosts = count_unique_hosts(df, cfg.url_column)
-    print(f"[Load] Unique hosts detected: {num_hosts}")
+    print(f"[Load] Unique hosts detected: {num_hosts}", file=sys.stderr)
     if cfg.workers is not None and cfg.workers > 0:
         workers = cfg.workers
-        print(f"[Config] Using configured workers: {workers}")
+        print(f"[Config] Using configured workers: {workers}", file=sys.stderr)
     else:
         workers = max(1, min(num_hosts * cfg.c_max, 10000))
-        print(f"[Config] Auto-sized worker pool: {workers} ({num_hosts} hosts × {cfg.c_max} c_max)")
+        print(
+            f"[Config] Auto-sized worker pool: {workers} ({num_hosts} hosts × {cfg.c_max} c_max)",
+            file=sys.stderr,
+        )
     return workers

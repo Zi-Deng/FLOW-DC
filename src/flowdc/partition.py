@@ -9,19 +9,27 @@ from . import integrity
 from .http import load_input_file
 
 
-def partition_manifest(input_path, output_dir, *, groups=1, url_column="url", method="host"):
-    if type(groups) is not int or groups < 1:
-        raise ValueError("groups must be a positive integer")
-    source, output = Path(input_path), Path(output_dir)
-    if output.exists():
-        raise FileExistsError(f"Partition destination exists: {output}")
+def partition_manifest(
+    input_path, output_dir, *, groups=1, url_column="url", method="host", input_format=None
+):
+    source = Path(input_path)
     raw = source.read_bytes()
-    frame = load_input_file(str(source))
+    frame = load_input_file(str(source), input_format)
     if source.read_bytes() != raw:
         raise ValueError("manifest changed while reading")
     if url_column not in frame.columns:
         raise ValueError(f"missing URL column: {url_column}")
     frame = integrity.stamp_frame(frame, integrity.digest(raw))
+    return partition_frame(frame, output_dir, groups=groups, url_column=url_column, method=method)
+
+
+def partition_frame(frame, output_dir, *, groups=1, url_column="url", method="host"):
+    """Write a previously validated snapshot without rereading a mutable manifest."""
+    if type(groups) is not int or groups < 1:
+        raise ValueError("groups must be a positive integer")
+    output = Path(output_dir)
+    if output.exists() or output.is_symlink():
+        raise FileExistsError(f"Partition destination exists: {output}")
     bins = [[] for _ in range(groups)]
     if method == "host":
         hosts = {}
