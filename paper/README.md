@@ -15,7 +15,10 @@ make reproduce
 
 Outputs appear under `../build/paper/`: the main PDF, supplement, standalone
 LuaLaTeX source/PDF, source ZIP and a receipt binding the current inputs and
-outputs. The standalone article embeds its bibliography and seven PDF figures.
+outputs. The build packages the exact staged input bytes and refuses publication
+if those inputs change during compilation. The standalone article embeds its
+bibliography and seven PDF figures; compiled citation/reference numbers, page
+count, extracted figure hashes and typesetting diagnostics are checked.
 The `check`, `single-file` and `source` targets rebuild their prerequisites.
 
 The article retains four matched short CVDF blocks, incomplete historical

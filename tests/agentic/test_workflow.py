@@ -250,6 +250,17 @@ class SnapshotTests(unittest.TestCase):
         with self.assertRaises(WorkflowError):
             review.safe_diff(self.repo, base, self.git("rev-parse", "HEAD"), self.config)
 
+    def test_private_diff_refuses_quoted_and_unicode_filenames(self):
+        (self.root / "memory").mkdir()
+        for name in ("研究.txt", 'quoted".txt', "back\\slash.txt", "tab\t.txt", "line\n.txt"):
+            base = self.git("rev-parse", "HEAD")
+            path = self.root / "memory" / name
+            path.write_text("private fixture that must never enter a packet")
+            self.git("add", "-f", "--", str(path))
+            self.git("commit", "-m", "unusual private filename")
+            with self.subTest(name=name), self.assertRaisesRegex(WorkflowError, "private/data"):
+                review.safe_diff(self.repo, base, self.git("rev-parse", "HEAD"), self.config)
+
     def test_empty_and_oversized_diff_refused(self):
         with self.assertRaises(WorkflowError):
             review.safe_diff(self.repo, self.head, self.head, self.config)

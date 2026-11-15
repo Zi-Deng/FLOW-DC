@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -96,6 +97,44 @@ def compile_paper(work):
         ],
         standalone,
     )
+    check_standalone(work, standalone)
+
+
+def check_standalone(work, standalone):
+    """Check compiled reference numbers, page count and extracted figure bytes."""
+    name = "FLOW-DC-single-file"
+    log = (standalone / (name + ".log")).read_text()
+    if re.search(r"undefined|multiply defined|Overfull|^!", log, re.M):
+        raise ValueError("Standalone article has unresolved references or typesetting errors")
+    modular_aux = (work / "build/FLOW-DC.aux").read_text()
+    standalone_aux = (standalone / (name + ".aux")).read_text()
+    for pattern in (r"\\bibcite\{([^{}]+)\}\{(\d+)\}", r"\\newlabel\{([^{}]+)\}\{\{([^{}]*)\}"):
+        expected, actual = [dict(re.findall(pattern, text)) for text in (modular_aux, standalone_aux)]
+        if not expected or expected != actual:
+            raise ValueError("Standalone citation/reference numbering differs from the modular article")
+
+    def pages(path):
+        info = subprocess.check_output(["pdfinfo", str(path)], text=True)
+        return int(re.search(r"Pages:\s+(\d+)", info).group(1))
+
+    if pages(work / "FLOW-DC.pdf") != pages(standalone / (name + ".pdf")):
+        raise ValueError("Standalone page count differs from the modular article")
+    assets = sorted((standalone / (name + "-assets")).glob("*.pdf"))
+    if len(assets) != 7 or any(sha(p) != sha(work / "figures" / p.name) for p in assets):
+        raise ValueError("Standalone figures differ from the modular article")
+    (work / "provenance/standalone-validation.json").write_text(
+        json.dumps(
+            {
+                "status": "passed",
+                "pages": pages(work / "FLOW-DC.pdf"),
+                "figures": len(assets),
+                "reference_numbering_matches": True,
+                "scope": "Fresh inline source; matching compiled reference numbers, pages and exact figure bytes",
+            },
+            indent=2,
+        )
+        + "\n"
+    )
 
 
 def build(output):
@@ -103,7 +142,11 @@ def build(output):
     with tempfile.TemporaryDirectory(prefix="flowdc-paper-") as temp:
         work = Path(temp) / "source"
         stage(work)
+        # Bind packaging and receipts to the exact staged originals, before generation.
+        inputs = {name: (work / name).read_bytes() for name in INPUTS}
         compile_paper(work)
+        if any((ROOT / name).read_bytes() != raw for name, raw in inputs.items()):
+            raise ValueError("Manuscript inputs changed during the build; outputs were not published")
         for name in ["FLOW-DC.pdf", "supplement.pdf", "FLOW-DC-single-file.tex"]:
             shutil.copy2(work / name, output / name)
         shutil.copy2(work / "standalone/FLOW-DC-single-file.pdf", output / "FLOW-DC-single-file.pdf")
@@ -115,14 +158,15 @@ def build(output):
             shutil.copy2(work / "sections" / name, output / "tables" / name)
         shutil.copytree(work / "build", output / "logs", dirs_exist_ok=True)
         shutil.copy2(work / "provenance/validation.json", output / "validation.json")
+        shutil.copy2(work / "provenance/standalone-validation.json", output / "standalone-validation.json")
         with zipfile.ZipFile(output / "FLOW-DC-source.zip", "w", zipfile.ZIP_DEFLATED) as archive:
             for name in sorted(INPUTS):
                 info = zipfile.ZipInfo(name, date_time=(2026, 1, 1, 0, 0, 0))
                 info.compress_type = zipfile.ZIP_DEFLATED
-                archive.writestr(info, (ROOT / name).read_bytes())
+                archive.writestr(info, inputs[name])
         receipt = {
             "status": "passed",
-            "inputs": {name: sha(ROOT / name) for name in INPUTS},
+            "inputs": {name: hashlib.sha256(raw).hexdigest() for name, raw in inputs.items()},
             "outputs": {
                 name: sha(output / name)
                 for name in [
@@ -131,6 +175,7 @@ def build(output):
                     "FLOW-DC-single-file.tex",
                     "FLOW-DC-single-file.pdf",
                     "FLOW-DC-source.zip",
+                    "standalone-validation.json",
                     "data/summaries.json",
                     "figures/manifest.json",
                     "tables/numbers.tex",

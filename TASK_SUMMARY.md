@@ -60,7 +60,7 @@ manuscript reproduction job added. Branch protection is unchanged.
   generated-output exclusions and workflow budgets passed. These checks are
   targeted checks, not a proof that all possible defects or secrets are absent.
 
-The retained workflow has 1,120 runtime lines and 516 test lines, within its
+The retained workflow has 1,131 runtime lines and 527 test lines, within its
 existing budgets. Native execution establishes local software behavior; it does
 not establish new public-service performance or general cluster scaling.
 
@@ -81,7 +81,13 @@ The first independent static review covered revision `a33679b1c74a0e1e91066ccd8f
 - Overwrite refuses ancestors of the working directory.
 - Diagnostics and consent prompts use stderr; acquisition stdout contains result JSON.
 
-The affected package/native suite passed 56 tests in 36.663 s after these repairs, and a newly built wheel passed installation/acquisition/verification outside the checkout. The initial three hosted jobs passed on the reviewed revision. Current-head CI and the second bounded review are pending. Review scope is professional static judgment, not exhaustive inspection. No merge, deployment or paper submission is performed.
+The affected package/native suite passed 56 tests in 36.663 s after these repairs, and a newly built wheel passed installation/acquisition/verification outside the checkout. The initial three hosted jobs passed on the reviewed revision. The second and final [static review](https://github.com/Zi-Deng/FLOW-DC/pull/55#pullrequestreview-5912190649) covered revision `5d4c841111805cda51c3afad65851be548868d06` with the same provider/model/effort and CLI version 2.1.312. It reported one P2 privacy issue and one P3 manuscript provenance issue. Both supported findings were repaired in the second round:
+
+- Review inventories use unquoted NUL-separated Git paths, with all excluded trees also removed by Git pathspecs. Regression cases cover Unicode, quotes, backslashes, tabs and newlines in private filenames.
+- Paper ZIPs and input hashes use the exact staged originals. Concurrent live-input edits abort publication before a receipt or ZIP is written.
+- Standalone qualification now compares compiled citation/reference numbering, page counts and exact embedded figure bytes, and rejects unresolved references or typesetting errors.
+
+Affected validation after the final repair: 28 workflow tests in 0.894 s, the concurrent-input publication regression in 0.007 s, and two isolated paper builds plus source-ZIP reproduction all passed. These are focused checks after the earlier complete local pass. Review scope is professional static judgment, not exhaustive inspection. All three hosted jobs passed on the last reviewed revision. Final-head CI will be recorded in the PR after publication. The final repair delta covers review-packet privacy, manuscript staging/standalone checks, their regression tests and documentation; it has not received a third automated review. Both allowed invocations and repair rounds are used. The PR remains draft for human delta assessment. No merge, deployment or paper submission is performed.
 
 ## Exact original prompt
 
@@ -217,6 +223,7 @@ Statuses describe the complete refactor relative to `f9362f4`, including moves. 
 - `tests/test_distributed.py`
 - `tests/test_experiments.py`
 - `tests/test_native.py`
+- `tests/test_paper.py`
 
 ### Modified
 

@@ -62,10 +62,12 @@ def snapshot(repo, head, output, config):
 
 def safe_diff(repo, base, head, config, source_bytes=0):
     revision = f"{base}...{head}"
-    changes = [
-        line.split("\t", 1)
-        for line in repo.git("diff", "--name-status", "--no-renames", revision).splitlines()
-    ]
+    fields = repo.git("diff", "--name-status", "--no-renames", "-z", revision).split("\0")
+    if fields[-1] == "":
+        fields.pop()
+    if len(fields) % 2:
+        raise WorkflowError("Malformed NUL-separated diff inventory")
+    changes = list(zip(fields[::2], fields[1::2], strict=True))
     if any(
         name.startswith(EXCLUDED) and not (status == "D" and name.startswith("archives/"))
         for status, name in changes
@@ -74,7 +76,14 @@ def safe_diff(repo, base, head, config, source_bytes=0):
     # Retired tracked archives may be deleted, but their old contents stay out of
     # the packet. Private-memory edits and renames remain refused above.
     diff = repo.git(
-        "diff", "--no-ext-diff", "--no-textconv", "--no-renames", revision, "--", ".", ":(exclude)archives/**"
+        "diff",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--no-renames",
+        revision,
+        "--",
+        ".",
+        *[":(exclude)" + prefix + "**" for prefix in EXCLUDED],
     )
     if not diff.strip() or source_bytes + len(diff.encode()) > config["max_snapshot_bytes"]:
         raise WorkflowError("Empty diff or source-plus-diff budget exceeded")
@@ -156,12 +165,14 @@ def prepare(repo, pr, config, *, issue=None, plan=None, context_key=None, **over
                 for name in repo.git(
                     "diff",
                     "--name-only",
+                    "-z",
                     "--diff-filter=D",
                     "--no-renames",
                     f"{base}...{head}",
                     "--",
                     "archives/",
-                ).splitlines()
+                ).split("\0")
+                if name
             ],
         },
     }
