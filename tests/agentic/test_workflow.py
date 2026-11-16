@@ -230,6 +230,37 @@ class SnapshotTests(unittest.TestCase):
             with self.assertRaisesRegex(WorkflowError, "private/data"):
                 review.safe_diff(self.repo, base, target, self.config)
 
+    def test_deleted_archive_content_is_omitted_but_archive_edits_are_refused(self):
+        (self.root / "archives").mkdir()
+        path = self.root / "archives/old.txt"
+        path.write_text("historical archive content")
+        self.git("add", ".")
+        self.git("commit", "-m", "archive fixture")
+        base = self.git("rev-parse", "HEAD")
+        path.unlink()
+        (self.root / "a.py").write_text("current source\n")
+        self.git("add", "-A")
+        self.git("commit", "-m", "retire archive")
+        diff = review.safe_diff(self.repo, base, self.git("rev-parse", "HEAD"), self.config)
+        self.assertIn("current source", diff)
+        self.assertNotIn("historical archive content", diff)
+        path.write_text("new archive content")
+        self.git("add", ".")
+        self.git("commit", "-m", "archive modification")
+        with self.assertRaises(WorkflowError):
+            review.safe_diff(self.repo, base, self.git("rev-parse", "HEAD"), self.config)
+
+    def test_private_diff_refuses_quoted_and_unicode_filenames(self):
+        (self.root / "memory").mkdir()
+        for name in ("研究.txt", 'quoted".txt', "back\\slash.txt", "tab\t.txt", "line\n.txt"):
+            base = self.git("rev-parse", "HEAD")
+            path = self.root / "memory" / name
+            path.write_text("private fixture that must never enter a packet")
+            self.git("add", "-f", "--", str(path))
+            self.git("commit", "-m", "unusual private filename")
+            with self.subTest(name=name), self.assertRaisesRegex(WorkflowError, "private/data"):
+                review.safe_diff(self.repo, base, self.git("rev-parse", "HEAD"), self.config)
+
     def test_empty_and_oversized_diff_refused(self):
         with self.assertRaises(WorkflowError):
             review.safe_diff(self.repo, self.head, self.head, self.config)

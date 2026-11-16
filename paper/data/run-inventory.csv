@@ -1,0 +1,37 @@
+study,run_id,method,block,status,input_sha256,credited_bytes,elapsed_s,coverage,reason
+CVDF 2026-10-22,openimages-cvdf-evaluation-0-gradient-candidate-v2,PAARC-Grad,1,complete,8934578d0f4f33069c1e604a93ec0e449301c871048f1422470d49da4833f0df,161556589,14.590815298999985,1.0,
+CVDF 2026-10-22,openimages-cvdf-evaluation-0-img2dataset-1.47.0,img2dataset,1,complete,8934578d0f4f33069c1e604a93ec0e449301c871048f1422470d49da4833f0df,161556589,12.987401653999996,1.0,
+CVDF 2026-10-22,openimages-cvdf-evaluation-0-ratio-v2,PAARC-Ratio,1,complete,8934578d0f4f33069c1e604a93ec0e449301c871048f1422470d49da4833f0df,161556589,13.842277697000043,1.0,
+CVDF 2026-10-22,openimages-cvdf-evaluation-1-gradient-candidate-v2,PAARC-Grad,2,complete,60280d0d8005839769c59705dbc3a8d11d87145d0d39a3c416ccd0ad29a728d7,165006387,14.442303864999985,1.0,
+CVDF 2026-10-22,openimages-cvdf-evaluation-1-img2dataset-1.47.0,img2dataset,2,complete,60280d0d8005839769c59705dbc3a8d11d87145d0d39a3c416ccd0ad29a728d7,165006387,13.160762993000048,1.0,
+CVDF 2026-10-22,openimages-cvdf-evaluation-1-ratio-v2,PAARC-Ratio,2,complete,60280d0d8005839769c59705dbc3a8d11d87145d0d39a3c416ccd0ad29a728d7,165006387,14.541818932999945,1.0,
+CVDF 2026-10-22,openimages-cvdf-evaluation-2-gradient-candidate-v2,PAARC-Grad,3,complete,13adab85f0b49a1201ff274d384e6cff8ae648b5ac142b2a968553af0175d136,158887958,14.810513728000046,1.0,
+CVDF 2026-10-22,openimages-cvdf-evaluation-2-img2dataset-1.47.0,img2dataset,3,complete,13adab85f0b49a1201ff274d384e6cff8ae648b5ac142b2a968553af0175d136,158887958,12.467243575999987,1.0,
+CVDF 2026-10-22,openimages-cvdf-evaluation-2-ratio-v2,PAARC-Ratio,3,complete,13adab85f0b49a1201ff274d384e6cff8ae648b5ac142b2a968553af0175d136,158887958,15.95257075500001,1.0,
+CVDF 2026-10-22,openimages-cvdf-evaluation-3-gradient-candidate-v2,PAARC-Grad,4,complete,26cd8b2528471aafa6c52abe628339f0b3cbe01495fbde9f2b47ed25b8b1c468,161600202,16.844036893000066,1.0,
+CVDF 2026-10-22,openimages-cvdf-evaluation-3-img2dataset-1.47.0,img2dataset,4,complete,26cd8b2528471aafa6c52abe628339f0b3cbe01495fbde9f2b47ed25b8b1c468,161600202,13.368688229999975,1.0,
+CVDF 2026-10-22,openimages-cvdf-evaluation-3-ratio-v2,PAARC-Ratio,4,complete,26cd8b2528471aafa6c52abe628339f0b3cbe01495fbde9f2b47ed25b8b1c468,161600202,15.138772445999962,1.0,
+TaiBIF earlier validation,validation-1-balanced-ratio-v2,PAARC-Ratio,1,complete,,4218836527,487.922061071,0.837554931640625,Bounded-window completion is not whole-manifest completion.
+TaiBIF earlier validation,validation-1-balanced-gradient-candidate-v2,PAARC-Grad,1,stopped,,,541.071006014,,Bounded-window completion is not whole-manifest completion.
+TaiBIF earlier validation,validation-1-high-ratio-v2,PAARC-Ratio,1,no_candidate,,,,,Bounded-window completion is not whole-manifest completion.
+TaiBIF earlier validation,validation-1-high-gradient-candidate-v2,PAARC-Grad,1,no_candidate,,,,,Bounded-window completion is not whole-manifest completion.
+TaiBIF earlier validation,validation-2-high-gradient-candidate-v2,PAARC-Grad,2,no_candidate,,,,,Bounded-window completion is not whole-manifest completion.
+TaiBIF earlier validation,validation-2-balanced-ratio-v2,PAARC-Ratio,2,complete,,4142852846,444.597552382,0.823028564453125,Bounded-window completion is not whole-manifest completion.
+TaiBIF earlier validation,validation-2-high-ratio-v2,PAARC-Ratio,2,no_candidate,,,,,Bounded-window completion is not whole-manifest completion.
+TaiBIF earlier validation,validation-2-balanced-gradient-candidate-v2,PAARC-Grad,2,complete,,4340961412,450.43349563999993,0.8607177734375,Bounded-window completion is not whole-manifest completion.
+TaiBIF earlier validation,validation-3-balanced-gradient-candidate-v2,PAARC-Grad,3,stopped,,,600.320835713,,Bounded-window completion is not whole-manifest completion.
+TaiBIF earlier validation,validation-3-balanced-ratio-v2,PAARC-Ratio,3,unstarted,,,,,Bounded-window completion is not whole-manifest completion.
+TaiBIF earlier validation,validation-3-high-ratio-v2,PAARC-Ratio,3,unstarted,,,,,Bounded-window completion is not whole-manifest completion.
+TaiBIF earlier validation,validation-3-high-gradient-candidate-v2,PAARC-Grad,3,unstarted,,,,,Bounded-window completion is not whole-manifest completion.
+TaiBIF 2026-10-22 deferred,deferred-taibif-1-PAARC-Ratio,PAARC-Ratio,1,unstarted,,,,,"Image-media rights not qualified before acquisition; inventory identifier, not executed run ID."
+TaiBIF 2026-10-22 deferred,deferred-taibif-1-PAARC-Grad,PAARC-Grad,1,unstarted,,,,,"Image-media rights not qualified before acquisition; inventory identifier, not executed run ID."
+TaiBIF 2026-10-22 deferred,deferred-taibif-1-img2dataset,img2dataset,1,unstarted,,,,,"Image-media rights not qualified before acquisition; inventory identifier, not executed run ID."
+TaiBIF 2026-10-22 deferred,deferred-taibif-2-PAARC-Ratio,PAARC-Ratio,2,unstarted,,,,,"Image-media rights not qualified before acquisition; inventory identifier, not executed run ID."
+TaiBIF 2026-10-22 deferred,deferred-taibif-2-PAARC-Grad,PAARC-Grad,2,unstarted,,,,,"Image-media rights not qualified before acquisition; inventory identifier, not executed run ID."
+TaiBIF 2026-10-22 deferred,deferred-taibif-2-img2dataset,img2dataset,2,unstarted,,,,,"Image-media rights not qualified before acquisition; inventory identifier, not executed run ID."
+TaiBIF 2026-10-22 deferred,deferred-taibif-3-PAARC-Ratio,PAARC-Ratio,3,unstarted,,,,,"Image-media rights not qualified before acquisition; inventory identifier, not executed run ID."
+TaiBIF 2026-10-22 deferred,deferred-taibif-3-PAARC-Grad,PAARC-Grad,3,unstarted,,,,,"Image-media rights not qualified before acquisition; inventory identifier, not executed run ID."
+TaiBIF 2026-10-22 deferred,deferred-taibif-3-img2dataset,img2dataset,3,unstarted,,,,,"Image-media rights not qualified before acquisition; inventory identifier, not executed run ID."
+TaiBIF 2026-10-22 deferred,deferred-taibif-4-PAARC-Ratio,PAARC-Ratio,4,unstarted,,,,,"Image-media rights not qualified before acquisition; inventory identifier, not executed run ID."
+TaiBIF 2026-10-22 deferred,deferred-taibif-4-PAARC-Grad,PAARC-Grad,4,unstarted,,,,,"Image-media rights not qualified before acquisition; inventory identifier, not executed run ID."
+TaiBIF 2026-10-22 deferred,deferred-taibif-4-img2dataset,img2dataset,4,unstarted,,,,,"Image-media rights not qualified before acquisition; inventory identifier, not executed run ID."

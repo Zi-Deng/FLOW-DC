@@ -1,0 +1,171 @@
+\pdfinfoomitdate=1
+\pdftrailerid{}
+\pdfsuppressptexinfo=15
+\documentclass[10pt]{article}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern,amsmath,amssymb,booktabs,array,longtable,graphicx,enumitem}
+\usepackage[margin=.85in]{geometry}
+\usepackage{xcolor,fancyhdr,hyperref,microtype}
+\widowpenalty=10000
+\clubpenalty=10000
+\definecolor{ink}{HTML}{19364A}
+\definecolor{accent}{HTML}{2265BD}
+\hypersetup{colorlinks=true,linkcolor=accent,urlcolor=accent,pdftitle={FLOW-DC: Supplementary Material},pdfauthor={Zi Deng, Nirav Merchant, Jeffrey J. Rodriguez}}
+\pagestyle{fancy}\fancyhf{}\fancyhead[L]{\small\textcolor{ink}{FLOW-DC / SUPPLEMENTARY MATERIAL}}\fancyfoot[R]{\thepage}
+\setlength{\headheight}{14pt}
+\setlength{\parskip}{4pt}
+\setlength{\parindent}{0pt}
+\setlist{nosep,leftmargin=*}
+\newcommand{\grad}{PAARC-Grad}
+\newcommand{\ratio}{PAARC-Ratio}
+\renewcommand{\thesection}{S\arabic{section}}
+\renewcommand{\thetable}{S\arabic{table}}
+\renewcommand{\thefigure}{S\arabic{figure}}
+\begin{document}
+{\LARGE\bfseries\color{ink} FLOW-DC}\par
+{\large Supplementary methods, evidence, and reproducibility}\par
+Zi Deng, Nirav Merchant, and Jeffrey J. Rodriguez\par
+University of Arizona\par\medskip
+This supplement accompanies \emph{FLOW-DC: A Large-Scale Distributed Downloader Utilizing Policy-Aware Adaptive Request Control}. It specifies the implemented controller, the available acquisition evidence, and the limits of the distributed engineering qualification. Numerical tables and figures are regenerated from the package's included data; no acquisition is performed by the build.
+
+\section{Controller Identity and Measurement Contract}
+Table~\ref{tab:identity} preserves the historical selectors recorded by the acquisitions. The current package exposes \texttt{paarc-ratio} and \texttt{paarc-grad}; its transition system is \texttt{DelayPolicy.step} in \nolinkurl{src/flowdc/controllers.py}. Integration uses \texttt{ObservationBuffer}, the admission layer, and HTTP timing in \nolinkurl{src/flowdc/http.py}. Deterministic transition comparisons preserve the controller behavior while the public interface changes.
+\begin{table}[h]\centering\small
+\caption{Manuscript names and implementation identity}\label{tab:identity}
+\begin{tabular}{lll}\toprule
+Name & Historical selector & Scope\\\midrule
+PAARC-Ratio & \texttt{ratio-v2} & Baseline-relative delay regulation\\
+PAARC-Grad & \texttt{gradient-candidate-v2} & Delay budget and gradient regulation\\
+img2dataset & \texttt{img2dataset-1.47.0} & Pinned acquisition tool\\\bottomrule
+\end{tabular}\end{table}
+The delay sample is a successful response's final-hop header-dispatch-to-first-body-byte interval. Body completion makes the sample available; local output persistence is a separate event. A complete HTTP body can inform control even if a subsequent local save fails. A local persistence error is not a server congestion observation. The current buffer admits finite positive samples from eligible HTTP 200 responses, and requires both dispatch and completion observations to be recent. With a rolling window, sparse observations can accumulate until the sample gate is met; an eligible update consumes them once. Overload clears pending observations.
+
+\begin{table}[h]\centering\small
+\caption{Controller constants in the reported configurations}
+\begin{tabular}{p{.46\linewidth}p{.42\linewidth}}\toprule
+Quantity & Value / interpretation\\\midrule
+Control opportunity; fresh window & 1 s; 2 s\\
+Minimum eligible observations; stale gap & 5; 5 s\\
+Initial and minimum admission limits & 4; 2 requests\\
+Delay and gradient time constants & 1 s each\\
+Baseline lifetime; minimum probe wait & 120 s; 1 s\\
+Numerical baseline floor; excess-delay floor & $10^{-6}$ s; $10^{-3}$ s\\
+Delay budget & $2b_t$\\
+Hard excess-delay threshold & $\max(10^{-3}\mathrm{s},4b_t)$\\
+Hard reduction; gradient soft reduction & 0.50; 0.85, floor rounded\\
+Utilization required for positive growth & $I_t\geq0.8C_t$\\
+Startup growth increment cap & 64 requests/update\\
+Gradient hold; reduction thresholds & 0.10 s$^{-1}$; 0.25 s$^{-1}$\\
+Reduction persistence; recovery interval & 2 eligible updates; 1 s\\
+Reexploration condition & 3 eligible updates at $\bar g_t\leq-0.1$ s$^{-1}$\\
+Ratio factor; additive headroom & clipped to [0.85,1.10]; 1 request\\\bottomrule
+\end{tabular}\end{table}
+The baseline percentile uses linear interpolation between adjacent ordered samples. During ordinary operation, a lower eligible tenth percentile immediately replaces the baseline and resets the derivative state. During refresh, only observations dispatched after the probe began are accepted. The limit falls to two requests, but healthy outstanding requests are allowed to complete. Refresh waits for the minimum probe interval, enough eligible observations, and at most two outstanding requests. The new baseline may be higher than the expired one.
+
+\section{Priority Order and State Transitions}
+The controller is deterministic given its prior state, monotonic time, eligible delays, overload flag, and inflight count. Every return clips the integer limit into its configured bounds. The following ordering is essential; applying a positive-growth rule before an earlier safeguard would describe a different algorithm.
+\begin{enumerate}
+\item \textbf{Overload:} halve the limit, clear delay/derivative state and the persistence count, enter recovery, and return. This branch does not require successful-delay samples.
+\item \textbf{Expired baseline:} if no probe is active, begin one, mark exploration eligible, reduce admission to the minimum, clear derivative state, and return.
+\item \textbf{Insufficient evidence:} hold on fewer than five eligible observations. Reset the reduction-persistence count. Clear derivative state if the last eligible observation is at least five seconds old.
+\item \textbf{Baseline update:} complete an active probe only after its drain and freshness requirements hold. Otherwise hold. Outside a probe, initialize the baseline or replace it with a lower eligible percentile.
+\item \textbf{Signal initialization:} after a reset or stale gap, initialize smoothed excess delay and smoothed median delay, record the time, and hold. A subsequent eligible update computes the elapsed-time filters and derivative.
+\item \textbf{Hard excess delay:} halve the limit when smoothed excess delay reaches the hard threshold; clear derivative state and enter recovery.
+\item \textbf{Recovery:} while the recovery deadline has not elapsed, hold the limit and reset gradient persistence. Filter updates can occur before this hold.
+\item \textbf{Exploration eligibility:} update the falling-gradient counter. Three sufficiently negative gradients reenable exploration. A smoothed delay at or above the budget disables exploration, including on that same update.
+\item \textbf{Utilized exploration:} apply bounded multiplicative startup growth when exploration remains enabled and the current limit is utilized.
+\item \textbf{Method-specific regulation:} apply the ratio rule, or the gradient method's ordered delay-budget reduction, persistent-gradient reduction, gradient hold, utilization hold, and bounded additive increase.
+\end{enumerate}
+
+\begin{figure}[h]\centering
+\includegraphics[width=.99\linewidth]{figures/paarc-phases.pdf}
+\caption{Logical PAARC phases. The implementation uses state variables and priority branches rather than an explicit five-state enumeration. Sparse or stale evidence and overload safeguards prevent unsupported positive growth.}
+\end{figure}
+For \ratio{}, the ordinary proposal $\lfloor C_t r_t+1\rfloor$ can increase by one when $r_t=1$. It is accepted only if it is a nonincrease or utilization is sufficient. Unlike a hard reduction, an ordinary ratio decrease does not clear the filters or start a recovery interval. For \grad{}, a delay-budget or persistent-gradient reduction clears the filters and starts recovery. The next eligible sample set therefore initializes rather than immediately calculating another gradient. Startup can be reenabled by falling delay, but the delay-budget check still has priority.
+
+The abstraction of delay as a queue proxy is limited. A final-hop response includes service and network effects and may be influenced by object selection, server scheduling, or client execution. The normalization by $b_t$ makes the derivative comparable relative to a low-delay reference; it does not convert the signal to transport RTT or identify server queue occupancy.
+
+\section{Measured Acquisition Protocols}
+\subsection{Open Images / CVDF}
+The public-data batch uses CVDF-hosted Open Images files selected from publisher metadata. The retained metadata snapshot has SHA-256 \texttt{05f3d68dbbb03728d1a37e51479f4f35c062b871e1a6cae8c4cefbe0e0c80ed0}. The prepared population contains 1,743,042 rows. Per-record attribution and rights information are retained by the acquisition study. Hosted renditions may already be resized: the verifier establishes integrity and common delivered bytes, not identity to Flickr originals referenced by another digest field.
+
+Configuration selection evaluated four predetermined choices per method on separate inputs. Adaptive choices combined growth factors 1.25/1.5 with baseline lifetimes 10/120 s, holding the target delay ratio at two. Tool choices used 8, 32, 96, or 192 threads with one process. The selected adaptive setting is growth 1.5 and lifetime 120 s; the selected tool has 192 threads. Selection results are not independent efficacy replications. Four fresh, mutually disjoint evaluation manifests each contain 512 rows and use balanced method ordering. The main paper reports only the three requested methods; other historical arms are outside its comparative scope and have not been relabeled.
+
+The downloader uses a 30-s timeout and one total attempt in the retained configuration. img2dataset disables resizing, all reencoding, ordinary retries, and the additional shard retry path. Its native timeout and connection semantics remain implementation-specific. A common outer job limit and output verifier bound the complete job. FLOW-DC verification additionally inspects its attempt/control records; the tool's verifier inspects its row ledger and archive. This asymmetry is included in the practical endpoint and disclosed in the native-period sensitivity analysis rather than removed from the primary result.
+
+The execution record identifies a single downloader on Jetstream2. Manager and origin-role VMs are required by the installed operational topology but do not serve experimental images. The retained rate observation identifies the downloader and origin-role instances as flavor ID 4 (8 SUs/h each) and the manager as flavor ID 5 (16 SUs/h). These are observed operational rates, not measured CPU throughput or network capacity. The compact manuscript data do not contain a full guest CPU, memory, storage, kernel, and package inventory; those details must be restored from the deployment/runtime records before a hardware-specific reproducibility claim. The earlier manuscript's cluster-wide memory figure is not substituted for guest memory.
+
+All twelve selected evaluation jobs finish and deliver 100\% coverage. The broader batch's later TaiBIF stratum was deferred before image acquisition because independent image-media rights were not qualified. For the three methods in this paper, twelve intended TaiBIF evaluation cells in that batch remain unstarted; they are distinct from the earlier TaiBIF validation described below. Missing source strata are not zero-goodput observations. The package records this exclusion explicitly.
+
+\subsection{Additional concurrency tests}
+The authors supplied four additional verified end-to-end goodput measurements for img2dataset at concurrency 96: 6.12, 6.33, 6.74, and 6.26 MB/s, with arithmetic mean 6.3625 MB/s. The report identifies the same four 512-URL Open Images blocks and timing definition, but execution used a different machine from the retained comparison. Hardware details, raw results, input hashes, elapsed times, and coverage records for these additional tests are not included in this artifact. The configurations share one display in the article, but these observations do not enter the original matched log-ratio analysis. Missing time and coverage values are not reconstructed from the original machine's byte totals.
+
+At configured concurrency 384, the authors report five runs, all stopped before completion for time reasons after severe slowdown. Observed activity fell to approximately two simultaneous requests. This is a qualitative concurrent-request observation, not two requests per second and not a trace-integrated mean. No HTTP errors were recorded. Completed-run goodput, completion time, and coverage are unavailable; the five stopped dispositions remain explicit rather than becoming zero-goodput runs. The observation is consistent with the author's suspicion of throttling, but cannot distinguish server policy from other network or client bottlenecks. It does not establish that completion would have been impossible with more time.
+
+\texttt{data/author-concurrency.json} preserves the supplied values, the five-run stopped count, the machine distinction, and the limits of the available record. No synthetic observations or successful replacement runs are added. The numerical summary and Figure~5 in the article are rebuilt from this file together with the original retained measurements.
+
+\subsection{TaiBIF validation}
+The retained validation uses 32,768 requested rows and bounded acquisition windows. \ratio{} uses growth 1.25 and \grad{} uses growth 1.5. Both use a delay ratio of two and a 120-s baseline lifetime. The controller ceiling is 512 and the request-execution ceiling is 256; the smaller execution resource can limit realized activity even if the controller requests more. These historical settings are not silently transferred to the 192-limit Open Images comparison.
+
+Table~\ref{tab:tai-status} preserves all twelve intended validation dispositions. ``No candidate'' means no configuration qualified for that arm's requested target; ``unstarted'' means no validation execution occurred. Neither means a completed zero-performance run. ``Stopped'' denotes a deadline-interrupted processing path. A completed bounded window still has undispatched rows, so its coverage is below 100\%.
+\begin{table}[h]\centering\small
+\caption{TaiBIF validation inventory}\label{tab:tai-status}
+\begin{tabular}{cllll}\toprule
+Block & Target & Method & Status & Verified MB/s\\\midrule
+1 & Balanced & PAARC-Ratio & Complete window & 8.647\\
+1 & Balanced & PAARC-Grad & Stopped & ---\\
+1 & High activity & PAARC-Ratio & No candidate & ---\\
+1 & High activity & PAARC-Grad & No candidate & ---\\
+2 & Balanced & PAARC-Ratio & Complete window & 9.318\\
+2 & Balanced & PAARC-Grad & Complete window & 9.637\\
+2 & High activity & PAARC-Ratio & No candidate & ---\\
+2 & High activity & PAARC-Grad & No candidate & ---\\
+3 & Balanced & PAARC-Ratio & Unstarted & ---\\
+3 & Balanced & PAARC-Grad & Stopped & ---\\
+3 & High activity & PAARC-Ratio & Unstarted & ---\\
+3 & High activity & PAARC-Grad & Unstarted & ---\\\bottomrule
+\end{tabular}\end{table}
+In block 2, \ratio{} dispatches 26,986 rows and credits 26,969; \grad{} dispatches 28,222 and credits 28,204. Thus, 17 and 18 dispatched rows, respectively, are not credited, in addition to undispatched rows. The compact summaries do not provide a reliable causal breakdown for these residuals, and the paper does not attribute them to throttling. The corresponding completed control records contain one baseline probe for each arm. \grad{} records 22 delay-budget decreases, four gradient holds, and no persistent-gradient decrease. That exposure supports the statement that the implementation exercised baseline refresh and delay-budget feedback in this run; it cannot establish the isolated efficacy of the gradient mechanism.
+
+The stopped block-3 \grad{} execution reaches a peak of 166 in its retained activity summary, but lacks completed output verification. It is therefore excluded from complete-run goodput and is not evidence of sustained activity above 150. No successful replacement is substituted for either stopped first attempt. The study was closed with these gaps retained.
+
+\subsection{Timing, pairing, and uncertainty}
+For block $j$, define $\ell_j=\log(G_{A,j}/G_{T,j})$, where $T$ is img2dataset. With $n=4$, the reported geometric ratio and ordinary 95\% interval are
+\[
+\exp(\bar\ell),\qquad \exp\!\left(\bar\ell\pm t_{0.975,3}\,s_{\ell}/\sqrt{4}\right).
+\]
+These intervals concern four retained paired runs and are not multiplicity-adjusted. Requests within a run are not replicates. The single complete TaiBIF pair receives no run-population confidence interval. Completion time there is not an equal-work makespan comparison because the two bounded windows credit different byte totals.
+
+Time-average activity over $[a,b]$ is $\bar I=(b-a)^{-1}\int_a^b I(t)\,dt$, computed from request-event overlap. The whole-HTTP interval spans the first dispatch through the last completed request event. The designated 30--90 s reporting window is a separate interval. Whole-HTTP throughput divides the job's verified bytes by the HTTP span; end-to-end goodput divides them by the full job clock. Neither should be mixed with a median admission setting or a mean over only selected busy instants.
+
+\section{Distributed Engineering Qualification}
+The additional campaign uses real iNaturalist Open Data and CVDF Open Images objects. The iNaturalist frame contains two million distinct JPEG records with explicit CC0 or CC-BY licenses and retained attribution, extracted from a bounded metadata-export prefix. It is not a uniform sample of the full iNaturalist collection. The CVDF frame contains 1,743,042 publisher-metadata records. Both image routes use S3. Hosted renditions are the verification target, not a photographer's original uploaded file or a different rendition identified by another digest.
+
+Engineering uses 512 and 2,048 rows on one worker for both sources, and on two workers for iNaturalist. The two sizes share a nested frozen prefix. These are sizing and correctness checks, not fresh efficacy replications. PAARC starts at four, has minimum two, growth factor 1.5, target delay ratio 2 and baseline lifetime 120 s. img2dataset tests process/thread pairs $(1,32)$, $(1,192)$ and $(8,24)$. Aggregate concurrency is bounded to 192; per-worker limits or threads are halved on two workers. Each PAARC controller remains local. All methods use identical original work within a configuration-size condition, zero image retry, original hosted bytes and uncompressed archives.
+
+A native TaskVine manager stages partitions, receives artifacts, and independently verifies every credited row. The manager has 16 virtual CPUs and 60 GiB of memory; each downloader has 8 virtual CPUs and 30 GiB, with task limits of 8 cores and 24 GiB. The runtime is the retained patched TaskVine 7.17.2 build. Exact source and runtime identities accompany the campaign package. Unlike the historical worker-verified endpoint, the new job clock includes artifact return to the manager and its verification. Rates with these different boundaries are not pooled.
+
+The finite campaign admits at most 24 hours from its first activation, no new image job after 21 hours, and 1,000 conservatively accounted new SUs. Each VM window is 3,600 s including 600 s for cleanup. Complete-job and native-process ceilings are 2,400 s and 1,800 s; the independent audit ceiling is 1,200 s. Response bodies are bounded to 64 GiB per job and 3 TiB cumulatively. The planned long study requires matched workloads targeting 720 s of HTTP activity, with an intended 600 s minimum. Its short-run affine forecast is an admission rule, not a scientific result about unexecuted long jobs.
+
+The first engineering task completed worker acquisition but stopped during manager unpacking because native integrity aliases were encoded as tar hardlinks. The repair retained one canonical archive and journal metadata, omitted duplicate payload aliases, and emitted regular files. Receiver path/type checks and independent verification were preserved. The original stopped attempt remains in the inventory, together with one explicitly identified engineering correction. This correction does not authorize a favorable replacement of any evaluation attempt.
+
+\input{sections/engineering-status}
+
+In the 2,048-row one-worker Ratio trace, the limit remained four although its ceiling was 192. A lower baseline caused the smoothed delay to exceed the two-baseline budget, ending startup. The rounded ratio proposal then remained unchanged. The implementation labels this outcome \texttt{utilization\_hold} even when utilization is sufficient; the label is not proof of insufficient demand. This observed behavior is not a server-side rate-limit identification. It also cautions against extrapolating a reliable steady-state rate from two short sizes.
+
+\section{Reproducibility and Evidence Boundaries}
+\subsection{Files and build}
+\texttt{FLOW-DC.tex} and \texttt{sections/} contain the main article. \texttt{supplement.tex} builds this file. \texttt{references.bib} supplies the bibliography. All figures, including the architectural diagrams, are vector PDFs recreated by \texttt{scripts/generate.py}. Numerical inputs are \texttt{data/measured.json}, \texttt{data/engineering-campaign.json}, and \texttt{data/author-concurrency.json}. The last file contains separately identified author-reported measurements; their raw acquisition records are not included. The scripts require Python, NumPy, SciPy, and Matplotlib; LaTeX uses IEEEtran for the main article and a separate article layout for the supplement.
+
+From a source-only copy, install \texttt{requirements.txt}, then run \texttt{make all} and \texttt{make check}. Neither command contacts a data host or activates a VM. The checks verify arithmetic, matched CVDF inputs and bytes, retained status counts, the bibliography, figure provenance, evidence classifications, page length, and resolved LaTeX references. They do not rerun acquisition or independently reverify remote image payloads. The copied measured records are retained analysis outputs, not a substitute for the raw scientific artifact.
+
+\subsection{Source and claim mapping}
+The Open Images results use source revision \nolinkurl{239cdacb0091e93692ae7d6770e83789880a2a6d}. \nolinkurl{provenance/evidence.json} binds the packaged numerical inputs to the preserved original records and maps the historical selectors to the current package. Original records remain unchanged in private evidence storage. The software regression suite compares the refactored controllers against frozen transitions from the historical implementation; these comparisons establish behavior preservation, not new performance observations.
+
+\nolinkurl{claim-evidence.csv} links statements to their numerical inputs, manuscript locations and limitations. The generated figure manifest distinguishes conceptual diagrams, historical measurements and engineering measurements. Build receipts bind active manuscript inputs and current output hashes. The source ZIP contains the explicit inputs needed to repeat the manuscript build.
+
+\subsection{Remaining scientific requirements}
+The current evidence does not establish a long-run goodput advantage over img2dataset, causal efficacy of the gradient mechanism, sustained 150-request operation, or four-worker scaling. The minimum study narrows its intended claims to matched practical acquisition on the selected public collections and one/two-worker configurations. A feasible long-run protocol and completed matched blocks remain necessary before those claims can be made. If finite limits and required duration cannot both be met, a documented scope or timing amendment must precede acquisition; incomplete work must not be relabeled as confirmation.
+
+No synthetic performance values or unexecuted ablation effects are included in the revised empirical results. The preceding manuscript remains recoverable in its private archive. Negative historical results, the stopped first engineering attempt, incomplete TaiBIF validation and any unstarted long-run cells remain part of the evidence record.
+\end{document}

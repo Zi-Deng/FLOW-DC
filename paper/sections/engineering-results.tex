@@ -1,0 +1,31 @@
+\subsection{Distributed Execution Qualification and Workload Sizing}
+We additionally qualify the matched TaskVine execution path on iNaturalist Open Data and CVDF Open Images. These short jobs serve a different purpose from the preceding acquisition comparisons: they check partition placement, returned artifacts, and the resource requirements for a later long-run study. They are not independent efficacy replications, and their measured durations are not substituted for a ten-minute evaluation.
+
+The manager has 16 virtual CPUs and 60 GiB of memory, while each downloader has eight virtual CPUs and 30 GiB. Each task receives eight cores and a 24-GiB memory budget. One- and two-worker iNaturalist jobs and one-worker Open Images jobs use 512 and 2,048 original rows. The two PAARC settings are unchanged. The tool additionally exercises the predefined process/thread configurations $(1,32)$, $(1,192)$, and $(8,24)$. Two-worker jobs halve the per-worker request ceiling or thread count, maintaining an aggregate ceiling of 192. Each worker runs its own local controller; a shared global adaptive authority is not evaluated. Every credited partition is independently verified after return to the manager.
+
+\input{sections/engineering-status}
+
+\begin{figure*}[t]\centering
+\includegraphics[width=.97\textwidth]{figures/engineering-duration.pdf}
+\caption{Measured 2,048-row execution qualification. Each bar is one completed engineering configuration, not a mean of independent efficacy replications. Color shows the HTTP span; gray shows the remainder of the manager interval. The two-worker span is the maximum individual worker span.}
+\label{fig:engineering}\end{figure*}
+
+\begin{table*}[t]\centering\small
+\caption{Engineering measurements used for workload sizing}
+\label{tab:engineering}
+\begin{tabular}{lr lrr@{\hspace{2em}}rr}\toprule
+Source & Workers & Method (processes, threads) & HTTP 512 (s) & HTTP 2,048 (s) & Total 2,048 (s) & Coverage (\%)\\\midrule
+\tableinput{sections/engineering-table.tex}
+\bottomrule\end{tabular}
+\par\vspace{3pt}\footnotesize One completed engineering attempt per configuration and size; missing measurements are shown as dashes. Coverage refers to the 2,048-row job. Original stopped attempts remain in the supplement and artifact inventory.
+\end{table*}
+
+These measurements also expose a workload-sizing constraint. A common manifest must contain enough work for the fastest configuration to acquire images for at least 600 s, while allowing every candidate to finish native processing and manager verification within finite deadlines. Let $\widehat H_m(n)$, $\widehat N_m(n)$, and $\widehat T_m(n)$ denote engineering estimates of HTTP, native-process, and manager elapsed time for method $m$ and $n$ original rows. The admission rule requires
+\begin{align}
+\min_m\widehat H_m(n)&\geq600\ \mathrm{s},\nonumber\\
+1.25\widehat N_m(n)&<1800\ \mathrm{s},\nonumber\\
+1.25\widehat T_m(n)+60\ \mathrm{s}&<2400\ \mathrm{s}
+\quad\text{for every }m.
+\label{eq:workload-admission}
+\end{align}
+Response-byte and storage limits apply in addition. The engineering model separates an estimated fixed cost from per-row work using the two sizes. This model is an admission heuristic, not a measured long-run performance law: adaptation, public-service variability, and storage behavior can change its slope. A refused workload therefore identifies an unresolved experimental requirement, not proof that longer acquisition is intrinsically impossible. Longer-run speed, causal mechanism effects, and general scalability require their own completed measurements.

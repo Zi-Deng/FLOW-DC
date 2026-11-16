@@ -1,0 +1,70 @@
+\section{Experimental Results and Discussion}\label{sec:results}
+The evaluation emphasizes practical acquisition: how quickly requested, verifiable bytes become available to downstream processing. We compare \ratio{} and \grad{} with img2dataset, and examine the relationship between transfer activity and end-to-end completion. The measured acquisitions use public image services. No generated origin or artificial image payload supplies the measured results.
+
+\subsection{Evaluation Design and Analysis}
+\textbf{Datasets and execution.} The Open Images acquisition uses public images hosted by the Common Visual Data Foundation (CVDF)~\cite{cvdf}. Four independently initialized evaluation blocks each contain 512 frozen URLs. Methods receive the same manifest within a block, with approximately 159--165 MB of hosted image bytes. The longer TaiBIF acquisition uses a frozen 32,768-row moth-image manifest from Taiwan's biodiversity infrastructure~\cite{taibif}. Both studies execute on Jetstream2 guests. Each acquisition uses one downloader guest; manager and origin-role guests support operations and do not serve experimental images. Source snapshots, settings, input hashes, and available environment records are identified in the supplement.
+
+Public hosts are observational environments. Their background demand and caches are outside the client's control, and a given host need not expose a stable concurrency threshold. Requests preserve the selected URL population and record failures. Within the Open Images evaluation, method order is randomized inside blocks and settings are selected on disjoint inputs before evaluation. These small samples characterize the retained jobs; they are not a population-wide performance guarantee.
+
+\textbf{Matched tool configuration.} img2dataset 1.47.0~\cite{img2dataset} uses one process and 192 threads for the Open Images comparison. Resizing and all reencoding are disabled, and retries are disabled for this bounded comparison. Both PAARC methods begin at four requests with a limit of 192, growth factor 1.5, delay ratio 2, and baseline lifetime 120 s. The output verifier applies a common original-row and byte-crediting rule. The clients retain their native connection and timeout implementations, which are documented rather than assumed equivalent. The comparison concerns these complete acquisition configurations, not a controlled substitution of one controller inside an otherwise identical HTTP client.
+
+\textbf{Primary measures.} Let $\mathcal R$ be the original set of requested rows, $z_i\in\{0,1\}$ indicate independently verified eligible output for row $i$, and $B_i$ be that output's byte count. We report
+\begin{equation}
+G=\frac{\sum_{i\in\mathcal R}z_iB_i}{t_{\rm verified}-t_{\rm start}},
+\qquad
+Q=\frac{\sum_{i\in\mathcal R}z_i}{|\mathcal R|}.
+\label{eq:goodput}
+\end{equation}
+$G$ is end-to-end goodput and $Q$ is original-row coverage. A duplicate manifest row retains its own disposition; byte credit follows the verifier's row contract, not the number of filesystem objects. The job clock includes the per-job execution and output verification boundary. Environment installation, batch orchestration, final collection, and VM cleanup are separate costs. All rates in this paper use decimal MB/s, with $1\,\mathrm{MB}=10^6$ bytes.
+
+We also report the HTTP-active span, native-process time, output-processing time, and observed concurrency. Time-average concurrency integrates activity over the stated interval; a peak is only the maximum observed overlap. Neither is interchangeable with the admission limit. An active interval begins at different native instrumentation points in FLOW-DC and img2dataset, so cross-tool concurrency counts require caution even when their end-to-end byte accounting agrees.
+
+\textbf{Analysis.} Runs, rather than requests, are the experimental units. For paired Open Images blocks, log goodput ratios compare each PAARC method with img2dataset. Their exponentiated mean and ordinary Student-$t$ interval summarize the retained blocks. With only four blocks, these are exploratory, unadjusted intervals. Interrupted and unstarted jobs remain in the inventory and are not imputed as complete observations.
+
+\subsection{Single-Machine Acquisition and Tool Comparison}
+Fig.~\ref{fig:cvdf} summarizes Open Images acquisition across the evaluated configurations. In the four matched blocks, img2dataset at 192 threads and both PAARC methods deliver complete verified coverage. img2dataset averages \CVDFToolGoodput{} MB/s and \CVDFToolTime{} s, while \ratio{} and \grad{} average \CVDFRatioGoodput{} and \CVDFGradGoodput{} MB/s, with completion times of \CVDFRatioTime{} and \CVDFGradTime{} s. Thus, the 192-thread img2dataset configuration is faster for this small, readily served workload. The geometric goodput ratios relative to this matched reference are 0.875 (95\% interval 0.771--0.993) and 0.858 (0.778--0.946), respectively.
+
+% Temporarily hidden until the additional Q, Active and Time values are supplied.
+% To restore, uncomment this table block and remove the reserved counter below.
+% \begin{table}[t]\centering\footnotesize
+% \setlength{\tabcolsep}{3pt}
+% \caption{Open Images acquisition by configuration}
+% \label{tab:cvdf}
+% \begin{tabular}{lrrrrr}\toprule
+% Method & Limit & MB/s & Time (s) & $Q$ (\%) & Active$^\dagger$\\\midrule
+% \tableinput{sections/cvdf-table.tex}
+% \bottomrule\end{tabular}
+% \par\vspace{3pt}\raggedright\footnotesize Limit is configured concurrency; available means summarize four runs. N/A denotes unavailable measurements, including completion metrics for all five stopped 384-limit runs. $^\dagger$Mean of native time-average activity. $^\ddagger$Approximately two simultaneous requests observed, not a measured mean or requests/s.
+% \end{table}
+\stepcounter{table} % Reserve Table 2 so subsequent tables keep their numbering.
+\begin{figure*}[t]\centering
+\includegraphics[width=.96\textwidth]{figures/cvdf-comparison.pdf}
+\caption{Open Images goodput by configuration: bars show means and points show individual runs; N/A marks five stopped runs, not zero goodput. The 96- and 384-thread tests used a different machine and are excluded from the matched statistical analysis.}
+\label{fig:cvdf}\end{figure*}
+
+The result is informative for automatic discovery. These jobs last only about 13--15 s end to end, and neither adaptive method reaches a long-running regime. Mean native activity is near seven requests for PAARC, while the tool starts with a much larger thread pool. Independent verification takes approximately 3.4--3.6 s per job. Startup and fixed per-job work therefore consume a substantial fraction of the useful acquisition interval. The 120-s baseline-refresh mechanism is not exercised by these short jobs. Complete output coverage demonstrates accountable delivery; it does not demonstrate the benefit of every control mechanism.
+
+\textbf{Configuration sensitivity.} At concurrency 96, the four verified end-to-end goodputs are 6.12, 6.33, 6.74, and 6.26 MB/s (mean 6.36 MB/s). At concurrency 384, all five runs were stopped for time reasons after severe slowdown, with approximately two simultaneous requests observed. These runs did not complete the acquisition objective; their completed-run goodput and completion time are N/A.
+
+\subsection{Response Analysis and End-to-End Cost}
+The longer TaiBIF validation separates network activity from the full acquisition pipeline. One matched block has complete retained processing records for both methods. Here, complete means that the bounded job and its output accounting finished; it does not mean that every row in the manifest was downloaded. \ratio{} verifies 26,969 of 32,768 rows (82.30\%), and \grad{} verifies 28,204 (86.07\%). Their verified output is 4.143 and 4.341 GB, respectively.
+
+Figure~\ref{fig:timing} shows why HTTP-period throughput alone can overstate the rate at which a usable dataset becomes available. For \ratio{}, 181.05 s of HTTP activity sits within 284.11 s of native execution and 444.60 s of end-to-end processing. The corresponding \grad{} intervals are 181.19, 287.17, and 450.43 s. Dividing verified bytes by the HTTP span gives 22.88 and 23.96 MB/s; the end-to-end rates are \TaiBIFRatioGoodput{} and \TaiBIFGradGoodput{} MB/s. The additional time includes native work outside the HTTP-active span and postprocessing or verification. The retained timing does not attribute every residual second to a single subsystem.
+
+\begin{figure*}[t]\centering
+\includegraphics[width=.97\textwidth]{figures/taibif-timing.pdf}
+\caption{Measured TaiBIF validation block 2. Left: HTTP span, other native time, and postprocessing. Right: the same verified-byte numerator divided by the HTTP span or the complete job interval. The two arms acquire different amounts within a bounded window.}
+\label{fig:timing}\end{figure*}
+
+The full-HTTP-span mean activity is 53.06 requests for \ratio{} and 54.55 for \grad{}, with peaks of 131 and 145. In the designated 30--90 s window, both have median activity 60. These measurements show useful adaptive acquisition at substantially lower activity than their configured ceilings. They do not establish sustained activity above 150, an optimal operating point, or a server-side throttling threshold. A larger limit is permission to admit work, not evidence that such work is present or beneficial.
+
+Across the twelve retained validation dispositions, three jobs complete, two stop on processing deadlines, and seven have no completed validation execution. Only the block above provides both complete arms. The additional complete \ratio{} job achieves 8.65 MB/s, while the stopped and unstarted records remain visible in the supplement. There is no matched img2dataset arm in this TaiBIF validation, so the Open Images tool comparison cannot be transferred to this host. The central positive result is practical verified acquisition and interpretable accounting, rather than a replicated superiority claim.
+
+\input{sections/engineering-results}
+
+\subsection{Discussion, Limitations, and Reproducibility}
+Automatic concurrency discovery is most valuable when prior host knowledge is limited and acquisitions last long enough to respond to observations. It reduces an operator's dependence on a manually chosen setting and can respond when the environment changes. Its benefit is conditional, however. Short jobs can favor a well-provisioned tool immediately; noisy or sparse observations can delay growth; and a low-delay response does not guarantee that the client is below every provider policy threshold. PAARC responds to observable signals and explicit retry instructions, not to a privileged view of server policy.
+
+The historical comparative evidence spans two public services and a limited number of independent jobs. Remote changes, order effects, cache state, and differing native-client behavior constrain generalization. Incomplete TaiBIF validation limits paired inference. The additional engineering checks qualify distribution and output accounting; they do not supply missing long-run experimental replication. Likewise, application adoption establishes utility of the acquisition workflow, not a retrospective evaluation of the current control rules.
+
+Reproducibility has two levels. The accompanying analysis package rebuilds every figure and table from included measured summaries and conceptual diagram code, with a claim-to-evidence mapping and source hashes. Repeating acquisition against the same public URLs can encounter changed bytes or availability and therefore cannot promise identical results. Retaining manifests, first-attempt outcomes, verification rules, timing boundaries, and software identities allows those differences to be examined rather than hidden. This separation is essential for a downloader whose scientific output depends partly on infrastructure outside its authors' control.

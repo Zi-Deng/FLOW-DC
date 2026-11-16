@@ -1,6 +1,6 @@
 # Local Jetstream2 control and pilot lifecycle
 
-`bin/flowdc_ops.py` runs on the **local control machine**, using Python 3.12+ on
+`flowdc ops` runs on the **local control machine**, using Python 3.12+ on
 Linux. It provides `init`, `doctor`, `inventory`, `plan`, and the additive
 [`pilot` lifecycle commands](LIFECYCLE.md). The original four commands remain
 non-activating. Explicit pilot preparation can install a user service; only that
@@ -24,8 +24,8 @@ was exercised with Bash 5.2.21; older-shell compatibility is not established.
 From the repository checkout:
 
 ```bash
-python3 bin/flowdc_ops.py init
-python3 bin/flowdc_ops.py doctor
+flowdc ops init
+flowdc ops doctor
 ```
 
 Initialization creates directories with mode 0700, the profile with mode 0600, and
@@ -37,10 +37,10 @@ match the fixed program for this tool version; a conflict is preserved and repor
 Optional absolute roots allow disposable validation without touching real state:
 
 ```bash
-python3 bin/flowdc_ops.py init \
+flowdc ops init \
   --state-root /absolute/private/flowdc-state \
   --config-root /absolute/private/flowdc-config
-python3 bin/flowdc_ops.py doctor \
+flowdc ops doctor \
   --state-root /absolute/private/flowdc-state \
   --profile /absolute/private/flowdc-config/profile.json
 ```
@@ -106,7 +106,7 @@ The child uses isolated Python, explicit application-credential authentication,
 HTTPS verification, public interface and compute version 2.1, without implicit
 clouds.yaml/vendor configuration, inherited Python/proxy settings or mutation retries.
 
-Run `python3 bin/flowdc_ops.py pilot runtime-check --profile PRIVATE_PROFILE` to
+Run `flowdc ops pilot runtime-check --profile PRIVATE_PROFILE` to
 check this prerequisite offline without loading the OpenRC or touching accounting.
 `offload_runtime_unsupported` fails closed. A group-writable base interpreter or
 ancestor, unsupported SDK or unrelated interpreter is refused; there is no PATH,
@@ -145,7 +145,7 @@ After configuring only the credential, wrapper, and client paths, obtain a bound
 first observation without guessing project or region:
 
 ```bash
-python3 bin/flowdc_ops.py inventory \
+flowdc ops inventory \
   --profile "$HOME/.config/flowdc/profile.json" \
   --output "$HOME/.local/share/flowdc-ops/inventory/first-observation.json"
 ```
@@ -160,7 +160,7 @@ selects exactly three of those observed UUIDs; inventory activates none of them.
 Then rerun inventory with a **fresh** output name:
 
 ```bash
-python3 bin/flowdc_ops.py inventory \
+flowdc ops inventory \
   --profile "$HOME/.config/flowdc/profile.json" \
   --output "$HOME/.local/share/flowdc-ops/inventory/pilot-observation.json"
 ```
@@ -247,7 +247,7 @@ provenance fields, booleans as numbers, nonfinite values, zero/negative rates an
 future rate timestamps are rejected. A flavor mismatch cannot produce a total.
 
 ```bash
-python3 bin/flowdc_ops.py plan \
+flowdc ops plan \
   --inventory "$HOME/.local/share/flowdc-ops/inventory/pilot-observation.json" \
   --spec "$HOME/.config/flowdc/pilot.json" \
   --output "$HOME/.local/share/flowdc-ops/runs/pilot-plan.json"
@@ -309,19 +309,14 @@ after failure rather than deleting prior data.
 ## Validation, remaining evidence, and rollback
 
 ```bash
-python3 -B -m unittest discover -s tests -p test_flowdc_ops.py -v
+python3 -B -m unittest discover -s tests/ops -t . -p test_flowdc_ops.py -v
 python -m unittest discover -s tests -v
 make check
 git diff --check
-ruff check bin/flowdc_ops.py tests/test_flowdc_ops.py
-ruff format --check bin/flowdc_ops.py tests/test_flowdc_ops.py
 ```
 
-Use Ruff from the development environment, or its explicit executable path.
-The existing `make check` lint target covers agentic workflow files; application
-tests are discovered by its unittest target. Run the two focused Ruff commands
-above for the operations CLI and its tests. This unit does not change that gate's
-workflow policy.
+The full `make check` gate includes package lint and operational tests. The
+operational runtime remains a self-contained immutable release unit.
 
 Ops tests use temporary directories, synthetic OpenRC files, fake executables and
 mocked local-session probes. They need neither credentials nor network access.

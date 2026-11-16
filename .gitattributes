@@ -1,0 +1,2 @@
+# Preserve whitespace in the verbatim original prompt.
+TASK_SUMMARY.md whitespace=-blank-at-eol
