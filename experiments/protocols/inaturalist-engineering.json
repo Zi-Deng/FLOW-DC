@@ -31,7 +31,7 @@
       }
     },
     {
-      "method": "paarc-grad",
+      "method": "paarc",
       "c_max": 192,
       "method_options": {
         "startup_growth_factor": 1.5,

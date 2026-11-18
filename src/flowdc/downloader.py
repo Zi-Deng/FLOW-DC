@@ -539,7 +539,7 @@ async def run_acquisition(cfg, *, report_factory=None):
 
         with integrity.RunStore(cfg.output_dir) as store:
             integrity.require(
-                store.owner["config"]["implementation"] == "flowdc-package-v1",
+                store.owner["config"]["implementation"] == "flowdc-package-v2",
                 "unsupported historical implementation: use its original runtime for recovery",
             )
             accepted = {f.name for f in fields(cfg)} - {
@@ -557,7 +557,7 @@ async def run_acquisition(cfg, *, report_factory=None):
 
                     def report_factory(config, outcomes, elapsed):
                         report = original_factory(config, outcomes, elapsed)
-                        for field in ("controller_variant", "gradient_summary", "gradient_summary_scope"):
+                        for field in ("controller_variant", "delay_rate_summary", "delay_rate_summary_scope"):
                             if field in previous:
                                 report[field] = previous[field]
                         return report

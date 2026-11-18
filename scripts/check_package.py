@@ -36,12 +36,21 @@ def main():
                 str(python),
                 "-I",
                 "-c",
-                "import flowdc; from pathlib import Path; assert 'site-packages' in str(Path(flowdc.__file__)); print(flowdc.__version__)",
+                "import flowdc; from pathlib import Path; from importlib.metadata import version; "
+                "assert 'site-packages' in str(Path(flowdc.__file__)); "
+                "assert version('flow-dc') == flowdc.__version__; print(flowdc.__version__)",
             ],
             cwd=root,
             env=clean,
             check=True,
         )
+        reported = subprocess.check_output(
+            [str(python), "-m", "flowdc", "--version"], cwd=root, env=clean, text=True
+        )
+        installed = subprocess.check_output(
+            [str(python), "-c", "import flowdc; print(flowdc.__version__)"], cwd=root, env=clean, text=True
+        )
+        assert reported.strip() == "FLOW-DC " + installed.strip(), "CLI/package version mismatch"
         subprocess.run(
             [str(python), str(ROOT / "examples/local_demo.py"), "--output-dir", str(root / "demo")],
             cwd=root,

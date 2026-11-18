@@ -11,7 +11,7 @@ from ..config import DownloadConfig
 from ..http import load_input_file
 from .common import file_hash, read_json, require, write_new
 
-METHODS = ("paarc-grad", "paarc-ratio", "img2dataset")
+METHODS = ("paarc", "paarc-ratio", "img2dataset")
 
 
 def validate(protocol):

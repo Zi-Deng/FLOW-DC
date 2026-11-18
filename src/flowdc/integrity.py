@@ -176,7 +176,7 @@ def effective_config(cfg):
 
     root = files("flowdc")
     return {
-        "implementation": "flowdc-package-v1",
+        "implementation": "flowdc-package-v2",
         "source_sha256": {name: digest(root.joinpath(name).read_bytes()) for name in SOURCE_MODULES},
         "values": json_value({k: v for k, v in dataclasses.asdict(cfg).items() if k not in excluded}),
     }
@@ -444,6 +444,7 @@ class RunStore:
     ):
         self.allow_historical = allow_historical
         self.historical = False
+        self.read_only = False
         self.fs = Files(root)
         self.root = self.fs.path
         self.fault = fault or (lambda _step: None)
@@ -506,8 +507,11 @@ class RunStore:
         )
         implementation = owner["config"].get("implementation")
         self.historical = implementation in ("base", "gradient")
+        self.read_only = implementation != "flowdc-package-v2"
         require(
-            implementation == "flowdc-package-v1" or self.historical and self.allow_historical,
+            implementation == "flowdc-package-v2"
+            or self.allow_historical
+            and implementation in ("flowdc-package-v1", "base", "gradient"),
             "historical output requires read-only verification or its original recovery runtime",
         )
         values = owner["config"]["values"]
@@ -602,7 +606,7 @@ class RunStore:
         return [f"{path}/{n}" for n in numbers]
 
     def begin(self, key):
-        require(not self.historical, "historical output is read-only; use the original recovery runtime")
+        require(not self.read_only, "historical output is read-only; use the original recovery runtime")
         row = self.rows[key]
         require(row["initial_disposition"] is None, "row is not eligible")
         require(not self.fs.exists(f"{INTERNAL}/commits/{key}.json"), "row already committed")
@@ -649,7 +653,7 @@ class RunStore:
         }
 
     def publish(self, directory, key, content):
-        require(not self.historical, "historical output is read-only; use the original recovery runtime")
+        require(not self.read_only, "historical output is read-only; use the original recovery runtime")
         intent = self.intent(directory, key)
         row = self.rows[key]
         self.fs.write(directory + "/payload", content)
@@ -699,7 +703,7 @@ class RunStore:
         )
 
     def complete(self, directory, key, record):
-        require(not self.historical, "historical output is read-only; use the original recovery runtime")
+        require(not self.read_only, "historical output is read-only; use the original recovery runtime")
         self.validate_record(directory, key, record)
         for field in ("payload", "metadata"):
             source, destination = directory + "/" + field, record[field]
@@ -728,7 +732,7 @@ class RunStore:
         latency_eligible=False,
         body_complete=False,
     ):
-        require(not self.historical, "historical output is read-only; use the original recovery runtime")
+        require(not self.read_only, "historical output is read-only; use the original recovery runtime")
         intent = self.intent(directory, key)
         self.fs.atomic(
             directory + "/result.json",
@@ -745,7 +749,7 @@ class RunStore:
 
     def measure(self, directory, key, trace, status, version):
         """Retain observed request timing independently of local publication."""
-        require(not self.historical, "historical output is read-only; use the original recovery runtime")
+        require(not self.read_only, "historical output is read-only; use the original recovery runtime")
         record = {
             **self.intent(directory, key),
             "schema": "flowdc-http-observation-v1",
@@ -802,7 +806,7 @@ class RunStore:
 
     def reconcile(self, *, recover=True, publish=True):
         require(
-            not self.historical or not recover and not publish, "historical reconciliation must be read-only"
+            not self.read_only or not recover and not publish, "historical reconciliation must be read-only"
         )
         # The final result is valid only after the CLI has also checked archives
         # and published its reports. A fresh reconciliation invalidates it first.
@@ -962,7 +966,7 @@ class RunStore:
 
     def remove_owned_exports(self):
         """Called only after explicit whole-output overwrite consent."""
-        require(not self.historical, "historical output is read-only; use the original recovery runtime")
+        require(not self.read_only, "historical output is read-only; use the original recovery runtime")
         path = f"{INTERNAL}/exports.json"
         if not self.fs.exists(path):
             return
@@ -987,7 +991,7 @@ class RunStore:
                 parent.unlink(name)
 
     def emit(self, name, raw, *, external=False):
-        require(not self.historical, "historical output is read-only; use the original recovery runtime")
+        require(not self.read_only, "historical output is read-only; use the original recovery runtime")
         stage = f"{INTERNAL}/exports/{uuid4().hex}"
         self.fs.write(stage, raw)
         return self.emit_staged(name, stage, len(raw), digest(raw), external=external)
@@ -998,7 +1002,7 @@ class RunStore:
         Retained stage inodes establish ownership after interruption. Matching
         bytes alone never establish ownership of a pre-existing destination.
         """
-        require(not self.historical, "historical output is read-only; use the original recovery runtime")
+        require(not self.read_only, "historical output is read-only; use the original recovery runtime")
         component(name)
         self.fs.verify(stage, size, sha256)
         key = ("external:" if external else "internal:") + name
@@ -1036,7 +1040,7 @@ class RunStore:
     def make_archive(self, snapshot, report, *, compress):
         # Stream only committed records into an owned same-filesystem stage.
         # Memory is bounded by the manifest/index and one member, not the archive.
-        require(not self.historical, "historical output is read-only; use the original recovery runtime")
+        require(not self.read_only, "historical output is read-only; use the original recovery runtime")
         stage = f"{INTERNAL}/exports/{uuid4().hex}"
         with self.fs.open(stage, write=True) as stream:
             with tarfile.open(

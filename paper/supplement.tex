@@ -16,7 +16,7 @@
 \setlength{\parskip}{4pt}
 \setlength{\parindent}{0pt}
 \setlist{nosep,leftmargin=*}
-\newcommand{\grad}{PAARC-Grad}
+\newcommand{\paarc}{PAARC}
 \newcommand{\ratio}{PAARC-Ratio}
 \renewcommand{\thesection}{S\arabic{section}}
 \renewcommand{\thetable}{S\arabic{table}}
@@ -29,13 +29,13 @@ University of Arizona\par\medskip
 This supplement accompanies \emph{FLOW-DC: A Large-Scale Distributed Downloader Utilizing Policy-Aware Adaptive Request Control}. It specifies the implemented controller, the available acquisition evidence, and the limits of the distributed engineering qualification. Numerical tables and figures are regenerated from the package's included data; no acquisition is performed by the build.
 
 \section{Controller Identity and Measurement Contract}
-Table~\ref{tab:identity} preserves the historical selectors recorded by the acquisitions. The current package exposes \texttt{paarc-ratio} and \texttt{paarc-grad}; its transition system is \texttt{DelayPolicy.step} in \nolinkurl{src/flowdc/controllers.py}. Integration uses \texttt{ObservationBuffer}, the admission layer, and HTTP timing in \nolinkurl{src/flowdc/http.py}. Deterministic transition comparisons preserve the controller behavior while the public interface changes.
+Table~\ref{tab:identity} preserves the historical selectors recorded by the acquisitions. The current package exposes \texttt{paarc-ratio} and \texttt{paarc}; its transition system is \texttt{DelayPolicy.step} in \nolinkurl{src/flowdc/controllers.py}. Integration uses \texttt{ObservationBuffer}, the admission layer, and HTTP timing in \nolinkurl{src/flowdc/http.py}. Deterministic transition comparisons preserve the controller behavior while the public interface changes.
 \begin{table}[h]\centering\small
 \caption{Manuscript names and implementation identity}\label{tab:identity}
 \begin{tabular}{lll}\toprule
 Name & Historical selector & Scope\\\midrule
 PAARC-Ratio & \texttt{ratio-v2} & Baseline-relative delay regulation\\
-PAARC-Grad & \texttt{gradient-candidate-v2} & Delay budget and gradient regulation\\
+PAARC & \texttt{gradient-candidate-v2} & Delay budget and delay rate regulation\\
 img2dataset & \texttt{img2dataset-1.47.0} & Pinned acquisition tool\\\bottomrule
 \end{tabular}\end{table}
 The delay sample is a successful response's final-hop header-dispatch-to-first-body-byte interval. Body completion makes the sample available; local output persistence is a separate event. A complete HTTP body can inform control even if a subsequent local save fails. A local persistence error is not a server congestion observation. The current buffer admits finite positive samples from eligible HTTP 200 responses, and requires both dispatch and completion observations to be recent. With a rolling window, sparse observations can accumulate until the sample gate is met; an eligible update consumes them once. Overload clears pending observations.
@@ -47,43 +47,43 @@ Quantity & Value / interpretation\\\midrule
 Control opportunity; fresh window & 1 s; 2 s\\
 Minimum eligible observations; stale gap & 5; 5 s\\
 Initial and minimum admission limits & 4; 2 requests\\
-Delay and gradient time constants & 1 s each\\
+Delay and delay-rate time constants & 1 s each\\
 Baseline lifetime; minimum probe wait & 120 s; 1 s\\
 Numerical baseline floor; excess-delay floor & $10^{-6}$ s; $10^{-3}$ s\\
 Delay budget & $2b_t$\\
 Hard excess-delay threshold & $\max(10^{-3}\mathrm{s},4b_t)$\\
-Hard reduction; gradient soft reduction & 0.50; 0.85, floor rounded\\
+Hard reduction; delay-rate soft reduction & 0.50; 0.85, floor rounded\\
 Utilization required for positive growth & $I_t\geq0.8C_t$\\
 Startup growth increment cap & 64 requests/update\\
-Gradient hold; reduction thresholds & 0.10 s$^{-1}$; 0.25 s$^{-1}$\\
+Delay-rate hold; reduction thresholds & 0.10 s$^{-1}$; 0.25 s$^{-1}$\\
 Reduction persistence; recovery interval & 2 eligible updates; 1 s\\
-Reexploration condition & 3 eligible updates at $\bar g_t\leq-0.1$ s$^{-1}$\\
+Reexploration condition & 3 eligible updates at $\bar s_t\leq-0.1$ s$^{-1}$\\
 Ratio factor; additive headroom & clipped to [0.85,1.10]; 1 request\\\bottomrule
 \end{tabular}\end{table}
-The baseline percentile uses linear interpolation between adjacent ordered samples. During ordinary operation, a lower eligible tenth percentile immediately replaces the baseline and resets the derivative state. During refresh, only observations dispatched after the probe began are accepted. The limit falls to two requests, but healthy outstanding requests are allowed to complete. Refresh waits for the minimum probe interval, enough eligible observations, and at most two outstanding requests. The new baseline may be higher than the expired one.
+The baseline percentile uses linear interpolation between adjacent ordered samples. During ordinary operation, a lower eligible tenth percentile immediately replaces the baseline and resets the delay-rate state. During refresh, only observations dispatched after the probe began are accepted. The limit falls to two requests, but healthy outstanding requests are allowed to complete. Refresh waits for the minimum probe interval, enough eligible observations, and at most two outstanding requests. The new baseline may be higher than the expired one.
 
 \section{Priority Order and State Transitions}
 The controller is deterministic given its prior state, monotonic time, eligible delays, overload flag, and inflight count. Every return clips the integer limit into its configured bounds. The following ordering is essential; applying a positive-growth rule before an earlier safeguard would describe a different algorithm.
 \begin{enumerate}
-\item \textbf{Overload:} halve the limit, clear delay/derivative state and the persistence count, enter recovery, and return. This branch does not require successful-delay samples.
-\item \textbf{Expired baseline:} if no probe is active, begin one, mark exploration eligible, reduce admission to the minimum, clear derivative state, and return.
-\item \textbf{Insufficient evidence:} hold on fewer than five eligible observations. Reset the reduction-persistence count. Clear derivative state if the last eligible observation is at least five seconds old.
+\item \textbf{Overload:} halve the limit, clear delay/delay-rate state and the persistence count, enter recovery, and return. This branch does not require successful-delay samples.
+\item \textbf{Expired baseline:} if no probe is active, begin one, mark exploration eligible, reduce admission to the minimum, clear delay-rate state, and return.
+\item \textbf{Insufficient evidence:} hold on fewer than five eligible observations. Reset the reduction-persistence count. Clear delay-rate state if the last eligible observation is at least five seconds old.
 \item \textbf{Baseline update:} complete an active probe only after its drain and freshness requirements hold. Otherwise hold. Outside a probe, initialize the baseline or replace it with a lower eligible percentile.
-\item \textbf{Signal initialization:} after a reset or stale gap, initialize smoothed excess delay and smoothed median delay, record the time, and hold. A subsequent eligible update computes the elapsed-time filters and derivative.
-\item \textbf{Hard excess delay:} halve the limit when smoothed excess delay reaches the hard threshold; clear derivative state and enter recovery.
-\item \textbf{Recovery:} while the recovery deadline has not elapsed, hold the limit and reset gradient persistence. Filter updates can occur before this hold.
-\item \textbf{Exploration eligibility:} update the falling-gradient counter. Three sufficiently negative gradients reenable exploration. A smoothed delay at or above the budget disables exploration, including on that same update.
+\item \textbf{Signal initialization:} after a reset or stale gap, initialize smoothed excess delay and smoothed median delay, record the time, and hold. A subsequent eligible update computes the elapsed-time filters and normalized excess-delay rate.
+\item \textbf{Hard excess delay:} halve the limit when smoothed excess delay reaches the hard threshold; clear delay-rate state and enter recovery.
+\item \textbf{Recovery:} while the recovery deadline has not elapsed, hold the limit and reset delay-rate persistence. Filter updates can occur before this hold.
+\item \textbf{Exploration eligibility:} update the falling-rate counter. Three sufficiently negative rate estimates reenable exploration. A smoothed delay at or above the budget disables exploration, including on that same update.
 \item \textbf{Utilized exploration:} apply bounded multiplicative startup growth when exploration remains enabled and the current limit is utilized.
-\item \textbf{Method-specific regulation:} apply the ratio rule, or the gradient method's ordered delay-budget reduction, persistent-gradient reduction, gradient hold, utilization hold, and bounded additive increase.
+\item \textbf{Method-specific regulation:} apply the ratio rule, or PAARC's ordered delay-budget reduction, persistent-rate reduction, delay rate hold, utilization hold, and bounded additive increase.
 \end{enumerate}
 
 \begin{figure}[h]\centering
 \includegraphics[width=.99\linewidth]{figures/paarc-phases.pdf}
 \caption{Logical PAARC phases. The implementation uses state variables and priority branches rather than an explicit five-state enumeration. Sparse or stale evidence and overload safeguards prevent unsupported positive growth.}
 \end{figure}
-For \ratio{}, the ordinary proposal $\lfloor C_t r_t+1\rfloor$ can increase by one when $r_t=1$. It is accepted only if it is a nonincrease or utilization is sufficient. Unlike a hard reduction, an ordinary ratio decrease does not clear the filters or start a recovery interval. For \grad{}, a delay-budget or persistent-gradient reduction clears the filters and starts recovery. The next eligible sample set therefore initializes rather than immediately calculating another gradient. Startup can be reenabled by falling delay, but the delay-budget check still has priority.
+For \ratio{}, the ordinary proposal $\lfloor C_t r_t+1\rfloor$ can increase by one when $r_t=1$. It is accepted only if it is a nonincrease or utilization is sufficient. Unlike a hard reduction, an ordinary ratio decrease does not clear the filters or start a recovery interval. For \paarc{}, a delay-budget or persistent-rate reduction clears the filters and starts recovery. The next eligible sample set therefore initializes rather than immediately calculating another rate estimate. Startup can be reenabled by falling delay, but the delay-budget check still has priority.
 
-The abstraction of delay as a queue proxy is limited. A final-hop response includes service and network effects and may be influenced by object selection, server scheduling, or client execution. The normalization by $b_t$ makes the derivative comparable relative to a low-delay reference; it does not convert the signal to transport RTT or identify server queue occupancy.
+The abstraction of delay as a queue proxy is limited. A final-hop response includes service and network effects and may be influenced by object selection, server scheduling, or client execution. The normalization by $b_t$ makes the finite difference comparable relative to a low-delay reference; it does not convert the signal to transport RTT or identify server queue occupancy.
 
 \section{Measured Acquisition Protocols}
 \subsection{Open Images / CVDF}
@@ -105,7 +105,7 @@ At configured concurrency 384, the authors report five runs, all stopped before 
 \texttt{data/author-concurrency.json} preserves the supplied values, the five-run stopped count, the machine distinction, and the limits of the available record. No synthetic observations or successful replacement runs are added. The numerical summary and Figure~5 in the article are rebuilt from this file together with the original retained measurements.
 
 \subsection{TaiBIF validation}
-The retained validation uses 32,768 requested rows and bounded acquisition windows. \ratio{} uses growth 1.25 and \grad{} uses growth 1.5. Both use a delay ratio of two and a 120-s baseline lifetime. The controller ceiling is 512 and the request-execution ceiling is 256; the smaller execution resource can limit realized activity even if the controller requests more. These historical settings are not silently transferred to the 192-limit Open Images comparison.
+The retained validation uses 32,768 requested rows and bounded acquisition windows. \ratio{} uses growth 1.25 and \paarc{} uses growth 1.5. Both use a delay ratio of two and a 120-s baseline lifetime. The controller ceiling is 512 and the request-execution ceiling is 256; the smaller execution resource can limit realized activity even if the controller requests more. These historical settings are not silently transferred to the 192-limit Open Images comparison.
 
 Table~\ref{tab:tai-status} preserves all twelve intended validation dispositions. ``No candidate'' means no configuration qualified for that arm's requested target; ``unstarted'' means no validation execution occurred. Neither means a completed zero-performance run. ``Stopped'' denotes a deadline-interrupted processing path. A completed bounded window still has undispatched rows, so its coverage is below 100\%.
 \begin{table}[h]\centering\small
@@ -113,21 +113,21 @@ Table~\ref{tab:tai-status} preserves all twelve intended validation dispositions
 \begin{tabular}{cllll}\toprule
 Block & Target & Method & Status & Verified MB/s\\\midrule
 1 & Balanced & PAARC-Ratio & Complete window & 8.647\\
-1 & Balanced & PAARC-Grad & Stopped & ---\\
+1 & Balanced & PAARC & Stopped & ---\\
 1 & High activity & PAARC-Ratio & No candidate & ---\\
-1 & High activity & PAARC-Grad & No candidate & ---\\
+1 & High activity & PAARC & No candidate & ---\\
 2 & Balanced & PAARC-Ratio & Complete window & 9.318\\
-2 & Balanced & PAARC-Grad & Complete window & 9.637\\
+2 & Balanced & PAARC & Complete window & 9.637\\
 2 & High activity & PAARC-Ratio & No candidate & ---\\
-2 & High activity & PAARC-Grad & No candidate & ---\\
+2 & High activity & PAARC & No candidate & ---\\
 3 & Balanced & PAARC-Ratio & Unstarted & ---\\
-3 & Balanced & PAARC-Grad & Stopped & ---\\
+3 & Balanced & PAARC & Stopped & ---\\
 3 & High activity & PAARC-Ratio & Unstarted & ---\\
-3 & High activity & PAARC-Grad & Unstarted & ---\\\bottomrule
+3 & High activity & PAARC & Unstarted & ---\\\bottomrule
 \end{tabular}\end{table}
-In block 2, \ratio{} dispatches 26,986 rows and credits 26,969; \grad{} dispatches 28,222 and credits 28,204. Thus, 17 and 18 dispatched rows, respectively, are not credited, in addition to undispatched rows. The compact summaries do not provide a reliable causal breakdown for these residuals, and the paper does not attribute them to throttling. The corresponding completed control records contain one baseline probe for each arm. \grad{} records 22 delay-budget decreases, four gradient holds, and no persistent-gradient decrease. That exposure supports the statement that the implementation exercised baseline refresh and delay-budget feedback in this run; it cannot establish the isolated efficacy of the gradient mechanism.
+In block 2, \ratio{} dispatches 26,986 rows and credits 26,969; \paarc{} dispatches 28,222 and credits 28,204. Thus, 17 and 18 dispatched rows, respectively, are not credited, in addition to undispatched rows. The compact summaries do not provide a reliable causal breakdown for these residuals, and the paper does not attribute them to throttling. The corresponding completed control records contain one baseline probe for each arm. \paarc{} records 22 delay-budget decreases, four delay rate holds, and no persistent-rate decrease. That exposure supports the statement that the implementation exercised baseline refresh and delay-budget feedback in this run; it cannot establish the isolated efficacy of the delay-rate mechanism.
 
-The stopped block-3 \grad{} execution reaches a peak of 166 in its retained activity summary, but lacks completed output verification. It is therefore excluded from complete-run goodput and is not evidence of sustained activity above 150. No successful replacement is substituted for either stopped first attempt. The study was closed with these gaps retained.
+The stopped block-3 \paarc{} execution reaches a peak of 166 in its retained activity summary, but lacks completed output verification. It is therefore excluded from complete-run goodput and is not evidence of sustained activity above 150. No successful replacement is substituted for either stopped first attempt. The study was closed with these gaps retained.
 
 \subsection{Timing, pairing, and uncertainty}
 For block $j$, define $\ell_j=\log(G_{A,j}/G_{T,j})$, where $T$ is img2dataset. With $n=4$, the reported geometric ratio and ordinary 95\% interval are
@@ -165,7 +165,7 @@ The Open Images results use source revision \nolinkurl{239cdacb0091e93692ae7d677
 \nolinkurl{claim-evidence.csv} links statements to their numerical inputs, manuscript locations and limitations. The generated figure manifest distinguishes conceptual diagrams, historical measurements and engineering measurements. Build receipts bind active manuscript inputs and current output hashes. The source ZIP contains the explicit inputs needed to repeat the manuscript build.
 
 \subsection{Remaining scientific requirements}
-The current evidence does not establish a long-run goodput advantage over img2dataset, causal efficacy of the gradient mechanism, sustained 150-request operation, or four-worker scaling. The minimum study narrows its intended claims to matched practical acquisition on the selected public collections and one/two-worker configurations. A feasible long-run protocol and completed matched blocks remain necessary before those claims can be made. If finite limits and required duration cannot both be met, a documented scope or timing amendment must precede acquisition; incomplete work must not be relabeled as confirmation.
+The current evidence does not establish a long-run goodput advantage over img2dataset, causal efficacy of the delay-rate mechanism, sustained 150-request operation, or four-worker scaling. The minimum study narrows its intended claims to matched practical acquisition on the selected public collections and one/two-worker configurations. A feasible long-run protocol and completed matched blocks remain necessary before those claims can be made. If finite limits and required duration cannot both be met, a documented scope or timing amendment must precede acquisition; incomplete work must not be relabeled as confirmation.
 
 No synthetic performance values or unexecuted ablation effects are included in the revised empirical results. The preceding manuscript remains recoverable in its private archive. Negative historical results, the stopped first engineering attempt, incomplete TaiBIF validation and any unstarted long-run cells remain part of the evidence record.
 \end{document}

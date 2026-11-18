@@ -1,24 +1,53 @@
 {
-  "schema": "flowdc-paper-evidence-v1",
+  "schema": "flowdc-paper-evidence-v2",
   "cvdf_source_revision": "239cdacb0091e93692ae7d6770e83789880a2a6d",
   "methods": {
-    "paarc-grad": "gradient-candidate-v2",
+    "paarc": "gradient-candidate-v2",
     "paarc-ratio": "ratio-v2"
   },
   "transition_fixture_sha256": "a6bda11229e48dae2032f1858d9c01d4ca31568d7292de4e0c73d87f5f03f728",
   "inputs": {
     "measured.json": {
       "original_sha256": "786b08a1290a0e2e244385042706c33a1ecd1e397701f44d9ef17de675e24fdf",
-      "packaged_sha256": "786b08a1290a0e2e244385042706c33a1ecd1e397701f44d9ef17de675e24fdf"
+      "packaged_sha256": "764e7a50f63940e9530ebbf63ad893b7560520c4ca461c006493be9b44c5726c",
+      "prior_packaged_sha256": "786b08a1290a0e2e244385042706c33a1ecd1e397701f44d9ef17de675e24fdf"
     },
     "engineering-campaign.json": {
       "original_sha256": "6992f7b300c731d7ddeedf735597a2ac1a72ed1ab49cadb3876f918248e8f153",
-      "packaged_sha256": "db09f10eb55c64e1d88a08abdadbb92ef8ec87e108398c925996fee77e66722d"
+      "packaged_sha256": "578aa8d14835a266f8202561088d56d44a7225c9435331e57e65420392cf4bf3",
+      "prior_packaged_sha256": "db09f10eb55c64e1d88a08abdadbb92ef8ec87e108398c925996fee77e66722d"
     },
     "author-concurrency.json": {
       "original_sha256": "fd6688a924791d71ce51546ec6ff89f443eb9189318c2466fd82154d5ec6248f",
-      "packaged_sha256": "e89f59429b5b9ee09f348f264cc990f5e37be33a83857ebeb2cc64b55a095675"
+      "packaged_sha256": "e89f59429b5b9ee09f348f264cc990f5e37be33a83857ebeb2cc64b55a095675",
+      "prior_packaged_sha256": "e89f59429b5b9ee09f348f264cc990f5e37be33a83857ebeb2cc64b55a095675"
+    },
+    "experiment-status.csv": {
+      "original_sha256": "07f19dc1796cfc80366f0a1c2b15a1680f2412be515364a338034a50b592ed9e",
+      "prior_packaged_sha256": "07f19dc1796cfc80366f0a1c2b15a1680f2412be515364a338034a50b592ed9e",
+      "packaged_sha256": "dde07a072e33c9876e52a870328567e1fe639fab9c8cb82c2f8ee1a34ec2db58"
+    },
+    "run-inventory.csv": {
+      "original_sha256": "b3ea1347076c31878bc000e8b9a4ca2d187cdd5397ea1973e2e55e0d07f20b27",
+      "prior_packaged_sha256": "b3ea1347076c31878bc000e8b9a4ca2d187cdd5397ea1973e2e55e0d07f20b27",
+      "packaged_sha256": "e687f5dd72a857a52bc0a1f5f383b52da201587dcfd8bf9a75a6136e8385c2ce"
     }
   },
-  "sanitization": "Operational participant identities and private preparation references are omitted. Numerical values and first-attempt dispositions are retained."
+  "sanitization": "Operational participant identities and private preparation references are omitted. Numerical values and first-attempt dispositions are retained.",
+  "relabeling": {
+    "scope": "Method names and diagnostic terminology only; measurements, source identities and first-attempt dispositions are unchanged.",
+    "original_public_methods": {
+      "paarc": "paarc-grad",
+      "paarc-ratio": "paarc-ratio"
+    },
+    "original_labels": {
+      "PAARC": "PAARC-Grad",
+      "PAARC-Ratio": "PAARC-Ratio"
+    },
+    "original_control_reasons": {
+      "delay_rate_hold": "gradient_hold",
+      "delay_rate_persistence_hold": "gradient_persistence_hold",
+      "delay_rate_decrease": "gradient_decrease"
+    }
+  }
 }

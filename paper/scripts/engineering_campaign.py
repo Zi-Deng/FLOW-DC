@@ -12,8 +12,8 @@ import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
 ARMS = [
-    ("ratio-v2", None, "PAARC-Ratio"),
-    ("gradient-candidate-v2", None, "PAARC-Grad"),
+    ("paarc", None, "PAARC"),
+    ("paarc-ratio", None, "PAARC-Ratio"),
     ("img2dataset-1.47.0", [1, 32], "img2dataset (1,32)"),
     ("img2dataset-1.47.0", [1, 192], "img2dataset (1,192)"),
     ("img2dataset-1.47.0", [8, 24], "img2dataset (8,24)"),
@@ -37,7 +37,7 @@ def generate():
         assert len(r["participants"]) == r["workers"]
     table = []
     fig, axes = plt.subplots(1, 3, figsize=(7.1, 2.9), layout="constrained")
-    colors = ["#2265bd", "#cc682d", "#68737b", "#89949a", "#b2b9bd"]
+    colors = ["#cc682d", "#2265bd", "#68737b", "#89949a", "#b2b9bd"]
     for ax, (source, workers, title) in zip(axes, CONDITIONS, strict=True):
         for i, (method, setting, label) in enumerate(ARMS):
             selected = [
@@ -63,7 +63,7 @@ def generate():
             fields += [f"{r['elapsed_s']:.1f}" if r else "---", f"{100 * r['coverage']:.2f}" if r else "---"]
             table.append(" & ".join(fields) + r" \\")
         ax.set_title(title, fontsize=8)
-        ax.set_xticks(range(5), ["Ratio", "Grad", "I2D\n1,32", "I2D\n1,192", "I2D\n8,24"], fontsize=7)
+        ax.set_xticks(range(5), ["PAARC", "Ratio", "I2D\n1,32", "I2D\n1,192", "I2D\n8,24"], fontsize=7)
         ax.set_ylim(bottom=0)
         ax.grid(axis="y", alpha=0.18)
         ax.set_axisbelow(True)

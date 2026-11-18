@@ -1,7 +1,9 @@
 """Frozen source decisions, observation freshness and adaptive admission."""
 
 import asyncio
+import hashlib
 import json
+import math
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -11,12 +13,44 @@ from flowdc.controllers import DelayPolicy, MethodConfig, ObservationBuffer
 
 
 class TransitionTests(unittest.TestCase):
+    def test_normalized_delay_rate_uses_elapsed_seconds_and_direct_initialization(self):
+        policy = DelayPolicy(MethodConfig())
+        policy.step(1, [0.1] * 5)
+        first = policy.step(3, [0.12] * 5)
+        alpha = 1 - math.exp(-2)
+        queue = 0.02 * alpha
+        rate = queue / (2 * 0.1)
+        self.assertAlmostEqual(first["raw_delay_rate_per_s"], rate)
+        self.assertEqual(first["raw_delay_rate_per_s"], first["delay_rate_ewma_per_s"])
+        self.assertAlmostEqual(first["delay_rate_alpha"], alpha)
+        second = policy.step(4, [0.11] * 5)
+        next_queue = queue + (1 - math.exp(-1)) * (0.01 - queue)
+        next_rate = (next_queue - queue) / 0.1
+        self.assertLess(second["raw_delay_rate_per_s"], 0)
+        self.assertAlmostEqual(second["raw_delay_rate_per_s"], next_rate)
+        self.assertAlmostEqual(
+            second["delay_rate_ewma_per_s"], rate + (1 - math.exp(-1)) * (next_rate - rate)
+        )
+        self.assertFalse(any("gradient" in key or "derivative" in key for key in second))
+
     def test_all_560_frozen_v2_transitions(self):
-        fixture = json.loads((Path(__file__).parent / "fixtures/controllers-v2.json").read_text())
+        raw = (Path(__file__).parent / "fixtures/controllers-v2.json").read_bytes()
+        self.assertEqual(
+            hashlib.sha256(raw).hexdigest(),
+            "a6bda11229e48dae2032f1858d9c01d4ca31568d7292de4e0c73d87f5f03f728",
+        )
+        fixture = json.loads(raw)
         reasons = set()
         for method, expected in fixture["methods"].items():
+            method = "paarc" if method == "paarc-grad" else method
             policy = DelayPolicy(MethodConfig(method=method))
             for event, target in zip(fixture["events"], expected, strict=True):
+                target = {
+                    "delay_rate_ewma_per_s" if k == "gradient_ewma_per_s" else k: (
+                        value.replace("gradient_", "delay_rate_") if k == "reason" else value
+                    )
+                    for k, value in target.items()
+                }
                 actual = policy.step(**event)
                 self.assertEqual({k: actual[k] for k in target}, target)
                 reasons.add(actual["reason"])
@@ -25,7 +59,7 @@ class TransitionTests(unittest.TestCase):
                 "startup_increase",
                 "baseline_reset",
                 "hard_queue_decrease",
-                "gradient_persistence_hold",
+                "delay_rate_persistence_hold",
                 "overload_decrease",
                 "empty_hold",
                 "sparse_hold",
@@ -59,15 +93,15 @@ class TransitionTests(unittest.TestCase):
         self.assertEqual(result["reason"], "baseline_reset")
         self.assertEqual(result["baseline_s"], 0.2)
         self.assertEqual(result["baseline_age_s"], 0)
-        self.assertIsNone(policy.gradient)
+        self.assertIsNone(policy.delay_rate)
 
-    def test_overload_precedes_probe_and_stale_derivative_is_reset(self):
+    def test_overload_precedes_probe_and_stale_delay_rate_is_reset(self):
         policy = DelayPolicy(MethodConfig())
         policy.step(1, [0.1] * 5, inflight=4)
         policy.step(2, [0.11] * 5, inflight=4)
         self.assertEqual(policy.step(121, [0.1] * 5, overload=True)["reason"], "overload_decrease")
         self.assertIsNone(policy.probe_started)
-        self.assertIsNone(policy.gradient)
+        self.assertIsNone(policy.delay_rate)
         policy.step(122, [0.1] * 5)
         policy.step(123, [0.1] * 5)
         self.assertEqual(policy.step(124, [0.1] * 5, inflight=0)["reason"], "utilization_hold")

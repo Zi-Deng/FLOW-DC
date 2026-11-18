@@ -16,8 +16,8 @@ from scipy import stats
 
 ROOT = Path(__file__).resolve().parents[1]
 DATA, FIG = ROOT / "data", ROOT / "figures"
-METHODS = ["img2dataset", "PAARC-Ratio", "PAARC-Grad"]
-COLORS = {"PAARC-Ratio": "#2265bd", "PAARC-Grad": "#cc682d", "img2dataset": "#68737b"}
+METHODS = ["img2dataset", "PAARC", "PAARC-Ratio"]
+COLORS = {"PAARC-Ratio": "#2265bd", "PAARC": "#cc682d", "img2dataset": "#68737b"}
 plt.rcParams.update(
     {
         "font.family": "DejaVu Sans",
@@ -123,7 +123,7 @@ def diagrams():
     box(ax, (0.32, 0.56), (0.25, 0.22), "Manager\nTaskVine scheduler", "#2265bd")
     box(ax, (0.34, 0.19), (0.21, 0.20), "Partition manifests")
     box(ax, (0.70, 0.69), (0.28, 0.17), "Public remote hosts")
-    box(ax, (0.69, 0.37), (0.29, 0.22), "Workers\nPAARC-Grad / PAARC-Ratio", fontsize=8.5)
+    box(ax, (0.69, 0.37), (0.29, 0.22), "Workers\nPAARC admission", fontsize=8.5)
     box(ax, (0.71, 0.05), (0.25, 0.17), "Verified output archives", fontsize=8.5)
     arrow(ax, (0.25, 0.67), (0.31, 0.67))
     arrow(ax, (0.445, 0.54), (0.445, 0.41))
@@ -154,7 +154,7 @@ def diagrams():
     fig, ax = canvas((7.1, 2.35))
     box(ax, (0.015, 0.61), (0.18, 0.23), "Initialize\nEligible samples", fontsize=8.5)
     box(ax, (0.27, 0.61), (0.19, 0.23), "Explore\nUtilized startup", "#2265bd")
-    box(ax, (0.55, 0.61), (0.19, 0.23), "Regulate\nRatio / gradient", "#2265bd")
+    box(ax, (0.55, 0.61), (0.19, 0.23), "Regulate\nDelay budget + rate", "#2265bd")
     box(ax, (0.77, 0.14), (0.21, 0.23), "Probe baseline\nDrain, then refresh")
     box(ax, (0.30, 0.14), (0.24, 0.23), "Recover / hold\nPriority safeguards")
     arrow(ax, (0.20, 0.72), (0.26, 0.72))
@@ -197,9 +197,9 @@ def plots(m, author):
             [r["goodput_Bps"] / 1e6 for r in m["cvdf"] if r["label"] == "PAARC-Ratio"],
         ),
         (
-            "PAARC-Grad\n192 cap",
-            "PAARC-Grad",
-            [r["goodput_Bps"] / 1e6 for r in m["cvdf"] if r["label"] == "PAARC-Grad"],
+            "PAARC\n192 cap",
+            "PAARC",
+            [r["goodput_Bps"] / 1e6 for r in m["cvdf"] if r["label"] == "PAARC"],
         ),
     ]
     for j, (_, method, values) in enumerate(groups):
@@ -362,12 +362,12 @@ def engineering_status():
     (ROOT / "sections/engineering-status.tex").write_text(text)
     measured = json.loads((DATA / "measured.json").read_text())
     values = {}
-    for method, label in [("img2dataset", "Tool"), ("PAARC-Ratio", "Ratio"), ("PAARC-Grad", "Grad")]:
+    for method, label in [("img2dataset", "Tool"), ("PAARC-Ratio", "Ratio"), ("PAARC", "PAARC")]:
         rows = [r for r in measured["cvdf"] if r["label"] == method]
         values[f"CVDF{label}Goodput"] = f"{np.mean([r['goodput_Bps'] for r in rows]) / 1e6:.2f}"
         values[f"CVDF{label}Time"] = f"{np.mean([r['elapsed_s'] for r in rows]):.2f}"
     for r in measured["taibif_timing"]:
-        label = "Ratio" if r["label"] == "PAARC-Ratio" else "Grad"
+        label = "Ratio" if r["label"] == "PAARC-Ratio" else "PAARC"
         values[f"TaiBIF{label}Goodput"] = f"{r['end_to_end_MBps']:.2f}"
     (ROOT / "sections/numbers.tex").write_text(
         "".join("\\newcommand{\\" + k + "}{" + v + "}\n" for k, v in values.items())

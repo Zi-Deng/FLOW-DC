@@ -35,3 +35,10 @@ also available independently of a relocated run journal.
 The downloader's overview records its acquisition interval. Scientific goodput is
 computed by the experiment runner over the complete job through independent
 verification; the two timing boundaries must not be interchanged.
+
+FLOW-DC 4 binds new runs to `flowdc-package-v2`. Earlier `flowdc-package-v1`
+outputs retain their original modern configuration layout and can be verified
+read-only; older supported standalone outputs retain their separate legacy layout.
+Read-only status does not reinterpret either layout. Resume, reconciliation and
+journal publication require the run's original compatible runtime. Renaming a
+method in an ownership record does not authorize a new runtime to continue it.

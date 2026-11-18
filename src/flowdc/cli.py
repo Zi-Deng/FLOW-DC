@@ -20,7 +20,7 @@ def parser():
         description="Verifiable image acquisition with adaptive per-host concurrency.",
         allow_abbrev=False,
     )
-    root.add_argument("--version", action="version", version="FLOW-DC 3.0.0")
+    root.add_argument("--version", action="version", version="FLOW-DC 4.0.0")
     sub = root.add_subparsers(dest="command", required=True)
     download = sub.add_parser("download", help="Download a URL manifest", allow_abbrev=False)
     download.add_argument("--config")
@@ -33,11 +33,15 @@ def parser():
         "label-column",
         "input-format",
         "output-format",
-        "method",
         "naming-mode",
         "file-name-pattern",
     ):
         download.add_argument("--" + flag, default=argparse.SUPPRESS)
+    download.add_argument(
+        "--method",
+        default=argparse.SUPPRESS,
+        help=f"Request controller: {DownloadConfig.method} (default) or paarc-ratio",
+    )
     for flag in ("workers", "c-min", "c-init", "c-max", "max-attempts", "http-connection-limit"):
         download.add_argument("--" + flag, type=int, default=argparse.SUPPRESS)
     for flag in ("timeout-s", "retry-backoff-s"):
@@ -72,7 +76,7 @@ def recovery_config(output_dir, command, input_path=None):
     with RunStore(output_dir) as store:
         owner = store.owner
     record = owner["config"]
-    if record.get("implementation") != "flowdc-package-v1":
+    if record.get("implementation") != "flowdc-package-v2":
         raise ValueError(
             "Historical runs require their original runtime for recovery; no automatic migration is performed"
         )

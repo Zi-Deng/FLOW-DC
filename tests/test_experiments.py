@@ -49,7 +49,7 @@ class ExperimentTests(unittest.TestCase):
             "source": "loopback",
             "blocks": 2,
             "conditions": [{"rows": 4, "workers": 1}],
-            "methods": [{"method": "paarc-ratio"}, {"method": "paarc-grad"}],
+            "methods": [{"method": "paarc-ratio"}, {"method": "paarc"}],
             "seed": 54,
             "timeout_s": 30,
             "body_limit_bytes": 2**20,

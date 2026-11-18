@@ -5,9 +5,10 @@ HTTP transfer, per-host adaptive concurrency, original-row accounting and option
 TaskVine distribution. It is designed for dataset construction on workstations,
 research clusters and heterogeneous academic resources.
 
-Two controllers share the same acquisition pipeline: **PAARC-Grad** responds to
-persistent growth in excess application delay; **PAARC-Ratio** regulates concurrency
-against a baseline-relative delay budget. PAARC-Grad is the default. Their signals
+**PAARC** is the default request controller. It combines a baseline-relative delay
+budget with a normalized excess-delay rate to adapt per-host concurrency.
+**PAARC-Ratio** is an alternative controller that regulates concurrency through
+a delay ratio within the same acquisition pipeline. Their signals
 are application-level response delays, not transport RTT or measured server queues.
 
 ## Start locally
@@ -29,7 +30,7 @@ For a real manifest, provide a Parquet or CSV file containing a URL column:
 
 ```sh
 flowdc download --input-path images.parquet --output-dir runs/images \
-  --url-column url --label-column species --method paarc-grad
+  --url-column url --label-column species --method paarc
 flowdc verify --output-dir runs/images
 ```
 
@@ -58,7 +59,7 @@ flowdc partition --input-path images.parquet --output-dir runs/partitions --grou
 
 Resume verifies source/configuration identity and remaining attempt budgets before
 sending requests. Reconciliation is offline. Existing output requires confirmation
-before replacement; `--force` explicitly authorizes replacement. Pre-refactor runs
+before replacement; `--force` explicitly authorizes replacement. Earlier-version runs
 require their original runtime for recovery; no automatic ownership migration occurs.
 See [configuration](docs/configuration.md), [integrity](docs/integrity.md) and the
 [interface migration guide](docs/migration.md).
@@ -101,7 +102,7 @@ receipts appear under `build/paper/`.
 
 The retained results establish complete short-job CVDF output coverage and useful
 TaiBIF acquisition with explicit byte and timing accounting. One matched TaiBIF block
-reports 9.32/9.64 MB/s for PAARC-Ratio/Grad. On the short CVDF comparison, img2dataset
+reports 9.32/9.64 MB/s for PAARC-Ratio/PAARC. On the short CVDF comparison, img2dataset
 is faster: 12.45 MB/s versus 10.91/10.70 MB/s. These observations support practical
 acquisition and expose adaptation's startup cost; they do not establish universal
 superiority, sustained high concurrency or general scaling. The

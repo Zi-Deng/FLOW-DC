@@ -97,7 +97,7 @@ def _run(study, *, taskvine, comparator_python, limit):
                     "input_path": str(directory / "input.parquet"),
                     "input_format": "parquet",
                     "output_dir": str(directory / "native"),
-                    "method": method if method != "img2dataset" else "paarc-grad",
+                    "method": method if method != "img2dataset" else "paarc",
                     "c_max": entry["processes"] * entry["threads"]
                     if method == "img2dataset"
                     else entry.get("c_max", 192),
@@ -264,7 +264,7 @@ def analyze(study):
                 {**cell, "status": "interrupted" if directory.exists() else "unstarted", "goodput_Bps": None}
             )
     contrasts = []
-    for method in ["paarc-ratio", "paarc-grad"]:
+    for method in ["paarc-ratio", "paarc"]:
         for condition in range(len(protocol["conditions"])):
             pairs = []
             changed_blocks = []
