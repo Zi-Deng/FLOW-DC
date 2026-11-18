@@ -24,10 +24,16 @@ Retired method and option spellings are rejected rather than accepted as aliases
 Rename configuration fields only when preparing a **new** run or study. Never edit
 an existing ownership record, frozen protocol, source hash or control trace to make
 it look current. New runs use `flowdc-package-v2` and new traces use
-`flowdc-control-trace-v2`. `flowdc verify` can inspect supported earlier outputs
+`flowdc-control-trace-v2`; newly prepared studies use `flowdc-study-v2`. `flowdc verify` can inspect supported earlier outputs
 without modifying them. Earlier-version resume/reconcile and frozen-study analysis
 require the recorded original runtime; their records are not automatically migrated.
 The unchanged historical controller selectors remain explicit provenance identifiers.
+Even ratio-only historical studies require their original runtime; an unchanged
+method spelling does not authorize extending an older frozen study.
+
+FLOW-DC 4 also refuses to replace earlier-version owned output with `--force` or
+interactive overwrite consent. Use a new output directory, or move the intact old
+run elsewhere after preserving its evidence. Do not edit its ownership metadata.
 
 ## Earlier script interfaces
 

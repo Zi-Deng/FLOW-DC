@@ -42,3 +42,7 @@ read-only; older supported standalone outputs retain their separate legacy layou
 Read-only status does not reinterpret either layout. Resume, reconciliation and
 journal publication require the run's original compatible runtime. Renaming a
 method in an ownership record does not authorize a new runtime to continue it.
+
+Explicit overwrite consent applies only to compatible current-version output.
+Earlier-version owned output is preserved even with `--force`; choose a new output
+directory or move the intact run elsewhere rather than editing its ownership records.

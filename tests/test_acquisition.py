@@ -208,6 +208,8 @@ class AcquisitionTests(unittest.TestCase):
                 self.assertRaisesRegex(ValueError, "original recovery runtime"),
             ):
                 recovery_config(root, command)
+        with self.assertRaisesRegex(ValueError, "new output directory"):
+            self.run_config(replace(cfg, force=True))
         with integrity.RunStore(root, allow_historical=True) as store:
             self.assertFalse(store.historical)  # v3 retains its own modern field layout.
             self.assertTrue(store.read_only)

@@ -97,6 +97,27 @@ class ExperimentTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             analyze(study)
 
+    def test_v3_ratio_only_study_is_preserved_and_requires_original_runtime(self):
+        source, path, protocol = self.definition()
+        protocol["methods"] = [{"method": "paarc-ratio"}]
+        path.write_text(json.dumps(protocol))
+        study = self.root / "old-study"
+        frozen = prepare(path, source, study)
+        self.assertEqual(frozen["schema"], "flowdc-study-v2")
+        frozen["schema"] = "flowdc-study-v1"
+        (study / "freeze.json").write_text(json.dumps(frozen))
+        before = {str(p.relative_to(study)): p.read_bytes() for p in study.rglob("*") if p.is_file()}
+        for operation in (run, analyze, verify, select):
+            with (
+                self.subTest(operation=operation.__name__),
+                self.assertRaisesRegex(ValueError, "original runtime"),
+            ):
+                operation(study)
+            self.assertEqual(
+                before, {str(p.relative_to(study)): p.read_bytes() for p in study.rglob("*") if p.is_file()}
+            )
+        self.assertFalse(ImageHandler.requests)
+
     def test_interrupted_attempt_is_not_replayed(self):
         source, path, _ = self.definition()
         study = self.root / "study"

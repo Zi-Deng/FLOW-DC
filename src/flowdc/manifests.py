@@ -64,8 +64,13 @@ def validate_and_load(cfg: Config, prepared=None) -> pl.DataFrame:
             pass
         if (out / integrity.INTERNAL).exists() or (out / integrity.INTERNAL).is_symlink():
             # Never erase a malformed/newer journal or an active managed run.
-            with integrity.RunStore(out):
-                pass
+            with integrity.RunStore(out, allow_historical=True) as previous:
+                integrity.require(
+                    not previous.read_only,
+                    "Earlier-version output is preserved, including with --force. "
+                    "Choose a new output directory or move the intact run elsewhere; "
+                    "use the original recovery runtime for historical recovery.",
+                )
         if cfg.resume or cfg.reconcile:
             return df
         if not cfg.force:
