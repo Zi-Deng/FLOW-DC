@@ -68,7 +68,7 @@ def validate_and_load(cfg: Config, prepared=None) -> pl.DataFrame:
                 integrity.require(
                     not previous.read_only,
                     "Earlier-version output is preserved, including with --force. "
-                    "Choose a new output directory or move the intact run elsewhere; "
+                    "Choose a new output directory; "
                     "use the original recovery runtime for historical recovery.",
                 )
         if cfg.resume or cfg.reconcile:

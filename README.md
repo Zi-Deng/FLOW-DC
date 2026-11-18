@@ -61,7 +61,7 @@ Resume verifies source/configuration identity and remaining attempt budgets befo
 sending requests. Reconciliation is offline. Existing output requires confirmation
 before replacement; `--force` explicitly authorizes compatible replacement.
 Earlier-version owned output is preserved even with `--force`: choose a new output
-directory or move the intact old run elsewhere. Earlier-version runs
+directory. Earlier-version runs
 require their original runtime for recovery; no automatic ownership migration occurs.
 See [configuration](docs/configuration.md), [integrity](docs/integrity.md) and the
 [interface migration guide](docs/migration.md).

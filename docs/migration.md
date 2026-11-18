@@ -32,8 +32,9 @@ Even ratio-only historical studies require their original runtime; an unchanged
 method spelling does not authorize extending an older frozen study.
 
 FLOW-DC 4 also refuses to replace earlier-version owned output with `--force` or
-interactive overwrite consent. Use a new output directory, or move the intact old
-run elsewhere after preserving its evidence. Do not edit its ownership metadata.
+interactive overwrite consent. Use a new output directory and retain the original
+run at its recorded location. Do not edit its ownership metadata to bypass its
+path binding.
 
 ## Earlier script interfaces
 
