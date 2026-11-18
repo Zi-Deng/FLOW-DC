@@ -32,3 +32,11 @@ VM identities are excluded; measured values and first-attempt dispositions are
 preserved. Original private evidence is retained separately. The authors retain
 rights to the manuscript; the software license does not relicense third-party
 images, datasets or cited works.
+
+PAARC is the controller formerly labeled PAARC-Grad; PAARC-Ratio remains the tested
+alternative. The paper calls its sampled feedback quantity the normalized
+excess-delay rate. Compact inputs use current names, with `original_method`,
+`original_label` and `original_control_reasons` preserving changed source fields.
+Stable run identifiers and original source hashes are unchanged. Every build reverses
+the relabeling and checks the exact prior packaged bytes as well as current hashes.
+This naming revision does not constitute a new acquisition or performance result.

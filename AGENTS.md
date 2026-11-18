@@ -2,7 +2,7 @@
 
 ## Source and scope
 
-- `src/flowdc/` is the maintained product. PAARC-Grad and PAARC-Ratio share one
+- `src/flowdc/` is the maintained product. PAARC is the default controller; PAARC-Ratio is its explicit alternative. They share one
   HTTP, admission, journal and archive pipeline. Controller defaults live in
   the typed configuration and policy model; CLI and TaskVine use those models.
 - `experiments/` contains explicit protocols and an isolated comparator environment.
@@ -51,3 +51,13 @@ No automatic paid fallback, third ordinary review or provider capability campaig
 Included usage only; paid extras and API spending remain zero. Record reviewed/final
 revisions, material findings, limitations and current CI. Agents never merge or submit
 papers. Maintain the existing workflow size/time budgets.
+
+## Method names and evidence
+
+- Current configurations use `paarc` or `paarc-ratio`; do not restore retired aliases.
+- Describe the controller signal as the normalized excess-delay rate, in inverse seconds.
+- Original names in provenance, frozen transition fixtures, historical verification,
+  migration examples and verbatim historical records are intentional. Do not rewrite
+  source identities or measurements to eliminate these historical strings.
+- Compact paper inputs retain reversible original fields; preserve their prior-byte
+  provenance checks and all incomplete/author-reported dispositions.

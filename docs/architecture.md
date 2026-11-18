@@ -19,14 +19,14 @@ flowchart LR
 |---|---|
 | `config`, `cli` | Typed defaults, strict configuration, CLI precedence |
 | `manifests`, `partition`, `naming` | Original-row identity and deterministic output planning |
-| `controllers`, `admission` | Pure ratio/gradient transitions, observation freshness and permits |
+| `controllers`, `admission` | Pure PAARC/ratio transitions, observation freshness and permits |
 | `http`, `downloader` | Request timing, redirects, retries and bounded worker scheduling |
 | `integrity`, `verification`, `reports` | No-follow storage, journals, reconciliation and byte accounting |
 | `distributed` | Package staging, owned native workers and manager-side verification |
 | `experiments` | Frozen protocols, isolated comparator, request observations and analysis |
 | `ops` | Optional resource lifecycle and cumulative accounting |
 
-PAARC-Grad and PAARC-Ratio correspond to the historical selectors
+PAARC and PAARC-Ratio correspond to the historical selectors
 `gradient-candidate-v2` and `ratio-v2`. Their transition oracle records the original
 v2 implementation revision. Renaming the public interface does not change their
 priority rules. No other controller implementation is retained.

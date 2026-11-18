@@ -1,7 +1,42 @@
 # Interface migration
 
-FLOW-DC 3 uses the installable `flowdc` command. Obsolete script wrappers and
+FLOW-DC 4 uses the installable `flowdc` command. Obsolete script wrappers and
 controller variants are removed; configuration is validated consistently.
+
+## FLOW-DC 3 to 4
+
+PAARC is the default controller previously named PAARC-Grad. This is a naming change,
+not a new regulation algorithm. PAARC-Ratio remains an explicitly selected alternative.
+Retired method and option spellings are rejected rather than accepted as aliases.
+
+| FLOW-DC 3 | FLOW-DC 4 |
+|---|---|
+| `method: paarc-grad` | `method: paarc` |
+| `gradient_tau_s` | `delay_rate_tau_s` |
+| `gradient_hold_per_s` | `delay_rate_hold_per_s` |
+| `gradient_decrease_per_s` | `delay_rate_decrease_per_s` |
+| `gradient_ewma_per_s` | `delay_rate_ewma_per_s` |
+| `derivative_per_s` | `raw_delay_rate_per_s` |
+| `gradient_alpha` | `delay_rate_alpha` |
+| `decision_gradient_per_s` | `decision_delay_rate_per_s` |
+| `gradient_hold`, `gradient_persistence_hold`, `gradient_decrease` | Corresponding `delay_rate_*` decision reasons |
+
+Rename configuration fields only when preparing a **new** run or study. Never edit
+an existing ownership record, frozen protocol, source hash or control trace to make
+it look current. New runs use `flowdc-package-v2` and new traces use
+`flowdc-control-trace-v2`; newly prepared studies use `flowdc-study-v2`. `flowdc verify` can inspect supported earlier outputs
+without modifying them. Earlier-version resume/reconcile and frozen-study analysis
+require the recorded original runtime; their records are not automatically migrated.
+The unchanged historical controller selectors remain explicit provenance identifiers.
+Even ratio-only historical studies require their original runtime; an unchanged
+method spelling does not authorize extending an older frozen study.
+
+FLOW-DC 4 also refuses to replace earlier-version owned output with `--force` or
+interactive overwrite consent. Use a new output directory and retain the original
+run at its recorded location. Do not edit its ownership metadata to bypass its
+path binding.
+
+## Earlier script interfaces
 
 | Previous interface | Current interface |
 |---|---|
@@ -17,7 +52,7 @@ controller variants are removed; configuration is validated consistently.
 | `C_min`, `C_init`, `C_max` | `c_min`, `c_init`, `c_max` |
 | `max_retry_attempts` | `max_attempts` (includes the first attempt) |
 | `force_overwrite`, `compress_tar` | `force`, `compress_archive` |
-| `control_method` | `method`: `paarc-grad` or `paarc-ratio` |
+| `control_method` | `method`: `paarc` or `paarc-ratio` |
 
 Historical selectors remain in the evidence mapping; they are not accepted as new
 public method names. Explicit CLI values override JSON instead of being silently

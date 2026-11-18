@@ -17,16 +17,25 @@ from ..config import DownloadConfig
 from ..distributed import run_distributed, verify_partition
 from .common import file_hash, read_json, require, write_new
 from .metrics import transport
-from .protocol import validate
+from .protocol import STUDY_SCHEMA, validate
+
+
+def study_identity(root):
+    frozen = read_json(root / "freeze.json")
+    require(
+        isinstance(frozen, dict) and frozen.get("schema") == STUDY_SCHEMA,
+        "Unsupported study identity: prepare a fresh FLOW-DC 4 study or use the original runtime "
+        "for historical studies; frozen records are not migrated.",
+    )
+    return frozen
 
 
 def freeze(study):
     root = Path(study).resolve()
+    frozen = study_identity(root)
     protocol = validate(read_json(root / "protocol.json"))
-    frozen = read_json(root / "freeze.json")
     require(frozen["protocol_sha256"] == file_hash(root / "protocol.json"), "frozen protocol changed")
     cells = frozen["cells"]
-    require(frozen["schema"] == "flowdc-study-v1", "unknown study schema")
     expected = {
         f"b{b}-c{c}-m{m}"
         for b in range(protocol["blocks"])
@@ -54,6 +63,7 @@ def freeze(study):
 def run(study, *, taskvine=None, comparator_python=None, limit=None):
     require(limit is None or type(limit) is int and limit > 0, "limit must be a positive integer")
     root = Path(study).resolve()
+    study_identity(root)  # Refuse old studies before even creating a lock file.
     with (root / ".run.lock").open("a+b") as lock:
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -97,7 +107,7 @@ def _run(study, *, taskvine, comparator_python, limit):
                     "input_path": str(directory / "input.parquet"),
                     "input_format": "parquet",
                     "output_dir": str(directory / "native"),
-                    "method": method if method != "img2dataset" else "paarc-grad",
+                    "method": method if method != "img2dataset" else "paarc",
                     "c_max": entry["processes"] * entry["threads"]
                     if method == "img2dataset"
                     else entry.get("c_max", 192),
@@ -264,7 +274,7 @@ def analyze(study):
                 {**cell, "status": "interrupted" if directory.exists() else "unstarted", "goodput_Bps": None}
             )
     contrasts = []
-    for method in ["paarc-ratio", "paarc-grad"]:
+    for method in ["paarc-ratio", "paarc"]:
         for condition in range(len(protocol["conditions"])):
             pairs = []
             changed_blocks = []

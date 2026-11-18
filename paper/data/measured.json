@@ -3,7 +3,7 @@
   "cvdf": [
     {
       "run_id": "openimages-cvdf-evaluation-0-gradient-candidate-v2",
-      "method": "gradient-candidate-v2",
+      "method": "paarc",
       "index": 0.0,
       "input_sha256": "8934578d0f4f33069c1e604a93ec0e449301c871048f1422470d49da4833f0df",
       "credited_bytes": 161556589.0,
@@ -14,8 +14,10 @@
       "coverage": 1.0,
       "mean_active": 5.767683216394419,
       "peak": 14.0,
-      "label": "PAARC-Grad",
-      "evidence_kind": "measured"
+      "label": "PAARC",
+      "evidence_kind": "measured",
+      "original_method": "gradient-candidate-v2",
+      "original_label": "PAARC-Grad"
     },
     {
       "run_id": "openimages-cvdf-evaluation-0-img2dataset-1.47.0",
@@ -35,7 +37,7 @@
     },
     {
       "run_id": "openimages-cvdf-evaluation-0-ratio-v2",
-      "method": "ratio-v2",
+      "method": "paarc-ratio",
       "index": 0.0,
       "input_sha256": "8934578d0f4f33069c1e604a93ec0e449301c871048f1422470d49da4833f0df",
       "credited_bytes": 161556589.0,
@@ -47,11 +49,12 @@
       "mean_active": 7.629877703842898,
       "peak": 21.0,
       "label": "PAARC-Ratio",
-      "evidence_kind": "measured"
+      "evidence_kind": "measured",
+      "original_method": "ratio-v2"
     },
     {
       "run_id": "openimages-cvdf-evaluation-1-gradient-candidate-v2",
-      "method": "gradient-candidate-v2",
+      "method": "paarc",
       "index": 1.0,
       "input_sha256": "60280d0d8005839769c59705dbc3a8d11d87145d0d39a3c416ccd0ad29a728d7",
       "credited_bytes": 165006387.0,
@@ -62,8 +65,10 @@
       "coverage": 1.0,
       "mean_active": 6.547403111489246,
       "peak": 14.0,
-      "label": "PAARC-Grad",
-      "evidence_kind": "measured"
+      "label": "PAARC",
+      "evidence_kind": "measured",
+      "original_method": "gradient-candidate-v2",
+      "original_label": "PAARC-Grad"
     },
     {
       "run_id": "openimages-cvdf-evaluation-1-img2dataset-1.47.0",
@@ -83,7 +88,7 @@
     },
     {
       "run_id": "openimages-cvdf-evaluation-1-ratio-v2",
-      "method": "ratio-v2",
+      "method": "paarc-ratio",
       "index": 1.0,
       "input_sha256": "60280d0d8005839769c59705dbc3a8d11d87145d0d39a3c416ccd0ad29a728d7",
       "credited_bytes": 165006387.0,
@@ -95,11 +100,12 @@
       "mean_active": 5.391911944804218,
       "peak": 9.0,
       "label": "PAARC-Ratio",
-      "evidence_kind": "measured"
+      "evidence_kind": "measured",
+      "original_method": "ratio-v2"
     },
     {
       "run_id": "openimages-cvdf-evaluation-2-gradient-candidate-v2",
-      "method": "gradient-candidate-v2",
+      "method": "paarc",
       "index": 2.0,
       "input_sha256": "13adab85f0b49a1201ff274d384e6cff8ae648b5ac142b2a968553af0175d136",
       "credited_bytes": 158887958.0,
@@ -110,8 +116,10 @@
       "coverage": 1.0,
       "mean_active": 6.403504273665327,
       "peak": 14.0,
-      "label": "PAARC-Grad",
-      "evidence_kind": "measured"
+      "label": "PAARC",
+      "evidence_kind": "measured",
+      "original_method": "gradient-candidate-v2",
+      "original_label": "PAARC-Grad"
     },
     {
       "run_id": "openimages-cvdf-evaluation-2-img2dataset-1.47.0",
@@ -131,7 +139,7 @@
     },
     {
       "run_id": "openimages-cvdf-evaluation-2-ratio-v2",
-      "method": "ratio-v2",
+      "method": "paarc-ratio",
       "index": 2.0,
       "input_sha256": "13adab85f0b49a1201ff274d384e6cff8ae648b5ac142b2a968553af0175d136",
       "credited_bytes": 158887958.0,
@@ -143,11 +151,12 @@
       "mean_active": 10.080676442730601,
       "peak": 30.0,
       "label": "PAARC-Ratio",
-      "evidence_kind": "measured"
+      "evidence_kind": "measured",
+      "original_method": "ratio-v2"
     },
     {
       "run_id": "openimages-cvdf-evaluation-3-gradient-candidate-v2",
-      "method": "gradient-candidate-v2",
+      "method": "paarc",
       "index": 3.0,
       "input_sha256": "26cd8b2528471aafa6c52abe628339f0b3cbe01495fbde9f2b47ed25b8b1c468",
       "credited_bytes": 161600202.0,
@@ -158,8 +167,10 @@
       "coverage": 1.0,
       "mean_active": 9.431635515958074,
       "peak": 32.0,
-      "label": "PAARC-Grad",
-      "evidence_kind": "measured"
+      "label": "PAARC",
+      "evidence_kind": "measured",
+      "original_method": "gradient-candidate-v2",
+      "original_label": "PAARC-Grad"
     },
     {
       "run_id": "openimages-cvdf-evaluation-3-img2dataset-1.47.0",
@@ -179,7 +190,7 @@
     },
     {
       "run_id": "openimages-cvdf-evaluation-3-ratio-v2",
-      "method": "ratio-v2",
+      "method": "paarc-ratio",
       "index": 3.0,
       "input_sha256": "26cd8b2528471aafa6c52abe628339f0b3cbe01495fbde9f2b47ed25b8b1c468",
       "credited_bytes": 161600202.0,
@@ -191,7 +202,8 @@
       "mean_active": 5.811169281474628,
       "peak": 14.0,
       "label": "PAARC-Ratio",
-      "evidence_kind": "measured"
+      "evidence_kind": "measured",
+      "original_method": "ratio-v2"
     }
   ],
   "taibif_validation": [
@@ -199,7 +211,7 @@
       "run_id": "validation-1-balanced-ratio-v2",
       "phase": "validation",
       "arm": "balanced-ratio-v2",
-      "method": "ratio-v2",
+      "method": "paarc-ratio",
       "block": 1,
       "status": "complete",
       "goodput_Bps": 8646537.764124783,
@@ -229,16 +241,25 @@
           "utilization_hold": 14
         },
         "decisions": 167,
-        "decreases": 64
+        "decreases": 64,
+        "original_control_reasons": {
+          "baseline_probe": 2,
+          "baseline_reset": 5,
+          "empty_hold": 1,
+          "ratio_update": 110,
+          "startup_increase": 35,
+          "utilization_hold": 14
+        }
       },
       "label": "PAARC-Ratio",
-      "evidence_kind": "measured"
+      "evidence_kind": "measured",
+      "original_method": "ratio-v2"
     },
     {
       "run_id": "validation-1-balanced-gradient-candidate-v2",
       "phase": "validation",
       "arm": "balanced-gradient-candidate-v2",
-      "method": "gradient-candidate-v2",
+      "method": "paarc",
       "block": 1,
       "status": "stopped",
       "goodput_Bps": null,
@@ -252,53 +273,60 @@
       },
       "verification": {},
       "observations": {},
-      "label": "PAARC-Grad",
-      "evidence_kind": "measured"
+      "label": "PAARC",
+      "evidence_kind": "measured",
+      "original_method": "gradient-candidate-v2",
+      "original_label": "PAARC-Grad"
     },
     {
       "run_id": "validation-1-high-ratio-v2",
       "phase": "validation",
       "arm": "high-ratio-v2",
-      "method": "ratio-v2",
+      "method": "paarc-ratio",
       "block": 1,
       "status": "no_candidate",
       "exposure": {},
       "verification": {},
       "observations": {},
       "label": "PAARC-Ratio",
-      "evidence_kind": "measured"
+      "evidence_kind": "measured",
+      "original_method": "ratio-v2"
     },
     {
       "run_id": "validation-1-high-gradient-candidate-v2",
       "phase": "validation",
       "arm": "high-gradient-candidate-v2",
-      "method": "gradient-candidate-v2",
+      "method": "paarc",
       "block": 1,
       "status": "no_candidate",
       "exposure": {},
       "verification": {},
       "observations": {},
-      "label": "PAARC-Grad",
-      "evidence_kind": "measured"
+      "label": "PAARC",
+      "evidence_kind": "measured",
+      "original_method": "gradient-candidate-v2",
+      "original_label": "PAARC-Grad"
     },
     {
       "run_id": "validation-2-high-gradient-candidate-v2",
       "phase": "validation",
       "arm": "high-gradient-candidate-v2",
-      "method": "gradient-candidate-v2",
+      "method": "paarc",
       "block": 2,
       "status": "no_candidate",
       "exposure": {},
       "verification": {},
       "observations": {},
-      "label": "PAARC-Grad",
-      "evidence_kind": "measured"
+      "label": "PAARC",
+      "evidence_kind": "measured",
+      "original_method": "gradient-candidate-v2",
+      "original_label": "PAARC-Grad"
     },
     {
       "run_id": "validation-2-balanced-ratio-v2",
       "phase": "validation",
       "arm": "balanced-ratio-v2",
-      "method": "ratio-v2",
+      "method": "paarc-ratio",
       "block": 2,
       "status": "complete",
       "goodput_Bps": 9318208.847088847,
@@ -328,29 +356,39 @@
           "utilization_hold": 21
         },
         "decisions": 168,
-        "decreases": 59
+        "decreases": 59,
+        "original_control_reasons": {
+          "baseline_probe": 1,
+          "baseline_reset": 8,
+          "empty_hold": 2,
+          "ratio_update": 102,
+          "startup_increase": 34,
+          "utilization_hold": 21
+        }
       },
       "label": "PAARC-Ratio",
-      "evidence_kind": "measured"
+      "evidence_kind": "measured",
+      "original_method": "ratio-v2"
     },
     {
       "run_id": "validation-2-high-ratio-v2",
       "phase": "validation",
       "arm": "high-ratio-v2",
-      "method": "ratio-v2",
+      "method": "paarc-ratio",
       "block": 2,
       "status": "no_candidate",
       "exposure": {},
       "verification": {},
       "observations": {},
       "label": "PAARC-Ratio",
-      "evidence_kind": "measured"
+      "evidence_kind": "measured",
+      "original_method": "ratio-v2"
     },
     {
       "run_id": "validation-2-balanced-gradient-candidate-v2",
       "phase": "validation",
       "arm": "balanced-gradient-candidate-v2",
-      "method": "gradient-candidate-v2",
+      "method": "paarc",
       "block": 2,
       "status": "complete",
       "goodput_Bps": 9637297.079410426,
@@ -377,21 +415,33 @@
           "delay_budget_decrease": 22,
           "eligible_increase": 85,
           "empty_hold": 2,
-          "gradient_hold": 4,
+          "delay_rate_hold": 4,
           "sample_initialize": 22,
           "startup_increase": 21
         },
         "decisions": 169,
-        "decreases": 23
+        "decreases": 23,
+        "original_control_reasons": {
+          "baseline_probe": 1,
+          "baseline_reset": 12,
+          "delay_budget_decrease": 22,
+          "eligible_increase": 85,
+          "empty_hold": 2,
+          "gradient_hold": 4,
+          "sample_initialize": 22,
+          "startup_increase": 21
+        }
       },
-      "label": "PAARC-Grad",
-      "evidence_kind": "measured"
+      "label": "PAARC",
+      "evidence_kind": "measured",
+      "original_method": "gradient-candidate-v2",
+      "original_label": "PAARC-Grad"
     },
     {
       "run_id": "validation-3-balanced-gradient-candidate-v2",
       "phase": "validation",
       "arm": "balanced-gradient-candidate-v2",
-      "method": "gradient-candidate-v2",
+      "method": "paarc",
       "block": 3,
       "status": "stopped",
       "goodput_Bps": null,
@@ -405,47 +455,53 @@
       },
       "verification": {},
       "observations": {},
-      "label": "PAARC-Grad",
-      "evidence_kind": "measured"
+      "label": "PAARC",
+      "evidence_kind": "measured",
+      "original_method": "gradient-candidate-v2",
+      "original_label": "PAARC-Grad"
     },
     {
       "run_id": "validation-3-balanced-ratio-v2",
       "phase": "validation",
       "arm": "balanced-ratio-v2",
-      "method": "ratio-v2",
+      "method": "paarc-ratio",
       "block": 3,
       "status": "unstarted",
       "exposure": {},
       "verification": {},
       "observations": {},
       "label": "PAARC-Ratio",
-      "evidence_kind": "measured"
+      "evidence_kind": "measured",
+      "original_method": "ratio-v2"
     },
     {
       "run_id": "validation-3-high-ratio-v2",
       "phase": "validation",
       "arm": "high-ratio-v2",
-      "method": "ratio-v2",
+      "method": "paarc-ratio",
       "block": 3,
       "status": "unstarted",
       "exposure": {},
       "verification": {},
       "observations": {},
       "label": "PAARC-Ratio",
-      "evidence_kind": "measured"
+      "evidence_kind": "measured",
+      "original_method": "ratio-v2"
     },
     {
       "run_id": "validation-3-high-gradient-candidate-v2",
       "phase": "validation",
       "arm": "high-gradient-candidate-v2",
-      "method": "gradient-candidate-v2",
+      "method": "paarc",
       "block": 3,
       "status": "unstarted",
       "exposure": {},
       "verification": {},
       "observations": {},
-      "label": "PAARC-Grad",
-      "evidence_kind": "measured"
+      "label": "PAARC",
+      "evidence_kind": "measured",
+      "original_method": "gradient-candidate-v2",
+      "original_label": "PAARC-Grad"
     }
   ],
   "taibif_timing": [
@@ -487,7 +543,7 @@
       "outside_http_span_seconds": 263.5468437149999
     },
     {
-      "label": "PAARC-Grad",
+      "label": "PAARC",
       "run_id": "validation-2-balanced-gradient-candidate-v2",
       "record_sha256": "00b4a2bed08173b552f45b060cd682f47f59ef141b3ae4911fb8a88fabea481b",
       "request_trace_sha256": "fb89ab71e8f65f44d62e5f16677c7ce45ef9615c6d5ffc857ee28c0fcbb813ba",
@@ -521,7 +577,8 @@
       "reported_acquisition_window_MBps": 26.776985016666664,
       "full_http_interval_MBps": 23.957689872001204,
       "http_span_fraction_of_total": 0.4022632036268785,
-      "outside_http_span_seconds": 269.24067466299994
+      "outside_http_span_seconds": 269.24067466299994,
+      "original_label": "PAARC-Grad"
     }
   ],
   "source_sha_cvdf": "239cdacb0091e93692ae7d6770e83789880a2a6d",

@@ -187,6 +187,52 @@ class AcquisitionTests(unittest.TestCase):
             self.assertFalse(store.eligible(snapshot))
         self.assertFalse(Handler.requests)
 
+    def test_v3_output_verifies_without_rebinding_and_refuses_recovery(self):
+        from flowdc.cli import recovery_config
+
+        cfg = self.config([self.url + "/ok"])
+        self.run_config(cfg)
+        root = Path(cfg.output_dir)
+        owner_path = root / ".flowdc/owner.json"
+        owner = integrity.parse(owner_path.read_bytes())
+        owner["config"]["implementation"] = "flowdc-package-v1"
+        owner["config"]["values"]["method"] = "paarc-grad"
+        owner["config"]["values"]["method_options"] = {"gradient_tau_s": 1.0}
+        owner_path.write_bytes(integrity.encode(owner))
+        before = {str(p.relative_to(root)): p.read_bytes() for p in root.rglob("*") if p.is_file()}
+        requests = list(Handler.requests)
+        self.assertEqual(verify_output(root)["counts"]["verified"], 1)
+        for command in ("resume", "reconcile"):
+            with (
+                self.subTest(command=command),
+                self.assertRaisesRegex(ValueError, "original recovery runtime"),
+            ):
+                recovery_config(root, command)
+        with self.assertRaisesRegex(ValueError, "new output directory"):
+            self.run_config(replace(cfg, force=True))
+        with integrity.RunStore(root, allow_historical=True) as store:
+            self.assertFalse(store.historical)  # v3 retains its own modern field layout.
+            self.assertTrue(store.read_only)
+            for operation in (store.reconcile, lambda: store.begin(owner["rows"][0]["row_id"])):
+                with self.assertRaisesRegex(ValueError, "read-only"):
+                    operation()
+        self.assertEqual(requests, Handler.requests)
+        self.assertEqual(
+            before, {str(p.relative_to(root)): p.read_bytes() for p in root.rglob("*") if p.is_file()}
+        )
+
+    def test_retired_configuration_fails_before_http_or_output_mutation(self):
+        cfg = self.config([self.url + "/ok"])
+        root = Path(cfg.output_dir)
+        root.mkdir()
+        sentinel = root / "preserve"
+        sentinel.write_text("owned user data")
+        for options in ({"method": "paarc-grad"}, {"method_options": {"gradient_hold_per_s": 0.1}}):
+            with self.subTest(options=options), self.assertRaisesRegex(ValueError, "renamed"):
+                self.run_config(replace(cfg, force=True, **options))
+        self.assertFalse(Handler.requests)
+        self.assertEqual(sentinel.read_text(), "owned user data")
+
     def test_partition_preserves_every_original_row_and_partial_provenance_refuses(self):
         cfg = self.config([None, self.url + "/ok", self.url + "/ok"])
         parts = partition_manifest(cfg.input_path, self.root / "parts", groups=2, method="rows")
@@ -308,7 +354,7 @@ class AcquisitionTests(unittest.TestCase):
 class ConfigurationTests(unittest.TestCase):
     def test_strict_fields_and_single_defaults(self):
         base = {"input_path": "input.csv", "output_dir": "output"}
-        self.assertEqual(DownloadConfig.from_dict(base).method, "paarc-grad")
+        self.assertEqual(DownloadConfig.from_dict(base).method, "paarc")
         for extra in [
             {"timeout": 3},
             {"C_max": 4},

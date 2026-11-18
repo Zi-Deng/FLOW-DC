@@ -51,7 +51,7 @@ class NativeTests(unittest.TestCase):
         }
 
     def test_one_and_two_worker_verified_return_and_archive_corruption(self):
-        for workers, method in [(1, "paarc-grad"), (2, "paarc-ratio")]:
+        for workers, method in [(1, "paarc"), (2, "paarc-ratio")]:
             source = self.root / "input.parquet"
             if workers == 1:
                 import polars as pl

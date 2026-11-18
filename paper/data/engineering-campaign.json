@@ -25,7 +25,7 @@
       "http_span_s": 101.25147576900002,
       "job_seconds": 600,
       "mean_job_concurrency": 2.037897419426705,
-      "method": "ratio-v2",
+      "method": "paarc-ratio",
       "native_seconds": 132.780324629,
       "original_rows": 2048,
       "participants": [
@@ -60,7 +60,8 @@
         1,
         192
       ],
-      "workers": 1
+      "workers": 1,
+      "original_method": "ratio-v2"
     },
     {
       "body_bytes": 2322695041,
@@ -77,7 +78,7 @@
       "http_span_s": 143.42942857999992,
       "job_seconds": 600,
       "mean_job_concurrency": 1.7984499368961944,
-      "method": "gradient-candidate-v2",
+      "method": "paarc",
       "native_seconds": 175.313474865,
       "original_rows": 2048,
       "participants": [
@@ -112,7 +113,8 @@
         1,
         192
       ],
-      "workers": 1
+      "workers": 1,
+      "original_method": "gradient-candidate-v2"
     },
     {
       "body_bytes": 2322695041,
@@ -278,7 +280,7 @@
         "input.parquet": "c7c60a15f4c68dad44a734d6cdfb8e7e5dfb9deea5a1581d8241b0b3ccdd0f84"
       },
       "job_seconds": 600,
-      "method": "ratio-v2",
+      "method": "paarc-ratio",
       "original_rows": 512,
       "phase": "engineering",
       "rows": 512,
@@ -292,7 +294,8 @@
         1,
         192
       ],
-      "workers": 1
+      "workers": 1,
+      "original_method": "ratio-v2"
     },
     {
       "body_bytes": 605033244,
@@ -309,7 +312,7 @@
       "http_span_s": 9.504771014000013,
       "job_seconds": 600,
       "mean_job_concurrency": 3.0438238198297114,
-      "method": "ratio-v2",
+      "method": "paarc-ratio",
       "native_seconds": 20.045434823999997,
       "original_rows": 512,
       "participants": [
@@ -344,7 +347,8 @@
         1,
         192
       ],
-      "workers": 1
+      "workers": 1,
+      "original_method": "ratio-v2"
     },
     {
       "body_bytes": 605033244,
@@ -361,7 +365,7 @@
       "http_span_s": 20.738476089000017,
       "job_seconds": 600,
       "mean_job_concurrency": 1.8403517063826906,
-      "method": "gradient-candidate-v2",
+      "method": "paarc",
       "native_seconds": 30.565060181000007,
       "original_rows": 512,
       "participants": [
@@ -396,7 +400,8 @@
         1,
         192
       ],
-      "workers": 1
+      "workers": 1,
+      "original_method": "gradient-candidate-v2"
     },
     {
       "body_bytes": 605033244,
@@ -571,7 +576,7 @@
       "http_span_s": 49.64140792799981,
       "job_seconds": 600,
       "mean_job_concurrency": 3.4826991361843103,
-      "method": "ratio-v2",
+      "method": "paarc-ratio",
       "native_seconds": 66.12178347400004,
       "original_rows": 2048,
       "participants": [
@@ -624,7 +629,8 @@
         1,
         192
       ],
-      "workers": 2
+      "workers": 2,
+      "original_method": "ratio-v2"
     },
     {
       "body_bytes": 2322695041,
@@ -643,7 +649,7 @@
       "http_span_s": 91.41509211100015,
       "job_seconds": 600,
       "mean_job_concurrency": 2.365361852023989,
-      "method": "gradient-candidate-v2",
+      "method": "paarc",
       "native_seconds": 107.68426629600003,
       "original_rows": 2048,
       "participants": [
@@ -696,7 +702,8 @@
         1,
         192
       ],
-      "workers": 2
+      "workers": 2,
+      "original_method": "gradient-candidate-v2"
     },
     {
       "body_bytes": 2322695041,
@@ -931,7 +938,7 @@
       "http_span_s": 8.187394325000014,
       "job_seconds": 600,
       "mean_job_concurrency": 2.4198630617839267,
-      "method": "ratio-v2",
+      "method": "paarc-ratio",
       "native_seconds": 14.530512849999923,
       "original_rows": 512,
       "participants": [
@@ -984,7 +991,8 @@
         1,
         192
       ],
-      "workers": 2
+      "workers": 2,
+      "original_method": "ratio-v2"
     },
     {
       "body_bytes": 605033244,
@@ -1003,7 +1011,7 @@
       "http_span_s": 19.00361262399997,
       "job_seconds": 600,
       "mean_job_concurrency": 1.9099503423119901,
-      "method": "gradient-candidate-v2",
+      "method": "paarc",
       "native_seconds": 25.041017792000048,
       "original_rows": 512,
       "participants": [
@@ -1056,7 +1064,8 @@
         1,
         192
       ],
-      "workers": 2
+      "workers": 2,
+      "original_method": "gradient-candidate-v2"
     },
     {
       "body_bytes": 605033244,
@@ -1289,7 +1298,7 @@
       "http_span_s": 41.55607464100001,
       "job_seconds": 600,
       "mean_job_concurrency": 2.780720408945236,
-      "method": "ratio-v2",
+      "method": "paarc-ratio",
       "native_seconds": 56.64377642900001,
       "original_rows": 2048,
       "participants": [
@@ -1324,7 +1333,8 @@
         1,
         192
       ],
-      "workers": 1
+      "workers": 1,
+      "original_method": "ratio-v2"
     },
     {
       "body_bytes": 648352053,
@@ -1341,7 +1351,7 @@
       "http_span_s": 36.550725991000036,
       "job_seconds": 600,
       "mean_job_concurrency": 2.807258406566017,
-      "method": "gradient-candidate-v2",
+      "method": "paarc",
       "native_seconds": 51.63425716099994,
       "original_rows": 2048,
       "participants": [
@@ -1376,7 +1386,8 @@
         1,
         192
       ],
-      "workers": 1
+      "workers": 1,
+      "original_method": "gradient-candidate-v2"
     },
     {
       "body_bytes": 648352053,
@@ -1549,7 +1560,7 @@
       "http_span_s": 7.902584156999978,
       "job_seconds": 600,
       "mean_job_concurrency": 2.97067098236221,
-      "method": "ratio-v2",
+      "method": "paarc-ratio",
       "native_seconds": 13.031040496999992,
       "original_rows": 512,
       "participants": [
@@ -1584,7 +1595,8 @@
         1,
         192
       ],
-      "workers": 1
+      "workers": 1,
+      "original_method": "ratio-v2"
     },
     {
       "body_bytes": 154931796,
@@ -1601,7 +1613,7 @@
       "http_span_s": 7.708549029000039,
       "job_seconds": 600,
       "mean_job_concurrency": 2.2182991243865717,
-      "method": "gradient-candidate-v2",
+      "method": "paarc",
       "native_seconds": 13.03035577899999,
       "original_rows": 512,
       "participants": [
@@ -1636,7 +1648,8 @@
         1,
         192
       ],
-      "workers": 1
+      "workers": 1,
+      "original_method": "gradient-candidate-v2"
     },
     {
       "body_bytes": 154931796,
@@ -1831,24 +1844,26 @@
         "limiting": "body"
       },
       {
-        "method": "ratio-v2",
+        "method": "paarc-ratio",
         "tool": [
           1,
           192
         ],
         "minimum_rows": 10046,
         "maximum_rows": 19619,
-        "limiting": "native"
+        "limiting": "native",
+        "original_method": "ratio-v2"
       },
       {
-        "method": "gradient-candidate-v2",
+        "method": "paarc",
         "tool": [
           1,
           192
         ],
         "minimum_rows": 7512,
         "maximum_rows": 15280,
-        "limiting": "native"
+        "limiting": "native",
+        "original_method": "gradient-candidate-v2"
       }
     ],
     "interpretation": "Short-engineering model; proves an empty admission interval under the frozen rule, not impossibility of long execution."

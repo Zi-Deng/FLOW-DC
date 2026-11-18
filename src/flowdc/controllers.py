@@ -1,4 +1,4 @@
-"""PAARC-Ratio and PAARC-Grad: pure policy transitions and HTTP observation integration."""
+"""PAARC and its PAARC-Ratio alternative: pure policy transitions and HTTP observation integration."""
 
 import hashlib
 import math
@@ -12,8 +12,8 @@ from yarl import URL
 
 from .admission import AdaptiveSemaphore
 
-METHODS = ("paarc-grad", "paarc-ratio")
-HISTORICAL_IDS = {"paarc-grad": "gradient-candidate-v2", "paarc-ratio": "ratio-v2"}
+METHODS = ("paarc", "paarc-ratio")
+HISTORICAL_IDS = {"paarc": "gradient-candidate-v2", "paarc-ratio": "ratio-v2"}
 
 
 def require(value, message):
@@ -60,7 +60,7 @@ def percentile(values, fraction):
 
 @dataclass(frozen=True)
 class MethodConfig:
-    method: str = "paarc-grad"
+    method: str = "paarc"
     c_min: int = 2
     c_max: int = 192
     c_init: int = 4
@@ -68,14 +68,14 @@ class MethodConfig:
     sample_window_s: float = 2.0
     interval_s: float = 1.0
     queue_tau_s: float = 1.0
-    gradient_tau_s: float = 1.0
+    delay_rate_tau_s: float = 1.0
     baseline_max_age_s: float = 120.0
     stale_after_s: float = 5.0
     probe_wait_s: float = 1.0
     queue_floor_s: float = 0.001
     numerical_floor_s: float = 1e-6
-    gradient_hold_per_s: float = 0.1
-    gradient_decrease_per_s: float = 0.25
+    delay_rate_hold_per_s: float = 0.1
+    delay_rate_decrease_per_s: float = 0.25
     hard_queue_ratio: float = 4.0
     soft_factor: float = 0.85
     hard_factor: float = 0.5
@@ -87,7 +87,14 @@ class MethodConfig:
     utilization_threshold: float = 0.8
 
     def __post_init__(self):
-        require(self.method in METHODS, "method must be paarc-grad or paarc-ratio")
+        require(
+            self.method != "paarc-grad",
+            "method 'paarc-grad' was renamed to 'paarc' in FLOW-DC 4; see docs/migration.md",
+        )
+        require(
+            self.method in METHODS,
+            "method must be paarc or paarc-ratio; retired spellings require migration (docs/migration.md)",
+        )
         for field in fields(self):
             if field.name == "method":
                 continue
@@ -100,7 +107,7 @@ class MethodConfig:
             require(type(getattr(self, name)) is int, f"{name} must be an integer")
         require(self.c_min <= self.c_init <= self.c_max <= 10000, "invalid concurrency bounds")
         require(0 < self.hard_factor <= self.soft_factor < 1, "invalid decrease factors")
-        require(self.gradient_hold_per_s <= self.gradient_decrease_per_s, "invalid gradient thresholds")
+        require(self.delay_rate_hold_per_s <= self.delay_rate_decrease_per_s, "invalid delay-rate thresholds")
         require(
             self.interval_s <= self.sample_window_s < self.stale_after_s <= self.baseline_max_age_s,
             "invalid freshness intervals",
@@ -115,11 +122,23 @@ class MethodConfig:
     @classmethod
     def from_config(cls, config):
         options = dict(config.method_options)
+        retired = {
+            "gradient_tau_s": "delay_rate_tau_s",
+            "gradient_hold_per_s": "delay_rate_hold_per_s",
+            "gradient_decrease_per_s": "delay_rate_decrease_per_s",
+        }
+        replacements = [f"{old} -> {new}" for old, new in retired.items() if old in options]
+        require(
+            not replacements, f"renamed controller options: {', '.join(replacements)}; see docs/migration.md"
+        )
         require(
             not set(options).intersection({"method", "c_min", "c_max", "c_init"}),
             "method_options cannot override method or concurrency bounds",
         )
-        require(not set(options) - {f.name for f in fields(cls)}, "unknown controller option")
+        require(
+            not set(options) - {f.name for f in fields(cls)},
+            f"unknown controller options: {sorted(set(options) - {f.name for f in fields(cls)})}; see docs/migration.md",
+        )
         return cls(
             method=config.method, c_min=config.c_min, c_max=config.c_max, c_init=config.c_init, **options
         )
@@ -132,15 +151,15 @@ class DelayPolicy:
         self.config = config
         self.limit = config.c_init
         self.baseline = self.baseline_at = self.last_step = self.last_sample = None
-        self.queue = self.gradient = self.current_delay = None
+        self.queue = self.delay_rate = self.current_delay = None
         self.probe_started = None
         self.recovery_until = 0.0
         self.overuse = 0
         self.exploring = True
         self.falling = 0
 
-    def reset_derivative(self):
-        self.queue = self.gradient = self.current_delay = self.last_sample = None
+    def reset_delay_state(self):
+        self.queue = self.delay_rate = self.current_delay = self.last_sample = None
         self.overuse = 0
 
     def step(self, now, delays, *, overload=False, inflight=0):
@@ -162,9 +181,9 @@ class DelayPolicy:
         p10 = percentile(delays, 0.1) if delays else None
         p50 = percentile(delays, 0.5) if delays else None
         elapsed = None
-        derivative = None
-        alpha_q = alpha_g = None
-        raw_queue = decision_queue = decision_gradient = ratio = None
+        raw_delay_rate = None
+        alpha_q = alpha_s = None
+        raw_queue = decision_queue = decision_delay_rate = ratio = None
         baseline_changed = False
 
         def result(reason):
@@ -183,14 +202,14 @@ class DelayPolicy:
                 "baseline_changed": baseline_changed,
                 "queue_ewma_s": self.queue,
                 "current_delay_ewma_s": self.current_delay,
-                "derivative_per_s": derivative,
-                "gradient_ewma_per_s": self.gradient,
+                "raw_delay_rate_per_s": raw_delay_rate,
+                "delay_rate_ewma_per_s": self.delay_rate,
                 "sample_elapsed_s": elapsed,
                 "queue_alpha": alpha_q,
-                "gradient_alpha": alpha_g,
+                "delay_rate_alpha": alpha_s,
                 "raw_queue_s": raw_queue,
                 "decision_queue_s": decision_queue,
-                "decision_gradient_per_s": decision_gradient,
+                "decision_delay_rate_per_s": decision_delay_rate,
                 "ratio": ratio,
                 "overuse_count": self.overuse,
                 "probe_started_s": self.probe_started,
@@ -203,7 +222,7 @@ class DelayPolicy:
         if overload:
             self.limit = math.floor(self.limit * cfg.hard_factor)
             self.recovery_until = now + cfg.recovery_grace_s
-            self.reset_derivative()
+            self.reset_delay_state()
             return result("overload_decrease")
         minimum = cfg.sample_min
         stale_baseline = self.baseline_at is not None and now - self.baseline_at >= cfg.baseline_max_age_s
@@ -211,44 +230,46 @@ class DelayPolicy:
             self.probe_started = now
             self.exploring = True
             self.limit = cfg.c_min
-            self.reset_derivative()
+            self.reset_delay_state()
             return result("baseline_probe")
         if len(delays) < minimum:
             self.overuse = 0
             if self.last_sample is not None and now - self.last_sample >= cfg.stale_after_s:
-                self.reset_derivative()
+                self.reset_delay_state()
             return result("empty_hold" if not delays else "sparse_hold")
         if self.probe_started is not None:
             if now - self.probe_started < cfg.probe_wait_s or inflight > cfg.c_min:
                 return result("probe_drain_hold")
             self.baseline, self.baseline_at = (max(p10, cfg.numerical_floor_s), now)
             self.probe_started = None
-            self.reset_derivative()
+            self.reset_delay_state()
             baseline_changed = True
         elif self.baseline is None or max(p10, cfg.numerical_floor_s) < self.baseline:
             self.baseline, self.baseline_at = (max(p10, cfg.numerical_floor_s), now)
-            self.reset_derivative()
+            self.reset_delay_state()
             baseline_changed = True
         raw_queue = max(0.0, p50 - self.baseline)
         if self.last_sample is None or now - self.last_sample >= cfg.stale_after_s:
-            self.reset_derivative()
+            self.reset_delay_state()
             self.queue, self.current_delay, self.last_sample = (raw_queue, p50, now)
             return result("baseline_reset" if baseline_changed else "sample_initialize")
         elapsed = now - self.last_sample
         alpha_q = -math.expm1(-elapsed / cfg.queue_tau_s)
-        alpha_g = -math.expm1(-elapsed / cfg.gradient_tau_s)
+        alpha_s = -math.expm1(-elapsed / cfg.delay_rate_tau_s)
         queue = self.queue + alpha_q * (raw_queue - self.queue)
-        derivative = (queue - self.queue) / (elapsed * max(self.baseline, cfg.numerical_floor_s))
-        self.gradient = (
-            derivative if self.gradient is None else self.gradient + alpha_g * (derivative - self.gradient)
+        raw_delay_rate = (queue - self.queue) / (elapsed * max(self.baseline, cfg.numerical_floor_s))
+        self.delay_rate = (
+            raw_delay_rate
+            if self.delay_rate is None
+            else self.delay_rate + alpha_s * (raw_delay_rate - self.delay_rate)
         )
         self.queue = queue
         self.current_delay += alpha_q * (p50 - self.current_delay)
         self.last_sample = now
-        decision_queue, decision_gradient = (self.queue, self.gradient)
+        decision_queue, decision_delay_rate = (self.queue, self.delay_rate)
         if self.queue >= max(cfg.queue_floor_s, cfg.hard_queue_ratio * self.baseline):
             self.limit = math.floor(self.limit * cfg.hard_factor)
-            self.reset_derivative()
+            self.reset_delay_state()
             self.recovery_until = now + cfg.recovery_grace_s
             return result("hard_queue_decrease")
         if now < self.recovery_until:
@@ -256,7 +277,7 @@ class DelayPolicy:
             return result("recovery_hold")
         utilized = inflight >= cfg.utilization_threshold * before
         budget = cfg.target_delay_ratio * self.baseline
-        self.falling = self.falling + 1 if self.gradient <= -0.1 else 0
+        self.falling = self.falling + 1 if self.delay_rate <= -0.1 else 0
         if self.falling >= 3 and now >= self.recovery_until:
             self.exploring = True
         if self.current_delay >= budget:
@@ -272,19 +293,19 @@ class DelayPolicy:
         if self.current_delay >= budget:
             self.limit = math.floor(before * cfg.soft_factor)
             self.recovery_until = now + cfg.recovery_grace_s
-            self.reset_derivative()
+            self.reset_delay_state()
             return result("delay_budget_decrease")
-        if self.queue >= cfg.queue_floor_s and (self.gradient >= cfg.gradient_decrease_per_s):
+        if self.queue >= cfg.queue_floor_s and (self.delay_rate >= cfg.delay_rate_decrease_per_s):
             self.overuse += 1
             if self.overuse >= cfg.persistence:
                 self.limit = math.floor(before * cfg.soft_factor)
-                self.reset_derivative()
+                self.reset_delay_state()
                 self.recovery_until = now + cfg.recovery_grace_s
-                return result("gradient_decrease")
-            return result("gradient_persistence_hold")
+                return result("delay_rate_decrease")
+            return result("delay_rate_persistence_hold")
         self.overuse = 0
-        if self.queue >= cfg.queue_floor_s and (self.gradient >= cfg.gradient_hold_per_s):
-            return result("gradient_hold")
+        if self.queue >= cfg.queue_floor_s and (self.delay_rate >= cfg.delay_rate_hold_per_s):
+            return result("delay_rate_hold")
         if not utilized:
             return result("utilization_hold")
         self.limit += min(8, max(1, math.ceil(0.02 * before)))
@@ -408,7 +429,7 @@ class ControlTrace:
         self.path = f".flowdc/control/{self.identifier}.jsonl"
         self.record_path = f".flowdc/control/{self.identifier}.json"
         self.record = {
-            "schema": "flowdc-control-trace-v1",
+            "schema": "flowdc-control-trace-v2",
             "path": self.path,
             "invocation_id": self.identifier,
             "run_id": store.owner["run_id"],
@@ -460,7 +481,7 @@ def control_records(store):
             continue
         record = store.fs.json(directory + "/" + name)
         require(
-            record["schema"] == "flowdc-control-trace-v1" and record["run_id"] == store.owner["run_id"],
+            record["schema"] == "flowdc-control-trace-v2" and record["run_id"] == store.owner["run_id"],
             "control trajectory ownership mismatch",
         )
         require(record["path"] == directory + "/" + name[:-5] + ".jsonl", "control trajectory path mismatch")

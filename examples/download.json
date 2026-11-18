@@ -1,6 +1,6 @@
 {
   "input_path": "examples/manifest.csv",
   "output_dir": "build/example-download",
-  "method": "paarc-grad",
+  "method": "paarc",
   "c_max": 192
 }

@@ -2,7 +2,9 @@
 """Check the manuscript artifact, not scientific completion of its experiments."""
 
 import argparse
+import csv
 import hashlib
+import io
 import json
 import math
 import re
@@ -21,12 +23,62 @@ def close(a, b):
     return math.isclose(a, b, rel_tol=1e-10, abs_tol=1e-8)
 
 
+def original_projection(raw, suffix):
+    """Undo display-only relabeling to verify the exact prior packaged bytes."""
+    methods = {"gradient-candidate-v2": "paarc", "ratio-v2": "paarc-ratio", "PAARC-Grad": "PAARC"}
+    if suffix == ".json":
+        data = json.loads(raw)
+
+        def restore(value):
+            if isinstance(value, list):
+                for item in value:
+                    restore(item)
+            elif isinstance(value, dict):
+                for name in ("method", "label", "control_reasons"):
+                    original = "original_" + name
+                    if original in value:
+                        old = value[original]
+                        expected = (
+                            methods[old]
+                            if name == "method"
+                            else "PAARC"
+                            if name == "label"
+                            else {k.replace("gradient_", "delay_rate_"): v for k, v in old.items()}
+                        )
+                        require(
+                            value[name] == expected, "relabeled observation lost its original method binding"
+                        )
+                        value[name] = value.pop(original)
+                for item in value.values():
+                    restore(item)
+
+        restore(data)
+        return (json.dumps(data, indent=2) + "\n").encode()
+    reader = csv.DictReader(io.StringIO(raw.decode()))
+    columns = [name for name in reader.fieldnames if name != "original_method"]
+    stream = io.StringIO(newline="")
+    writer = csv.DictWriter(stream, fieldnames=columns, lineterminator="\r\n" if b"\r\n" in raw else "\n")
+    writer.writeheader()
+    for row in reader:
+        original = row.pop("original_method")
+        require(not original or row["method"] == methods[original], "inventory method binding differs")
+        row["method"] = original or row["method"]
+        writer.writerow(row)
+    return stream.getvalue().encode()
+
+
 def main():
     evidence = json.loads((ROOT / "provenance/evidence.json").read_text())
     for name, record in evidence["inputs"].items():
+        raw = (ROOT / "data" / name).read_bytes()
         require(
-            hashlib.sha256((ROOT / "data" / name).read_bytes()).hexdigest() == record["packaged_sha256"],
+            hashlib.sha256(raw).hexdigest() == record["packaged_sha256"],
             "packaged numerical input differs from its evidence binding",
+        )
+        require(
+            hashlib.sha256(original_projection(raw, Path(name).suffix)).hexdigest()
+            == record["prior_packaged_sha256"],
+            "method relabeling changed the original measurements or identities",
         )
     parser = argparse.ArgumentParser()
     parser.parse_args()
@@ -121,6 +173,12 @@ def main():
         "Obsolete label or placeholder in main article",
     )
     abstract = src.split(r"\begin{abstract}")[1].split(r"\end{abstract}")[0]
+    require("PAARC-Ratio" not in abstract and r"\ratio" not in abstract, "Abstract must center on PAARC")
+    active = body + (ROOT / "supplement.tex").read_text()
+    require(
+        not re.search(r"PAARC-Grad|paarc-grad|\bgradients?\b(?!-candidate-v2)", active, re.I),
+        "Retired controller terminology remains in active manuscript text",
+    )
     require(150 <= len(abstract.split()) <= 250, "Abstract length outside 150--250 words")
     require(
         not re.search(r"\\(?:cite|footnote|gen)\b", abstract),
@@ -164,6 +222,7 @@ def main():
         n = int(re.search(r"Pages:\s+(\d+)", info).group(1))
         results[name] = n
         text = subprocess.check_output(["pdftotext", str(pdf), "-"], text=True)
+        require("PAARC-Grad" not in text, f"Retired method label remains in rendered {name}")
         require("prototype" not in text.lower(), f"Unexpected prototype banner: {name}")
         require(
             "Generated scenario; not an experimental measurement." not in text,

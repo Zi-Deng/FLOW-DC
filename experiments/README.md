@@ -75,3 +75,8 @@ to another host; current source access must still be qualified. Runtime guards h
 explicit refusals, publisher opt-outs and body budgets. Latency is diagnostic in the
 current guarded comparison; user pauses are explicit and server Retry-After remains
 effective. No public acquisition is part of ordinary software qualification.
+
+FLOW-DC 4 writes `flowdc-study-v2` identities. Earlier frozen studies are not
+extended, analyzed or rewritten by this runtime, including ratio-only studies.
+Keep their records and use their original runtime, or prepare a fresh version-4
+study in a new directory. This restriction is checked before a run lock is created.

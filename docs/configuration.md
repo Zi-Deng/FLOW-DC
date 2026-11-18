@@ -9,7 +9,7 @@ unknown keys and invalid values fail before output deletion or HTTP.
 | `input_path`, `output_dir` | Required | Manifest and owned output directory |
 | `input_format` | Inferred | `parquet`, `csv`, `excel`, `xml` |
 | `url_column`, `label_column` | `url`, null | Source metadata columns |
-| `method` | `paarc-grad` | `paarc-grad` or `paarc-ratio` |
+| `method` | `paarc` | `paarc` or `paarc-ratio` |
 | `c_min`, `c_init`, `c_max` | 2, 4, 192 | Per-host request limits |
 | `workers` | null | Downloader coroutine pool; null sizes from host count |
 | `timeout_s` | 30 | Per-attempt HTTP deadline |
@@ -42,3 +42,16 @@ Manifests retain flat string/boolean/integer/float/null metadata. Unsupported ty
 nonfinite research metadata and unsafe output names are rejected explicitly. XML
 uses the optional pandas reader; installing format support does not affect the
 controller. The manifest and row index are memory resident.
+
+PAARC measures the **normalized excess-delay rate**: the change in smoothed excess
+delay divided by elapsed seconds and the low-delay baseline. The raw and smoothed
+rates have units of inverse seconds. `delay_rate_tau_s` defaults to 1 second;
+`delay_rate_hold_per_s` and `delay_rate_decrease_per_s` default to 0.10 and 0.25
+inverse seconds. Two consecutive eligible updates at the reduction threshold are
+required. These names describe a finite difference over time, not an optimization
+parameter. PAARC-Ratio shares the observation and exploration safeguards but uses
+a bounded delay ratio for ordinary regulation.
+
+New control events expose `raw_delay_rate_per_s`, `delay_rate_ewma_per_s`,
+`delay_rate_alpha` and `decision_delay_rate_per_s`. Original historical names remain
+in historical records only; see the [migration guide](migration.md).

@@ -11,7 +11,8 @@ from ..config import DownloadConfig
 from ..http import load_input_file
 from .common import file_hash, read_json, require, write_new
 
-METHODS = ("paarc-grad", "paarc-ratio", "img2dataset")
+METHODS = ("paarc", "paarc-ratio", "img2dataset")
+STUDY_SCHEMA = "flowdc-study-v2"
 
 
 def validate(protocol):
@@ -181,7 +182,7 @@ def prepare(protocol_path, input_path, output_dir, exclude_study=None):
                     }
                 )
     freeze = {
-        "schema": "flowdc-study-v1",
+        "schema": STUDY_SCHEMA,
         "protocol_sha256": file_hash(root / "protocol.json"),
         "population_sha256": integrity.digest(raw),
         "exclusions": exclusions,
