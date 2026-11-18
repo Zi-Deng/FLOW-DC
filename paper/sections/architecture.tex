@@ -7,14 +7,14 @@ FLOW-DC organizes data acquisition into three stages: input preparation, coordin
 \label{fig:overview}\end{figure*}
 
 \subsection{TaskVine}
-TaskVine provides the manager--worker execution layer~\cite{taskvine}. The manager declares a task's command, resource requirements, input files, and output files. Workers connect to the manager, receive runnable tasks and their declared inputs, and return declared outputs. This design avoids requiring a shared filesystem between all participants. It also permits workers to join after task submission, provided that the credentials, and network connectivity are compatible.
+TaskVine provides the manager--worker execution layer~\cite{taskvine}. The manager declares a task's command, resource requirements, input files, and output files. Workers connect to the manager, receive runnable tasks and their declared inputs, and return declared outputs. This design avoids requiring a shared filesystem between all participants. It also permits workers to join after task submission, provided that the runtime, credentials, and network connectivity are compatible.
 
 \begin{figure}[t]\centering
 \includegraphics[width=.97\columnwidth]{figures/taskvine.pdf}
 \caption{TaskVine manager--worker organization. The scheduler transfers declared inputs and outputs and assigns available tasks to connected workers.}
 \label{fig:taskvine}\end{figure}
 
-FLOW-DC concentrates on the acquisition stage: partitions have similar execution structure, but their duration depends on remote hosts and their objects. TaskVine supplies scheduling and file movement; FLOW-DC supplies manifest semantics, the HTTP client, request control, and output verification. A scheduler's successful task return is not treated as sufficient evidence of successful acquisition. Additionally, ther workflow engines such as Snakemake~\cite{snakemake}, Nextflow~\cite{nextflow}, and Pegasus~\cite{pegasus} were considered and tested but determined to be less suitable.
+FLOW-DC concentrates on the acquisition stage: partitions have similar execution structure, but their duration depends on remote hosts and their objects. TaskVine supplies scheduling and file movement; FLOW-DC supplies manifest semantics, the HTTP client, request control, and output verification. A scheduler's successful task return is not treated as sufficient evidence of successful acquisition. Other workflow engines such as Snakemake~\cite{snakemake}, Nextflow~\cite{nextflow}, and Pegasus~\cite{pegasus} address broader reproducible workflow needs.
 
 \subsection{Policy-Aware Adaptive Request Control}
 PAARC controls a per-host concurrency limit $C_t$. Outstanding requests can temporarily exceed a newly reduced limit because the controller does not cancel otherwise healthy transfers merely to enforce an instantaneous reduction. Further admissions wait until capacity is available. A configured upper bound remains necessary to protect finite client resources; automatic discovery does not imply unlimited concurrency.
